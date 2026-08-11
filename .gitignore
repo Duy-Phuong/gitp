@@ -1,0 +1,14 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Node / frontend
+node_modules/
+crates/gitp-gui/webui/dist/
+
+# Tauri generated
+crates/gitp-gui/gen/
+
+# OS / editor
+.DS_Store
+*.log

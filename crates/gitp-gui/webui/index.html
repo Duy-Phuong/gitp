@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>gitp</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <span class="brand">gitp</span>
+        <input id="repo-input" class="repo-input" placeholder="/path/to/repository" spellcheck="false" />
+        <button id="open-btn" class="btn">Open</button>
+        <nav class="tabs">
+          <button class="tab active" data-tab="history">History</button>
+          <button class="tab" data-tab="config">Config</button>
+        </nav>
+        <button id="terminal-toggle" class="btn ghost">Terminal</button>
+      </header>
+
+      <main class="content">
+        <section id="history-view" class="view">
+          <div id="log-pane" class="log-pane"></div>
+          <div id="detail-pane" class="detail-pane"></div>
+        </section>
+        <section id="config-view" class="view hidden">
+          <div id="config-editor" class="config-editor"></div>
+        </section>
+      </main>
+
+      <section id="terminal-panel" class="terminal-panel hidden">
+        <div class="terminal-head">
+          <span>Terminal</span>
+          <button id="terminal-close" class="btn ghost small">Hide</button>
+        </div>
+        <div id="terminal-host" class="terminal-host"></div>
+      </section>
+
+      <footer id="statusbar" class="statusbar"></footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

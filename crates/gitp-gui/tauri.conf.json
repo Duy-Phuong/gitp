@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "gitp",
+  "version": "0.1.0",
+  "identifier": "io.gitp.desktop",
+  "build": {
+    "beforeDevCommand": {
+      "script": "npm run dev",
+      "cwd": "webui",
+      "wait": false
+    },
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "webui"
+    },
+    "frontendDist": "webui/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "gitp",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 600
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}

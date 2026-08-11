@@ -1,0 +1,420 @@
+:root {
+  --bg: #0f1117;
+  --bg-elev: #161923;
+  --bg-elev-2: #1d212e;
+  --border: #262b3a;
+  --text: #d7dbe6;
+  --text-dim: #8b93a7;
+  --accent: #5b8cff;
+  --add-bg: rgba(63, 185, 80, 0.14);
+  --add-fg: #7ee787;
+  --del-bg: rgba(248, 81, 73, 0.14);
+  --del-fg: #ff9a94;
+  --badge-local: #3b82f6;
+  --badge-global: #a855f7;
+  --badge-system: #64748b;
+  --row-hover: #1b2030;
+  --row-sel: #223056;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f7f8fa;
+    --bg-elev: #ffffff;
+    --bg-elev-2: #f0f2f6;
+    --border: #dde1e9;
+    --text: #1c2027;
+    --text-dim: #667085;
+    --accent: #2f6bff;
+    --add-bg: rgba(46, 160, 67, 0.12);
+    --add-fg: #1a7f37;
+    --del-bg: rgba(207, 34, 46, 0.1);
+    --del-fg: #b42318;
+    --row-hover: #eef1f6;
+    --row-sel: #dce7ff;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--sans);
+  color: var(--text);
+  background: var(--bg);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  height: 100vh;
+}
+
+/* Top bar ---------------------------------------------------------------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+}
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+}
+.repo-input {
+  flex: 1;
+  max-width: 480px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.tab {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.tab.active {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+.btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn.ghost {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+.btn.small {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.btn:hover {
+  filter: brightness(1.08);
+}
+
+/* Views ------------------------------------------------------------------ */
+.content {
+  overflow: hidden;
+  min-height: 0;
+}
+.view {
+  height: 100%;
+}
+.view.hidden,
+#history-view.hidden,
+#config-view.hidden,
+.terminal-panel.hidden {
+  display: none;
+}
+
+#history-view {
+  display: grid;
+  grid-template-columns: minmax(340px, 1fr) minmax(360px, 1.3fr);
+}
+
+/* Log -------------------------------------------------------------------- */
+.log-pane {
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+.log {
+  position: relative;
+}
+.graph {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+.rows {
+  position: relative;
+}
+.commit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.commit-row:hover {
+  background: var(--row-hover);
+}
+.commit-row.selected {
+  background: var(--row-sel);
+}
+.commit-summary {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.commit-refs {
+  display: inline-flex;
+  gap: 4px;
+}
+.ref-pill {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.commit-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.commit-sha {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+
+/* Detail ----------------------------------------------------------------- */
+.detail-pane {
+  overflow: auto;
+  padding: 16px;
+  background: var(--bg-elev);
+}
+.detail-empty {
+  color: var(--text-dim);
+  padding: 40px;
+  text-align: center;
+}
+.detail-summary {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.detail-body {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  margin: 4px 0 14px;
+}
+.detail-meta {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+.detail-meta .sha {
+  font-family: var(--mono);
+}
+.file {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.file-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-elev-2);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.status-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.status-Added {
+  background: var(--add-bg);
+  color: var(--add-fg);
+}
+.status-Deleted {
+  background: var(--del-bg);
+  color: var(--del-fg);
+}
+.status-Modified,
+.status-Renamed,
+.status-Copied,
+.status-Other {
+  background: var(--bg-elev);
+  color: var(--text-dim);
+}
+.hunk-header {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 12px;
+  background: var(--bg);
+}
+.diff-line {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 0 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.diff-line.add {
+  background: var(--add-bg);
+  color: var(--add-fg);
+}
+.diff-line.del {
+  background: var(--del-bg);
+  color: var(--del-fg);
+}
+
+/* Config ----------------------------------------------------------------- */
+.config-editor {
+  height: 100%;
+  overflow: auto;
+  padding: 16px;
+}
+.config-table {
+  width: 100%;
+  border-collapse: collapse;
+  max-width: 900px;
+}
+.config-table th {
+  text-align: left;
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.config-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.config-key {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.config-value-input {
+  width: 100%;
+  background: var(--bg-elev-2);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--text);
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.config-value-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.scope-badge {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 8px;
+  color: white;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.scope-Local {
+  background: var(--badge-local);
+}
+.scope-Global {
+  background: var(--badge-global);
+}
+.scope-System,
+.scope-Other {
+  background: var(--badge-system);
+}
+.config-add {
+  margin-top: 16px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: 900px;
+}
+.config-add input,
+.config-add select {
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.config-add .key-input {
+  flex: 1;
+}
+.config-add .val-input {
+  flex: 1;
+}
+
+/* Terminal --------------------------------------------------------------- */
+.terminal-panel {
+  height: 240px;
+  border-top: 1px solid var(--border);
+  background: #0b0d13;
+  display: flex;
+  flex-direction: column;
+}
+.terminal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.terminal-host {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 8px;
+}
+
+/* Status bar ------------------------------------------------------------- */
+.statusbar {
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg-elev);
+  border-top: 1px solid var(--border);
+  min-height: 22px;
+}
