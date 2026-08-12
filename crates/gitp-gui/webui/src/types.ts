@@ -12,6 +12,11 @@ export interface CommitRow {
   color: number;
 }
 
+export interface LogPage {
+  rows: CommitRow[];
+  total: number;
+}
+
 export type ChangeKind =
   | "Added"
   | "Modified"

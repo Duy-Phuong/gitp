@@ -2,7 +2,7 @@
 // In a plain browser (e.g. `vite dev` for UI work) they return mock data so the
 // UI is fully explorable without the desktop shell.
 
-import type { CommitDetail, CommitRow, ConfigEntry, ConfigScope } from "./types";
+import type { CommitDetail, CommitRow, ConfigEntry, ConfigScope, LogPage } from "./types";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -18,9 +18,11 @@ export async function openRepo(path: string): Promise<string> {
   return invoke<string>("open_repo", { path });
 }
 
-export async function fetchLog(maxCount?: number): Promise<CommitRow[]> {
-  if (!isTauri()) return MOCK_LOG;
-  return invoke<CommitRow[]>("get_log", { maxCount: maxCount ?? null });
+export async function fetchLogPage(offset: number, limit: number): Promise<LogPage> {
+  if (!isTauri()) {
+    return { rows: MOCK_LOG.slice(offset, offset + limit), total: MOCK_LOG.length };
+  }
+  return invoke<LogPage>("get_log_page", { offset, limit });
 }
 
 export async function fetchCommitDetail(rev: string): Promise<CommitDetail> {

@@ -2,7 +2,7 @@ import "./styles.css";
 import {
   fetchCommitDetail,
   fetchConfig,
-  fetchLog,
+  fetchLogPage,
   isTauri,
   openRepo,
   saveConfig,
@@ -13,14 +13,20 @@ import { renderConfig } from "./views/config";
 import { setupTerminal, type TerminalHandle } from "./views/terminal";
 import type { CommitRow, ConfigScope } from "./types";
 
+// Commits loaded per page. The first page makes the repo openable instantly;
+// more are appended as the user scrolls (see loadMoreCommits).
+const PAGE_SIZE = 1000;
+
 interface State {
   repoPath: string;
   rows: CommitRow[];
+  total: number;
   selectedId: string | null;
 }
 
-const state: State = { repoPath: "", rows: [], selectedId: null };
+const state: State = { repoPath: "", rows: [], total: 0, selectedId: null };
 let terminal: TerminalHandle | null = null;
+let loadingMore = false;
 
 const $ = <T extends HTMLElement>(sel: string): T => {
   const node = document.querySelector<T>(sel);
@@ -38,18 +44,40 @@ async function loadRepo(path: string): Promise<void> {
     $<HTMLInputElement>("#repo-input").value = state.repoPath;
     terminal?.setCwd(state.repoPath);
     await refreshHistory();
-    setStatus(`Opened ${state.repoPath} · ${state.rows.length} commits`);
+    setStatus(`Opened ${state.repoPath} · ${state.total} commits`);
   } catch (err) {
     setStatus(`Failed to open repo: ${String(err)}`);
   }
 }
 
 async function refreshHistory(): Promise<void> {
-  state.rows = await fetchLog();
+  const page = await fetchLogPage(0, PAGE_SIZE);
+  state.rows = page.rows;
+  state.total = page.total;
   state.selectedId = state.rows[0]?.id ?? null;
-  renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit);
+  renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits);
   if (state.selectedId) await selectCommit(state.selectedId);
   else renderDetailEmpty($("#detail-pane"));
+}
+
+// Append the next page when the user scrolls near the end of what's loaded.
+async function loadMoreCommits(): Promise<void> {
+  if (loadingMore || state.rows.length >= state.total) return;
+  loadingMore = true;
+  try {
+    const page = await fetchLogPage(state.rows.length, PAGE_SIZE);
+    state.rows = state.rows.concat(page.rows);
+    state.total = page.total;
+    const host = $("#log-pane");
+    const keepScroll = host.scrollTop;
+    renderLog(host, state.rows, state.selectedId, selectCommit, loadMoreCommits);
+    host.scrollTop = keepScroll;
+    setStatus(`${state.rows.length} / ${state.total} commits loaded`);
+  } catch (err) {
+    setStatus(`Failed to load more commits: ${String(err)}`);
+  } finally {
+    loadingMore = false;
+  }
 }
 
 async function selectCommit(id: string): Promise<void> {

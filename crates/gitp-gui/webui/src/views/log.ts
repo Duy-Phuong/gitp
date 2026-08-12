@@ -49,6 +49,7 @@ export function renderLog(
   rows: CommitRow[],
   selectedId: string | null,
   onSelect: (id: string) => void,
+  onNeedMore?: () => void,
 ): void {
   resizeObserver?.disconnect();
   host.onscroll = null;
@@ -89,6 +90,11 @@ export function renderLog(
     const end = Math.min(rows.length, Math.ceil((scrollTop + viewH) / rowH) + BUFFER_ROWS);
     const top = start * rowH;
     const bottom = end * rowH;
+
+    // Ask for more rows once the viewport nears the end of what's loaded.
+    if (onNeedMore && scrollTop + viewH >= layout.height - rowH * 20) {
+      onNeedMore();
+    }
 
     clear(rowsLayer);
     for (let i = start; i < end; i++) {
