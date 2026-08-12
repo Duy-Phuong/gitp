@@ -34,6 +34,6 @@ function applyAttrs(node: HTMLElement, attrs: Attrs): void {
   }
 }
 
-export function clear(node: HTMLElement): void {
+export function clear(node: Element): void {
   node.replaceChildren();
 }

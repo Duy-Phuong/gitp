@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { layoutGraph, GRAPH_METRICS } from "./graph";
+import { layoutGraph, fitLaneWidth, GRAPH_METRICS } from "./graph";
 import type { CommitRow } from "./types";
 
 function row(partial: Partial<CommitRow> & { id: string }): CommitRow {
@@ -74,5 +74,30 @@ describe("layoutGraph", () => {
 
     expect(layout.nodes).toHaveLength(1);
     expect(layout.edges).toHaveLength(0);
+  });
+});
+
+describe("fitLaneWidth", () => {
+  it("uses the default width when there are no extra lanes", () => {
+    expect(fitLaneWidth(0, 340)).toBe(GRAPH_METRICS.laneWidth);
+  });
+
+  it("keeps the default width for a few lanes", () => {
+    expect(fitLaneWidth(2, 340)).toBe(GRAPH_METRICS.laneWidth);
+  });
+
+  it("compresses many lanes so the graph fits (regression: wide graphs hid text)", () => {
+    const maxLane = 32;
+    const paneWidth = 340;
+    const laneWidth = fitLaneWidth(maxLane, paneWidth);
+
+    expect(laneWidth).toBeLessThan(GRAPH_METRICS.laneWidth);
+
+    // The graph gutter must leave room for commit text in the pane.
+    const rows: CommitRow[] = Array.from({ length: 3 }, (_, i) =>
+      row({ id: `c${i}`, lane: i === 0 ? maxLane : 0 }),
+    );
+    const layout = layoutGraph(rows, laneWidth);
+    expect(layout.width).toBeLessThan(paneWidth * 0.6);
   });
 });

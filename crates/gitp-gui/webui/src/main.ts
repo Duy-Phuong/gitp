@@ -53,8 +53,8 @@ async function refreshHistory(): Promise<void> {
 }
 
 async function selectCommit(id: string): Promise<void> {
+  // The log view updates its own highlight on click; here we only load detail.
   state.selectedId = id;
-  renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit);
   try {
     const detail = await fetchCommitDetail(id);
     renderDetail($("#detail-pane"), detail);

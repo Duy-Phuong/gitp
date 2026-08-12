@@ -145,6 +145,11 @@ body {
 #history-view {
   display: grid;
   grid-template-columns: minmax(340px, 1fr) minmax(360px, 1.3fr);
+  height: 100%;
+  min-height: 0;
+}
+#history-view > * {
+  min-height: 0;
 }
 
 /* Log -------------------------------------------------------------------- */
@@ -239,6 +244,7 @@ body {
 }
 .detail-meta .sha {
   font-family: var(--mono);
+  cursor: pointer;
 }
 .file {
   border: 1px solid var(--border);
