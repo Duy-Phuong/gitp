@@ -8,9 +8,12 @@
 
 pub mod terminal;
 
+use std::path::Path;
 use std::sync::Mutex;
 
-use gitp_core::{CommitDetail, CommitRow, ConfigEntry, ConfigScope, LogOptions, Repo};
+use gitp_core::{
+    CommitDetail, CommitRow, ConfigEntry, ConfigScope, FileDiff, LogOptions, Refs, Repo,
+};
 use serde::Serialize;
 use tauri::State;
 
@@ -20,13 +23,53 @@ use terminal::TerminalState;
 /// computed once (the expensive walk) so pages can be served cheaply and with
 /// globally-consistent graph lanes.
 struct Session {
+    path: String,
+    name: String,
     repo: Repo,
     log: Option<Vec<CommitRow>>,
 }
 
-/// The currently-open repository (if any).
+/// All open repositories plus which one is active. Commands that read a repo
+/// (log, detail, config) operate on the active session.
 #[derive(Default)]
-pub struct RepoState(Mutex<Option<Session>>);
+struct Workspace {
+    sessions: Vec<Session>,
+    active: Option<usize>,
+}
+
+impl Workspace {
+    fn view(&self) -> WorkspaceView {
+        WorkspaceView {
+            repos: self
+                .sessions
+                .iter()
+                .map(|s| RepoTab {
+                    path: s.path.clone(),
+                    name: s.name.clone(),
+                })
+                .collect(),
+            active: self.active,
+        }
+    }
+}
+
+/// The set of open repositories (a workspace of tabs).
+#[derive(Default)]
+pub struct RepoState(Mutex<Workspace>);
+
+/// One open repository as shown in the tab bar.
+#[derive(Serialize, Clone)]
+pub struct RepoTab {
+    path: String,
+    name: String,
+}
+
+/// The open repos and the active index — the frontend renders its tab bar from this.
+#[derive(Serialize)]
+pub struct WorkspaceView {
+    repos: Vec<RepoTab>,
+    active: Option<usize>,
+}
 
 /// A page of log rows plus the total count, so the frontend knows when to stop.
 #[derive(Serialize)]
@@ -39,29 +82,91 @@ fn to_message<E: std::fmt::Display>(err: E) -> String {
     err.to_string()
 }
 
-/// Run `f` against the open repo, or return an error string if none is open.
+/// A tab label like `mideal (Documents)`: the repo folder plus its parent.
+fn display_name(path: &str) -> String {
+    let p = Path::new(path);
+    let base = p
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path)
+        .to_string();
+    match p.parent().and_then(Path::file_name).and_then(|s| s.to_str()) {
+        Some(parent) if !parent.is_empty() => format!("{base} ({parent})"),
+        _ => base,
+    }
+}
+
+/// Run `f` against the active repo, or return an error string if none is open.
 fn with_repo<T>(
     state: &RepoState,
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
 ) -> Result<T, String> {
     let guard = state.0.lock().map_err(to_message)?;
-    let session = guard.as_ref().ok_or("no repository is open")?;
-    f(&session.repo).map_err(to_message)
+    let idx = guard.active.ok_or("no repository is open")?;
+    f(&guard.sessions[idx].repo).map_err(to_message)
 }
 
 // --- Command logic (runtime-agnostic, unit-testable) -----------------------
 
-fn open_repo_impl(state: &RepoState, path: String) -> Result<String, String> {
+/// Open `path` as a new tab (or switch to it if already open) and make it active.
+fn open_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    if let Some(i) = guard.sessions.iter().position(|s| s.path == path) {
+        guard.active = Some(i);
+        return Ok(guard.view());
+    }
     let repo = Repo::open(&path).map_err(to_message)?;
-    *state.0.lock().map_err(to_message)? = Some(Session { repo, log: None });
-    Ok(path)
+    let name = display_name(&path);
+    guard.sessions.push(Session {
+        path,
+        name,
+        repo,
+        log: None,
+    });
+    guard.active = Some(guard.sessions.len() - 1);
+    Ok(guard.view())
 }
 
-/// Return the `[offset, offset+limit)` slice of the log, computing and caching
-/// the full log on first use so lanes are consistent across pages.
+fn list_repos_impl(state: &RepoState) -> Result<WorkspaceView, String> {
+    Ok(state.0.lock().map_err(to_message)?.view())
+}
+
+/// Switch the active tab to the open repo at `path`.
+fn activate_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let i = guard
+        .sessions
+        .iter()
+        .position(|s| s.path == path)
+        .ok_or("repository is not open")?;
+    guard.active = Some(i);
+    Ok(guard.view())
+}
+
+/// Close the tab for `path`, keeping the active selection sensible.
+fn close_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let i = guard
+        .sessions
+        .iter()
+        .position(|s| s.path == path)
+        .ok_or("repository is not open")?;
+    guard.sessions.remove(i);
+    guard.active = match guard.active {
+        _ if guard.sessions.is_empty() => None,
+        Some(a) if i < a => Some(a - 1),
+        Some(a) => Some(a.min(guard.sessions.len() - 1)),
+        None => None,
+    };
+    Ok(guard.view())
+}
+
+/// Return the `[offset, offset+limit)` slice of the active repo's log, computing
+/// and caching the full log on first use so lanes are consistent across pages.
 fn get_log_page_impl(state: &RepoState, offset: usize, limit: usize) -> Result<LogPage, String> {
     let mut guard = state.0.lock().map_err(to_message)?;
-    let session = guard.as_mut().ok_or("no repository is open")?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
     if session.log.is_none() {
         let rows = session
             .repo
@@ -80,6 +185,29 @@ fn get_commit_detail_impl(state: &RepoState, rev: String) -> Result<CommitDetail
     with_repo(state, |repo| repo.commit_detail(&rev))
 }
 
+fn get_refs_impl(state: &RepoState) -> Result<Refs, String> {
+    with_repo(state, Repo::refs)
+}
+
+fn get_local_change_count_impl(state: &RepoState) -> Result<usize, String> {
+    with_repo(state, Repo::local_change_count)
+}
+
+fn get_working_changes_impl(state: &RepoState) -> Result<Vec<FileDiff>, String> {
+    with_repo(state, Repo::working_changes)
+}
+
+/// Check out `name` on the active repo. Invalidates the cached log because HEAD
+/// moves, so the next `get_log_page` recomputes the walk from the new HEAD.
+fn checkout_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    session.repo.checkout_branch(&name).map_err(to_message)?;
+    session.log = None;
+    Ok(())
+}
+
 fn get_config_impl(state: &RepoState) -> Result<Vec<ConfigEntry>, String> {
     with_repo(state, |repo| repo.read_config())
 }
@@ -96,8 +224,23 @@ fn set_config_impl(
 // --- Tauri command wrappers -------------------------------------------------
 
 #[tauri::command]
-fn open_repo(path: String, state: State<RepoState>) -> Result<String, String> {
+fn open_repo(path: String, state: State<RepoState>) -> Result<WorkspaceView, String> {
     open_repo_impl(&state, path)
+}
+
+#[tauri::command]
+fn list_repos(state: State<RepoState>) -> Result<WorkspaceView, String> {
+    list_repos_impl(&state)
+}
+
+#[tauri::command]
+fn activate_repo(path: String, state: State<RepoState>) -> Result<WorkspaceView, String> {
+    activate_repo_impl(&state, path)
+}
+
+#[tauri::command]
+fn close_repo(path: String, state: State<RepoState>) -> Result<WorkspaceView, String> {
+    close_repo_impl(&state, path)
 }
 
 #[tauri::command]
@@ -108,6 +251,26 @@ fn get_log_page(offset: usize, limit: usize, state: State<RepoState>) -> Result<
 #[tauri::command]
 fn get_commit_detail(rev: String, state: State<RepoState>) -> Result<CommitDetail, String> {
     get_commit_detail_impl(&state, rev)
+}
+
+#[tauri::command]
+fn get_refs(state: State<RepoState>) -> Result<Refs, String> {
+    get_refs_impl(&state)
+}
+
+#[tauri::command]
+fn get_local_change_count(state: State<RepoState>) -> Result<usize, String> {
+    get_local_change_count_impl(&state)
+}
+
+#[tauri::command]
+fn get_working_changes(state: State<RepoState>) -> Result<Vec<FileDiff>, String> {
+    get_working_changes_impl(&state)
+}
+
+#[tauri::command]
+fn checkout_branch(name: String, state: State<RepoState>) -> Result<(), String> {
+    checkout_branch_impl(&state, name)
 }
 
 #[tauri::command]
@@ -128,12 +291,20 @@ fn set_config(
 /// Build and run the desktop app.
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(RepoState::default())
         .manage(TerminalState::default())
         .invoke_handler(tauri::generate_handler![
             open_repo,
+            list_repos,
+            activate_repo,
+            close_repo,
             get_log_page,
             get_commit_detail,
+            get_refs,
+            get_local_change_count,
+            get_working_changes,
+            checkout_branch,
             get_config,
             set_config,
             terminal::terminal_spawn,
@@ -146,7 +317,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_commit_detail_impl, get_log_page_impl, open_repo_impl, RepoState};
+    use super::{
+        activate_repo_impl, close_repo_impl, get_commit_detail_impl, get_log_page_impl,
+        list_repos_impl, open_repo_impl, RepoState,
+    };
     use std::path::Path;
     use std::process::Command;
 
@@ -224,5 +398,43 @@ mod tests {
         let past_end = get_log_page_impl(&state, 10, 2).expect("past end");
         assert!(past_end.rows.is_empty());
         assert_eq!(past_end.total, 5);
+    }
+
+    #[test]
+    fn multiple_repos_open_as_tabs_and_can_be_switched_and_closed() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        make_repo(dir_a.path(), &["a1", "a2"]); // 2 commits
+        make_repo(dir_b.path(), &["b1", "b2", "b3"]); // 3 commits
+        let path_a = dir_a.path().to_str().unwrap().to_string();
+        let path_b = dir_b.path().to_str().unwrap().to_string();
+
+        let state = RepoState::default();
+        open_repo_impl(&state, path_a.clone()).expect("open A");
+        let ws = open_repo_impl(&state, path_b.clone()).expect("open B");
+        // Both repos are open as tabs; the most recently opened is active.
+        assert_eq!(ws.repos.len(), 2);
+        assert_eq!(ws.active, Some(1));
+        assert_eq!(get_log_page_impl(&state, 0, 100).unwrap().total, 3, "active is B");
+
+        // Re-opening an already-open repo just switches to it (no duplicate tab).
+        let ws = open_repo_impl(&state, path_a.clone()).expect("reopen A");
+        assert_eq!(ws.repos.len(), 2);
+        assert_eq!(ws.active, Some(0));
+        assert_eq!(get_log_page_impl(&state, 0, 100).unwrap().total, 2, "active is A");
+
+        // Switch explicitly, then close the active tab.
+        activate_repo_impl(&state, path_b.clone()).expect("activate B");
+        assert_eq!(get_log_page_impl(&state, 0, 100).unwrap().total, 3);
+        let ws = close_repo_impl(&state, path_b).expect("close B");
+        assert_eq!(ws.repos.len(), 1);
+        assert_eq!(ws.repos[0].path, path_a);
+        assert_eq!(get_log_page_impl(&state, 0, 100).unwrap().total, 2, "fell back to A");
+
+        // Closing the last repo leaves no active tab.
+        let ws = close_repo_impl(&state, path_a).expect("close A");
+        assert!(ws.repos.is_empty());
+        assert_eq!(ws.active, None);
+        assert!(list_repos_impl(&state).unwrap().repos.is_empty());
     }
 }

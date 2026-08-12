@@ -11,7 +11,7 @@ export interface TerminalHandle {
   setCwd: (cwd: string) => void;
 }
 
-export function setupTerminal(host: HTMLElement): TerminalHandle {
+export function setupTerminal(host: HTMLElement, onCommand?: () => void): TerminalHandle {
   const term = new Terminal({
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     fontSize: 12,
@@ -31,7 +31,7 @@ export function setupTerminal(host: HTMLElement): TerminalHandle {
     return { fit: () => fitAddon.fit(), setCwd: (c) => (cwd = c) };
   }
 
-  void wireToBackend(term, () => cwd);
+  void wireToBackend(term, () => cwd, onCommand);
 
   return {
     fit: () => {
@@ -42,13 +42,27 @@ export function setupTerminal(host: HTMLElement): TerminalHandle {
   };
 }
 
-async function wireToBackend(term: Terminal, getCwd: () => string): Promise<void> {
+async function wireToBackend(
+  term: Terminal,
+  getCwd: () => string,
+  onCommand?: () => void,
+): Promise<void> {
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
 
   await listen<string>("terminal-output", (event) => term.write(event.payload));
   await invoke("terminal_spawn", { cwd: getCwd(), cols: term.cols, rows: term.rows });
-  term.onData((data) => void invoke("terminal_write", { data }));
+
+  // Pressing Enter submits a command; after it has had a moment to run, tell the
+  // app so it can refresh anything a commit/checkout/stash would have changed.
+  let commandTimer: number | undefined;
+  term.onData((data) => {
+    void invoke("terminal_write", { data });
+    if (onCommand && (data.includes("\r") || data.includes("\n"))) {
+      window.clearTimeout(commandTimer);
+      commandTimer = window.setTimeout(onCommand, 700);
+    }
+  });
 }
 
 async function resizeBackend(cols: number, rows: number): Promise<void> {

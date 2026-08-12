@@ -2,7 +2,16 @@
 // In a plain browser (e.g. `vite dev` for UI work) they return mock data so the
 // UI is fully explorable without the desktop shell.
 
-import type { CommitDetail, CommitRow, ConfigEntry, ConfigScope, LogPage } from "./types";
+import type {
+  CommitDetail,
+  CommitRow,
+  ConfigEntry,
+  ConfigScope,
+  FileDiff,
+  LogPage,
+  Refs,
+  Workspace,
+} from "./types";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -13,9 +22,35 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
   return invoke<T>(cmd, args);
 }
 
-export async function openRepo(path: string): Promise<string> {
-  if (!isTauri()) return path;
-  return invoke<string>("open_repo", { path });
+// Repo tabs: open/list/activate/close all return the full workspace so the
+// frontend can re-render its tab bar from one source of truth.
+export async function openRepo(path: string): Promise<Workspace> {
+  if (!isTauri()) return mockOpen(path);
+  return invoke<Workspace>("open_repo", { path });
+}
+
+export async function listRepos(): Promise<Workspace> {
+  if (!isTauri()) return { ...MOCK_WORKSPACE };
+  return invoke<Workspace>("list_repos", {});
+}
+
+export async function activateRepo(path: string): Promise<Workspace> {
+  if (!isTauri()) return mockActivate(path);
+  return invoke<Workspace>("activate_repo", { path });
+}
+
+export async function closeRepo(path: string): Promise<Workspace> {
+  if (!isTauri()) return mockClose(path);
+  return invoke<Workspace>("close_repo", { path });
+}
+
+// Show a native folder picker. Returns the chosen directory, or null if the
+// user cancelled (or if running outside the Tauri shell, where no picker exists).
+export async function browseForRepo(): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({ directory: true, multiple: false, title: "Open Repository" });
+  return typeof selected === "string" ? selected : null;
 }
 
 export async function fetchLogPage(offset: number, limit: number): Promise<LogPage> {
@@ -28,6 +63,38 @@ export async function fetchLogPage(offset: number, limit: number): Promise<LogPa
 export async function fetchCommitDetail(rev: string): Promise<CommitDetail> {
   if (!isTauri()) return mockDetail(rev);
   return invoke<CommitDetail>("get_commit_detail", { rev });
+}
+
+export async function fetchRefs(): Promise<Refs> {
+  if (!isTauri()) return MOCK_REFS;
+  return invoke<Refs>("get_refs", {});
+}
+
+export async function fetchLocalChangeCount(): Promise<number> {
+  if (!isTauri()) return mockDetail("x").files.length + 780;
+  return invoke<number>("get_local_change_count", {});
+}
+
+export async function fetchWorkingChanges(): Promise<FileDiff[]> {
+  if (!isTauri()) return mockDetail("x").files;
+  return invoke<FileDiff[]>("get_working_changes", {});
+}
+
+// Yes/No confirmation. Uses the native dialog plugin in Tauri; window.confirm
+// in a plain browser (preview mode).
+export async function confirmDialog(message: string, title = "gitp"): Promise<boolean> {
+  if (!isTauri()) return window.confirm(message);
+  const { ask } = await import("@tauri-apps/plugin-dialog");
+  return ask(message, { title, kind: "warning" });
+}
+
+export async function checkoutBranch(name: string): Promise<void> {
+  if (!isTauri()) {
+    MOCK_REFS.branches.forEach((b) => (b.is_head = b.name === name));
+    MOCK_REFS.head = name;
+    return;
+  }
+  await invoke<void>("checkout_branch", { name });
 }
 
 export async function fetchConfig(): Promise<ConfigEntry[]> {
@@ -52,6 +119,42 @@ export async function saveConfig(
 // ---------------------------------------------------------------------------
 // Mock data (browser-only)
 // ---------------------------------------------------------------------------
+
+// A stand-in workspace so the tab bar is explorable in `vite dev`.
+const MOCK_WORKSPACE: Workspace = {
+  repos: [{ path: "/Users/you/Documents/mideal", name: "mideal (Documents)" }],
+  active: 0,
+};
+
+function mockName(path: string): string {
+  const parts = path.replace(/\/+$/, "").split("/");
+  const base = parts[parts.length - 1] || path;
+  const parent = parts[parts.length - 2];
+  return parent ? `${base} (${parent})` : base;
+}
+
+function mockOpen(path: string): Workspace {
+  const i = MOCK_WORKSPACE.repos.findIndex((r) => r.path === path);
+  if (i === -1) MOCK_WORKSPACE.repos.push({ path, name: mockName(path) });
+  MOCK_WORKSPACE.active = i === -1 ? MOCK_WORKSPACE.repos.length - 1 : i;
+  return { ...MOCK_WORKSPACE };
+}
+
+function mockActivate(path: string): Workspace {
+  const i = MOCK_WORKSPACE.repos.findIndex((r) => r.path === path);
+  if (i !== -1) MOCK_WORKSPACE.active = i;
+  return { ...MOCK_WORKSPACE };
+}
+
+function mockClose(path: string): Workspace {
+  const i = MOCK_WORKSPACE.repos.findIndex((r) => r.path === path);
+  if (i !== -1) {
+    MOCK_WORKSPACE.repos.splice(i, 1);
+    const a = MOCK_WORKSPACE.active ?? 0;
+    MOCK_WORKSPACE.active = MOCK_WORKSPACE.repos.length === 0 ? null : Math.min(i < a ? a - 1 : a, MOCK_WORKSPACE.repos.length - 1);
+  }
+  return { ...MOCK_WORKSPACE };
+}
 
 const DAY = 86400;
 const BASE = 1_700_000_000;
@@ -132,6 +235,47 @@ function mockDetail(rev: string): CommitDetail {
     ],
   };
 }
+
+// Build the same 40-char id MOCK_LOG uses, so a mock branch tip resolves to a row.
+function mockOid(c: string): string {
+  return c.repeat(40).slice(0, 40);
+}
+
+// Ref tree resembling the reference design, so the sidebar is explorable.
+export const MOCK_REFS: Refs = {
+  head: "develop/3.33.0",
+  branches: [
+    { name: "master", is_head: false, ahead: 0, behind: 46, target: mockOid("a") },
+    { name: "bugifx/login-crash", is_head: false, ahead: 0, behind: 0, target: mockOid("b") },
+    { name: "develop/3.33.0", is_head: true, ahead: 2, behind: 0, target: mockOid("g") },
+    { name: "development/api-v2", is_head: false, ahead: 0, behind: 0, target: mockOid("c") },
+    { name: "draft-development/spike", is_head: false, ahead: 0, behind: 0, target: mockOid("d") },
+    { name: "feature/dashboard", is_head: false, ahead: 3, behind: 1, target: mockOid("e") },
+    { name: "feature/export", is_head: false, ahead: 0, behind: 0, target: mockOid("f") },
+    { name: "hotfix/urgent-patch", is_head: false, ahead: 0, behind: 0, target: mockOid("c") },
+    { name: "merge/master-to-develop", is_head: false, ahead: 0, behind: 0, target: mockOid("d") },
+    { name: "pr-2444", is_head: false, ahead: 0, behind: 0, target: mockOid("b") },
+    { name: "pr-2536", is_head: false, ahead: 0, behind: 0, target: mockOid("c") },
+    { name: "pr-2543", is_head: false, ahead: 0, behind: 0, target: mockOid("d") },
+    { name: "pr-2684-review", is_head: false, ahead: 0, behind: 0, target: mockOid("e") },
+    { name: "release-hotfix-3.24.5", is_head: false, ahead: 0, behind: 0, target: mockOid("f") },
+    { name: "release-hotfix-3.29.2", is_head: false, ahead: 0, behind: 0, target: mockOid("a") },
+  ],
+  remotes: [
+    { remote: "origin", name: "origin/master", target: mockOid("a") },
+    { remote: "origin", name: "origin/develop/3.33.0", target: mockOid("f") },
+    { remote: "origin", name: "origin/feature/dashboard", target: mockOid("e") },
+  ],
+  tags: [
+    { name: "v3.31.2", target: mockOid("b") },
+    { name: "v3.32.0", target: mockOid("d") },
+    { name: "v3.33.0", target: mockOid("g") },
+  ],
+  stashes: [
+    { index: 0, message: "config 3.31.2" },
+    { index: 1, message: "config 3.31 for mock" },
+  ],
+};
 
 export const MOCK_CONFIG: ConfigEntry[] = [
   { name: "user.name", value: "Ada Lovelace", scope: "Global" },

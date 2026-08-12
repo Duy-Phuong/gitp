@@ -1,0 +1,33 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5b8cff"/>
+      <stop offset="1" stop-color="#2f6bff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- rounded-square backdrop -->
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- git commit graph: main lane + a branch that forks and merges back -->
+  <g fill="none" stroke="#ffffff" stroke-width="26" stroke-linecap="round">
+    <!-- main lane -->
+    <path d="M185 140 L185 372"/>
+    <!-- branch out -->
+    <path d="M185 140 C 185 202 327 198 327 256"/>
+    <!-- merge back -->
+    <path d="M327 256 C 327 314 185 310 185 372"/>
+  </g>
+
+  <!-- commit nodes -->
+  <g fill="#ffffff">
+    <circle cx="185" cy="140" r="34"/>
+    <circle cx="327" cy="256" r="34"/>
+    <circle cx="185" cy="372" r="34"/>
+  </g>
+  <g fill="url(#bg)">
+    <circle cx="185" cy="140" r="14"/>
+    <circle cx="327" cy="256" r="14"/>
+    <circle cx="185" cy="372" r="14"/>
+  </g>
+</svg>

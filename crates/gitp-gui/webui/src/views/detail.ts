@@ -34,7 +34,7 @@ export function renderDetail(host: HTMLElement, detail: CommitDetail): void {
   }
 }
 
-function renderFile(file: FileDiff): HTMLElement {
+export function renderFile(file: FileDiff): HTMLElement {
   const container = el("div", { class: "file" });
 
   const head = el("div", { class: "file-head" });

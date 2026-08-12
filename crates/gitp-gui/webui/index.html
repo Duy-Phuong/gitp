@@ -10,22 +10,39 @@
       <header class="topbar">
         <span class="brand">gitp</span>
         <input id="repo-input" class="repo-input" placeholder="/path/to/repository" spellcheck="false" />
+        <button id="browse-btn" class="btn ghost">Browse…</button>
         <button id="open-btn" class="btn">Open</button>
         <nav class="tabs">
           <button class="tab active" data-tab="history">History</button>
           <button class="tab" data-tab="config">Config</button>
         </nav>
         <button id="terminal-toggle" class="btn ghost">Terminal</button>
+        <div id="settings" class="settings">
+          <button id="settings-btn" class="btn ghost icon-btn" title="Settings" aria-haspopup="true" aria-expanded="false">⚙</button>
+          <div id="settings-menu" class="menu hidden" role="menu">
+            <button class="menu-item" data-action="git-config" role="menuitem">Git Config</button>
+          </div>
+        </div>
       </header>
 
+      <div id="repo-tabs" class="repo-tabs hidden"></div>
+
       <main class="content">
-        <section id="history-view" class="view">
-          <div id="log-pane" class="log-pane"></div>
-          <div id="detail-pane" class="detail-pane"></div>
-        </section>
-        <section id="config-view" class="view hidden">
-          <div id="config-editor" class="config-editor"></div>
-        </section>
+        <aside id="sidebar" class="sidebar"></aside>
+        <div id="sidebar-divider" class="pane-divider" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
+        <div id="main-panel" class="main-panel">
+          <section id="history-view" class="view">
+            <div id="log-pane" class="log-pane"></div>
+            <div id="pane-divider" class="pane-divider" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
+            <div id="detail-pane" class="detail-pane"></div>
+          </section>
+          <section id="changes-view" class="view hidden">
+            <div id="changes-pane" class="changes-pane"></div>
+          </section>
+          <section id="config-view" class="view hidden">
+            <div id="config-editor" class="config-editor"></div>
+          </section>
+        </div>
       </main>
 
       <section id="terminal-panel" class="terminal-panel hidden">

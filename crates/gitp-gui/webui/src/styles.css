@@ -58,7 +58,7 @@ body {
 
 #app {
   display: grid;
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: auto auto 1fr auto auto;
   height: 100vh;
 }
 
@@ -126,11 +126,246 @@ body {
 .btn:hover {
   filter: brightness(1.08);
 }
+.icon-btn {
+  font-size: 15px;
+  line-height: 1;
+  padding: 5px 9px;
+}
+
+/* Settings menu ---------------------------------------------------------- */
+.settings {
+  position: relative;
+}
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  z-index: 20;
+}
+.menu.hidden {
+  display: none;
+}
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.menu-item:hover {
+  background: var(--row-hover);
+}
+
+/* Repo tabs --------------------------------------------------------------- */
+.repo-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+/* Collapse to zero height rather than display:none, so the tab bar keeps its
+   grid row and the content row below stays the flexible (1fr) one. */
+.repo-tabs.hidden {
+  height: 0;
+  padding: 0;
+  border: none;
+  overflow: hidden;
+}
+.repo-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.repo-tab:hover {
+  background: var(--bg-elev-2);
+}
+.repo-tab.active {
+  background: var(--bg-elev-2);
+  border-color: var(--border);
+  color: var(--text);
+}
+.repo-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+}
+.repo-tab-close:hover {
+  background: var(--row-hover);
+  color: var(--text);
+}
+
+/* Sidebar ----------------------------------------------------------------- */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elev);
+  padding: 8px 6px;
+  user-select: none;
+  font-size: 13px;
+}
+/* Header, nav and filter stay put; only the ref tree scrolls. */
+.sb-header,
+.sb-nav,
+.sb-filter-wrap {
+  flex-shrink: 0;
+}
+.sb-header {
+  padding: 4px 8px 8px;
+  font-weight: 600;
+  overflow: hidden;
+}
+.sb-repo {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.sb-nav:hover {
+  background: var(--bg-elev-2);
+}
+.sb-nav.active {
+  background: var(--row-sel);
+  color: var(--text);
+}
+.sb-count {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.sb-filter-wrap {
+  padding: 8px 4px;
+}
+.sb-filter {
+  width: 100%;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.sb-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: 2px;
+}
+.sb-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  margin-top: 4px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.4px;
+}
+.sb-folder {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.sb-folder:hover {
+  background: var(--bg-elev-2);
+}
+.sb-chevron {
+  display: inline-block;
+  width: 12px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.sb-leaf {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 22px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.sb-leaf.indent {
+  padding-left: 34px;
+}
+.sb-leaf:hover {
+  background: var(--bg-elev-2);
+}
+.sb-leaf-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+.sb-leaf.head .sb-leaf-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+.sb-ab {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+
+/* Local Changes view ------------------------------------------------------ */
+.changes-pane {
+  overflow: auto;
+  padding: 16px;
+  background: var(--bg-elev);
+  height: 100%;
+}
 
 /* Views ------------------------------------------------------------------ */
 .content {
+  display: grid;
+  grid-template-columns: var(--sidebar-w, 248px) 6px 1fr;
   overflow: hidden;
   min-height: 0;
+}
+.main-panel {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
 }
 .view {
   height: 100%;
@@ -144,12 +379,21 @@ body {
 
 #history-view {
   display: grid;
-  grid-template-columns: minmax(340px, 1fr) minmax(360px, 1.3fr);
+  grid-template-columns: var(--log-w, minmax(340px, 1fr)) 6px minmax(360px, 1fr);
   height: 100%;
   min-height: 0;
 }
 #history-view > * {
   min-height: 0;
+}
+.pane-divider {
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.12s;
+}
+.pane-divider:hover,
+.pane-divider.dragging {
+  background: var(--accent);
 }
 
 /* Log -------------------------------------------------------------------- */

@@ -55,6 +55,48 @@ export interface CommitDetail {
   files: FileDiff[];
 }
 
+export interface RepoTab {
+  path: string;
+  name: string;
+}
+
+export interface BranchRef {
+  name: string;
+  is_head: boolean;
+  ahead: number;
+  behind: number;
+  target: string;
+}
+
+export interface RemoteBranch {
+  remote: string;
+  name: string;
+  target: string;
+}
+
+export interface TagRef {
+  name: string;
+  target: string;
+}
+
+export interface StashRef {
+  index: number;
+  message: string;
+}
+
+export interface Refs {
+  head: string | null;
+  branches: BranchRef[];
+  remotes: RemoteBranch[];
+  tags: TagRef[];
+  stashes: StashRef[];
+}
+
+export interface Workspace {
+  repos: RepoTab[];
+  active: number | null;
+}
+
 export type ConfigScope = "Local" | "Global" | "System" | "Other";
 
 export interface ConfigEntry {
