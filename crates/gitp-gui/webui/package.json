@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "tauri": "cd .. && tauri",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
