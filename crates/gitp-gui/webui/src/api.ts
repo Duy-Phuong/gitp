@@ -117,6 +117,24 @@ export async function push(): Promise<string> {
   return invoke<string>("push", {});
 }
 
+export async function stash(): Promise<string> {
+  if (!isTauri()) {
+    MOCK_REFS.stashes.unshift({ index: 0, message: "WIP on develop (preview mock)" });
+    MOCK_REFS.stashes.forEach((s, i) => (s.index = i));
+    return "Saved working directory (preview mock)";
+  }
+  return invoke<string>("stash", {});
+}
+
+export async function stashPop(): Promise<string> {
+  if (!isTauri()) {
+    MOCK_REFS.stashes.shift();
+    MOCK_REFS.stashes.forEach((s, i) => (s.index = i));
+    return "Popped stash (preview mock)";
+  }
+  return invoke<string>("stash_pop", {});
+}
+
 export async function fetchConfig(): Promise<ConfigEntry[]> {
   if (!isTauri()) return MOCK_CONFIG;
   return invoke<ConfigEntry[]>("get_config", {});

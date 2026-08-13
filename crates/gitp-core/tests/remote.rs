@@ -92,6 +92,31 @@ fn pull_brings_new_commits_from_the_remote() {
 }
 
 #[test]
+fn stash_saves_changes_and_pop_restores_them() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    std::fs::write(fx.path().join("a.txt"), "two\n").unwrap(); // dirty the tree
+
+    let repo = Repo::open(fx.path()).unwrap();
+    assert_eq!(repo.local_change_count().unwrap(), 1, "one modified file");
+
+    repo.stash().expect("stash saves the change");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "one\n",
+        "working tree reverted to HEAD after stash"
+    );
+    assert_eq!(repo.local_change_count().unwrap(), 0, "clean tree after stash");
+
+    repo.stash_pop().expect("pop restores the change");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "two\n",
+        "modification restored after pop"
+    );
+}
+
+#[test]
 fn create_branch_makes_a_branch_at_head_and_checks_it_out() {
     let fx = FixtureRepo::init();
     fx.commit_file("a.txt", "x\n", "c1");

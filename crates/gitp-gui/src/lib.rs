@@ -235,6 +235,16 @@ fn push_impl(state: &RepoState) -> Result<String, String> {
     with_repo(state, Repo::push)
 }
 
+/// `git stash` the active repo's local changes. Returns git's output.
+fn stash_impl(state: &RepoState) -> Result<String, String> {
+    with_repo(state, Repo::stash)
+}
+
+/// `git stash pop` on the active repo. Returns git's output.
+fn stash_pop_impl(state: &RepoState) -> Result<String, String> {
+    with_repo(state, Repo::stash_pop)
+}
+
 fn get_config_impl(state: &RepoState) -> Result<Vec<ConfigEntry>, String> {
     with_repo(state, |repo| repo.read_config())
 }
@@ -316,6 +326,16 @@ fn push(state: State<RepoState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn stash(state: State<RepoState>) -> Result<String, String> {
+    stash_impl(&state)
+}
+
+#[tauri::command]
+fn stash_pop(state: State<RepoState>) -> Result<String, String> {
+    stash_pop_impl(&state)
+}
+
+#[tauri::command]
 fn get_config(state: State<RepoState>) -> Result<Vec<ConfigEntry>, String> {
     get_config_impl(&state)
 }
@@ -350,6 +370,8 @@ pub fn run() {
             create_branch,
             pull,
             push,
+            stash,
+            stash_pop,
             get_config,
             set_config,
             terminal::terminal_spawn,

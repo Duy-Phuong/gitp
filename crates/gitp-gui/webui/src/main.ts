@@ -18,6 +18,8 @@ import {
   pull,
   push,
   saveConfig,
+  stash,
+  stashPop,
 } from "./api";
 import { clear, el } from "./dom";
 import { GRAPH_METRICS } from "./graph";
@@ -251,6 +253,7 @@ function renderBranchIndicator(): void {
 
 function renderSidebarNow(): void {
   renderBranchIndicator();
+  refreshActionButtons();
   const active = state.repos.find((r) => r.path === state.repoPath);
   renderSidebar(
     $("#sidebar"),
@@ -331,11 +334,23 @@ async function checkoutBranchAction(b: BranchRef): Promise<void> {
 
 // --- Action bar (Pull / Push / Branch) -------------------------------------
 
-// Disable the toolbar buttons while a pull/push is in flight.
+let actionsBusy = false;
+
+// Enable/disable the toolbar buttons based on the in-flight state and what the
+// active repo supports: nothing to stash → Stash off; empty stack → Pop off.
+function refreshActionButtons(): void {
+  const blocked = actionsBusy || !state.repoPath;
+  $<HTMLButtonElement>("#pull-btn").disabled = blocked;
+  $<HTMLButtonElement>("#push-btn").disabled = blocked;
+  $<HTMLButtonElement>("#branch-btn").disabled = blocked;
+  $<HTMLButtonElement>("#stash-btn").disabled = blocked || state.localChanges === 0;
+  $<HTMLButtonElement>("#pop-btn").disabled = blocked || state.refs.stashes.length === 0;
+}
+
+// Disable every toolbar button while a git operation is in flight.
 function setActionsBusy(busy: boolean): void {
-  for (const sel of ["#pull-btn", "#push-btn", "#branch-btn"]) {
-    ($<HTMLButtonElement>(sel)).disabled = busy;
-  }
+  actionsBusy = busy;
+  refreshActionButtons();
 }
 
 async function pullAction(): Promise<void> {
@@ -363,6 +378,38 @@ async function pushAction(): Promise<void> {
     setStatus(out || "Push complete.");
   } catch (err) {
     setStatus(`Push failed: ${String(err)}`);
+  } finally {
+    setActionsBusy(false);
+  }
+}
+
+async function stashAction(): Promise<void> {
+  if (!state.repoPath) return;
+  setActionsBusy(true);
+  setStatus("Stashing…");
+  try {
+    const out = await stash();
+    if (state.view === "changes") await loadChanges();
+    await loadSidebar();
+    setStatus(out || "Stashed.");
+  } catch (err) {
+    setStatus(`Stash failed: ${String(err)}`);
+  } finally {
+    setActionsBusy(false);
+  }
+}
+
+async function popAction(): Promise<void> {
+  if (!state.repoPath) return;
+  setActionsBusy(true);
+  setStatus("Popping stash…");
+  try {
+    const out = await stashPop();
+    if (state.view === "changes") await loadChanges();
+    await loadSidebar();
+    setStatus(out || "Popped stash.");
+  } catch (err) {
+    setStatus(`Pop failed: ${String(err)}`);
   } finally {
     setActionsBusy(false);
   }
@@ -565,6 +612,8 @@ function wireUi(): void {
   }
   $("#pull-btn").addEventListener("click", () => void pullAction());
   $("#push-btn").addEventListener("click", () => void pushAction());
+  $("#stash-btn").addEventListener("click", () => void stashAction());
+  $("#pop-btn").addEventListener("click", () => void popAction());
   setupBranchMenu();
   $("#terminal-toggle").addEventListener("click", toggleTerminal);
   $("#terminal-close").addEventListener("click", toggleTerminal);

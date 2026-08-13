@@ -1,7 +1,8 @@
-//! Network operations (pull, push) implemented by shelling out to the system
-//! `git` binary. Running the user's own `git` means their existing credentials
-//! — SSH agent, credential helper, git config — apply as-is, instead of
-//! reimplementing libgit2 authentication (which is fragile for private remotes).
+//! Git operations that shell out to the system `git` binary: pull, push, and
+//! stash. For the network operations (pull, push) this means the user's own
+//! credentials — SSH agent, credential helper, git config — apply as-is,
+//! instead of reimplementing libgit2 authentication (fragile for private
+//! remotes); stash/pop go through the same helper for consistency.
 
 use std::process::Command;
 
@@ -24,6 +25,18 @@ impl Repo {
             let branch = self.current_branch_name()?;
             self.run_git(&["push", "-u", "origin", &branch])
         }
+    }
+
+    /// `git stash` — save local modifications away and revert the working tree
+    /// to HEAD. Returns git's output (including "No local changes to save").
+    pub fn stash(&self) -> Result<String> {
+        self.run_git(&["stash"])
+    }
+
+    /// `git stash pop` — reapply the most recent stash and drop it. Errors if
+    /// there are no stash entries.
+    pub fn stash_pop(&self) -> Result<String> {
+        self.run_git(&["stash", "pop"])
     }
 
     /// Short name of the checked-out branch, or an error if HEAD is detached.
