@@ -6,6 +6,7 @@
   --text: #d7dbe6;
   --text-dim: #8b93a7;
   --accent: #5b8cff;
+  --accent-soft: rgba(91, 140, 255, 0.16);
   --add-bg: rgba(63, 185, 80, 0.14);
   --add-fg: #7ee787;
   --del-bg: rgba(248, 81, 73, 0.14);
@@ -28,6 +29,7 @@
     --text: #1c2027;
     --text-dim: #667085;
     --accent: #2f6bff;
+    --accent-soft: rgba(47, 107, 255, 0.12);
     --add-bg: rgba(46, 160, 67, 0.12);
     --add-fg: #1a7f37;
     --del-bg: rgba(207, 34, 46, 0.1);
@@ -104,6 +106,31 @@ body {
 .tab.active {
   background: var(--bg-elev-2);
   color: var(--text);
+}
+/* Current-branch indicator in the top bar. */
+.branch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 240px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.branch-chip::before {
+  content: "⎇";
+  font-size: 13px;
+  line-height: 1;
+}
+.branch-chip.hidden {
+  display: none;
 }
 .btn {
   background: var(--accent);
@@ -336,6 +363,13 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 1;
+}
+.sb-leaf.head {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.sb-leaf.head:hover {
+  background: var(--accent-soft);
 }
 .sb-leaf.head .sb-leaf-label {
   color: var(--accent);

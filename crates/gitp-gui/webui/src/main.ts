@@ -235,7 +235,18 @@ async function loadSidebar(): Promise<void> {
   renderSidebarNow();
 }
 
+// Show the checked-out branch name as a chip in the top bar (hidden when no
+// repo is open or HEAD is detached).
+function renderBranchIndicator(): void {
+  const chip = $("#branch-indicator");
+  const head = state.repoPath ? state.refs.head : null;
+  chip.textContent = head ?? "";
+  chip.title = head ? `On branch ${head}` : "Current branch";
+  chip.classList.toggle("hidden", !head);
+}
+
 function renderSidebarNow(): void {
+  renderBranchIndicator();
   const active = state.repos.find((r) => r.path === state.repoPath);
   renderSidebar(
     $("#sidebar"),
