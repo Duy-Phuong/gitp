@@ -12,6 +12,7 @@ mod refs;
 mod remote;
 mod repo;
 mod status;
+mod tree;
 
 pub use config::{ConfigEntry, ConfigScope};
 pub use diff::{ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff};

@@ -70,6 +70,11 @@ export async function fetchRefs(): Promise<Refs> {
   return invoke<Refs>("get_refs", {});
 }
 
+export async function fetchCommitTree(rev: string): Promise<string[]> {
+  if (!isTauri()) return MOCK_TREE;
+  return invoke<string[]>("get_commit_tree", { rev });
+}
+
 export async function fetchLocalChangeCount(): Promise<number> {
   if (!isTauri()) return mockDetail("x").files.length + 780;
   return invoke<number>("get_local_change_count", {});
@@ -314,6 +319,20 @@ export const MOCK_REFS: Refs = {
     { index: 1, message: "config 3.31 for mock" },
   ],
 };
+
+// A sample repository tree for the File Tree tab in preview mode. Includes the
+// two files mockDetail marks as changed (src/config.rs, README.md).
+export const MOCK_TREE: string[] = [
+  "Cargo.toml",
+  "README.md",
+  "docs/design.md",
+  "src/config.rs",
+  "src/error.rs",
+  "src/lib.rs",
+  "src/main.rs",
+  "src/views/log.ts",
+  "src/views/sidebar.ts",
+];
 
 export const MOCK_CONFIG: ConfigEntry[] = [
   { name: "user.name", value: "Ada Lovelace", scope: "Global" },

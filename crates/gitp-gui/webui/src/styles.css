@@ -587,13 +587,161 @@ body {
 
 /* Detail ----------------------------------------------------------------- */
 .detail-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-elev);
+}
+.detail-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.detail-tab {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.detail-tab.active {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+.detail-body-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+.tab-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   padding: 16px;
-  background: var(--bg-elev);
 }
 .detail-empty {
   color: var(--text-dim);
   padding: 40px;
+  text-align: center;
+}
+/* Refs pointing at this commit. */
+.detail-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.ref-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.detail-meta > div {
+  margin-bottom: 2px;
+}
+.detail-meta .sha.link {
+  color: var(--accent);
+}
+/* Changed-files list (Commit tab + Changes tab left column). */
+.file-list {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.file-item:hover {
+  background: var(--bg-elev-2);
+}
+.file-item.active {
+  background: var(--row-sel);
+}
+.file-item-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Changes tab: file list beside the selected diff. */
+.changes-split {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+.changes-list {
+  flex: 0 0 38%;
+  max-width: 300px;
+  min-width: 150px;
+  overflow: auto;
+  padding: 8px;
+  border-right: 1px solid var(--border);
+}
+.changes-diff {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  padding: 12px;
+}
+/* File Tree tab. */
+.tree-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 4px;
+  font-family: var(--mono);
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.tree-row.tree-folder {
+  cursor: pointer;
+}
+.tree-row.tree-file {
+  color: var(--text-dim);
+}
+.tree-row.tree-file.changed {
+  color: var(--text);
+  cursor: pointer;
+}
+.tree-row:hover {
+  background: var(--bg-elev-2);
+}
+.tree-chevron {
+  width: 12px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.tree-bullet {
+  width: 18px;
+}
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-file .status-badge {
+  min-width: 18px;
   text-align: center;
 }
 .detail-summary {

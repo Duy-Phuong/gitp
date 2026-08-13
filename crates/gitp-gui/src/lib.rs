@@ -245,6 +245,11 @@ fn stash_pop_impl(state: &RepoState) -> Result<String, String> {
     with_repo(state, Repo::stash_pop)
 }
 
+/// Every file path in `rev`'s tree, for the File Tree view.
+fn get_commit_tree_impl(state: &RepoState, rev: String) -> Result<Vec<String>, String> {
+    with_repo(state, |repo| repo.commit_tree(&rev))
+}
+
 fn get_config_impl(state: &RepoState) -> Result<Vec<ConfigEntry>, String> {
     with_repo(state, |repo| repo.read_config())
 }
@@ -336,6 +341,11 @@ fn stash_pop(state: State<RepoState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn get_commit_tree(rev: String, state: State<RepoState>) -> Result<Vec<String>, String> {
+    get_commit_tree_impl(&state, rev)
+}
+
+#[tauri::command]
 fn get_config(state: State<RepoState>) -> Result<Vec<ConfigEntry>, String> {
     get_config_impl(&state)
 }
@@ -372,6 +382,7 @@ pub fn run() {
             push,
             stash,
             stash_pop,
+            get_commit_tree,
             get_config,
             set_config,
             terminal::terminal_spawn,

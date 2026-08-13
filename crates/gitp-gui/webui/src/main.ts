@@ -7,6 +7,7 @@ import {
   confirmDialog,
   createBranch,
   fetchCommitDetail,
+  fetchCommitTree,
   fetchConfig,
   fetchLocalChangeCount,
   fetchLogPage,
@@ -24,7 +25,7 @@ import {
 import { clear, el } from "./dom";
 import { GRAPH_METRICS } from "./graph";
 import { renderLog } from "./views/log";
-import { renderDetail, renderDetailEmpty } from "./views/detail";
+import { setupDetail, type DetailHandle } from "./views/detail";
 import { renderChanges } from "./views/changes";
 import { renderConfig } from "./views/config";
 import { renderSidebar, type SidebarView } from "./views/sidebar";
@@ -65,7 +66,17 @@ const state: State = {
   sbCollapsed: new Set(),
 };
 let terminal: TerminalHandle | null = null;
+let detailView: DetailHandle | null = null;
 let loadingMore = false;
+
+// Labels of refs whose tip is this commit — shown as chips in the Commit tab.
+function refsAt(id: string): string[] {
+  const labels: string[] = [];
+  for (const b of state.refs.branches) if (b.target === id) labels.push(b.name);
+  for (const r of state.refs.remotes) if (r.target === id) labels.push(r.name);
+  for (const t of state.refs.tags) if (t.target === id) labels.push(t.name);
+  return labels;
+}
 
 const $ = <T extends HTMLElement>(sel: string): T => {
   const node = document.querySelector<T>(sel);
@@ -144,7 +155,7 @@ async function closeRepoTab(path: string): Promise<void> {
       state.refs = EMPTY_REFS;
       state.localChanges = 0;
       renderLog($("#log-pane"), [], null, selectCommit, loadMoreCommits);
-      renderDetailEmpty($("#detail-pane"));
+      detailView?.showEmpty();
       renderSidebarNow();
       setStatus("No repository open.");
     } else if (wasActive) {
@@ -164,7 +175,7 @@ async function refreshHistory(): Promise<void> {
   state.selectedId = state.rows[0]?.id ?? null;
   renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits);
   if (state.selectedId) await selectCommit(state.selectedId);
-  else renderDetailEmpty($("#detail-pane"));
+  else detailView?.showEmpty();
 }
 
 // Append the next page when the user scrolls near the end of what's loaded.
@@ -191,8 +202,7 @@ async function selectCommit(id: string): Promise<void> {
   // The log view updates its own highlight on click; here we only load detail.
   state.selectedId = id;
   try {
-    const detail = await fetchCommitDetail(id);
-    renderDetail($("#detail-pane"), detail);
+    detailView?.show(await fetchCommitDetail(id));
   } catch (err) {
     setStatus(`Failed to load commit: ${String(err)}`);
   }
@@ -239,6 +249,8 @@ async function loadSidebar(): Promise<void> {
     setStatus(`Failed to load refs: ${String(err)}`);
   }
   renderSidebarNow();
+  // Refs now known — re-render the open commit so its ref chips appear.
+  detailView?.refresh();
 }
 
 // Show the checked-out branch name as a chip in the top bar (hidden when no
@@ -625,9 +637,14 @@ function wireUi(): void {
 
 async function init(): Promise<void> {
   wireUi();
+  detailView = setupDetail($("#detail-pane"), {
+    onSelectCommit: (id) => void jumpToCommit(id, id.slice(0, 10)),
+    refsAt,
+    fetchTree: fetchCommitTree,
+  });
   if (isTauri()) {
     setStatus("Enter a repository path and press Open.");
-    renderDetailEmpty($("#detail-pane"));
+    detailView?.showEmpty();
     renderSidebarNow();
   } else {
     applyWorkspace(await listRepos());
