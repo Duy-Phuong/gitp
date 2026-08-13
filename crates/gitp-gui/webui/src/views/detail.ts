@@ -9,6 +9,7 @@
 
 import { clear, el, svg } from "../dom";
 import type { BlameLine, CommitDetail, FileCommit, FileDiff } from "../types";
+import { wordDiff, type Seg } from "../worddiff";
 import { renderFileTree } from "./tree";
 
 type Tab = "commit" | "changes" | "tree";
@@ -31,6 +32,8 @@ export interface DetailHandle {
   showEmpty: () => void;
   // Re-render the current commit (e.g. after refs load) — no-op when empty.
   refresh: () => void;
+  // Switch to the Commit tab — used when jumping to a commit via a link.
+  focusCommit: () => void;
 }
 
 // A single-entry cache keyed by `${commitId}:${path}`.
@@ -288,14 +291,18 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   function buildBlame(lines: BlameLine[]): HTMLElement {
     const wrap = el("div", { class: "blame" });
     for (const l of lines) {
-      wrap.append(
-        el("div", { class: "blame-row" }, [
-          el("span", { class: "blame-commit", text: l.commit, title: l.author }),
-          el("span", { class: "blame-author", text: l.author }),
-          el("span", { class: "blame-ln", text: String(l.line_no) }),
-          el("span", { class: "blame-code", text: l.content }),
-        ]),
-      );
+      const clickable = l.commit !== "";
+      const row = el("div", { class: `blame-row${clickable ? " link" : ""}` }, [
+        el("span", { class: "blame-commit", text: l.commit.slice(0, 7) }),
+        el("span", { class: "blame-author", text: l.author }),
+        el("span", { class: "blame-ln", text: String(l.line_no) }),
+        el("span", { class: "blame-code", text: l.content }),
+      ]);
+      if (clickable) {
+        row.title = `Open commit ${l.commit.slice(0, 10)} — ${l.author}`;
+        row.addEventListener("click", () => cb.onSelectCommit(l.commit));
+      }
+      wrap.append(row);
     }
     return wrap;
   }
@@ -407,6 +414,9 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     refresh: () => {
       if (detail) render();
     },
+    focusCommit: () => {
+      if (detail) setTab("commit");
+    },
   };
 }
 
@@ -453,20 +463,45 @@ function fileHead(file: FileDiff): HTMLElement {
   return head;
 }
 
-// Unified diff: inline +/- lines. Shared with the Local Changes view.
+// Unified diff: inline +/- lines, with intra-line (word) highlights on paired
+// deletion/addition lines. Shared with the Local Changes view.
 export function renderFile(file: FileDiff): HTMLElement {
   const container = el("div", { class: "file" }, [fileHead(file)]);
   file.hunks.forEach((hunk, i) => {
     const h = el("div", { class: "hunk", "data-hunk": i });
     h.append(el("div", { class: "hunk-header", text: hunk.header }));
+
+    let dels: Line[] = [];
+    let adds: Line[] = [];
+    const flush = () => {
+      const pairs = Math.min(dels.length, adds.length);
+      const wds = Array.from({ length: pairs }, (_, k) => wordDiff(dels[k].content, adds[k].content));
+      dels.forEach((d, k) => h.append(unifiedLine(d, "del", k < pairs ? wds[k].left : null)));
+      adds.forEach((a, k) => h.append(unifiedLine(a, "add", k < pairs ? wds[k].right : null)));
+      dels = [];
+      adds = [];
+    };
     for (const line of hunk.lines) {
-      const cls =
-        line.origin === "+" ? "diff-line add" : line.origin === "-" ? "diff-line del" : "diff-line";
-      h.append(el("div", { class: cls, text: `${line.origin} ${line.content}` }));
+      if (line.origin === "-") dels.push(line);
+      else if (line.origin === "+") adds.push(line);
+      else {
+        flush();
+        h.append(unifiedLine(line, "ctx", null));
+      }
     }
+    flush();
+
     container.append(h);
   });
   return container;
+}
+
+function unifiedLine(line: Line, kind: "del" | "add" | "ctx", segs: Seg[] | null): HTMLElement {
+  const cls = kind === "add" ? "diff-line add" : kind === "del" ? "diff-line del" : "diff-line";
+  const div = el("div", { class: cls }, [el("span", { class: "diff-origin", text: `${line.origin} ` })]);
+  if (segs) appendSegs(div, segs, kind === "del" ? "word-del" : "word-add");
+  else div.append(document.createTextNode(line.content));
+  return div;
 }
 
 const renderUnifiedDiff = renderFile;
@@ -506,15 +541,32 @@ function renderSplitDiff(file: FileDiff): HTMLElement {
 type Line = FileDiff["hunks"][number]["lines"][number];
 
 function splitRow(left: Line | null, right: Line | null): HTMLElement {
-  return el("div", { class: "split-row" }, [sideCell(left, "left"), sideCell(right, "right")]);
+  // Word-highlight only a genuine deletion/addition pair (not context rows).
+  const pair = left && right && left.origin === "-" && right.origin === "+";
+  const wd = pair ? wordDiff(left.content, right.content) : null;
+  return el("div", { class: "split-row" }, [
+    sideCell(left, "left", wd ? wd.left : null),
+    sideCell(right, "right", wd ? wd.right : null),
+  ]);
 }
 
-function sideCell(line: Line | null, side: "left" | "right"): HTMLElement {
+function sideCell(line: Line | null, side: "left" | "right", segs: Seg[] | null): HTMLElement {
   if (!line) return el("div", { class: "split-cell empty" });
   const changed = side === "left" ? line.origin === "-" : line.origin === "+";
   const no = side === "left" ? line.old_lineno : line.new_lineno;
+  const code = el("span", { class: "split-code" });
+  if (segs) appendSegs(code, segs, side === "left" ? "word-del" : "word-add");
+  else code.append(document.createTextNode(line.content));
   return el("div", { class: `split-cell${changed ? (side === "left" ? " del" : " add") : ""}` }, [
     el("span", { class: "split-ln", text: no != null ? String(no) : "" }),
-    el("span", { class: "split-code", text: line.content }),
+    code,
   ]);
+}
+
+// Append text segments, wrapping changed ones in a highlight span.
+function appendSegs(host: HTMLElement, segs: Seg[], changedClass: string): void {
+  for (const s of segs) {
+    if (s.changed) host.append(el("span", { class: changedClass, text: s.text }));
+    else host.append(document.createTextNode(s.text));
+  }
 }

@@ -10,7 +10,8 @@ use crate::repo::Repo;
 /// One source line plus the commit/author that last changed it.
 #[derive(Debug, Clone, Serialize)]
 pub struct BlameLine {
-    /// Short hex id of the commit that last modified this line.
+    /// Full hex id of the commit that last modified this line (the UI shows a
+    /// short prefix but keeps the full id so a click can open that commit).
     pub commit: String,
     pub author: String,
     /// 1-based line number in the file at `rev`.
@@ -40,7 +41,7 @@ impl Repo {
             let line_no = i + 1;
             let (commit, author) = match blame.get_line(line_no) {
                 Some(hunk) => (
-                    short(hunk.final_commit_id()),
+                    hunk.final_commit_id().to_string(),
                     hunk.final_signature().name().unwrap_or("").to_string(),
                 ),
                 None => (String::new(), String::new()),
@@ -54,10 +55,4 @@ impl Repo {
         }
         Ok(lines)
     }
-}
-
-/// First 7 hex chars of an oid.
-fn short(oid: git2::Oid) -> String {
-    let s = oid.to_string();
-    s.get(..7).unwrap_or(&s).to_string()
 }

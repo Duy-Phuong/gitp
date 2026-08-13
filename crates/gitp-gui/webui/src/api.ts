@@ -346,12 +346,13 @@ export const MOCK_TREE: string[] = [
   "src/views/sidebar.ts",
 ];
 
-// Per-line blame for the File Tree/Changes blame view in preview mode.
+// Per-line blame for the blame view in preview mode. Commit ids are full (as
+// the backend returns) so clicking a line can navigate to that commit.
 export const MOCK_BLAME: BlameLine[] = [
-  { commit: "aaaaaaa", author: "Ada Lovelace", line_no: 1, content: "use crate::error::Result;" },
-  { commit: "ccccccc", author: "Ada Lovelace", line_no: 2, content: "pub fn read_config() -> Result<Vec<ConfigEntry>> {" },
-  { commit: "ccccccc", author: "Grace Hopper", line_no: 3, content: "    // ..." },
-  { commit: "fffffff", author: "Ada Lovelace", line_no: 4, content: "}" },
+  { commit: mockOid("a"), author: "Ada Lovelace", line_no: 1, content: "use crate::error::Result;" },
+  { commit: mockOid("c"), author: "Ada Lovelace", line_no: 2, content: "pub fn read_config() -> Result<Vec<ConfigEntry>> {" },
+  { commit: mockOid("c"), author: "Grace Hopper", line_no: 3, content: "    // ..." },
+  { commit: mockOid("f"), author: "Ada Lovelace", line_no: 4, content: "}" },
 ];
 
 // A file's commit history for the History view in preview mode.

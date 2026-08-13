@@ -317,6 +317,7 @@ async function jumpToCommit(target: string, label: string): Promise<void> {
     pane.scrollTop = Math.max(0, idx * GRAPH_METRICS.rowHeight - pane.clientHeight / 2);
   }
   await selectCommit(target);
+  detailView?.focusCommit();
   setStatus(idx >= 0 ? `Jumped to ${label}` : `Showing ${label} (tip not in the loaded log)`);
 }
 

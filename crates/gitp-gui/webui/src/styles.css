@@ -11,6 +11,8 @@
   --add-fg: #7ee787;
   --del-bg: rgba(248, 81, 73, 0.14);
   --del-fg: #ff9a94;
+  --word-add-bg: rgba(63, 185, 80, 0.4);
+  --word-del-bg: rgba(248, 81, 73, 0.4);
   --badge-local: #3b82f6;
   --badge-global: #a855f7;
   --badge-system: #64748b;
@@ -34,6 +36,8 @@
     --add-fg: #1a7f37;
     --del-bg: rgba(207, 34, 46, 0.1);
     --del-fg: #b42318;
+    --word-add-bg: rgba(46, 160, 67, 0.3);
+    --word-del-bg: rgba(207, 34, 46, 0.24);
     --row-hover: #eef1f6;
     --row-sel: #dce7ff;
   }
@@ -599,6 +603,10 @@ body {
   padding: 6px 8px;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
+  overflow-x: auto;
+}
+.detail-tab {
+  flex: 0 0 auto;
 }
 .detail-tab {
   background: transparent;
@@ -712,6 +720,14 @@ body {
   padding: 6px 8px;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
+  overflow-x: auto;
+}
+/* Toolbar controls keep their size and scroll rather than crop when the pane
+   is narrow. */
+.tb-btn,
+.tb-sep,
+.tb-group {
+  flex: 0 0 auto;
 }
 .file-view {
   flex: 1 1 auto;
@@ -824,6 +840,9 @@ body {
   padding: 1px 8px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.blame-row.link {
+  cursor: pointer;
 }
 .blame-row:hover {
   background: var(--bg-elev-2);
@@ -1004,6 +1023,18 @@ body {
 .diff-line.del {
   background: var(--del-bg);
   color: var(--del-fg);
+}
+.diff-origin {
+  user-select: none;
+}
+/* Intra-line (word-level) change highlights, stronger than the line tint. */
+.word-add {
+  background: var(--word-add-bg);
+  border-radius: 2px;
+}
+.word-del {
+  background: var(--word-del-bg);
+  border-radius: 2px;
 }
 
 /* Config ----------------------------------------------------------------- */
