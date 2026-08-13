@@ -5,6 +5,7 @@ import {
   checkoutBranch,
   closeRepo,
   confirmDialog,
+  createBranch,
   fetchCommitDetail,
   fetchConfig,
   fetchLocalChangeCount,
@@ -14,6 +15,8 @@ import {
   isTauri,
   listRepos,
   openRepo,
+  pull,
+  push,
   saveConfig,
 } from "./api";
 import { clear, el } from "./dom";
@@ -91,6 +94,7 @@ function applyWorkspace(ws: Workspace): void {
   const active = ws.active != null ? ws.repos[ws.active] : undefined;
   state.repoPath = active?.path ?? "";
   renderRepoTabs();
+  $("#action-bar").classList.toggle("hidden", state.repos.length === 0);
   $<HTMLInputElement>("#repo-input").value = state.repoPath;
   if (state.repoPath) terminal?.setCwd(state.repoPath);
 }
@@ -325,6 +329,115 @@ async function checkoutBranchAction(b: BranchRef): Promise<void> {
   }
 }
 
+// --- Action bar (Pull / Push / Branch) -------------------------------------
+
+// Disable the toolbar buttons while a pull/push is in flight.
+function setActionsBusy(busy: boolean): void {
+  for (const sel of ["#pull-btn", "#push-btn", "#branch-btn"]) {
+    ($<HTMLButtonElement>(sel)).disabled = busy;
+  }
+}
+
+async function pullAction(): Promise<void> {
+  if (!state.repoPath) return;
+  setActionsBusy(true);
+  setStatus("Pulling…");
+  try {
+    const out = await pull();
+    await Promise.all([refreshHistory(), loadSidebar()]);
+    setStatus(out || "Pull complete.");
+  } catch (err) {
+    setStatus(`Pull failed: ${String(err)}`);
+  } finally {
+    setActionsBusy(false);
+  }
+}
+
+async function pushAction(): Promise<void> {
+  if (!state.repoPath) return;
+  setActionsBusy(true);
+  setStatus("Pushing…");
+  try {
+    const out = await push();
+    await loadSidebar();
+    setStatus(out || "Push complete.");
+  } catch (err) {
+    setStatus(`Push failed: ${String(err)}`);
+  } finally {
+    setActionsBusy(false);
+  }
+}
+
+async function createBranchAction(name: string): Promise<void> {
+  setStatus(`Creating ${name}…`);
+  try {
+    await createBranch(name);
+    showView("history");
+    await Promise.all([refreshHistory(), loadSidebar()]);
+    setStatus(`Created and switched to ${name}`);
+  } catch (err) {
+    setStatus(`Create branch failed: ${String(err)}`);
+  }
+}
+
+// The Branch button's dropdown: pick a local branch to check out, or create a
+// new one from the current HEAD. Rebuilt from current refs each time it opens.
+function setupBranchMenu(): void {
+  const btn = $("#branch-btn");
+  const menu = $("#branch-menu");
+  const close = () => {
+    menu.classList.add("hidden");
+    btn.setAttribute("aria-expanded", "false");
+  };
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (menu.classList.contains("hidden")) buildBranchMenu(menu, close);
+    const nowHidden = menu.classList.toggle("hidden");
+    btn.setAttribute("aria-expanded", String(!nowHidden));
+  });
+  document.addEventListener("click", (e) => {
+    if (!$("#branch-wrap").contains(e.target as Node)) close();
+  });
+}
+
+function buildBranchMenu(menu: HTMLElement, close: () => void): void {
+  clear(menu);
+
+  if (state.refs.branches.length === 0) {
+    menu.append(el("div", { class: "menu-item", text: "No branches" }));
+  }
+  for (const b of state.refs.branches) {
+    const item = el("button", {
+      class: `menu-item${b.is_head ? " head" : ""}`,
+      text: b.is_head ? `● ${b.name}` : b.name,
+    });
+    item.addEventListener("click", () => {
+      close();
+      void checkoutBranchAction(b);
+    });
+    menu.append(item);
+  }
+
+  menu.append(el("div", { class: "menu-sep" }));
+  const input = el("input", {
+    placeholder: "New branch name",
+    spellcheck: false,
+  }) as HTMLInputElement;
+  const create = el("button", { class: "btn small", text: "Create" });
+  const submit = () => {
+    const name = input.value.trim();
+    if (!name) return;
+    close();
+    void createBranchAction(name);
+  };
+  create.addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
+  });
+  menu.append(el("div", { class: "menu-newbranch" }, [input, create]));
+  requestAnimationFrame(() => input.focus());
+}
+
 // The embedded terminal ran a command (Enter pressed); refresh anything that a
 // commit/checkout/stash would have changed.
 function onTerminalCommand(): void {
@@ -450,6 +563,9 @@ function wireUi(): void {
   for (const tab of document.querySelectorAll<HTMLElement>(".tab")) {
     tab.addEventListener("click", () => showView((tab.dataset.tab as View) ?? "history"));
   }
+  $("#pull-btn").addEventListener("click", () => void pullAction());
+  $("#push-btn").addEventListener("click", () => void pushAction());
+  setupBranchMenu();
   $("#terminal-toggle").addEventListener("click", toggleTerminal);
   $("#terminal-close").addEventListener("click", toggleTerminal);
   window.addEventListener("resize", () => terminal?.fit());

@@ -60,7 +60,7 @@ body {
 
 #app {
   display: grid;
-  grid-template-rows: auto auto 1fr auto auto;
+  grid-template-rows: auto auto auto 1fr auto auto;
   height: 100vh;
 }
 
@@ -132,6 +132,99 @@ body {
 .branch-chip.hidden {
   display: none;
 }
+
+/* Action toolbar (Pull / Push / Branch) ---------------------------------- */
+.action-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px 8px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+}
+/* Collapse to zero height (rather than display:none) so the grid row is kept
+   and the content row below stays the flexible (1fr) one. */
+.action-bar.hidden {
+  height: 0;
+  padding: 0;
+  border: none;
+  overflow: hidden;
+}
+.action-item {
+  position: relative;
+  display: flex;
+}
+.action-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 62px;
+  padding: 5px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+.action-btn:hover:not(:disabled) {
+  background: var(--bg-elev-2);
+}
+.action-btn:disabled {
+  color: var(--text-dim);
+  opacity: 0.5;
+  cursor: default;
+}
+.action-icon {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.action-sep {
+  width: 1px;
+  margin: 6px 4px;
+  background: var(--border);
+}
+/* Branch menu is anchored under its button (left-aligned), unlike the
+   right-aligned settings menu. */
+#branch-menu {
+  left: 0;
+  right: auto;
+  top: calc(100% + 2px);
+  min-width: 220px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.menu-item.head {
+  color: var(--accent);
+  font-weight: 600;
+}
+.menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+.menu-newbranch {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+}
+.menu-newbranch input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
 .btn {
   background: var(--accent);
   color: white;

@@ -208,6 +208,33 @@ fn checkout_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Create branch `name` from the current HEAD and check it out. Invalidates the
+/// cached log because HEAD moves to the new branch.
+fn create_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    session.repo.create_branch(&name).map_err(to_message)?;
+    session.log = None;
+    Ok(())
+}
+
+/// `git pull` the active repo. Invalidates the cached log because pulling can
+/// bring in new commits. Returns git's output for display.
+fn pull_impl(state: &RepoState) -> Result<String, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let output = session.repo.pull().map_err(to_message)?;
+    session.log = None;
+    Ok(output)
+}
+
+/// `git push` the active repo's current branch. Returns git's output.
+fn push_impl(state: &RepoState) -> Result<String, String> {
+    with_repo(state, Repo::push)
+}
+
 fn get_config_impl(state: &RepoState) -> Result<Vec<ConfigEntry>, String> {
     with_repo(state, |repo| repo.read_config())
 }
@@ -274,6 +301,21 @@ fn checkout_branch(name: String, state: State<RepoState>) -> Result<(), String> 
 }
 
 #[tauri::command]
+fn create_branch(name: String, state: State<RepoState>) -> Result<(), String> {
+    create_branch_impl(&state, name)
+}
+
+#[tauri::command]
+fn pull(state: State<RepoState>) -> Result<String, String> {
+    pull_impl(&state)
+}
+
+#[tauri::command]
+fn push(state: State<RepoState>) -> Result<String, String> {
+    push_impl(&state)
+}
+
+#[tauri::command]
 fn get_config(state: State<RepoState>) -> Result<Vec<ConfigEntry>, String> {
     get_config_impl(&state)
 }
@@ -305,6 +347,9 @@ pub fn run() {
             get_local_change_count,
             get_working_changes,
             checkout_branch,
+            create_branch,
+            pull,
+            push,
             get_config,
             set_config,
             terminal::terminal_spawn,

@@ -26,6 +26,35 @@
         </div>
       </header>
 
+      <div id="action-bar" class="action-bar hidden">
+        <button id="pull-btn" class="action-btn" title="Pull (fetch + merge) from the remote">
+          <span class="action-label">Pull</span>
+          <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3v12m0 0l-5-5m5 5l5-5M5 21h14" />
+          </svg>
+        </button>
+        <span class="action-sep"></span>
+        <button id="push-btn" class="action-btn" title="Push the current branch to the remote">
+          <span class="action-label">Push</span>
+          <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 21V9m0 0l-5 5m5-5l5 5M5 3h14" />
+          </svg>
+        </button>
+        <span class="action-sep"></span>
+        <div id="branch-wrap" class="action-item">
+          <button id="branch-btn" class="action-btn" title="Switch to or create a branch" aria-haspopup="true" aria-expanded="false">
+            <span class="action-label">Branch</span>
+            <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="6" cy="6" r="2.4" />
+              <circle cx="6" cy="18" r="2.4" />
+              <circle cx="18" cy="7" r="2.4" />
+              <path d="M6 8.4v7.2M6 12h6a6 6 0 006-6v-.6" />
+            </svg>
+          </button>
+          <div id="branch-menu" class="menu hidden" role="menu"></div>
+        </div>
+      </div>
+
       <div id="repo-tabs" class="repo-tabs hidden"></div>
 
       <main class="content">

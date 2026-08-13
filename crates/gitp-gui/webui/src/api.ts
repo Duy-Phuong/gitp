@@ -97,6 +97,26 @@ export async function checkoutBranch(name: string): Promise<void> {
   await invoke<void>("checkout_branch", { name });
 }
 
+export async function createBranch(name: string): Promise<void> {
+  if (!isTauri()) {
+    MOCK_REFS.branches.forEach((b) => (b.is_head = false));
+    MOCK_REFS.branches.push({ name, is_head: true, ahead: 0, behind: 0, target: mockOid("g") });
+    MOCK_REFS.head = name;
+    return;
+  }
+  await invoke<void>("create_branch", { name });
+}
+
+export async function pull(): Promise<string> {
+  if (!isTauri()) return "Already up to date. (preview mock)";
+  return invoke<string>("pull", {});
+}
+
+export async function push(): Promise<string> {
+  if (!isTauri()) return "Everything up-to-date (preview mock)";
+  return invoke<string>("push", {});
+}
+
 export async function fetchConfig(): Promise<ConfigEntry[]> {
   if (!isTauri()) return MOCK_CONFIG;
   return invoke<ConfigEntry[]>("get_config", {});

@@ -9,6 +9,7 @@ mod error;
 mod graph;
 mod log;
 mod refs;
+mod remote;
 mod repo;
 mod status;
 

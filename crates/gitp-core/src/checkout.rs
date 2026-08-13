@@ -21,4 +21,12 @@ impl Repo {
         }
         Ok(())
     }
+
+    /// Create a branch named `name` at the current HEAD commit and check it out.
+    /// Errors if the branch already exists.
+    pub fn create_branch(&self, name: &str) -> Result<()> {
+        let head = self.inner.head()?.peel_to_commit()?;
+        self.inner.branch(name, &head, false)?;
+        self.checkout_branch(name)
+    }
 }
