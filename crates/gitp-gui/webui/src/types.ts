@@ -55,6 +55,21 @@ export interface CommitDetail {
   files: FileDiff[];
 }
 
+export interface BlameLine {
+  commit: string;
+  author: string;
+  line_no: number;
+  content: string;
+}
+
+export interface FileCommit {
+  id: string;
+  short_id: string;
+  summary: string;
+  author_name: string;
+  time: number;
+}
+
 export interface RepoTab {
   path: string;
   name: string;

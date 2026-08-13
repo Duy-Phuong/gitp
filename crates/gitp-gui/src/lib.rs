@@ -12,7 +12,8 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use gitp_core::{
-    CommitDetail, CommitRow, ConfigEntry, ConfigScope, FileDiff, LogOptions, Refs, Repo,
+    BlameLine, CommitDetail, CommitRow, ConfigEntry, ConfigScope, FileCommit, FileDiff, LogOptions,
+    Refs, Repo,
 };
 use serde::Serialize;
 use tauri::State;
@@ -250,6 +251,20 @@ fn get_commit_tree_impl(state: &RepoState, rev: String) -> Result<Vec<String>, S
     with_repo(state, |repo| repo.commit_tree(&rev))
 }
 
+/// Per-line blame for `path` as of `rev`.
+fn get_blame_impl(state: &RepoState, rev: String, path: String) -> Result<Vec<BlameLine>, String> {
+    with_repo(state, |repo| repo.blame(&rev, &path))
+}
+
+/// Commits that changed `path`, up to `rev`.
+fn get_file_history_impl(
+    state: &RepoState,
+    rev: String,
+    path: String,
+) -> Result<Vec<FileCommit>, String> {
+    with_repo(state, |repo| repo.file_history(&rev, &path))
+}
+
 fn get_config_impl(state: &RepoState) -> Result<Vec<ConfigEntry>, String> {
     with_repo(state, |repo| repo.read_config())
 }
@@ -346,6 +361,20 @@ fn get_commit_tree(rev: String, state: State<RepoState>) -> Result<Vec<String>, 
 }
 
 #[tauri::command]
+fn get_blame(rev: String, path: String, state: State<RepoState>) -> Result<Vec<BlameLine>, String> {
+    get_blame_impl(&state, rev, path)
+}
+
+#[tauri::command]
+fn get_file_history(
+    rev: String,
+    path: String,
+    state: State<RepoState>,
+) -> Result<Vec<FileCommit>, String> {
+    get_file_history_impl(&state, rev, path)
+}
+
+#[tauri::command]
 fn get_config(state: State<RepoState>) -> Result<Vec<ConfigEntry>, String> {
     get_config_impl(&state)
 }
@@ -383,6 +412,8 @@ pub fn run() {
             stash,
             stash_pop,
             get_commit_tree,
+            get_blame,
+            get_file_history,
             get_config,
             set_config,
             terminal::terminal_spawn,

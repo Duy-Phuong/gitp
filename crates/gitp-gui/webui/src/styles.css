@@ -698,6 +698,187 @@ body {
   overflow: auto;
   padding: 12px;
 }
+/* Right side of the Changes tab: file toolbar above the file view. */
+.changes-right {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.file-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.file-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+.tb-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.tb-btn.icon {
+  padding: 4px 6px;
+}
+.tb-btn:hover:not(:disabled) {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+.tb-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.tb-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.tb-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  display: block;
+}
+.tb-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 4px;
+  background: var(--border);
+}
+.tb-group {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+/* Highlight the hunk the prev/next arrows jumped to. */
+.hunk.hunk-current {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+/* Split (side-by-side) diff. */
+.split-table {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.split-row {
+  display: flex;
+}
+.split-cell {
+  flex: 1 1 50%;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  padding: 0 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-right: 1px solid var(--border);
+}
+.split-cell:last-child {
+  border-right: none;
+}
+.split-cell.del {
+  background: var(--del-bg);
+  color: var(--del-fg);
+}
+.split-cell.add {
+  background: var(--add-bg);
+  color: var(--add-fg);
+}
+.split-cell.empty {
+  background: var(--bg);
+}
+.split-ln {
+  color: var(--text-dim);
+  min-width: 32px;
+  text-align: right;
+  user-select: none;
+}
+.split-code {
+  flex: 1 1 auto;
+}
+/* Blame view. */
+.blame {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.blame-row {
+  display: flex;
+  gap: 10px;
+  padding: 1px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.blame-row:hover {
+  background: var(--bg-elev-2);
+}
+.blame-commit {
+  color: var(--accent);
+  min-width: 58px;
+}
+.blame-author {
+  color: var(--text-dim);
+  min-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.blame-ln {
+  color: var(--text-dim);
+  min-width: 36px;
+  text-align: right;
+  user-select: none;
+}
+.blame-code {
+  flex: 1 1 auto;
+}
+/* File history list. */
+.file-history {
+  display: flex;
+  flex-direction: column;
+}
+.hist-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.hist-row:hover {
+  background: var(--bg-elev-2);
+}
+.hist-sha {
+  font-family: var(--mono);
+  color: var(--accent);
+}
+.hist-summary {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hist-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
 /* File Tree tab. */
 .tree-view {
   flex: 1 1 auto;

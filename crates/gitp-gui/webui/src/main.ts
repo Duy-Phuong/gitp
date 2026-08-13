@@ -6,9 +6,11 @@ import {
   closeRepo,
   confirmDialog,
   createBranch,
+  fetchBlame,
   fetchCommitDetail,
   fetchCommitTree,
   fetchConfig,
+  fetchFileHistory,
   fetchLocalChangeCount,
   fetchLogPage,
   fetchRefs,
@@ -641,6 +643,8 @@ async function init(): Promise<void> {
     onSelectCommit: (id) => void jumpToCommit(id, id.slice(0, 10)),
     refsAt,
     fetchTree: fetchCommitTree,
+    fetchBlame,
+    fetchFileHistory,
   });
   if (isTauri()) {
     setStatus("Enter a repository path and press Open.");

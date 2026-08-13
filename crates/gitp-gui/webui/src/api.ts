@@ -3,10 +3,12 @@
 // UI is fully explorable without the desktop shell.
 
 import type {
+  BlameLine,
   CommitDetail,
   CommitRow,
   ConfigEntry,
   ConfigScope,
+  FileCommit,
   FileDiff,
   LogPage,
   Refs,
@@ -73,6 +75,16 @@ export async function fetchRefs(): Promise<Refs> {
 export async function fetchCommitTree(rev: string): Promise<string[]> {
   if (!isTauri()) return MOCK_TREE;
   return invoke<string[]>("get_commit_tree", { rev });
+}
+
+export async function fetchBlame(rev: string, path: string): Promise<BlameLine[]> {
+  if (!isTauri()) return MOCK_BLAME;
+  return invoke<BlameLine[]>("get_blame", { rev, path });
+}
+
+export async function fetchFileHistory(rev: string, path: string): Promise<FileCommit[]> {
+  if (!isTauri()) return MOCK_FILE_HISTORY;
+  return invoke<FileCommit[]>("get_file_history", { rev, path });
 }
 
 export async function fetchLocalChangeCount(): Promise<number> {
@@ -333,6 +345,23 @@ export const MOCK_TREE: string[] = [
   "src/views/log.ts",
   "src/views/sidebar.ts",
 ];
+
+// Per-line blame for the File Tree/Changes blame view in preview mode.
+export const MOCK_BLAME: BlameLine[] = [
+  { commit: "aaaaaaa", author: "Ada Lovelace", line_no: 1, content: "use crate::error::Result;" },
+  { commit: "ccccccc", author: "Ada Lovelace", line_no: 2, content: "pub fn read_config() -> Result<Vec<ConfigEntry>> {" },
+  { commit: "ccccccc", author: "Grace Hopper", line_no: 3, content: "    // ..." },
+  { commit: "fffffff", author: "Ada Lovelace", line_no: 4, content: "}" },
+];
+
+// A file's commit history for the History view in preview mode.
+export const MOCK_FILE_HISTORY: FileCommit[] = MOCK_LOG.slice(0, 4).map((r) => ({
+  id: r.id,
+  short_id: r.short_id,
+  summary: r.summary,
+  author_name: r.author_name,
+  time: r.time,
+}));
 
 export const MOCK_CONFIG: ConfigEntry[] = [
   { name: "user.name", value: "Ada Lovelace", scope: "Global" },
