@@ -114,7 +114,7 @@ impl Repo {
 }
 
 /// Walk a diff's deltas, hunks and lines into owned `FileDiff`s.
-fn collect_files(diff: &git2::Diff) -> Result<Vec<FileDiff>> {
+pub(crate) fn collect_files(diff: &git2::Diff) -> Result<Vec<FileDiff>> {
     let mut files: Vec<FileDiff> = Vec::new();
 
     for (idx, delta) in diff.deltas().enumerate() {
