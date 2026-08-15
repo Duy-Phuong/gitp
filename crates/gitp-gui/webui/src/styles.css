@@ -987,7 +987,8 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
-.status-Added {
+.status-Added,
+.status-Untracked {
   background: var(--add-bg);
   color: var(--add-fg);
 }

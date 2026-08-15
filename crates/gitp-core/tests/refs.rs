@@ -51,6 +51,10 @@ fn working_changes_reports_modified_and_untracked_files() {
     let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
     assert!(paths.contains(&"a.txt"), "modified file present");
     assert!(paths.contains(&"b.txt"), "untracked file present");
+
+    // The new file reports as Untracked (not the catch-all Other).
+    let b = files.iter().find(|f| f.path == "b.txt").unwrap();
+    assert_eq!(b.status, gitp_core::ChangeKind::Untracked);
 }
 
 #[test]

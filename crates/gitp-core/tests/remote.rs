@@ -92,28 +92,30 @@ fn pull_brings_new_commits_from_the_remote() {
 }
 
 #[test]
-fn stash_saves_changes_and_pop_restores_them() {
+fn stash_saves_changes_including_untracked_and_pop_restores_them() {
     let fx = FixtureRepo::init();
     fx.commit_file("a.txt", "one\n", "c1");
-    std::fs::write(fx.path().join("a.txt"), "two\n").unwrap(); // dirty the tree
+    std::fs::write(fx.path().join("a.txt"), "two\n").unwrap(); // modify tracked
+    std::fs::write(fx.path().join("new.txt"), "brand new\n").unwrap(); // untracked
 
     let repo = Repo::open(fx.path()).unwrap();
-    assert_eq!(repo.local_change_count().unwrap(), 1, "one modified file");
+    assert_eq!(repo.local_change_count().unwrap(), 2, "one modified + one untracked");
 
-    repo.stash().expect("stash saves the change");
+    repo.stash().expect("stash saves tracked and untracked changes");
     assert_eq!(
         std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
         "one\n",
-        "working tree reverted to HEAD after stash"
+        "tracked file reverted to HEAD after stash"
+    );
+    assert!(
+        !fx.path().join("new.txt").exists(),
+        "untracked file is swept away by stash --include-untracked"
     );
     assert_eq!(repo.local_change_count().unwrap(), 0, "clean tree after stash");
 
-    repo.stash_pop().expect("pop restores the change");
-    assert_eq!(
-        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
-        "two\n",
-        "modification restored after pop"
-    );
+    repo.stash_pop().expect("pop restores everything");
+    assert_eq!(std::fs::read_to_string(fx.path().join("a.txt")).unwrap(), "two\n");
+    assert!(fx.path().join("new.txt").exists(), "untracked file restored after pop");
 }
 
 #[test]

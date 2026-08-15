@@ -23,6 +23,7 @@ export type ChangeKind =
   | "Deleted"
   | "Renamed"
   | "Copied"
+  | "Untracked"
   | "Other";
 
 export interface DiffLine {

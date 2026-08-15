@@ -27,10 +27,13 @@ impl Repo {
         }
     }
 
-    /// `git stash` — save local modifications away and revert the working tree
-    /// to HEAD. Returns git's output (including "No local changes to save").
+    /// `git stash --include-untracked` — save local modifications *and* new
+    /// untracked files away, reverting the working tree to HEAD. Untracked files
+    /// are included so it matches what "Local Changes" shows (git's plain
+    /// `stash` would ignore them and do nothing when only new files exist).
+    /// Returns git's output (including "No local changes to save").
     pub fn stash(&self) -> Result<String> {
-        self.run_git(&["stash"])
+        self.run_git(&["stash", "--include-untracked"])
     }
 
     /// `git stash pop` — reapply the most recent stash and drop it. Errors if

@@ -93,7 +93,25 @@ export async function fetchLocalChangeCount(): Promise<number> {
 }
 
 export async function fetchWorkingChanges(): Promise<FileDiff[]> {
-  if (!isTauri()) return mockDetail("x").files;
+  if (!isTauri()) {
+    return [
+      ...mockDetail("x").files,
+      {
+        path: "notes.md",
+        old_path: null,
+        status: "Untracked",
+        hunks: [
+          {
+            header: "@@ -0,0 +1,2 @@",
+            lines: [
+              { origin: "+", old_lineno: null, new_lineno: 1, content: "# Notes" },
+              { origin: "+", old_lineno: null, new_lineno: 2, content: "brand new file" },
+            ],
+          },
+        ],
+      },
+    ];
+  }
   return invoke<FileDiff[]>("get_working_changes", {});
 }
 
