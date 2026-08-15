@@ -13,7 +13,7 @@ use std::sync::Mutex;
 
 use gitp_core::{
     BlameLine, CommitDetail, CommitRow, ConfigEntry, ConfigScope, FileCommit, FileDiff, LogOptions,
-    Refs, Repo,
+    Refs, Repo, StatusLists,
 };
 use serde::Serialize;
 use tauri::State;
@@ -198,6 +198,41 @@ fn get_working_changes_impl(state: &RepoState) -> Result<Vec<FileDiff>, String> 
     with_repo(state, Repo::working_changes)
 }
 
+fn get_status_impl(state: &RepoState) -> Result<StatusLists, String> {
+    with_repo(state, Repo::status_lists)
+}
+
+fn stage_impl(state: &RepoState, path: String) -> Result<(), String> {
+    with_repo(state, |repo| repo.stage(&path))
+}
+
+fn unstage_impl(state: &RepoState, path: String) -> Result<(), String> {
+    with_repo(state, |repo| repo.unstage(&path))
+}
+
+fn stage_all_impl(state: &RepoState) -> Result<(), String> {
+    with_repo(state, Repo::stage_all)
+}
+
+fn unstage_all_impl(state: &RepoState) -> Result<(), String> {
+    with_repo(state, Repo::unstage_all)
+}
+
+/// Commit the staged changes. Invalidates the cached log because HEAD moves.
+fn commit_changes_impl(
+    state: &RepoState,
+    subject: String,
+    body: String,
+    amend: bool,
+) -> Result<String, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let output = session.repo.commit(&subject, &body, amend).map_err(to_message)?;
+    session.log = None;
+    Ok(output)
+}
+
 /// Check out `name` on the active repo. Invalidates the cached log because HEAD
 /// moves, so the next `get_log_page` recomputes the walk from the new HEAD.
 fn checkout_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
@@ -326,6 +361,41 @@ fn get_working_changes(state: State<RepoState>) -> Result<Vec<FileDiff>, String>
 }
 
 #[tauri::command]
+fn get_status(state: State<RepoState>) -> Result<StatusLists, String> {
+    get_status_impl(&state)
+}
+
+#[tauri::command]
+fn stage(path: String, state: State<RepoState>) -> Result<(), String> {
+    stage_impl(&state, path)
+}
+
+#[tauri::command]
+fn unstage(path: String, state: State<RepoState>) -> Result<(), String> {
+    unstage_impl(&state, path)
+}
+
+#[tauri::command]
+fn stage_all(state: State<RepoState>) -> Result<(), String> {
+    stage_all_impl(&state)
+}
+
+#[tauri::command]
+fn unstage_all(state: State<RepoState>) -> Result<(), String> {
+    unstage_all_impl(&state)
+}
+
+#[tauri::command]
+fn commit_changes(
+    subject: String,
+    body: String,
+    amend: bool,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    commit_changes_impl(&state, subject, body, amend)
+}
+
+#[tauri::command]
 fn checkout_branch(name: String, state: State<RepoState>) -> Result<(), String> {
     checkout_branch_impl(&state, name)
 }
@@ -405,6 +475,12 @@ pub fn run() {
             get_refs,
             get_local_change_count,
             get_working_changes,
+            get_status,
+            stage,
+            unstage,
+            stage_all,
+            unstage_all,
+            commit_changes,
             checkout_branch,
             create_branch,
             pull,

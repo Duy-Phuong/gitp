@@ -27,6 +27,41 @@ impl Repo {
         }
     }
 
+    /// Stage `path` (`git add`), handling new, modified, and deleted files.
+    pub fn stage(&self, path: &str) -> Result<()> {
+        self.run_git(&["add", "--", path]).map(|_| ())
+    }
+
+    /// Unstage `path` (`git reset HEAD -- <path>`).
+    pub fn unstage(&self, path: &str) -> Result<()> {
+        self.run_git(&["reset", "-q", "HEAD", "--", path]).map(|_| ())
+    }
+
+    /// Stage every change, including untracked and deletions (`git add -A`).
+    pub fn stage_all(&self) -> Result<()> {
+        self.run_git(&["add", "-A"]).map(|_| ())
+    }
+
+    /// Unstage everything (`git reset HEAD`).
+    pub fn unstage_all(&self) -> Result<()> {
+        self.run_git(&["reset", "-q", "HEAD"]).map(|_| ())
+    }
+
+    /// Commit the staged changes. `body` is added as a second paragraph when
+    /// non-empty; `amend` rewrites HEAD instead of adding a new commit.
+    pub fn commit(&self, subject: &str, body: &str, amend: bool) -> Result<String> {
+        let mut args: Vec<&str> = vec!["commit", "-m", subject];
+        let body = body.trim();
+        if !body.is_empty() {
+            args.push("-m");
+            args.push(body);
+        }
+        if amend {
+            args.push("--amend");
+        }
+        self.run_git(&args)
+    }
+
     /// `git stash --include-untracked` — save local modifications *and* new
     /// untracked files away, reverting the working tree to HEAD. Untracked files
     /// are included so it matches what "Local Changes" shows (git's plain

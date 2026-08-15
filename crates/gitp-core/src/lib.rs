@@ -24,3 +24,4 @@ pub use filelog::FileCommit;
 pub use log::{CommitRow, LogOptions};
 pub use refs::{BranchRef, Refs, RemoteBranch, StashRef, TagRef};
 pub use repo::Repo;
+pub use status::StatusLists;

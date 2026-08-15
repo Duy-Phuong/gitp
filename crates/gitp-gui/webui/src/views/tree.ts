@@ -17,6 +17,10 @@ export interface FileTreeCallbacks {
   // Status label for a changed file (e.g. "Modified"), or null if unchanged.
   statusOf: (path: string) => string | null;
   onFileClick: (path: string) => void;
+  // Optional: double-click a file (used to stage/unstage in the changes view).
+  onFileDblClick?: (path: string) => void;
+  // Optional: path of the currently selected file, to highlight its row.
+  selectedPath?: string;
 }
 
 export function renderFileTree(host: HTMLElement, paths: string[], cb: FileTreeCallbacks): void {
@@ -52,8 +56,9 @@ function renderLevel(host: HTMLElement, node: Node, depth: number, cb: FileTreeC
     const pad = 8 + depth * 14;
     if (child.isFile) {
       const status = cb.statusOf(child.path);
+      const selected = cb.selectedPath === child.path;
       const row = el("div", {
-        class: `tree-row tree-file${status ? " changed" : ""}`,
+        class: `tree-row tree-file${status ? " changed" : ""}${selected ? " selected" : ""}`,
         title: child.path,
       });
       row.style.paddingLeft = `${pad}px`;
@@ -63,7 +68,10 @@ function renderLevel(host: HTMLElement, node: Node, depth: number, cb: FileTreeC
           : el("span", { class: "tree-bullet" }),
       );
       row.append(el("span", { class: "tree-name", text: child.name }));
-      if (status) row.addEventListener("click", () => cb.onFileClick(child.path));
+      if (status) {
+        row.addEventListener("click", () => cb.onFileClick(child.path));
+        if (cb.onFileDblClick) row.addEventListener("dblclick", () => cb.onFileDblClick!(child.path));
+      }
       host.append(row);
     } else {
       const collapsed = cb.collapsed.has(child.path);

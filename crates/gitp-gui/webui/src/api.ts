@@ -12,6 +12,7 @@ import type {
   FileDiff,
   LogPage,
   Refs,
+  StatusLists,
   Workspace,
 } from "./types";
 
@@ -90,6 +91,50 @@ export async function fetchFileHistory(rev: string, path: string): Promise<FileC
 export async function fetchLocalChangeCount(): Promise<number> {
   if (!isTauri()) return mockDetail("x").files.length + 780;
   return invoke<number>("get_local_change_count", {});
+}
+
+export async function fetchStatus(): Promise<StatusLists> {
+  if (!isTauri()) return { staged: [...MOCK_STATUS.staged], unstaged: [...MOCK_STATUS.unstaged] };
+  return invoke<StatusLists>("get_status", {});
+}
+
+export async function stage(path: string): Promise<void> {
+  if (!isTauri()) return mockMove(MOCK_STATUS.unstaged, MOCK_STATUS.staged, path);
+  await invoke<void>("stage", { path });
+}
+
+export async function unstage(path: string): Promise<void> {
+  if (!isTauri()) return mockMove(MOCK_STATUS.staged, MOCK_STATUS.unstaged, path);
+  await invoke<void>("unstage", { path });
+}
+
+export async function stageAll(): Promise<void> {
+  if (!isTauri()) {
+    MOCK_STATUS.staged.push(...MOCK_STATUS.unstaged.splice(0));
+    return;
+  }
+  await invoke<void>("stage_all", {});
+}
+
+export async function unstageAll(): Promise<void> {
+  if (!isTauri()) {
+    MOCK_STATUS.unstaged.push(...MOCK_STATUS.staged.splice(0));
+    return;
+  }
+  await invoke<void>("unstage_all", {});
+}
+
+export async function commitChanges(
+  subject: string,
+  body: string,
+  amend: boolean,
+): Promise<string> {
+  if (!isTauri()) {
+    const n = MOCK_STATUS.staged.length;
+    MOCK_STATUS.staged.splice(0);
+    return `[preview ${amend ? "amend" : "commit"}] ${subject} — ${n} file(s)`;
+  }
+  return invoke<string>("commit_changes", { subject, body, amend });
 }
 
 export async function fetchWorkingChanges(): Promise<FileDiff[]> {
@@ -381,6 +426,33 @@ export const MOCK_FILE_HISTORY: FileCommit[] = MOCK_LOG.slice(0, 4).map((r) => (
   author_name: r.author_name,
   time: r.time,
 }));
+
+// Mutable staging state for preview mode, so stage/unstage/commit feel real.
+const MOCK_STATUS: StatusLists = {
+  staged: [],
+  unstaged: [
+    ...mockDetail("x").files,
+    {
+      path: "notes.md",
+      old_path: null,
+      status: "Untracked",
+      hunks: [
+        {
+          header: "@@ -0,0 +1,2 @@",
+          lines: [
+            { origin: "+", old_lineno: null, new_lineno: 1, content: "# Notes" },
+            { origin: "+", old_lineno: null, new_lineno: 2, content: "brand new file" },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+function mockMove(from: FileDiff[], to: FileDiff[], path: string): void {
+  const i = from.findIndex((f) => f.path === path);
+  if (i !== -1) to.push(from.splice(i, 1)[0]);
+}
 
 export const MOCK_CONFIG: ConfigEntry[] = [
   { name: "user.name", value: "Ada Lovelace", scope: "Global" },

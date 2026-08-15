@@ -45,6 +45,11 @@ export interface FileDiff {
   hunks: DiffHunk[];
 }
 
+export interface StatusLists {
+  staged: FileDiff[];
+  unstaged: FileDiff[];
+}
+
 export interface CommitDetail {
   id: string;
   summary: string;

@@ -4,6 +4,7 @@ import {
   browseForRepo,
   checkoutBranch,
   closeRepo,
+  commitChanges,
   confirmDialog,
   createBranch,
   fetchBlame,
@@ -14,21 +15,25 @@ import {
   fetchLocalChangeCount,
   fetchLogPage,
   fetchRefs,
-  fetchWorkingChanges,
+  fetchStatus,
   isTauri,
   listRepos,
   openRepo,
   pull,
   push,
   saveConfig,
+  stage,
+  stageAll,
   stash,
   stashPop,
+  unstage,
+  unstageAll,
 } from "./api";
 import { clear, el } from "./dom";
 import { GRAPH_METRICS } from "./graph";
 import { renderLog } from "./views/log";
 import { setupDetail, type DetailHandle } from "./views/detail";
-import { renderChanges } from "./views/changes";
+import { setupChanges, type ChangesHandle } from "./views/changes";
 import { renderConfig } from "./views/config";
 import { renderSidebar, type SidebarView } from "./views/sidebar";
 import { setupTerminal, type TerminalHandle } from "./views/terminal";
@@ -69,6 +74,7 @@ const state: State = {
 };
 let terminal: TerminalHandle | null = null;
 let detailView: DetailHandle | null = null;
+let changesView: ChangesHandle | null = null;
 let loadingMore = false;
 
 // Labels of refs whose tip is this commit — shown as chips in the Commit tab.
@@ -327,8 +333,7 @@ function renderSidebarNow(): void {
 
 async function loadChanges(): Promise<void> {
   try {
-    const files = await fetchWorkingChanges();
-    renderChanges($("#changes-pane"), files);
+    await changesView?.reload();
   } catch (err) {
     setStatus(`Failed to load local changes: ${String(err)}`);
   }
@@ -684,6 +689,20 @@ async function init(): Promise<void> {
     fetchTree: fetchCommitTree,
     fetchBlame,
     fetchFileHistory,
+  });
+  changesView = setupChanges($("#changes-pane"), {
+    fetchStatus,
+    stage,
+    unstage,
+    stageAll,
+    unstageAll,
+    commit: commitChanges,
+    onChanged: () => void loadSidebar(),
+    onCommitted: () => {
+      void loadSidebar();
+      void refreshHistory();
+    },
+    setStatus,
   });
   if (isTauri()) {
     setStatus("Enter a repository path and press Open.");
