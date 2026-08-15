@@ -68,9 +68,21 @@ function renderLevel(host: HTMLElement, node: Node, depth: number, cb: FileTreeC
           : el("span", { class: "tree-bullet" }),
       );
       row.append(el("span", { class: "tree-name", text: child.name }));
-      if (status) {
+      if (status && cb.onFileDblClick) {
+        // Delay the single-click (which re-renders and would destroy this row)
+        // so a double-click can pre-empt it — otherwise the second click lands
+        // on a fresh node and no dblclick ever fires. Mirrors the sidebar.
+        let clickTimer: number | undefined;
+        row.addEventListener("click", () => {
+          window.clearTimeout(clickTimer);
+          clickTimer = window.setTimeout(() => cb.onFileClick(child.path), 200);
+        });
+        row.addEventListener("dblclick", () => {
+          window.clearTimeout(clickTimer);
+          cb.onFileDblClick!(child.path);
+        });
+      } else if (status) {
         row.addEventListener("click", () => cb.onFileClick(child.path));
-        if (cb.onFileDblClick) row.addEventListener("dblclick", () => cb.onFileDblClick!(child.path));
       }
       host.append(row);
     } else {
