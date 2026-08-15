@@ -22,8 +22,30 @@
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
+/* Light palette. Applied when the OS prefers light (unless the user forced
+   dark), and always when the user explicitly picks Light via Settings. The
+   :root base above is the dark palette, so forcing dark needs no extra rule. */
+:root[data-theme="light"] {
+  --bg: #f7f8fa;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #f0f2f6;
+  --border: #dde1e9;
+  --text: #1c2027;
+  --text-dim: #667085;
+  --accent: #2f6bff;
+  --accent-soft: rgba(47, 107, 255, 0.12);
+  --add-bg: rgba(46, 160, 67, 0.12);
+  --add-fg: #1a7f37;
+  --del-bg: rgba(207, 34, 46, 0.1);
+  --del-fg: #b42318;
+  --word-add-bg: rgba(46, 160, 67, 0.3);
+  --word-del-bg: rgba(207, 34, 46, 0.24);
+  --row-hover: #eef1f6;
+  --row-sel: #dce7ff;
+}
+
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     --bg: #f7f8fa;
     --bg-elev: #ffffff;
     --bg-elev-2: #f0f2f6;
@@ -289,6 +311,21 @@ body {
 }
 .menu-item:hover {
   background: var(--row-hover);
+}
+.menu-label {
+  padding: 6px 10px 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-dim);
+}
+.menu-item.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.menu-item.active::after {
+  content: "✓";
+  float: right;
 }
 
 /* Repo tabs --------------------------------------------------------------- */

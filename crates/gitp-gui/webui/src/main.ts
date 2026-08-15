@@ -90,6 +90,35 @@ function setStatus(message: string): void {
   $("#statusbar").textContent = message;
 }
 
+// --- Theme (System / Light / Dark) -----------------------------------------
+
+type ThemeChoice = "system" | "light" | "dark";
+const THEME_KEY = "gitp-theme";
+
+function currentTheme(): ThemeChoice {
+  const v = localStorage.getItem(THEME_KEY);
+  return v === "light" || v === "dark" ? v : "system";
+}
+
+// Apply and persist a theme. "system" clears the override so CSS follows the OS
+// via prefers-color-scheme; "light"/"dark" force the palette via data-theme.
+function applyTheme(choice: ThemeChoice): void {
+  if (choice === "system") {
+    document.documentElement.removeAttribute("data-theme");
+    localStorage.removeItem(THEME_KEY);
+  } else {
+    document.documentElement.dataset.theme = choice;
+    localStorage.setItem(THEME_KEY, choice);
+  }
+}
+
+function updateThemeMenu(): void {
+  const cur = currentTheme();
+  for (const b of document.querySelectorAll<HTMLElement>("#settings-menu [data-theme-choice]")) {
+    b.classList.toggle("active", b.dataset.themeChoice === cur);
+  }
+}
+
 // Open a repo as a new tab (or switch to it if already open), then show its log.
 async function loadRepo(path: string): Promise<void> {
   try {
@@ -604,6 +633,14 @@ function setupSettingsMenu(): void {
     close();
     showView("config");
   });
+  for (const choice of menu.querySelectorAll<HTMLElement>("[data-theme-choice]")) {
+    choice.addEventListener("click", () => {
+      applyTheme(choice.dataset.themeChoice as ThemeChoice);
+      updateThemeMenu();
+      close();
+    });
+  }
+  updateThemeMenu();
   document.addEventListener("click", (e) => {
     if (!$("#settings").contains(e.target as Node)) close();
   });
@@ -639,6 +676,7 @@ function wireUi(): void {
 }
 
 async function init(): Promise<void> {
+  applyTheme(currentTheme());
   wireUi();
   detailView = setupDetail($("#detail-pane"), {
     onSelectCommit: (id) => void jumpToCommit(id, id.slice(0, 10)),
