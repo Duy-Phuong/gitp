@@ -37,6 +37,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let body = "";
   let amend = false;
   let busy = false;
+  let diffHost: HTMLElement | null = null;
 
   async function reload(): Promise<void> {
     const s = await cb.fetchStatus();
@@ -77,8 +78,37 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       panel("staged", "Staged", staged),
       commitBox(),
     );
-    wrap.append(left, diffPane());
+    diffHost = el("div", { class: "staging-diff" });
+    renderDiffInto(diffHost);
+    wrap.append(left, diffHost);
     host.append(wrap);
+  }
+
+  // Selecting a file updates only the highlight + diff — it must NOT rebuild the
+  // trees, so file rows survive for a native double-click (instant staging).
+  function selectFile(panel: Panel, path: string): void {
+    selected = { panel, path };
+    for (const r of host.querySelectorAll<HTMLElement>(".tree-file.selected")) {
+      r.classList.remove("selected");
+    }
+    const trees = host.querySelectorAll<HTMLElement>(".stage-tree");
+    const container = panel === "unstaged" ? trees[0] : trees[1];
+    for (const r of container?.querySelectorAll<HTMLElement>(".tree-file") ?? []) {
+      if (r.getAttribute("title") === path) {
+        r.classList.add("selected");
+        break;
+      }
+    }
+    if (diffHost) renderDiffInto(diffHost);
+  }
+
+  function renderDiffInto(pane: HTMLElement): void {
+    clear(pane);
+    const file = selected
+      ? (selected.panel === "unstaged" ? unstaged : staged).find((f) => f.path === selected!.path)
+      : undefined;
+    if (file) pane.append(renderFile(file));
+    else pane.append(el("div", { class: "detail-empty", text: "Select a file to view its changes." }));
   }
 
   function panel(which: Panel, label: string, files: FileDiff[]): HTMLElement {
@@ -112,10 +142,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
           render();
         },
         statusOf: (p) => status.get(p) ?? null,
-        onFileClick: (p) => {
-          selected = { panel: which, path: p };
-          render();
-        },
+        onFileClick: (p) => selectFile(which, p),
         onFileDblClick: (p) =>
           run(which === "unstaged" ? () => cb.stage(p) : () => cb.unstage(p), cb.onChanged),
         selectedPath: selected?.panel === which ? selected.path : undefined,
@@ -185,18 +212,6 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
 
   function canCommit(): boolean {
     return subject.trim() !== "" && (staged.length > 0 || amend);
-  }
-
-  function diffPane(): HTMLElement {
-    const pane = el("div", { class: "staging-diff" });
-    if (!selected) {
-      pane.append(el("div", { class: "detail-empty", text: "Select a file to view its changes." }));
-      return pane;
-    }
-    const list = selected.panel === "unstaged" ? unstaged : staged;
-    const file = list.find((f) => f.path === selected!.path);
-    if (file) pane.append(renderFile(file));
-    return pane;
   }
 
   render();
