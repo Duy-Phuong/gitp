@@ -123,6 +123,20 @@ impl Repo {
     /// pathspec so only that one file's blobs are read. Returns `None` if the
     /// path has no changes in that direction.
     pub fn file_diff(&self, path: &str, staged: bool) -> Result<Option<FileDiff>> {
+        let diff = self.staging_diff(path, staged)?;
+        let mut files = collect_files(&diff)?;
+        let idx = files.iter().position(|f| f.path == path);
+        Ok(match idx {
+            Some(i) => Some(files.remove(i)),
+            None => files.into_iter().next(),
+        })
+    }
+
+    /// The raw git2 diff for a single `path` in one direction — staged
+    /// (HEAD → index) or unstaged (index → working tree). Shared by `file_diff`
+    /// and the per-hunk operations so a hunk's index is identical whether it's
+    /// being rendered or applied.
+    pub(crate) fn staging_diff(&self, path: &str, staged: bool) -> Result<git2::Diff<'_>> {
         let head_tree = match self.inner.head() {
             Ok(head) => Some(head.peel_to_tree()?),
             Err(_) => None,
@@ -140,12 +154,6 @@ impl Repo {
             self.inner
                 .diff_index_to_workdir(Some(&index), Some(&mut opts))?
         };
-
-        let mut files = collect_files(&diff)?;
-        let idx = files.iter().position(|f| f.path == path);
-        Ok(match idx {
-            Some(i) => Some(files.remove(i)),
-            None => files.into_iter().next(),
-        })
+        Ok(diff)
     }
 }

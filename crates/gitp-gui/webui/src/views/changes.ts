@@ -5,7 +5,8 @@
 
 import { clear, el } from "../dom";
 import type { FileDiff, StatusLists } from "../types";
-import { renderFile } from "./detail";
+import { showContextMenu } from "./context-menu";
+import { renderFile, renderSplitDiff } from "./detail";
 import { renderFileTree } from "./tree";
 
 type Panel = "unstaged" | "staged";
@@ -19,6 +20,12 @@ export interface ChangesCallbacks {
   unstage: (path: string) => Promise<void>;
   stageAll: () => Promise<void>;
   unstageAll: () => Promise<void>;
+  // Per-hunk (per-block) operations, driven by the diff's right-click menu.
+  stageHunk: (path: string, hunkIndex: number) => Promise<void>;
+  unstageHunk: (path: string, hunkIndex: number) => Promise<void>;
+  discardHunk: (path: string, hunkIndex: number) => Promise<void>;
+  // Confirm a destructive action (discard); resolves true to proceed.
+  confirm: (message: string) => Promise<boolean>;
   commit: (subject: string, body: string, amend: boolean) => Promise<string>;
   // After every reload: the number of distinct changed paths, for the sidebar
   // badge — cheap enough to pass along instead of a separate backend scan.
@@ -47,6 +54,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let body = "";
   let amend = false;
   let busy = false;
+  let splitView = false;
   let diffHost: HTMLElement | null = null;
 
   async function reload(): Promise<void> {
@@ -138,11 +146,69 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     clear(pane);
     if (!selected) {
       pane.append(el("div", { class: "detail-empty", text: "Select a file to view its changes." }));
-    } else if (selectedDiff) {
-      pane.append(renderFile(selectedDiff));
-    } else {
-      pane.append(el("div", { class: "detail-empty", text: "Loading changes…" }));
+      return;
     }
+    pane.append(diffToolbar());
+    const body = el("div", { class: "staging-diff-body" });
+    if (selectedDiff) {
+      body.append(splitView ? renderSplitDiff(selectedDiff) : renderFile(selectedDiff));
+      attachHunkMenus(body);
+    } else {
+      body.append(el("div", { class: "detail-empty", text: "Loading changes…" }));
+    }
+    pane.append(body);
+  }
+
+  // Unified / Split toggle above the diff.
+  function diffToolbar(): HTMLElement {
+    const mk = (label: string, on: boolean, set: boolean) => {
+      const b = el("button", { class: `btn ghost small${on ? " active" : ""}`, text: label });
+      b.addEventListener("click", () => {
+        if (splitView === set) return;
+        splitView = set;
+        if (diffHost) renderDiffInto(diffHost);
+      });
+      return b;
+    };
+    return el("div", { class: "diff-toolbar" }, [
+      mk("Unified", !splitView, false),
+      mk("Split", splitView, true),
+    ]);
+  }
+
+  // Right-click a hunk block → stage / discard (unstaged) or unstage (staged)
+  // just that block. Hunk index comes from the data-hunk attribute the diff
+  // renderers set on each `.hunk` element.
+  function attachHunkMenus(body: HTMLElement): void {
+    const sel = selected;
+    if (!sel) return;
+    for (const hunkEl of body.querySelectorAll<HTMLElement>(".hunk[data-hunk]")) {
+      const index = Number(hunkEl.dataset.hunk);
+      hunkEl.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        const items =
+          sel.panel === "unstaged"
+            ? [
+                { label: "Stage this block", run: () => run(() => cb.stageHunk(sel.path, index)) },
+                {
+                  label: "Discard this block…",
+                  danger: true,
+                  run: () => void discardHunkAction(sel.path, index),
+                },
+              ]
+            : [{ label: "Unstage this block", run: () => run(() => cb.unstageHunk(sel.path, index)) }];
+        showContextMenu(e.clientX, e.clientY, items);
+      });
+    }
+  }
+
+  async function discardHunkAction(path: string, index: number): Promise<void> {
+    const ok = await cb.confirm(`Discard this block of ${path}? This change will be lost.`);
+    if (!ok) {
+      cb.setStatus("Discard cancelled.");
+      return;
+    }
+    await run(() => cb.discardHunk(path, index));
   }
 
   function panel(which: Panel, label: string, files: FileDiff[]): HTMLElement {

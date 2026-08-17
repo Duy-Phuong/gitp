@@ -4,7 +4,8 @@
 //! instead of reimplementing libgit2 authentication (fragile for private
 //! remotes); stash/pop go through the same helper for consistency.
 
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 use crate::error::{Error, Result};
 use crate::repo::Repo;
@@ -106,6 +107,46 @@ impl Repo {
             .env("GIT_TERMINAL_PROMPT", "0")
             .args(args)
             .output()
+            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+
+        let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
+        combined.push_str(&String::from_utf8_lossy(&output.stderr));
+        let combined = combined.trim().to_string();
+
+        if output.status.success() {
+            Ok(combined)
+        } else {
+            Err(Error::Message(combined))
+        }
+    }
+
+    /// Like `run_git`, but pipes `input` to the command's stdin — for
+    /// `git apply`, which reads a patch from stdin. Returns the trimmed combined
+    /// output on success, or it as an error on a non-zero exit.
+    pub(crate) fn run_git_stdin(&self, args: &[&str], input: &str) -> Result<String> {
+        let workdir = self
+            .inner
+            .workdir()
+            .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
+        let mut child = Command::new("git")
+            .current_dir(workdir)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| Error::Message("failed to open git stdin".into()))?
+            .write_all(input.as_bytes())
+            .map_err(|e| Error::Message(format!("failed to write patch to git: {e}")))?;
+
+        let output = child
+            .wait_with_output()
             .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
 
         let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();

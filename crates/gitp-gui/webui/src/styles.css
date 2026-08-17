@@ -649,7 +649,30 @@ body {
 .staging-diff {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* Unified / Split toggle above the staging diff. */
+.diff-toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.diff-toolbar .btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.staging-diff-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
+  padding: 12px;
+}
+.staging-diff > .detail-empty {
   padding: 12px;
 }
 .tree-row.tree-file.selected {

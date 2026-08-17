@@ -10,6 +10,7 @@ mod diff;
 mod error;
 mod filelog;
 mod graph;
+mod hunk;
 mod log;
 mod refs;
 mod remote;

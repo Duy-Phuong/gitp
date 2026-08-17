@@ -222,6 +222,18 @@ fn unstage_impl(state: &RepoState, path: String) -> Result<(), String> {
     with_repo(state, |repo| repo.unstage(&path))
 }
 
+fn stage_hunk_impl(state: &RepoState, path: String, hunk_index: usize) -> Result<(), String> {
+    with_repo(state, |repo| repo.stage_hunk(&path, hunk_index))
+}
+
+fn unstage_hunk_impl(state: &RepoState, path: String, hunk_index: usize) -> Result<(), String> {
+    with_repo(state, |repo| repo.unstage_hunk(&path, hunk_index))
+}
+
+fn discard_hunk_impl(state: &RepoState, path: String, hunk_index: usize) -> Result<(), String> {
+    with_repo(state, |repo| repo.discard_hunk(&path, hunk_index))
+}
+
 fn stage_all_impl(state: &RepoState) -> Result<(), String> {
     with_repo(state, Repo::stage_all)
 }
@@ -452,6 +464,21 @@ fn unstage(path: String, state: State<RepoState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn stage_hunk(path: String, hunk_index: usize, state: State<RepoState>) -> Result<(), String> {
+    stage_hunk_impl(&state, path, hunk_index)
+}
+
+#[tauri::command]
+fn unstage_hunk(path: String, hunk_index: usize, state: State<RepoState>) -> Result<(), String> {
+    unstage_hunk_impl(&state, path, hunk_index)
+}
+
+#[tauri::command]
+fn discard_hunk(path: String, hunk_index: usize, state: State<RepoState>) -> Result<(), String> {
+    discard_hunk_impl(&state, path, hunk_index)
+}
+
+#[tauri::command]
 fn stage_all(state: State<RepoState>) -> Result<(), String> {
     stage_all_impl(&state)
 }
@@ -591,6 +618,9 @@ pub fn run() {
             get_file_diff,
             stage,
             unstage,
+            stage_hunk,
+            unstage_hunk,
+            discard_hunk,
             stage_all,
             unstage_all,
             commit_changes,

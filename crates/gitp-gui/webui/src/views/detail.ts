@@ -507,7 +507,7 @@ function unifiedLine(line: Line, kind: "del" | "add" | "ctx", segs: Seg[] | null
 const renderUnifiedDiff = renderFile;
 
 // Split diff: old on the left, new on the right, changed runs aligned.
-function renderSplitDiff(file: FileDiff): HTMLElement {
+export function renderSplitDiff(file: FileDiff): HTMLElement {
   const container = el("div", { class: "file" }, [fileHead(file)]);
   file.hunks.forEach((hunk, i) => {
     const h = el("div", { class: "hunk", "data-hunk": i });

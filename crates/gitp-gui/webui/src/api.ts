@@ -128,6 +128,28 @@ export async function unstage(path: string): Promise<void> {
   await invoke<void>("unstage", { path });
 }
 
+// Per-hunk staging (git add -p style). In preview mode, approximate by dropping
+// the affected hunk from the mock file (or moving the file when it empties).
+export async function stageHunk(path: string, hunkIndex: number): Promise<void> {
+  if (!isTauri()) return mockMoveHunk(MOCK_STATUS.unstaged, MOCK_STATUS.staged, path, hunkIndex);
+  await invoke<void>("stage_hunk", { path, hunkIndex });
+}
+
+export async function unstageHunk(path: string, hunkIndex: number): Promise<void> {
+  if (!isTauri()) return mockMoveHunk(MOCK_STATUS.staged, MOCK_STATUS.unstaged, path, hunkIndex);
+  await invoke<void>("unstage_hunk", { path, hunkIndex });
+}
+
+export async function discardHunk(path: string, hunkIndex: number): Promise<void> {
+  if (!isTauri()) {
+    const f = MOCK_STATUS.unstaged.find((x) => x.path === path);
+    f?.hunks.splice(hunkIndex, 1);
+    if (f && f.hunks.length === 0) mockMove(MOCK_STATUS.unstaged, [], path);
+    return;
+  }
+  await invoke<void>("discard_hunk", { path, hunkIndex });
+}
+
 export async function stageAll(): Promise<void> {
   if (!isTauri()) {
     MOCK_STATUS.staged.push(...MOCK_STATUS.unstaged.splice(0));
@@ -510,6 +532,22 @@ const MOCK_STATUS: StatusLists = {
 function mockMove(from: FileDiff[], to: FileDiff[], path: string): void {
   const i = from.findIndex((f) => f.path === path);
   if (i !== -1) to.push(from.splice(i, 1)[0]);
+}
+
+// Preview-only: move one hunk of `path` from `from` to `to`. Removes it from the
+// source file (dropping the file when it empties) and appends it to a matching
+// file in the destination (creating a shell entry if needed).
+function mockMoveHunk(from: FileDiff[], to: FileDiff[], path: string, hunkIndex: number): void {
+  const src = from.find((f) => f.path === path);
+  if (!src || !src.hunks[hunkIndex]) return;
+  const [hunk] = src.hunks.splice(hunkIndex, 1);
+  let dst = to.find((f) => f.path === path);
+  if (!dst) {
+    dst = { path: src.path, old_path: src.old_path, status: src.status, hunks: [] };
+    to.push(dst);
+  }
+  dst.hunks.push(hunk);
+  if (src.hunks.length === 0) mockMove(from, [], path);
 }
 
 export const MOCK_CONFIG: ConfigEntry[] = [

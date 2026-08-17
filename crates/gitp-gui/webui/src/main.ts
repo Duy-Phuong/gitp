@@ -11,6 +11,7 @@ import {
   createBranch,
   createBranchAt,
   createTagAt,
+  discardHunk,
   fetchBlame,
   fetchCommitDetail,
   fetchCommitTree,
@@ -32,10 +33,12 @@ import {
   saveConfig,
   stage,
   stageAll,
+  stageHunk,
   stash,
   stashPop,
   unstage,
   unstageAll,
+  unstageHunk,
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el } from "./dom";
@@ -910,6 +913,10 @@ async function init(): Promise<void> {
     unstage,
     stageAll,
     unstageAll,
+    stageHunk,
+    unstageHunk,
+    discardHunk,
+    confirm: confirmDialog,
     commit: commitChanges,
     // Staging doesn't change refs or history, so just update the badge — no ref
     // walk or log rebuild (that's what made each stage/unstage feel slow).
