@@ -86,15 +86,60 @@ function refsAt(id: string): string[] {
   return labels;
 }
 
-// Same, but typed by kind for the colored chips shown on log-row hover.
+// For the log-row hover chips we want the branches/tags that CONTAIN each
+// commit (so every commit shows its branch), not just the tips. Computed once
+// per log/ref change by seeding each ref at its tip and propagating the label to
+// ancestors over the loaded commit graph.
+let commitRefs = new Map<string, RefLabel[]>();
+
 function refLabelsAt(id: string): RefLabel[] {
-  const out: RefLabel[] = [];
-  for (const b of state.refs.branches) {
-    if (b.target === id) out.push({ name: b.name, kind: b.is_head ? "head" : "branch" });
-  }
-  for (const r of state.refs.remotes) if (r.target === id) out.push({ name: r.name, kind: "remote" });
-  for (const t of state.refs.tags) if (t.target === id) out.push({ name: t.name, kind: "tag" });
-  return out;
+  return commitRefs.get(id) ?? [];
+}
+
+function rebuildCommitRefs(): void {
+  const byId = new Map(state.rows.map((r) => [r.id, r]));
+  const labels = new Map<string, RefLabel[]>();
+  const names = new Map<string, Set<string>>(); // per-commit dedup by ref name
+
+  const push = (cid: string, label: RefLabel) => {
+    if (!byId.has(cid)) return;
+    let set = names.get(cid);
+    if (!set) {
+      set = new Set();
+      names.set(cid, set);
+      labels.set(cid, []);
+    }
+    if (set.has(label.name)) return;
+    set.add(label.name);
+    labels.get(cid)!.push(label);
+  };
+
+  // Walk a branch's history from its tip over parents, labelling every commit it
+  // contains. Called in priority order so the label ordering per commit is
+  // stable (current branch first).
+  const walk = (tip: string, label: RefLabel) => {
+    const stack = [tip];
+    const seen = new Set<string>();
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const row = byId.get(id);
+      if (!row) continue;
+      push(id, label);
+      for (const p of row.parents) if (!seen.has(p)) stack.push(p);
+    }
+  };
+
+  // Branches contain their whole ancestry — current branch first, so it leads on
+  // every commit. Tags and remotes stay at their tip only (less noise).
+  const head = state.refs.branches.find((b) => b.is_head);
+  if (head) walk(head.target, { name: head.name, kind: "head" });
+  for (const b of state.refs.branches) if (!b.is_head) walk(b.target, { name: b.name, kind: "branch" });
+  for (const t of state.refs.tags) push(t.target, { name: t.name, kind: "tag" });
+  for (const r of state.refs.remotes) push(r.target, { name: r.name, kind: "remote" });
+
+  commitRefs = labels;
 }
 
 const $ = <T extends HTMLElement>(sel: string): T => {
@@ -221,6 +266,7 @@ async function refreshHistory(): Promise<void> {
   state.rows = page.rows;
   state.total = page.total;
   state.selectedId = state.rows[0]?.id ?? null;
+  rebuildCommitRefs();
   renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt);
   if (state.selectedId) await selectCommit(state.selectedId);
   else detailView?.showEmpty();
@@ -236,6 +282,7 @@ async function loadMoreCommits(): Promise<void> {
     state.total = page.total;
     const host = $("#log-pane");
     const keepScroll = host.scrollTop;
+    rebuildCommitRefs();
     renderLog(host, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt);
     host.scrollTop = keepScroll;
     setStatus(`${state.rows.length} / ${state.total} commits loaded`);
@@ -297,8 +344,10 @@ async function loadSidebar(): Promise<void> {
     setStatus(`Failed to load refs: ${String(err)}`);
   }
   renderSidebarNow();
-  // Refs now known — re-render the open commit + the log so ref chips appear.
+  // Refs now known — recompute containment and re-render the open commit + the
+  // log so the branch chips appear on every commit.
   detailView?.refresh();
+  rebuildCommitRefs();
   if (state.view === "history" && state.rows.length) {
     const pane = $("#log-pane");
     const keep = pane.scrollTop;
