@@ -4,9 +4,12 @@
 // buffer) are in the DOM, so a repo with 100k commits stays responsive. The
 // full geometry is computed once (cheap math); only rendering is windowed.
 
+import { avatarUrl } from "../avatar";
 import { clear, el, svg } from "../dom";
 import { fitLaneWidth, GRAPH_METRICS, layoutGraph } from "../graph";
 import type { CommitRow } from "../types";
+
+const AVATAR_R = 9;
 
 // A ref pointing at a commit, shown as a colored chip on hover.
 export interface RefLabel {
@@ -72,11 +75,11 @@ export function renderLog(
   // text off-screen. Based on the pane width available for the graph gutter.
   const maxLane = rows.reduce((m, r) => Math.max(m, r.lane), 0);
   const laneWidth = fitLaneWidth(maxLane, host.clientWidth || 360);
-  const nodeRadius = Math.max(2.5, Math.min(4.5, laneWidth * 0.42));
 
   const layout = layoutGraph(rows, laneWidth);
   const rowH = GRAPH_METRICS.rowHeight;
   let currentSelected = selectedId;
+  const emailById = new Map(rows.map((r) => [r.id, r.author_email]));
 
   // A full-height spacer establishes the scrollbar; children are absolutely
   // positioned within it.
@@ -115,6 +118,8 @@ export function renderLog(
       rowEl.style.left = `${layout.width}px`;
       rowEl.style.right = "0";
       rowEl.style.height = `${rowH}px`;
+      // Lane-colored bar tying the message to its commit's graph strand/avatar.
+      rowEl.style.borderLeft = `3px solid ${laneColor(row.color)}`;
       rowEl.append(el("span", { class: "commit-summary", text: row.summary }));
 
       // Ref chips (branch/tag/remote pointing at this commit) — placed after the
@@ -152,6 +157,12 @@ export function renderLog(
     }
 
     clear(graph);
+    // One reusable circular clip (object-bounding-box units) for all avatars.
+    const defs = svg("defs");
+    const clip = svg("clipPath", { id: "avatarClip", clipPathUnits: "objectBoundingBox" });
+    clip.appendChild(svg("circle", { cx: 0.5, cy: 0.5, r: 0.5 }));
+    defs.appendChild(clip);
+    graph.appendChild(defs);
     for (const edge of layout.edges) {
       if (Math.max(edge.fromY, edge.toY) < top || Math.min(edge.fromY, edge.toY) > bottom) {
         continue;
@@ -168,13 +179,33 @@ export function renderLog(
     }
     for (const node of layout.nodes) {
       if (node.y < top || node.y > bottom) continue;
+      const color = laneColor(node.color);
+      // Base dot: the fallback if the avatar image is missing/fails to load.
+      graph.append(svg("circle", { cx: node.x, cy: node.y, r: AVATAR_R, fill: color }));
+
+      const url = avatarUrl(emailById.get(node.id) ?? "");
+      if (url) {
+        const img = svg("image", {
+          x: node.x - AVATAR_R,
+          y: node.y - AVATAR_R,
+          width: AVATAR_R * 2,
+          height: AVATAR_R * 2,
+          href: url,
+          preserveAspectRatio: "xMidYMid slice",
+          "clip-path": "url(#avatarClip)",
+        });
+        img.addEventListener("error", () => img.remove());
+        graph.append(img);
+      }
+
+      // Lane-colored ring around the avatar.
       graph.append(
         svg("circle", {
           cx: node.x,
           cy: node.y,
-          r: nodeRadius,
-          fill: laneColor(node.color),
-          stroke: "var(--bg)",
+          r: AVATAR_R,
+          fill: "none",
+          stroke: color,
           "stroke-width": 2,
         }),
       );

@@ -29,6 +29,7 @@ import {
   unstage,
   unstageAll,
 } from "./api";
+import { ensureAvatars } from "./avatar";
 import { clear, el } from "./dom";
 import { GRAPH_METRICS } from "./graph";
 import { renderLog, type RefLabel } from "./views/log";
@@ -288,6 +289,7 @@ async function refreshHistory(): Promise<void> {
   state.rows = page.rows;
   state.total = page.total;
   state.selectedId = state.rows[0]?.id ?? null;
+  await ensureAvatars(state.rows.map((r) => r.author_email));
   rebuildCommitRefs();
   renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt);
   if (state.selectedId) await selectCommit(state.selectedId);
@@ -304,6 +306,7 @@ async function loadMoreCommits(): Promise<void> {
     state.total = page.total;
     const host = $("#log-pane");
     const keepScroll = host.scrollTop;
+    await ensureAvatars(state.rows.map((r) => r.author_email));
     rebuildCommitRefs();
     renderLog(host, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt);
     host.scrollTop = keepScroll;

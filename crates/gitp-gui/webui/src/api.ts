@@ -300,7 +300,7 @@ function mkRow(
     short_id: id.repeat(7).slice(0, 7),
     summary,
     author_name: "Ada Lovelace",
-    author_email: "ada@example.com",
+    author_email: `${id}@example.com`,
     time,
     parents: parents.map((p) => p.repeat(40).slice(0, 40)),
     lane,
