@@ -1,7 +1,7 @@
 // A collapsible folder tree built from a flat, sorted list of file paths.
 // Used by the commit detail's File Tree tab.
 
-import { el } from "../dom";
+import { chevronIcon, el } from "../dom";
 
 interface Node {
   name: string;
@@ -79,10 +79,8 @@ function renderLevel(host: HTMLElement, node: Node, depth: number, cb: FileTreeC
     } else {
       const collapsed = cb.collapsed.has(child.path);
       // Collapse toggles only when the chevron is clicked, not the whole row.
-      const chevron = el("span", {
-        class: `tree-chevron${collapsed ? "" : " open"}`,
-        text: collapsed ? "▸" : "▾",
-      });
+      const chevron = el("span", { class: `tree-chevron${collapsed ? "" : " open"}` });
+      chevron.append(chevronIcon());
       chevron.addEventListener("click", () => cb.onToggle(child.path));
       const row = el("div", { class: "tree-row tree-folder", title: child.path }, [
         chevron,

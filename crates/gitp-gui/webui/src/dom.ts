@@ -37,3 +37,20 @@ function applyAttrs(node: HTMLElement, attrs: Attrs): void {
 export function clear(node: Element): void {
   node.replaceChildren();
 }
+
+// A rounded down-pointing chevron for collapsible sections/folders. Points down
+// as-is; callers rotate it (via a CSS class) to point right when collapsed.
+export function chevronIcon(): SVGElement {
+  const s = svg("svg", { viewBox: "0 0 16 16", class: "chevron-icon" });
+  s.appendChild(
+    svg("path", {
+      d: "M4 6l4 4 4-4",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": "1.6",
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
+    }),
+  );
+  return s;
+}

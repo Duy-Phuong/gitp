@@ -4,7 +4,7 @@
 // Rendered as a pure function of state + callbacks; main.ts owns the state
 // (filter text, which sections/folders are collapsed) and re-renders on change.
 
-import { clear, el } from "../dom";
+import { chevronIcon, clear, el } from "../dom";
 import type { BranchRef, Refs } from "../types";
 
 export type SidebarView = "history" | "changes";
@@ -113,7 +113,9 @@ function folderRow(key: string, label: string, collapsed: boolean, cb: SidebarCa
 }
 
 function chevron(collapsed: boolean): HTMLElement {
-  return el("span", { class: `sb-chevron${collapsed ? "" : " open"}`, text: collapsed ? "▸" : "▾" });
+  const span = el("span", { class: `sb-chevron${collapsed ? "" : " open"}` });
+  span.append(chevronIcon());
+  return span;
 }
 
 function branchLeaf(

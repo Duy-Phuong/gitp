@@ -98,47 +98,69 @@ function refLabelsAt(id: string): RefLabel[] {
 
 function rebuildCommitRefs(): void {
   const byId = new Map(state.rows.map((r) => [r.id, r]));
-  const labels = new Map<string, RefLabel[]>();
-  const names = new Map<string, Set<string>>(); // per-commit dedup by ref name
+  // Per commit: candidate labels with the distance (in commits) from the ref tip
+  // and a stable tie-break order. Sorted nearest-first so a commit shows the
+  // most-specific branch it belongs to; the current branch only leads on commits
+  // that are near its tip (or that no other branch contains).
+  interface Cand {
+    label: RefLabel;
+    dist: number;
+    order: number;
+  }
+  const cands = new Map<string, Cand[]>();
+  let order = 0;
 
-  const push = (cid: string, label: RefLabel) => {
+  const add = (cid: string, label: RefLabel, dist: number, ord: number) => {
     if (!byId.has(cid)) return;
-    let set = names.get(cid);
-    if (!set) {
-      set = new Set();
-      names.set(cid, set);
-      labels.set(cid, []);
+    const arr = cands.get(cid) ?? [];
+    const existing = arr.find((c) => c.label.name === label.name);
+    if (existing) {
+      if (dist < existing.dist) existing.dist = dist;
+      return;
     }
-    if (set.has(label.name)) return;
-    set.add(label.name);
-    labels.get(cid)!.push(label);
+    arr.push({ label, dist, order: ord });
+    cands.set(cid, arr);
   };
 
-  // Walk a branch's history from its tip over parents, labelling every commit it
-  // contains. Called in priority order so the label ordering per commit is
-  // stable (current branch first).
-  const walk = (tip: string, label: RefLabel) => {
-    const stack = [tip];
-    const seen = new Set<string>();
-    while (stack.length) {
-      const id = stack.pop()!;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const row = byId.get(id);
-      if (!row) continue;
-      push(id, label);
-      for (const p of row.parents) if (!seen.has(p)) stack.push(p);
+  // Breadth-first from a branch tip so every contained commit gets its hop
+  // distance from that tip.
+  const bfs = (tip: string, label: RefLabel) => {
+    if (!byId.has(tip)) return;
+    const ord = order++;
+    const seen = new Set([tip]);
+    let frontier = [tip];
+    let dist = 0;
+    while (frontier.length) {
+      for (const id of frontier) add(id, label, dist, ord);
+      const next: string[] = [];
+      for (const id of frontier) {
+        const row = byId.get(id);
+        if (!row) continue;
+        for (const p of row.parents) {
+          if (byId.has(p) && !seen.has(p)) {
+            seen.add(p);
+            next.push(p);
+          }
+        }
+      }
+      frontier = next;
+      dist++;
     }
   };
 
-  // Branches contain their whole ancestry — current branch first, so it leads on
-  // every commit. Tags and remotes stay at their tip only (less noise).
+  // Non-current branches first so they win ties over the current branch. Tags
+  // and remotes stay at their tip only.
+  for (const b of state.refs.branches) if (!b.is_head) bfs(b.target, { name: b.name, kind: "branch" });
   const head = state.refs.branches.find((b) => b.is_head);
-  if (head) walk(head.target, { name: head.name, kind: "head" });
-  for (const b of state.refs.branches) if (!b.is_head) walk(b.target, { name: b.name, kind: "branch" });
-  for (const t of state.refs.tags) push(t.target, { name: t.name, kind: "tag" });
-  for (const r of state.refs.remotes) push(r.target, { name: r.name, kind: "remote" });
+  if (head) bfs(head.target, { name: head.name, kind: "head" });
+  for (const t of state.refs.tags) add(t.target, { name: t.name, kind: "tag" }, 0, order++);
+  for (const r of state.refs.remotes) add(r.target, { name: r.name, kind: "remote" }, 0, order++);
 
+  const labels = new Map<string, RefLabel[]>();
+  for (const [cid, arr] of cands) {
+    arr.sort((a, b) => a.dist - b.dist || a.order - b.order);
+    labels.set(cid, arr.map((c) => c.label));
+  }
   commitRefs = labels;
 }
 

@@ -472,10 +472,22 @@ body {
   background: var(--bg-elev-2);
 }
 .sb-chevron {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 12px;
   color: var(--text-dim);
-  font-size: 10px;
+  transform: rotate(-90deg);
+  transition: transform 0.12s ease;
+}
+.sb-chevron.open {
+  transform: rotate(0deg);
+}
+/* Shared chevron glyph for collapsible sections/folders. */
+.chevron-icon {
+  width: 12px;
+  height: 12px;
+  display: block;
 }
 .sb-leaf {
   display: flex;
@@ -1088,10 +1100,17 @@ body {
   background: var(--bg-elev-2);
 }
 .tree-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 12px;
   color: var(--text-dim);
-  font-size: 10px;
   cursor: pointer;
+  transform: rotate(-90deg);
+  transition: transform 0.12s ease;
+}
+.tree-chevron.open {
+  transform: rotate(0deg);
 }
 .tree-bullet {
   width: 18px;
