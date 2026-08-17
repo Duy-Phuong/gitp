@@ -13,7 +13,7 @@ use std::sync::Mutex;
 
 use gitp_core::{
     BlameLine, CommitDetail, CommitRow, ConfigEntry, ConfigScope, FileCommit, FileDiff, LogOptions,
-    Refs, Repo, StatusLists,
+    Refs, Repo, ResetMode, StatusLists,
 };
 use serde::Serialize;
 use tauri::State;
@@ -313,6 +313,56 @@ fn set_config_impl(
     with_repo(state, |repo| repo.set_config(scope, &name, &value))
 }
 
+/// Run `f` against the active repo and then invalidate its cached log, for
+/// operations that move HEAD or rewrite history (so the next `get_log_page`
+/// recomputes the walk). Errors if no repository is open.
+fn with_active_repo_invalidating<T>(
+    state: &RepoState,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
+) -> Result<T, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let out = f(&session.repo).map_err(to_message)?;
+    session.log = None;
+    Ok(out)
+}
+
+/// Detach HEAD onto `rev`. Invalidates the cached log because HEAD moves.
+fn checkout_commit_impl(state: &RepoState, rev: String) -> Result<String, String> {
+    with_active_repo_invalidating(state, |repo| repo.checkout_commit(&rev))
+}
+
+/// Create branch `name` at `rev` and check it out. Invalidates the cached log.
+fn create_branch_at_impl(state: &RepoState, name: String, rev: String) -> Result<String, String> {
+    with_active_repo_invalidating(state, |repo| repo.create_branch_at(&name, &rev))
+}
+
+/// Tag `rev` as `name`. HEAD doesn't move, so the log cache is left intact.
+fn create_tag_at_impl(state: &RepoState, name: String, rev: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.create_tag_at(&name, &rev))
+}
+
+/// Cherry-pick `rev` onto the current branch. Invalidates the cached log.
+fn cherry_pick_impl(state: &RepoState, rev: String) -> Result<String, String> {
+    with_active_repo_invalidating(state, |repo| repo.cherry_pick(&rev))
+}
+
+/// Revert `rev` on the current branch. Invalidates the cached log.
+fn revert_impl(state: &RepoState, rev: String) -> Result<String, String> {
+    with_active_repo_invalidating(state, |repo| repo.revert(&rev))
+}
+
+/// Reset the current branch to `rev`. Invalidates the cached log.
+fn reset_impl(state: &RepoState, rev: String, mode: ResetMode) -> Result<String, String> {
+    with_active_repo_invalidating(state, |repo| repo.reset(&rev, mode))
+}
+
+/// Rebase the current branch onto `rev`. Invalidates the cached log.
+fn rebase_onto_impl(state: &RepoState, rev: String) -> Result<String, String> {
+    with_active_repo_invalidating(state, |repo| repo.rebase_onto(&rev))
+}
+
 // --- Tauri command wrappers -------------------------------------------------
 
 #[tauri::command]
@@ -406,6 +456,41 @@ fn create_branch(name: String, state: State<RepoState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn checkout_commit(rev: String, state: State<RepoState>) -> Result<String, String> {
+    checkout_commit_impl(&state, rev)
+}
+
+#[tauri::command]
+fn create_branch_at(name: String, rev: String, state: State<RepoState>) -> Result<String, String> {
+    create_branch_at_impl(&state, name, rev)
+}
+
+#[tauri::command]
+fn create_tag_at(name: String, rev: String, state: State<RepoState>) -> Result<String, String> {
+    create_tag_at_impl(&state, name, rev)
+}
+
+#[tauri::command]
+fn cherry_pick(rev: String, state: State<RepoState>) -> Result<String, String> {
+    cherry_pick_impl(&state, rev)
+}
+
+#[tauri::command]
+fn revert(rev: String, state: State<RepoState>) -> Result<String, String> {
+    revert_impl(&state, rev)
+}
+
+#[tauri::command]
+fn reset(rev: String, mode: ResetMode, state: State<RepoState>) -> Result<String, String> {
+    reset_impl(&state, rev, mode)
+}
+
+#[tauri::command]
+fn rebase_onto(rev: String, state: State<RepoState>) -> Result<String, String> {
+    rebase_onto_impl(&state, rev)
+}
+
+#[tauri::command]
 fn pull(state: State<RepoState>) -> Result<String, String> {
     pull_impl(&state)
 }
@@ -483,6 +568,13 @@ pub fn run() {
             commit_changes,
             checkout_branch,
             create_branch,
+            checkout_commit,
+            create_branch_at,
+            create_tag_at,
+            cherry_pick,
+            revert,
+            reset,
+            rebase_onto,
             pull,
             push,
             stash,

@@ -96,7 +96,7 @@ impl Repo {
     /// credential prompts disabled, so a missing credential fails fast with a
     /// clear message instead of hanging a GUI that has no TTY. On success
     /// returns the trimmed combined output; on failure returns it as an error.
-    fn run_git(&self, args: &[&str]) -> Result<String> {
+    pub(crate) fn run_git(&self, args: &[&str]) -> Result<String> {
         let workdir = self
             .inner
             .workdir()

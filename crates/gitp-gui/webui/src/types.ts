@@ -120,6 +120,9 @@ export interface Workspace {
 
 export type ConfigScope = "Local" | "Global" | "System" | "Other";
 
+// How far a reset moves the branch (mirrors gitp-core's ResetMode).
+export type ResetMode = "Soft" | "Mixed" | "Hard";
+
 export interface ConfigEntry {
   name: string;
   value: string;

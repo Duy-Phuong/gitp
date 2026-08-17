@@ -328,6 +328,26 @@ body {
   float: right;
 }
 
+/* Commit right-click menu: floats at the cursor (fixed), not anchored to a
+   button like the settings/branch menus. */
+.commit-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: auto;
+  min-width: 240px;
+  max-height: 80vh;
+  overflow-y: auto;
+  z-index: 100;
+}
+.menu-item.danger {
+  color: var(--danger, #ff7b72);
+}
+.menu-item.danger:hover {
+  background: var(--danger, #ff7b72);
+  color: white;
+}
+
 /* Repo tabs --------------------------------------------------------------- */
 .repo-tabs {
   display: flex;

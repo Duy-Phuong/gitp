@@ -4,6 +4,7 @@
 
 mod blame;
 mod checkout;
+mod commit_ops;
 mod config;
 mod diff;
 mod error;
@@ -17,6 +18,7 @@ mod status;
 mod tree;
 
 pub use blame::BlameLine;
+pub use commit_ops::ResetMode;
 pub use config::{ConfigEntry, ConfigScope};
 pub use diff::{ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff};
 pub use error::{Error, Result};

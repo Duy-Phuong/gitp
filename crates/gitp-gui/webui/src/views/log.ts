@@ -61,6 +61,7 @@ export function renderLog(
   onSelect: (id: string) => void,
   onNeedMore?: () => void,
   refsAt?: (id: string) => RefLabel[],
+  onContextMenu?: (row: CommitRow, x: number, y: number) => void,
 ): void {
   resizeObserver?.disconnect();
   host.onscroll = null;
@@ -153,6 +154,16 @@ export function renderLog(
         renderWindow();
         onSelect(row.id);
       });
+      if (onContextMenu) {
+        rowEl.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          // Right-click also selects, so the detail pane follows the menu target.
+          currentSelected = row.id;
+          renderWindow();
+          onSelect(row.id);
+          onContextMenu(row, e.clientX, e.clientY);
+        });
+      }
       rowsLayer.append(rowEl);
     }
 

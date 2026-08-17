@@ -12,6 +12,7 @@ import type {
   FileDiff,
   LogPage,
   Refs,
+  ResetMode,
   StatusLists,
   Workspace,
 } from "./types";
@@ -185,6 +186,44 @@ export async function createBranch(name: string): Promise<void> {
     return;
   }
   await invoke<void>("create_branch", { name });
+}
+
+// --- Commit-scoped operations (log right-click menu) -----------------------
+// In preview mode these are no-ops that report they can't run without the shell.
+
+export async function checkoutCommit(rev: string): Promise<string> {
+  if (!isTauri()) return `Checkout ${rev.slice(0, 10)} (preview mock)`;
+  return invoke<string>("checkout_commit", { rev });
+}
+
+export async function createBranchAt(name: string, rev: string): Promise<string> {
+  if (!isTauri()) return `Created ${name} at ${rev.slice(0, 10)} (preview mock)`;
+  return invoke<string>("create_branch_at", { name, rev });
+}
+
+export async function createTagAt(name: string, rev: string): Promise<string> {
+  if (!isTauri()) return `Tagged ${rev.slice(0, 10)} as ${name} (preview mock)`;
+  return invoke<string>("create_tag_at", { name, rev });
+}
+
+export async function cherryPick(rev: string): Promise<string> {
+  if (!isTauri()) return `Cherry-picked ${rev.slice(0, 10)} (preview mock)`;
+  return invoke<string>("cherry_pick", { rev });
+}
+
+export async function revertCommit(rev: string): Promise<string> {
+  if (!isTauri()) return `Reverted ${rev.slice(0, 10)} (preview mock)`;
+  return invoke<string>("revert", { rev });
+}
+
+export async function resetTo(rev: string, mode: ResetMode): Promise<string> {
+  if (!isTauri()) return `Reset --${mode.toLowerCase()} to ${rev.slice(0, 10)} (preview mock)`;
+  return invoke<string>("reset", { rev, mode });
+}
+
+export async function rebaseOnto(rev: string): Promise<string> {
+  if (!isTauri()) return `Rebased onto ${rev.slice(0, 10)} (preview mock)`;
+  return invoke<string>("rebase_onto", { rev });
 }
 
 export async function pull(): Promise<string> {

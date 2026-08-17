@@ -3,10 +3,14 @@ import {
   activateRepo,
   browseForRepo,
   checkoutBranch,
+  checkoutCommit,
+  cherryPick,
   closeRepo,
   commitChanges,
   confirmDialog,
   createBranch,
+  createBranchAt,
+  createTagAt,
   fetchBlame,
   fetchCommitDetail,
   fetchCommitTree,
@@ -21,6 +25,9 @@ import {
   openRepo,
   pull,
   push,
+  rebaseOnto,
+  resetTo,
+  revertCommit,
   saveConfig,
   stage,
   stageAll,
@@ -33,12 +40,13 @@ import { ensureAvatars } from "./avatar";
 import { clear, el } from "./dom";
 import { GRAPH_METRICS } from "./graph";
 import { renderLog, type RefLabel } from "./views/log";
+import { showCommitMenu, closeCommitMenu } from "./views/commit-menu";
 import { setupDetail, type DetailHandle } from "./views/detail";
 import { setupChanges, type ChangesHandle } from "./views/changes";
 import { renderConfig } from "./views/config";
 import { renderSidebar, type SidebarView } from "./views/sidebar";
 import { setupTerminal, type TerminalHandle } from "./views/terminal";
-import type { BranchRef, CommitRow, ConfigScope, Refs, RepoTab, Workspace } from "./types";
+import type { BranchRef, CommitRow, ConfigScope, Refs, RepoTab, ResetMode, Workspace } from "./types";
 
 type View = "history" | "changes" | "config";
 
@@ -291,7 +299,7 @@ async function refreshHistory(): Promise<void> {
   state.selectedId = state.rows[0]?.id ?? null;
   await ensureAvatars(state.rows.map((r) => r.author_email));
   rebuildCommitRefs();
-  renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt);
+  renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu);
   if (state.selectedId) await selectCommit(state.selectedId);
   else detailView?.showEmpty();
 }
@@ -308,7 +316,7 @@ async function loadMoreCommits(): Promise<void> {
     const keepScroll = host.scrollTop;
     await ensureAvatars(state.rows.map((r) => r.author_email));
     rebuildCommitRefs();
-    renderLog(host, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt);
+    renderLog(host, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu);
     host.scrollTop = keepScroll;
     setStatus(`${state.rows.length} / ${state.total} commits loaded`);
   } catch (err) {
@@ -346,6 +354,7 @@ async function handleConfigSave(scope: ConfigScope, name: string, value: string)
 // Switch the main panel between history, local changes, and config; keeps the
 // topbar tabs and sidebar nav highlight in sync, and loads the view's data.
 function showView(view: View): void {
+  closeCommitMenu();
   state.view = view;
   $("#history-view").classList.toggle("hidden", view !== "history");
   $("#changes-view").classList.toggle("hidden", view !== "changes");
@@ -376,7 +385,7 @@ async function loadSidebar(): Promise<void> {
   if (state.view === "history" && state.rows.length) {
     const pane = $("#log-pane");
     const keep = pane.scrollTop;
-    renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt);
+    renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu);
     pane.scrollTop = keep;
   }
 }
@@ -436,7 +445,7 @@ async function jumpToCommit(target: string, label: string): Promise<void> {
   showView("history");
   const idx = state.rows.findIndex((r) => r.id === target);
   state.selectedId = target;
-  renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt);
+  renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu);
   if (idx >= 0) {
     const pane = $("#log-pane");
     pane.scrollTop = Math.max(0, idx * GRAPH_METRICS.rowHeight - pane.clientHeight / 2);
@@ -565,6 +574,118 @@ async function createBranchAction(name: string): Promise<void> {
   } catch (err) {
     setStatus(`Create branch failed: ${String(err)}`);
   }
+}
+
+// --- Commit right-click menu ------------------------------------------------
+
+// Open the context menu for a right-clicked commit, wiring each item to the
+// action that runs the git command and refreshes the view.
+function onCommitContextMenu(row: CommitRow, x: number, y: number): void {
+  const rev = row.id;
+  const short = row.short_id;
+  showCommitMenu(x, y, row, {
+    copySha: () => void copySha(rev),
+    checkoutCommit: () => void checkoutCommitAction(rev, short),
+    newBranch: (name) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev)),
+    newTag: (name) => void tagAction(name, rev, short),
+    cherryPick: () => void runCommitOp(`Cherry-picking ${short}`, () => cherryPick(rev)),
+    revert: () => void runCommitOp(`Reverting ${short}`, () => revertCommit(rev)),
+    reset: (mode) => void resetAction(rev, short, mode),
+    rebaseOnto: () =>
+      void confirmThenRun(
+        `Rebase the current branch onto ${short}? This rewrites commits on the branch.`,
+        `Rebasing onto ${short}`,
+        () => rebaseOnto(rev),
+      ),
+  });
+}
+
+// Run a HEAD-moving commit op, then reload history + sidebar from the new HEAD.
+// Shows git's own output on success (e.g. cherry-pick/revert summaries).
+async function runCommitOp(label: string, op: () => Promise<string>): Promise<void> {
+  setStatus(`${label}…`);
+  try {
+    const out = (await op()).trim();
+    showView("history");
+    await Promise.all([refreshHistory(), loadSidebar()]);
+    setStatus(out || `${label} done.`);
+  } catch (err) {
+    setStatus(`${label} failed: ${String(err)}`);
+  }
+}
+
+// Confirm first (destructive/history-rewriting ops), then run.
+async function confirmThenRun(
+  question: string,
+  label: string,
+  op: () => Promise<string>,
+): Promise<void> {
+  if (!(await confirmDialog(question))) {
+    setStatus(`${label} cancelled.`);
+    return;
+  }
+  await runCommitOp(label, op);
+}
+
+// Detached checkout — warns first if the working tree has uncommitted changes,
+// mirroring the branch checkout flow.
+async function checkoutCommitAction(rev: string, short: string): Promise<void> {
+  if (state.localChanges > 0) {
+    const n = state.localChanges;
+    const ok = await confirmDialog(
+      `You have ${n} uncommitted change${n === 1 ? "" : "s"}.\n\n` +
+        `Check out ${short} (detached HEAD)? Conflicting changes will block it.`,
+    );
+    if (!ok) {
+      setStatus("Checkout cancelled.");
+      return;
+    }
+  }
+  await runCommitOp(`Checking out ${short}`, () => checkoutCommit(rev));
+}
+
+async function resetAction(rev: string, short: string, mode: ResetMode): Promise<void> {
+  const question =
+    mode === "Hard"
+      ? `Hard reset the current branch to ${short}?\n\n` +
+        "Uncommitted changes and any commits after it on this branch will be lost."
+      : `${mode} reset the current branch to ${short}?`;
+  await confirmThenRun(question, `Resetting (${mode.toLowerCase()}) to ${short}`, () =>
+    resetTo(rev, mode),
+  );
+}
+
+// Tagging doesn't move HEAD, so it only refreshes the sidebar (to show the tag)
+// and leaves the current view/scroll alone.
+async function tagAction(name: string, rev: string, short: string): Promise<void> {
+  setStatus(`Tagging ${short} as ${name}…`);
+  try {
+    await createTagAt(name, rev);
+    await loadSidebar();
+    setStatus(`Tagged ${short} as ${name}`);
+  } catch (err) {
+    setStatus(`Tag failed: ${String(err)}`);
+  }
+}
+
+// Copy the full SHA. Uses the async clipboard API, falling back to a hidden
+// textarea for webviews where it's unavailable.
+async function copySha(rev: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(rev);
+  } catch {
+    const ta = el("textarea", { text: rev }) as HTMLTextAreaElement;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.append(ta);
+    ta.select();
+    try {
+      document.execCommand("copy");
+    } finally {
+      ta.remove();
+    }
+  }
+  setStatus(`Copied ${rev.slice(0, 10)} to clipboard`);
 }
 
 // The Branch button's dropdown: pick a local branch to check out, or create a
