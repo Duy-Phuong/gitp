@@ -31,7 +31,7 @@ import {
 } from "./api";
 import { clear, el } from "./dom";
 import { GRAPH_METRICS } from "./graph";
-import { renderLog } from "./views/log";
+import { renderLog, type RefLabel } from "./views/log";
 import { setupDetail, type DetailHandle } from "./views/detail";
 import { setupChanges, type ChangesHandle } from "./views/changes";
 import { renderConfig } from "./views/config";
@@ -84,6 +84,17 @@ function refsAt(id: string): string[] {
   for (const r of state.refs.remotes) if (r.target === id) labels.push(r.name);
   for (const t of state.refs.tags) if (t.target === id) labels.push(t.name);
   return labels;
+}
+
+// Same, but typed by kind for the colored chips shown on log-row hover.
+function refLabelsAt(id: string): RefLabel[] {
+  const out: RefLabel[] = [];
+  for (const b of state.refs.branches) {
+    if (b.target === id) out.push({ name: b.name, kind: b.is_head ? "head" : "branch" });
+  }
+  for (const r of state.refs.remotes) if (r.target === id) out.push({ name: r.name, kind: "remote" });
+  for (const t of state.refs.tags) if (t.target === id) out.push({ name: t.name, kind: "tag" });
+  return out;
 }
 
 const $ = <T extends HTMLElement>(sel: string): T => {
@@ -210,7 +221,7 @@ async function refreshHistory(): Promise<void> {
   state.rows = page.rows;
   state.total = page.total;
   state.selectedId = state.rows[0]?.id ?? null;
-  renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits);
+  renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt);
   if (state.selectedId) await selectCommit(state.selectedId);
   else detailView?.showEmpty();
 }
@@ -225,7 +236,7 @@ async function loadMoreCommits(): Promise<void> {
     state.total = page.total;
     const host = $("#log-pane");
     const keepScroll = host.scrollTop;
-    renderLog(host, state.rows, state.selectedId, selectCommit, loadMoreCommits);
+    renderLog(host, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt);
     host.scrollTop = keepScroll;
     setStatus(`${state.rows.length} / ${state.total} commits loaded`);
   } catch (err) {
@@ -286,8 +297,14 @@ async function loadSidebar(): Promise<void> {
     setStatus(`Failed to load refs: ${String(err)}`);
   }
   renderSidebarNow();
-  // Refs now known — re-render the open commit so its ref chips appear.
+  // Refs now known — re-render the open commit + the log so ref chips appear.
   detailView?.refresh();
+  if (state.view === "history" && state.rows.length) {
+    const pane = $("#log-pane");
+    const keep = pane.scrollTop;
+    renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt);
+    pane.scrollTop = keep;
+  }
 }
 
 // Show the checked-out branch name as a chip in the top bar (hidden when no
@@ -345,7 +362,7 @@ async function jumpToCommit(target: string, label: string): Promise<void> {
   showView("history");
   const idx = state.rows.findIndex((r) => r.id === target);
   state.selectedId = target;
-  renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits);
+  renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt);
   if (idx >= 0) {
     const pane = $("#log-pane");
     pane.scrollTop = Math.max(0, idx * GRAPH_METRICS.rowHeight - pane.clientHeight / 2);

@@ -8,6 +8,12 @@ import { clear, el, svg } from "../dom";
 import { fitLaneWidth, GRAPH_METRICS, layoutGraph } from "../graph";
 import type { CommitRow } from "../types";
 
+// A ref pointing at a commit, shown as a colored chip on hover.
+export interface RefLabel {
+  name: string;
+  kind: "head" | "branch" | "remote" | "tag";
+}
+
 const LANE_COLORS = [
   "#5b8cff",
   "#f0883e",
@@ -20,6 +26,7 @@ const LANE_COLORS = [
 ];
 
 const BUFFER_ROWS = 8;
+const MAX_REF_CHIPS = 3;
 
 function laneColor(color: number): string {
   return LANE_COLORS[color % LANE_COLORS.length];
@@ -50,6 +57,7 @@ export function renderLog(
   selectedId: string | null,
   onSelect: (id: string) => void,
   onNeedMore?: () => void,
+  refsAt?: (id: string) => RefLabel[],
 ): void {
   resizeObserver?.disconnect();
   host.onscroll = null;
@@ -107,8 +115,30 @@ export function renderLog(
       rowEl.style.left = `${layout.width}px`;
       rowEl.style.right = "0";
       rowEl.style.height = `${rowH}px`;
+      rowEl.append(el("span", { class: "commit-summary", text: row.summary }));
+
+      // Ref chips (branch/tag/remote pointing at this commit) — placed after the
+      // summary so the message stays readable, revealed on hover, colored per
+      // kind. Capped so a heavily-tagged commit can't crowd out the row.
+      const refs = refsAt?.(row.id) ?? [];
+      if (refs.length) {
+        const box = el("span", { class: "commit-refs" });
+        for (const r of refs.slice(0, MAX_REF_CHIPS)) {
+          box.append(
+            el("span", {
+              class: `commit-ref ${r.kind}`,
+              text: r.kind === "head" ? `✓ ${r.name}` : r.name,
+              title: r.name,
+            }),
+          );
+        }
+        if (refs.length > MAX_REF_CHIPS) {
+          box.append(el("span", { class: "commit-ref more", text: `+${refs.length - MAX_REF_CHIPS}` }));
+        }
+        rowEl.append(box);
+      }
+
       rowEl.append(
-        el("span", { class: "commit-summary", text: row.summary }),
         el("span", { class: "commit-meta", text: row.author_name }),
         el("span", { class: "commit-meta", text: relativeTime(row.time) }),
         el("span", { class: "commit-sha", text: row.short_id }),
