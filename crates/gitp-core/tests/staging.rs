@@ -54,13 +54,33 @@ fn status_summary_lists_files_without_hunks_and_file_diff_fills_them_in() {
     // file_diff fills in the hunks for a modified file, in the staged direction.
     let staged_diff = repo.file_diff("a.txt", true).unwrap().expect("a.txt staged diff");
     assert!(!staged_diff.hunks.is_empty(), "staged diff has hunks");
-    // An untracked file is reported in the unstaged direction (content-less, same
-    // as status_lists, which doesn't enable show_untracked_content).
+    // An untracked file's content is viewable too (show_untracked_content), so it
+    // has a hunk with its added lines — not a blank diff.
     let untracked = repo.file_diff("new.txt", false).unwrap().expect("new.txt diff");
     assert_eq!(untracked.status, gitp_core::ChangeKind::Untracked);
+    assert!(!untracked.hunks.is_empty(), "untracked file shows its content");
 
     // No change in a direction → None (a.txt has nothing left unstaged).
     assert!(repo.file_diff("a.txt", false).unwrap().is_none(), "a.txt fully staged");
+}
+
+#[test]
+fn file_diff_shows_content_of_untracked_and_deleted_files() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("keep.txt", "a\nb\nc\n", "base");
+    std::fs::write(fx.path().join("new.txt"), "hello\nworld\n").unwrap(); // untracked
+    std::fs::remove_file(fx.path().join("keep.txt")).unwrap(); // deleted
+
+    let repo = Repo::open(fx.path()).unwrap();
+
+    let new = repo.file_diff("new.txt", false).unwrap().expect("untracked diff");
+    assert_eq!(new.status, gitp_core::ChangeKind::Untracked);
+    let added: String = new.hunks.iter().flat_map(|h| &h.lines).map(|l| l.content.as_str()).collect();
+    assert!(added.contains("hello") && added.contains("world"), "new file content shown");
+
+    let del = repo.file_diff("keep.txt", false).unwrap().expect("deleted diff");
+    assert_eq!(del.status, gitp_core::ChangeKind::Deleted);
+    assert!(!del.hunks.is_empty(), "deleted file shows its removed content");
 }
 
 #[test]

@@ -150,7 +150,12 @@ impl Repo {
             self.inner
                 .diff_tree_to_index(head_tree.as_ref(), Some(&index), Some(&mut opts))?
         } else {
-            opts.include_untracked(true).recurse_untracked_dirs(true);
+            // show_untracked_content so a brand-new file's lines appear in the
+            // diff (otherwise an untracked file has zero hunks and shows blank);
+            // this also lets it be staged hunk-by-hunk like any other change.
+            opts.include_untracked(true)
+                .recurse_untracked_dirs(true)
+                .show_untracked_content(true);
             self.inner
                 .diff_index_to_workdir(Some(&index), Some(&mut opts))?
         };
