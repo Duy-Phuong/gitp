@@ -31,6 +31,39 @@ fn status_splits_staged_from_unstaged_and_stage_moves_between_them() {
 }
 
 #[test]
+fn status_summary_lists_files_without_hunks_and_file_diff_fills_them_in() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    std::fs::write(fx.path().join("a.txt"), "two\n").unwrap(); // modify tracked
+    std::fs::write(fx.path().join("new.txt"), "new\n").unwrap(); // untracked
+
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.stage("a.txt").unwrap();
+
+    // Summary carries the same paths/statuses as status_lists, but no hunks.
+    let sum = repo.status_summary().unwrap();
+    let staged: Vec<&str> = sum.staged.iter().map(|f| f.path.as_str()).collect();
+    let unstaged: Vec<&str> = sum.unstaged.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(staged, vec!["a.txt"]);
+    assert!(unstaged.contains(&"new.txt"));
+    assert!(
+        sum.staged.iter().chain(&sum.unstaged).all(|f| f.hunks.is_empty()),
+        "summary omits hunks"
+    );
+
+    // file_diff fills in the hunks for a modified file, in the staged direction.
+    let staged_diff = repo.file_diff("a.txt", true).unwrap().expect("a.txt staged diff");
+    assert!(!staged_diff.hunks.is_empty(), "staged diff has hunks");
+    // An untracked file is reported in the unstaged direction (content-less, same
+    // as status_lists, which doesn't enable show_untracked_content).
+    let untracked = repo.file_diff("new.txt", false).unwrap().expect("new.txt diff");
+    assert_eq!(untracked.status, gitp_core::ChangeKind::Untracked);
+
+    // No change in a direction → None (a.txt has nothing left unstaged).
+    assert!(repo.file_diff("a.txt", false).unwrap().is_none(), "a.txt fully staged");
+}
+
+#[test]
 fn commit_records_staged_changes_and_clears_the_staging_area() {
     let fx = FixtureRepo::init();
     fx.commit_file("a.txt", "one\n", "c1");

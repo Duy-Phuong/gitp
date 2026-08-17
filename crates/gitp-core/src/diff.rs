@@ -167,6 +167,31 @@ pub(crate) fn collect_files(diff: &git2::Diff) -> Result<Vec<FileDiff>> {
     Ok(files)
 }
 
+/// Like `collect_files` but metadata only — path, old_path, and status, with no
+/// hunks. Skips `Patch::from_diff` entirely (which reads and line-diffs every
+/// blob), so it's cheap even with many changed files. Used for the staging file
+/// trees, which don't render hunks; the selected file's hunks are fetched
+/// separately via `file_diff`.
+pub(crate) fn collect_summaries(diff: &git2::Diff) -> Vec<FileDiff> {
+    diff.deltas()
+        .map(|delta| {
+            let new_path = delta.new_file().path().map(path_string);
+            let old_path_raw = delta.old_file().path().map(path_string);
+            let path = new_path
+                .clone()
+                .or_else(|| old_path_raw.clone())
+                .unwrap_or_default();
+            let old_path = old_path_raw.filter(|op| Some(op) != new_path.as_ref());
+            FileDiff {
+                path,
+                old_path,
+                status: delta.status().into(),
+                hunks: Vec::new(),
+            }
+        })
+        .collect()
+}
+
 fn path_string(p: &std::path::Path) -> String {
     p.to_string_lossy().into_owned()
 }

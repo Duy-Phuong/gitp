@@ -94,9 +94,28 @@ export async function fetchLocalChangeCount(): Promise<number> {
   return invoke<number>("get_local_change_count", {});
 }
 
-export async function fetchStatus(): Promise<StatusLists> {
-  if (!isTauri()) return { staged: [...MOCK_STATUS.staged], unstaged: [...MOCK_STATUS.unstaged] };
-  return invoke<StatusLists>("get_status", {});
+// Staging trees: paths + statuses only (no hunks), so refreshing after each
+// stage/unstage stays fast even with many changed files. The selected file's
+// hunks come from fetchFileDiff.
+export async function fetchStatusSummary(): Promise<StatusLists> {
+  if (!isTauri()) {
+    const strip = (f: FileDiff): FileDiff => ({ ...f, hunks: [] });
+    return {
+      staged: MOCK_STATUS.staged.map(strip),
+      unstaged: MOCK_STATUS.unstaged.map(strip),
+    };
+  }
+  return invoke<StatusLists>("get_status_summary", {});
+}
+
+// The full diff (with hunks) for one file, in the staged (HEAD→index) or
+// unstaged (index→worktree) direction. Null when the path has no such change.
+export async function fetchFileDiff(path: string, staged: boolean): Promise<FileDiff | null> {
+  if (!isTauri()) {
+    const list = staged ? MOCK_STATUS.staged : MOCK_STATUS.unstaged;
+    return list.find((f) => f.path === path) ?? null;
+  }
+  return invoke<FileDiff | null>("get_file_diff", { path, staged });
 }
 
 export async function stage(path: string): Promise<void> {

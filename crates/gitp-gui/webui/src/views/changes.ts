@@ -11,14 +11,18 @@ import { renderFileTree } from "./tree";
 type Panel = "unstaged" | "staged";
 
 export interface ChangesCallbacks {
+  // Staging trees: paths + statuses only, no hunks (cheap to refresh).
   fetchStatus: () => Promise<StatusLists>;
+  // The selected file's full diff (with hunks), fetched on demand.
+  fetchFileDiff: (path: string, staged: boolean) => Promise<FileDiff | null>;
   stage: (path: string) => Promise<void>;
   unstage: (path: string) => Promise<void>;
   stageAll: () => Promise<void>;
   unstageAll: () => Promise<void>;
   commit: (subject: string, body: string, amend: boolean) => Promise<string>;
-  // After stage/unstage (refresh the sidebar change count).
-  onChanged: () => void;
+  // After every reload: the number of distinct changed paths, for the sidebar
+  // badge — cheap enough to pass along instead of a separate backend scan.
+  onChanged: (localChangeCount: number) => void;
   // After a successful commit (refresh history + sidebar).
   onCommitted: () => void;
   setStatus: (msg: string) => void;
@@ -29,9 +33,15 @@ export interface ChangesHandle {
 }
 
 export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHandle {
+  // staged/unstaged hold summaries (no hunks); selectedDiff holds the fetched
+  // hunks for the currently selected file only.
   let staged: FileDiff[] = [];
   let unstaged: FileDiff[] = [];
   let selected: { panel: Panel; path: string } | null = null;
+  let selectedDiff: FileDiff | null = null;
+  // Bumped on every diff fetch so a slow response for a since-changed selection
+  // is discarded instead of overwriting the current one.
+  let diffToken = 0;
   const collapsed: Record<Panel, Set<string>> = { unstaged: new Set(), staged: new Set() };
   let subject = "";
   let body = "";
@@ -45,6 +55,26 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     unstaged = s.unstaged;
     resolveSelection();
     render();
+    // Distinct changed paths (a file can be both staged and unstaged).
+    const paths = new Set([...staged, ...unstaged].map((f) => f.path));
+    cb.onChanged(paths.size);
+    await loadSelectedDiff();
+  }
+
+  // Fetch (and render) the hunks for the current selection. No-op to an empty
+  // diff pane when nothing is selected.
+  async function loadSelectedDiff(): Promise<void> {
+    const sel = selected;
+    const token = ++diffToken;
+    if (!sel) {
+      selectedDiff = null;
+      if (diffHost) renderDiffInto(diffHost);
+      return;
+    }
+    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged");
+    if (token !== diffToken) return; // selection moved on; drop this result
+    selectedDiff = file;
+    if (diffHost) renderDiffInto(diffHost);
   }
 
   // Keep the selection valid after files move between panels or disappear.
@@ -55,12 +85,12 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     else selected = null;
   }
 
-  async function run(action: () => Promise<void>, after: () => void): Promise<void> {
+  async function run(action: () => Promise<void>, after?: () => void): Promise<void> {
     if (busy) return;
     busy = true;
     try {
       await action();
-      after();
+      after?.();
       await reload();
     } catch (err) {
       cb.setStatus(String(err));
@@ -88,6 +118,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   // trees, so file rows survive for a native double-click (instant staging).
   function selectFile(panel: Panel, path: string): void {
     selected = { panel, path };
+    selectedDiff = null;
     for (const r of host.querySelectorAll<HTMLElement>(".tree-file.selected")) {
       r.classList.remove("selected");
     }
@@ -100,15 +131,18 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       }
     }
     if (diffHost) renderDiffInto(diffHost);
+    void loadSelectedDiff();
   }
 
   function renderDiffInto(pane: HTMLElement): void {
     clear(pane);
-    const file = selected
-      ? (selected.panel === "unstaged" ? unstaged : staged).find((f) => f.path === selected!.path)
-      : undefined;
-    if (file) pane.append(renderFile(file));
-    else pane.append(el("div", { class: "detail-empty", text: "Select a file to view its changes." }));
+    if (!selected) {
+      pane.append(el("div", { class: "detail-empty", text: "Select a file to view its changes." }));
+    } else if (selectedDiff) {
+      pane.append(renderFile(selectedDiff));
+    } else {
+      pane.append(el("div", { class: "detail-empty", text: "Loading changes…" }));
+    }
   }
 
   function panel(which: Panel, label: string, files: FileDiff[]): HTMLElement {
@@ -123,7 +157,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     }) as HTMLButtonElement;
     allBtn.disabled = files.length === 0;
     allBtn.addEventListener("click", () =>
-      run(which === "unstaged" ? cb.stageAll : cb.unstageAll, cb.onChanged),
+      run(which === "unstaged" ? cb.stageAll : cb.unstageAll),
     );
     head.append(allBtn);
     box.append(head);
@@ -144,7 +178,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         statusOf: (p) => status.get(p) ?? null,
         onFileClick: (p) => selectFile(which, p),
         onFileDblClick: (p) =>
-          run(which === "unstaged" ? () => cb.stage(p) : () => cb.unstage(p), cb.onChanged),
+          run(which === "unstaged" ? () => cb.stage(p) : () => cb.unstage(p)),
         selectedPath: selected?.panel === which ? selected.path : undefined,
       });
     }

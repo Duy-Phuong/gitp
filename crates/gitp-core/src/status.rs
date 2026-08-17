@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 
-use crate::diff::{collect_files, FileDiff};
+use crate::diff::{collect_files, collect_summaries, FileDiff};
 use crate::error::Result;
 use crate::repo::Repo;
 
@@ -80,6 +80,72 @@ impl Repo {
         Ok(StatusLists {
             staged: collect_files(&staged)?,
             unstaged: collect_files(&unstaged)?,
+        })
+    }
+
+    /// The staging area as *summaries* — path, old_path, and status only, no
+    /// hunks. Much cheaper than `status_lists` because it never builds per-file
+    /// patches, so refreshing the trees after each stage/unstage is fast even
+    /// with many changed files. Fetch a file's hunks on demand with `file_diff`.
+    pub fn status_summary(&self) -> Result<StatusLists> {
+        let head_tree = match self.inner.head() {
+            Ok(head) => Some(head.peel_to_tree()?),
+            Err(_) => None,
+        };
+        let mut index = self.inner.index()?;
+        index.read(true)?;
+
+        let mut staged = self.inner.diff_tree_to_index(
+            head_tree.as_ref(),
+            Some(&index),
+            Some(git2::DiffOptions::new().patience(true)),
+        )?;
+        staged.find_similar(Some(&mut git2::DiffFindOptions::new()))?;
+
+        let mut wt_opts = git2::DiffOptions::new();
+        wt_opts
+            .patience(true)
+            .include_untracked(true)
+            .recurse_untracked_dirs(true);
+        let mut unstaged = self
+            .inner
+            .diff_index_to_workdir(Some(&index), Some(&mut wt_opts))?;
+        unstaged.find_similar(Some(&mut git2::DiffFindOptions::new()))?;
+
+        Ok(StatusLists {
+            staged: collect_summaries(&staged),
+            unstaged: collect_summaries(&unstaged),
+        })
+    }
+
+    /// The full diff (with hunks) for a single `path`, either staged
+    /// (HEAD → index) or unstaged (index → working tree). Narrowed with a
+    /// pathspec so only that one file's blobs are read. Returns `None` if the
+    /// path has no changes in that direction.
+    pub fn file_diff(&self, path: &str, staged: bool) -> Result<Option<FileDiff>> {
+        let head_tree = match self.inner.head() {
+            Ok(head) => Some(head.peel_to_tree()?),
+            Err(_) => None,
+        };
+        let mut index = self.inner.index()?;
+        index.read(true)?;
+
+        let mut opts = git2::DiffOptions::new();
+        opts.patience(true).pathspec(path);
+        let diff = if staged {
+            self.inner
+                .diff_tree_to_index(head_tree.as_ref(), Some(&index), Some(&mut opts))?
+        } else {
+            opts.include_untracked(true).recurse_untracked_dirs(true);
+            self.inner
+                .diff_index_to_workdir(Some(&index), Some(&mut opts))?
+        };
+
+        let mut files = collect_files(&diff)?;
+        let idx = files.iter().position(|f| f.path == path);
+        Ok(match idx {
+            Some(i) => Some(files.remove(i)),
+            None => files.into_iter().next(),
         })
     }
 }

@@ -16,10 +16,11 @@ import {
   fetchCommitTree,
   fetchConfig,
   fetchFileHistory,
+  fetchFileDiff,
   fetchLocalChangeCount,
   fetchLogPage,
   fetchRefs,
-  fetchStatus,
+  fetchStatusSummary,
   isTauri,
   listRepos,
   openRepo,
@@ -903,13 +904,19 @@ async function init(): Promise<void> {
     fetchFileHistory,
   });
   changesView = setupChanges($("#changes-pane"), {
-    fetchStatus,
+    fetchStatus: fetchStatusSummary,
+    fetchFileDiff,
     stage,
     unstage,
     stageAll,
     unstageAll,
     commit: commitChanges,
-    onChanged: () => void loadSidebar(),
+    // Staging doesn't change refs or history, so just update the badge — no ref
+    // walk or log rebuild (that's what made each stage/unstage feel slow).
+    onChanged: (count) => {
+      state.localChanges = count;
+      renderSidebarNow();
+    },
     onCommitted: () => {
       void loadSidebar();
       void refreshHistory();

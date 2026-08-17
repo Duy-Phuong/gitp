@@ -202,6 +202,18 @@ fn get_status_impl(state: &RepoState) -> Result<StatusLists, String> {
     with_repo(state, Repo::status_lists)
 }
 
+fn get_status_summary_impl(state: &RepoState) -> Result<StatusLists, String> {
+    with_repo(state, Repo::status_summary)
+}
+
+fn get_file_diff_impl(
+    state: &RepoState,
+    path: String,
+    staged: bool,
+) -> Result<Option<FileDiff>, String> {
+    with_repo(state, |repo| repo.file_diff(&path, staged))
+}
+
 fn stage_impl(state: &RepoState, path: String) -> Result<(), String> {
     with_repo(state, |repo| repo.stage(&path))
 }
@@ -416,6 +428,20 @@ fn get_status(state: State<RepoState>) -> Result<StatusLists, String> {
 }
 
 #[tauri::command]
+fn get_status_summary(state: State<RepoState>) -> Result<StatusLists, String> {
+    get_status_summary_impl(&state)
+}
+
+#[tauri::command]
+fn get_file_diff(
+    path: String,
+    staged: bool,
+    state: State<RepoState>,
+) -> Result<Option<FileDiff>, String> {
+    get_file_diff_impl(&state, path, staged)
+}
+
+#[tauri::command]
 fn stage(path: String, state: State<RepoState>) -> Result<(), String> {
     stage_impl(&state, path)
 }
@@ -561,6 +587,8 @@ pub fn run() {
             get_local_change_count,
             get_working_changes,
             get_status,
+            get_status_summary,
+            get_file_diff,
             stage,
             unstage,
             stage_all,
