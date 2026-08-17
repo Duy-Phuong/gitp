@@ -340,6 +340,12 @@ body {
   overflow-y: auto;
   z-index: 100;
 }
+/* Distinct hover for commit-menu actions: accent tint + accent text, clearer
+   than the subtle row-hover used elsewhere. The danger item keeps its red. */
+.commit-menu .menu-item:hover:not(.danger) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .menu-item.danger {
   color: var(--danger, #ff7b72);
 }
