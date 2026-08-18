@@ -1364,6 +1364,13 @@ async function init(): Promise<void> {
     unstageHunk,
     discardHunk,
     confirm: confirmDialog,
+    fetchHead: async () => {
+      try {
+        return await fetchCommitDetail("HEAD");
+      } catch {
+        return null;
+      }
+    },
     commit: commitChanges,
     // Staging doesn't change refs or history, so just update the badge — no ref
     // walk or log rebuild (that's what made each stage/unstage feel slow).

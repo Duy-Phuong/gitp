@@ -4,7 +4,7 @@
 // state, and the commit fields, reloading from the backend after each mutation.
 
 import { clear, el } from "../dom";
-import type { FileDiff, StatusLists } from "../types";
+import type { CommitDetail, FileDiff, StatusLists } from "../types";
 import { showContextMenu } from "./context-menu";
 import { renderFile, renderSplitDiff } from "./detail";
 import { renderFileTree } from "./tree";
@@ -26,6 +26,9 @@ export interface ChangesCallbacks {
   discardHunk: (path: string, hunkIndex: number) => Promise<void>;
   // Confirm a destructive action (discard); resolves true to proceed.
   confirm: (message: string) => Promise<boolean>;
+  // The current HEAD commit (message + files), for pre-filling an amend and
+  // showing the commit being amended. Null when the branch has no commits.
+  fetchHead: () => Promise<CommitDetail | null>;
   commit: (subject: string, body: string, amend: boolean) => Promise<string>;
   // After every reload: the number of distinct changed paths, for the sidebar
   // badge — cheap enough to pass along instead of a separate backend scan.
@@ -56,6 +59,12 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let subject = "";
   let body = "";
   let amend = false;
+  // When amend is on: the files from HEAD (with hunks), shown in the Staged
+  // panel so the commit being amended is visible. Empty when amend is off.
+  let amendFiles: FileDiff[] = [];
+  // The message we auto-filled from HEAD, so unchecking Amend can clear it only
+  // when the user hasn't edited it.
+  let amendPrefill: { subject: string; body: string } | null = null;
   let busy = false;
   let splitView = false;
   let diffHost: HTMLElement | null = null;
@@ -83,6 +92,16 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       if (diffHost) renderDiffInto(diffHost);
       return;
     }
+    // Amend-only files aren't in the index; their diff is HEAD's cached hunks.
+    if (sel.panel === "staged") {
+      const cached = amendOnly(sel.path);
+      if (cached) {
+        selectedDiff = cached;
+        diffLoaded = true;
+        if (diffHost) renderDiffInto(diffHost);
+        return;
+      }
+    }
     const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged");
     if (token !== diffToken) return; // selection moved on; drop this result
     selectedDiff = file;
@@ -95,6 +114,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     if (!selected) return;
     if (unstaged.some((f) => f.path === selected!.path)) selected = { panel: "unstaged", path: selected.path };
     else if (staged.some((f) => f.path === selected!.path)) selected = { panel: "staged", path: selected.path };
+    else if (amendOnly(selected.path)) selected = { panel: "staged", path: selected.path };
     else selected = null;
   }
 
@@ -118,7 +138,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     const left = el("div", { class: "staging-left" });
     left.append(
       panel("unstaged", "Unstaged", unstaged),
-      panel("staged", "Staged", staged),
+      panel("staged", amend ? "Staged — amending last commit" : "Staged", stagedDisplay()),
       commitBox(),
     );
     diffHost = el("div", { class: "staging-diff" });
@@ -256,8 +276,11 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         },
         statusOf: (p) => status.get(p) ?? null,
         onFileClick: (p) => selectFile(which, p),
-        onFileDblClick: (p) =>
-          run(which === "unstaged" ? () => cb.stage(p) : () => cb.unstage(p)),
+        onFileDblClick: (p) => {
+          // Amend-only rows aren't really staged, so there's nothing to unstage.
+          if (which === "staged" && amendOnly(p)) return;
+          run(which === "unstaged" ? () => cb.stage(p) : () => cb.unstage(p));
+        },
         selectedPath: selected?.panel === which ? selected.path : undefined,
       });
     }
@@ -291,10 +314,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
 
     const amendBox = el("input", { type: "checkbox" }) as HTMLInputElement;
     amendBox.checked = amend;
-    amendBox.addEventListener("change", () => {
-      amend = amendBox.checked;
-      commitBtn.disabled = !canCommit();
-    });
+    amendBox.addEventListener("change", () => void toggleAmend(amendBox.checked));
     const amendLabel = el("label", { class: "commit-amend" }, [amendBox, "Amend"]);
 
     const commitBtn = el("button", { class: "btn commit-btn", text: "Commit" }) as HTMLButtonElement;
@@ -313,6 +333,8 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
           subject = "";
           body = "";
           amend = false;
+          amendFiles = [];
+          amendPrefill = null;
           cb.onCommitted();
         },
       );
@@ -321,6 +343,52 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     const controls = el("div", { class: "commit-controls" }, [amendLabel, commitBtn]);
     box.append(subjectInput, bodyInput, controls);
     return box;
+  }
+
+  // Toggle "Amend last commit": pull in HEAD's message (if the box is empty) and
+  // its files (shown in Staged), or undo both when switching off.
+  async function toggleAmend(on: boolean): Promise<void> {
+    amend = on;
+    if (on) {
+      const head = await cb.fetchHead().catch(() => null);
+      if (head) {
+        amendFiles = head.files;
+        // Only pre-fill an empty box, so we never clobber a typed message.
+        if (subject.trim() === "" && body.trim() === "") {
+          subject = head.summary;
+          const rest = head.message.startsWith(head.summary)
+            ? head.message.slice(head.summary.length)
+            : head.message;
+          body = rest.replace(/^\s+/, "").trimEnd();
+          amendPrefill = { subject, body };
+        }
+      }
+    } else {
+      amendFiles = [];
+      // Clear the message only if it's still exactly what we pre-filled.
+      if (amendPrefill && subject === amendPrefill.subject && body === amendPrefill.body) {
+        subject = "";
+        body = "";
+      }
+      amendPrefill = null;
+    }
+    render();
+  }
+
+  // Files shown in the Staged panel: real staged changes plus, when amending,
+  // HEAD's files that aren't already staged (so the amended commit's full
+  // contents are visible). Real staged entries win on path collisions.
+  function stagedDisplay(): FileDiff[] {
+    if (!amend) return staged;
+    const paths = new Set(staged.map((f) => f.path));
+    return [...staged, ...amendFiles.filter((f) => !paths.has(f.path))];
+  }
+
+  // A staged-panel path that comes only from the amended commit (not actually
+  // staged) — its diff is the cached HEAD hunks, and it can't be unstaged.
+  function amendOnly(path: string): FileDiff | undefined {
+    if (!amend || staged.some((f) => f.path === path)) return undefined;
+    return amendFiles.find((f) => f.path === path);
   }
 
   function canCommit(): boolean {
