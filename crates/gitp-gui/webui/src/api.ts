@@ -300,6 +300,11 @@ export async function pushBranch(name: string): Promise<string> {
   return invoke<string>("push_branch", { name });
 }
 
+export async function fetchBranch(name: string): Promise<string> {
+  if (!isTauri()) return `Fetched updates for ${name} (preview mock)`;
+  return invoke<string>("fetch_branch", { name });
+}
+
 export async function fastForwardBranch(name: string): Promise<string> {
   if (!isTauri()) return `Fast-forwarded ${name} (preview mock)`;
   return invoke<string>("fast_forward_branch", { name });

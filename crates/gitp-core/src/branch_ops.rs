@@ -69,6 +69,17 @@ impl Repo {
         self.run_git(&["push", "origin", name])
     }
 
+    /// Fetch updates for `name`'s remote (its configured remote, or all remotes
+    /// if it tracks none), updating the remote-tracking refs so the branch's
+    /// ahead/behind counts reflect new upstream commits. Doesn't touch the
+    /// working tree or any local branch.
+    pub fn fetch_branch(&self, name: &str) -> Result<String> {
+        match self.run_git(&["config", &format!("branch.{name}.remote")]) {
+            Ok(remote) if !remote.is_empty() => self.run_git(&["fetch", "--prune", &remote]),
+            _ => self.run_git(&["fetch", "--all", "--prune"]),
+        }
+    }
+
     /// Fast-forward branch `name` to its configured upstream. The current branch
     /// is advanced with `merge --ff-only`; another branch is advanced by a local
     /// fetch into it, which git only allows when it's a true fast-forward.
