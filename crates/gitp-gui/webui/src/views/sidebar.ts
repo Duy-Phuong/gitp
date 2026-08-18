@@ -27,6 +27,8 @@ export interface SidebarCallbacks {
   onRefJump: (target: string, label: string) => void;
   // Double-click a branch: check it out.
   onBranchCheckout: (b: BranchRef) => void;
+  // Right-click a branch: open its actions menu at the cursor.
+  onBranchMenu: (b: BranchRef, x: number, y: number) => void;
 }
 
 export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCallbacks): void {
@@ -126,7 +128,7 @@ function branchLeaf(
 ): HTMLElement {
   const row = el("div", {
     class: `sb-leaf${b.is_head ? " head" : ""}${indented ? " indent" : ""}`,
-    title: `${b.name}\nClick: jump to tip · Double-click: checkout`,
+    title: `${b.name}\nClick: jump to tip · Double-click: checkout · Right-click: actions`,
   });
   row.append(el("span", { class: "sb-leaf-label", text: label }));
   const ab: string[] = [];
@@ -143,6 +145,11 @@ function branchLeaf(
   row.addEventListener("dblclick", () => {
     window.clearTimeout(clickTimer);
     cb.onBranchCheckout(b);
+  });
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    window.clearTimeout(clickTimer);
+    cb.onBranchMenu(b, e.clientX, e.clientY);
   });
   return row;
 }

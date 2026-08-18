@@ -1,13 +1,19 @@
 // A small generic floating context menu (right-click). One menu is open at a
 // time; it dismisses on outside-click, Escape, or scroll. Styling reuses the
 // `.commit-menu` classes (fixed position, accent hover).
+//
+// Items are plain actions (`run`), separators, or name prompts: clicking a
+// prompt item swaps the menu in place for a text input + Create button, so
+// "New Branch…", "New Tag…", and "Rename…" collect a value without a dialog.
 
 import { el } from "../dom";
 
 export interface MenuItem {
-  label: string;
+  label?: string;
   danger?: boolean;
-  run: () => void;
+  separator?: boolean;
+  run?: () => void;
+  prompt?: { placeholder: string; value?: string; onSubmit: (value: string) => void };
 }
 
 let openMenu: HTMLElement | null = null;
@@ -31,14 +37,7 @@ export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
   closeContextMenu();
 
   const menu = el("div", { class: "menu commit-menu" });
-  for (const it of items) {
-    const btn = el("button", { class: `menu-item${it.danger ? " danger" : ""}`, text: it.label });
-    btn.addEventListener("click", () => {
-      closeContextMenu();
-      it.run();
-    });
-    menu.append(btn);
-  }
+  renderItems(menu, items);
   document.body.append(menu);
   openMenu = menu;
 
@@ -62,4 +61,60 @@ export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
   document.addEventListener("mousedown", onDocMouseDown, true);
   document.addEventListener("keydown", onKeyDown, true);
   document.addEventListener("scroll", onScroll, true);
+}
+
+function renderItems(menu: HTMLElement, items: MenuItem[]): void {
+  menu.replaceChildren();
+  for (const it of items) {
+    if (it.separator) {
+      menu.append(el("div", { class: "menu-sep" }));
+      continue;
+    }
+    const btn = el("button", {
+      class: `menu-item${it.danger ? " danger" : ""}`,
+      text: it.label ?? "",
+    });
+    btn.addEventListener("click", () => {
+      if (it.prompt) {
+        renderPrompt(menu, items, it.prompt);
+      } else {
+        closeContextMenu();
+        it.run?.();
+      }
+    });
+    menu.append(btn);
+  }
+}
+
+// Swap the menu for a single labelled input; Enter/Create submits, Escape
+// returns to the item list.
+function renderPrompt(
+  menu: HTMLElement,
+  items: MenuItem[],
+  prompt: NonNullable<MenuItem["prompt"]>,
+): void {
+  menu.replaceChildren();
+  const input = el("input", {
+    placeholder: prompt.placeholder,
+    value: prompt.value ?? "",
+    spellcheck: false,
+  }) as HTMLInputElement;
+  const create = el("button", { class: "btn small", text: "OK" });
+  const submit = () => {
+    const value = input.value.trim();
+    if (!value) return;
+    closeContextMenu();
+    prompt.onSubmit(value);
+  };
+  create.addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") submit();
+    else if (e.key === "Escape") renderItems(menu, items);
+  });
+  menu.append(el("div", { class: "menu-newbranch" }, [input, create]));
+  requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+  });
 }

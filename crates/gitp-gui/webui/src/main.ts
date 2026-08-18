@@ -11,7 +11,9 @@ import {
   createBranch,
   createBranchAt,
   createTagAt,
+  deleteBranch,
   discardHunk,
+  fastForwardBranch,
   fetchBlame,
   fetchCommitDetail,
   fetchCommitTree,
@@ -24,10 +26,13 @@ import {
   fetchStatusSummary,
   isTauri,
   listRepos,
+  mergeBranch,
   openRepo,
   pull,
   push,
+  pushBranch,
   rebaseOnto,
+  renameBranch,
   resetTo,
   revertCommit,
   saveConfig,
@@ -45,6 +50,7 @@ import { clear, el } from "./dom";
 import { GRAPH_METRICS } from "./graph";
 import { renderLog, type RefLabel } from "./views/log";
 import { showCommitMenu, closeCommitMenu } from "./views/commit-menu";
+import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { setupDetail, type DetailHandle } from "./views/detail";
 import { setupChanges, type ChangesHandle } from "./views/changes";
 import { renderConfig } from "./views/config";
@@ -431,6 +437,7 @@ function renderSidebarNow(): void {
       },
       onRefJump: (target, label) => void jumpToCommit(target, label),
       onBranchCheckout: (b) => void checkoutBranchAction(b),
+      onBranchMenu: (b, x, y) => onBranchMenu(b, x, y),
     },
   );
 }
@@ -580,6 +587,144 @@ async function createBranchAction(name: string): Promise<void> {
   }
 }
 
+// --- Branch right-click menu ------------------------------------------------
+
+// The short (leaf) name of a branch, for prefilling the Rename input.
+function branchLeafName(name: string): string {
+  const i = name.lastIndexOf("/");
+  return i === -1 ? name : name.slice(i + 1);
+}
+
+// Build and open the actions menu for a right-clicked branch.
+function onBranchMenu(b: BranchRef, x: number, y: number): void {
+  const current = state.refs.head;
+  const items: MenuItem[] = [];
+
+  if (!b.is_head) items.push({ label: "Checkout", run: () => void checkoutBranchAction(b) });
+  items.push({ separator: true });
+  items.push({
+    label: "New Branch here…",
+    prompt: {
+      placeholder: "New branch name",
+      onSubmit: (name) => void runBranchOp(`Creating ${name}`, () => createBranchAt(name, b.target), true),
+    },
+  });
+  items.push({
+    label: "New Tag here…",
+    prompt: {
+      placeholder: "New tag name",
+      onSubmit: (name) => void runBranchOp(`Tagging ${b.name} as ${name}`, () => createTagAt(name, b.target), false),
+    },
+  });
+
+  if (!b.is_head && current) {
+    items.push({ separator: true });
+    items.push({
+      label: `Merge into ${current}`,
+      run: () => void runBranchOp(`Merging ${b.name} into ${current}`, () => mergeBranch(b.name), true),
+    });
+    items.push({
+      label: `Rebase ${current} onto ${b.name}`,
+      run: () =>
+        void confirmThenRun(
+          `Rebase ${current} onto ${b.name}? This rewrites commits on ${current}.`,
+          `Rebasing ${current} onto ${b.name}`,
+          () => rebaseOnto(b.name),
+        ),
+    });
+  }
+
+  items.push({ separator: true });
+  items.push({ label: "Push to origin", run: () => void runBranchOp(`Pushing ${b.name}`, () => pushBranch(b.name), false) });
+  if (b.behind > 0) {
+    items.push({
+      label: "Fast-forward to upstream",
+      run: () => void runBranchOp(`Fast-forwarding ${b.name}`, () => fastForwardBranch(b.name), true),
+    });
+  }
+
+  items.push({ separator: true });
+  items.push({
+    label: "Rename…",
+    prompt: {
+      placeholder: "New name",
+      value: branchLeafName(b.name),
+      onSubmit: (name) => void renameBranchAction(b, name),
+    },
+  });
+  if (!b.is_head) items.push({ label: "Delete…", danger: true, run: () => void deleteBranchAction(b) });
+
+  items.push({ separator: true });
+  items.push({ label: "Copy Branch Name", run: () => void copyText(b.name, `Copied ${b.name}`) });
+
+  showContextMenu(x, y, items);
+}
+
+// Run a branch op, then refresh the sidebar (and history when the op can move
+// HEAD or change commits). Shows git's own output on success.
+async function runBranchOp(label: string, op: () => Promise<string>, refreshLog: boolean): Promise<void> {
+  setStatus(`${label}…`);
+  try {
+    const out = (await op()).trim();
+    if (refreshLog) {
+      showView("history");
+      await Promise.all([refreshHistory(), loadSidebar()]);
+    } else {
+      await loadSidebar();
+    }
+    setStatus(out || `${label} done.`);
+  } catch (err) {
+    setStatus(`${label} failed: ${String(err)}`);
+  }
+}
+
+async function renameBranchAction(b: BranchRef, newName: string): Promise<void> {
+  if (newName === b.name) return;
+  setStatus(`Renaming ${b.name}…`);
+  try {
+    await renameBranch(b.name, newName);
+    await loadSidebar();
+    if (state.view === "history") await refreshHistory();
+    setStatus(`Renamed ${b.name} → ${newName}`);
+  } catch (err) {
+    setStatus(`Rename failed: ${String(err)}`);
+  }
+}
+
+// Safe delete first; if git refuses because the branch isn't merged, offer a
+// force delete behind a second, explicit confirmation.
+async function deleteBranchAction(b: BranchRef): Promise<void> {
+  if (!(await confirmDialog(`Delete branch ${b.name}?`))) {
+    setStatus("Delete cancelled.");
+    return;
+  }
+  try {
+    await deleteBranch(b.name, false);
+    await loadSidebar();
+    setStatus(`Deleted ${b.name}`);
+  } catch (err) {
+    const msg = String(err);
+    if (/not fully merged/i.test(msg)) {
+      const force = await confirmDialog(
+        `${b.name} is not fully merged. Force delete? Unmerged commits will be lost.`,
+      );
+      if (!force) {
+        setStatus("Delete cancelled.");
+        return;
+      }
+      try {
+        await deleteBranch(b.name, true);
+        await loadSidebar();
+        setStatus(`Force-deleted ${b.name}`);
+      } catch (err2) {
+        setStatus(`Delete failed: ${String(err2)}`);
+      }
+    } else {
+      setStatus(`Delete failed: ${msg}`);
+    }
+  }
+}
+
 // --- Commit right-click menu ------------------------------------------------
 
 // Open the context menu for a right-clicked commit, wiring each item to the
@@ -672,13 +817,17 @@ async function tagAction(name: string, rev: string, short: string): Promise<void
   }
 }
 
-// Copy the full SHA. Uses the async clipboard API, falling back to a hidden
-// textarea for webviews where it's unavailable.
 async function copySha(rev: string): Promise<void> {
+  await copyText(rev, `Copied ${rev.slice(0, 10)} to clipboard`);
+}
+
+// Copy `text` to the clipboard. Uses the async clipboard API, falling back to a
+// hidden textarea for webviews where it's unavailable.
+async function copyText(text: string, note: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(rev);
+    await navigator.clipboard.writeText(text);
   } catch {
-    const ta = el("textarea", { text: rev }) as HTMLTextAreaElement;
+    const ta = el("textarea", { text }) as HTMLTextAreaElement;
     ta.style.position = "fixed";
     ta.style.opacity = "0";
     document.body.append(ta);
@@ -689,7 +838,7 @@ async function copySha(rev: string): Promise<void> {
       ta.remove();
     }
   }
-  setStatus(`Copied ${rev.slice(0, 10)} to clipboard`);
+  setStatus(note);
 }
 
 // The Branch button's dropdown: pick a local branch to check out, or create a

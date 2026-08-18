@@ -267,6 +267,42 @@ export async function rebaseOnto(rev: string): Promise<string> {
   return invoke<string>("rebase_onto", { rev });
 }
 
+// --- Branch operations (sidebar right-click menu) --------------------------
+
+export async function renameBranch(oldName: string, newName: string): Promise<string> {
+  if (!isTauri()) {
+    const b = MOCK_REFS.branches.find((x) => x.name === oldName);
+    if (b) b.name = newName;
+    if (MOCK_REFS.head === oldName) MOCK_REFS.head = newName;
+    return `Renamed ${oldName} → ${newName} (preview mock)`;
+  }
+  return invoke<string>("rename_branch", { old: oldName, new: newName });
+}
+
+export async function deleteBranch(name: string, force: boolean): Promise<string> {
+  if (!isTauri()) {
+    const i = MOCK_REFS.branches.findIndex((x) => x.name === name);
+    if (i !== -1) MOCK_REFS.branches.splice(i, 1);
+    return `Deleted ${name} (preview mock)`;
+  }
+  return invoke<string>("delete_branch", { name, force });
+}
+
+export async function mergeBranch(name: string): Promise<string> {
+  if (!isTauri()) return `Merged ${name} (preview mock)`;
+  return invoke<string>("merge_branch", { name });
+}
+
+export async function pushBranch(name: string): Promise<string> {
+  if (!isTauri()) return `Pushed ${name} to origin (preview mock)`;
+  return invoke<string>("push_branch", { name });
+}
+
+export async function fastForwardBranch(name: string): Promise<string> {
+  if (!isTauri()) return `Fast-forwarded ${name} (preview mock)`;
+  return invoke<string>("fast_forward_branch", { name });
+}
+
 export async function pull(): Promise<string> {
   if (!isTauri()) return "Already up to date. (preview mock)";
   return invoke<string>("pull", {});

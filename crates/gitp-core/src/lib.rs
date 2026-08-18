@@ -3,6 +3,7 @@
 //! Frontend-agnostic. No UI, no CLI concerns. Returns plain data structures.
 
 mod blame;
+mod branch_ops;
 mod checkout;
 mod commit_ops;
 mod config;

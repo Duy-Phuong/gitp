@@ -387,6 +387,33 @@ fn rebase_onto_impl(state: &RepoState, rev: String) -> Result<String, String> {
     with_active_repo_invalidating(state, |repo| repo.rebase_onto(&rev))
 }
 
+/// Rename branch `old` to `new`. Invalidates the cached log (HEAD's branch name
+/// may change).
+fn rename_branch_impl(state: &RepoState, old: String, new: String) -> Result<String, String> {
+    with_active_repo_invalidating(state, |repo| repo.rename_branch(&old, &new))
+}
+
+/// Delete branch `name` (force = `-D`). Doesn't move HEAD, so the log stays.
+fn delete_branch_impl(state: &RepoState, name: String, force: bool) -> Result<String, String> {
+    with_repo(state, |repo| repo.delete_branch(&name, force))
+}
+
+/// Merge `name` into the current branch. Invalidates the cached log.
+fn merge_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
+    with_active_repo_invalidating(state, |repo| repo.merge_branch(&name))
+}
+
+/// Push branch `name` to origin. No local change to the log.
+fn push_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.push_branch(&name))
+}
+
+/// Fast-forward `name` to its upstream. Invalidates the cached log (it may be
+/// the current branch).
+fn fast_forward_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
+    with_active_repo_invalidating(state, |repo| repo.fast_forward_branch(&name))
+}
+
 // --- Tauri command wrappers -------------------------------------------------
 
 #[tauri::command]
@@ -544,6 +571,31 @@ fn rebase_onto(rev: String, state: State<RepoState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn rename_branch(old: String, new: String, state: State<RepoState>) -> Result<String, String> {
+    rename_branch_impl(&state, old, new)
+}
+
+#[tauri::command]
+fn delete_branch(name: String, force: bool, state: State<RepoState>) -> Result<String, String> {
+    delete_branch_impl(&state, name, force)
+}
+
+#[tauri::command]
+fn merge_branch(name: String, state: State<RepoState>) -> Result<String, String> {
+    merge_branch_impl(&state, name)
+}
+
+#[tauri::command]
+fn push_branch(name: String, state: State<RepoState>) -> Result<String, String> {
+    push_branch_impl(&state, name)
+}
+
+#[tauri::command]
+fn fast_forward_branch(name: String, state: State<RepoState>) -> Result<String, String> {
+    fast_forward_branch_impl(&state, name)
+}
+
+#[tauri::command]
 fn pull(state: State<RepoState>) -> Result<String, String> {
     pull_impl(&state)
 }
@@ -633,6 +685,11 @@ pub fn run() {
             revert,
             reset,
             rebase_onto,
+            rename_branch,
+            delete_branch,
+            merge_branch,
+            push_branch,
+            fast_forward_branch,
             pull,
             push,
             stash,
