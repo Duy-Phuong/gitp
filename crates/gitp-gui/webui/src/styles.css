@@ -582,6 +582,30 @@ body {
   gap: 6px;
 }
 
+/* Error / message dialog -------------------------------------------------- */
+.message-dialog {
+  width: min(560px, 92vw);
+}
+.message-dialog-title {
+  color: var(--danger, #ff7b72);
+  margin-bottom: 10px;
+}
+.message-dialog-detail {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  max-height: 40vh;
+  overflow: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
 /* Apply-stash popup ------------------------------------------------------- */
 .stash-apply-modal {
   width: 420px;

@@ -68,6 +68,7 @@ import { renderLog, type RefLabel } from "./views/log";
 import { showCommitMenu, closeCommitMenu } from "./views/commit-menu";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { openRebaseModal, type RebaseOptions } from "./views/rebase";
+import { showErrorDialog } from "./views/message-dialog";
 import { openStashApplyModal } from "./views/stash-apply";
 import { setupDetail, type DetailHandle } from "./views/detail";
 import { setupChanges, type ChangesHandle } from "./views/changes";
@@ -908,7 +909,10 @@ async function runRebasePlan(
     if (!state.rebase?.in_progress) setStatus(out || `Rebased ${current} onto ${ontoLabel}.`);
   } catch (err) {
     await refreshRebaseStatus();
-    setStatus(`Rebase failed: ${String(err)}`);
+    // A rebase that can't even start (e.g. uncommitted local changes) reports a
+    // multi-line reason — surface it in a dialog, not just the status line.
+    setStatus("Rebase failed.");
+    showErrorDialog("Rebase failed", String(err));
   }
 }
 
@@ -940,7 +944,8 @@ async function quickRebase(commit: CommitRow, action: RebaseAction, message?: st
     }));
     await runRebasePlan(onto, ontoLabel, steps, { updateRefs: false, backup: false });
   } catch (err) {
-    setStatus(`${action} failed: ${String(err)}`);
+    setStatus(`${action} failed.`);
+    showErrorDialog(`Could not ${action} commit`, String(err));
   }
 }
 
@@ -1010,7 +1015,8 @@ async function rebaseControl(kind: "continue" | "skip" | "abort"): Promise<void>
     if (!state.rebase?.in_progress) setStatus(out || `${label} done.`);
   } catch (err) {
     await refreshRebaseStatus();
-    setStatus(`${label} failed: ${String(err)}`);
+    setStatus(`${label} failed.`);
+    showErrorDialog(`${label} rebase failed`, String(err));
   }
 }
 
