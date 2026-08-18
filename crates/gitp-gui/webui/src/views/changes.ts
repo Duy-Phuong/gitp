@@ -46,6 +46,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let unstaged: FileDiff[] = [];
   let selected: { panel: Panel; path: string } | null = null;
   let selectedDiff: FileDiff | null = null;
+  // Whether the current selection's diff fetch has completed — distinguishes
+  // "still loading" from "loaded but no textual diff" (binary / Git LFS file).
+  let diffLoaded = false;
   // Bumped on every diff fetch so a slow response for a since-changed selection
   // is discarded instead of overwriting the current one.
   let diffToken = 0;
@@ -74,14 +77,16 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   async function loadSelectedDiff(): Promise<void> {
     const sel = selected;
     const token = ++diffToken;
+    selectedDiff = null;
+    diffLoaded = false;
     if (!sel) {
-      selectedDiff = null;
       if (diffHost) renderDiffInto(diffHost);
       return;
     }
     const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged");
     if (token !== diffToken) return; // selection moved on; drop this result
     selectedDiff = file;
+    diffLoaded = true;
     if (diffHost) renderDiffInto(diffHost);
   }
 
@@ -127,6 +132,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   function selectFile(panel: Panel, path: string): void {
     selected = { panel, path };
     selectedDiff = null;
+    diffLoaded = false;
     for (const r of host.querySelectorAll<HTMLElement>(".tree-file.selected")) {
       r.classList.remove("selected");
     }
@@ -148,13 +154,20 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       pane.append(el("div", { class: "detail-empty", text: "Select a file to view its changes." }));
       return;
     }
-    pane.append(diffToolbar());
+    const hasDiff = selectedDiff != null && selectedDiff.hunks.length > 0;
+    if (hasDiff) pane.append(diffToolbar());
     const body = el("div", { class: "staging-diff-body" });
-    if (selectedDiff) {
-      body.append(splitView ? renderSplitDiff(selectedDiff) : renderFile(selectedDiff));
+    if (hasDiff) {
+      body.append(splitView ? renderSplitDiff(selectedDiff!) : renderFile(selectedDiff!));
       attachHunkMenus(body);
-    } else {
+    } else if (!diffLoaded) {
       body.append(el("div", { class: "detail-empty", text: "Loading changes…" }));
+    } else {
+      // Loaded, but no textual diff — a binary or Git-LFS-tracked file. It still
+      // appears in the list and can be staged/committed like any change.
+      body.append(
+        el("div", { class: "detail-empty", text: "No text preview — binary or Git LFS file." }),
+      );
     }
     pane.append(body);
   }

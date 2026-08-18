@@ -120,6 +120,30 @@ impl Repo {
         }
     }
 
+    /// Run `git <args>` and return its raw, untrimmed stdout bytes — for
+    /// machine-readable output like `status --porcelain -z`, where leading
+    /// spaces (the index/worktree status columns) and NUL separators are
+    /// significant and must not be stripped.
+    pub(crate) fn run_git_raw(&self, args: &[&str]) -> Result<Vec<u8>> {
+        let workdir = self
+            .inner
+            .workdir()
+            .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
+        let output = Command::new("git")
+            .current_dir(workdir)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .args(args)
+            .output()
+            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        if output.status.success() {
+            Ok(output.stdout)
+        } else {
+            Err(Error::Message(
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ))
+        }
+    }
+
     /// Like `run_git`, but pipes `input` to the command's stdin — for
     /// `git apply`, which reads a patch from stdin. Returns the trimmed combined
     /// output on success, or it as an error on a non-zero exit.

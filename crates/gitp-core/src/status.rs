@@ -1,8 +1,10 @@
 //! Working-tree status: the uncommitted changes shown by "Local Changes".
 
+use std::collections::HashSet;
+
 use serde::Serialize;
 
-use crate::diff::{collect_files, collect_summaries, FileDiff};
+use crate::diff::{collect_files, ChangeKind, FileDiff};
 use crate::error::Result;
 use crate::repo::Repo;
 
@@ -16,16 +18,16 @@ pub struct StatusLists {
 }
 
 impl Repo {
-    /// Number of paths with uncommitted changes (staged, unstaged, or untracked).
-    /// Cheap — computes status without building patches, for the sidebar badge.
+    /// Number of distinct paths with uncommitted changes, for the sidebar badge.
     pub fn local_change_count(&self) -> Result<usize> {
-        let mut opts = git2::StatusOptions::new();
-        opts.include_untracked(true).recurse_untracked_dirs(true);
-        let statuses = self.inner.statuses(Some(&mut opts))?;
-        Ok(statuses
+        let s = self.status_summary()?;
+        let paths: HashSet<&str> = s
+            .staged
             .iter()
-            .filter(|e| e.status() != git2::Status::CURRENT)
-            .count())
+            .chain(&s.unstaged)
+            .map(|f| f.path.as_str())
+            .collect();
+        Ok(paths.len())
     }
 
     /// All uncommitted changes vs HEAD (staged + unstaged + untracked), as file
@@ -84,38 +86,76 @@ impl Repo {
     }
 
     /// The staging area as *summaries* — path, old_path, and status only, no
-    /// hunks. Much cheaper than `status_lists` because it never builds per-file
-    /// patches, so refreshing the trees after each stage/unstage is fast even
-    /// with many changed files. Fetch a file's hunks on demand with `file_diff`.
+    /// hunks (fetch those on demand with `file_diff`).
+    ///
+    /// Computed from `git status --porcelain` rather than libgit2 diffs, so that
+    /// gitattributes `filter`s — most importantly **Git LFS** — are honored
+    /// exactly as the `git` CLI does. libgit2 can't run external filters, so a
+    /// git2 diff misses every change to an LFS-tracked file; parsing the CLI's
+    /// status keeps the list identical to `git status`.
     pub fn status_summary(&self) -> Result<StatusLists> {
-        let head_tree = match self.inner.head() {
-            Ok(head) => Some(head.peel_to_tree()?),
-            Err(_) => None,
-        };
-        let mut index = self.inner.index()?;
-        index.read(true)?;
+        // -z: NUL-separated records (safe for any path); --untracked-files=all:
+        // list individual new files, not just their directories.
+        let raw = self.run_git_raw(&["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;
+        let text = String::from_utf8_lossy(&raw);
+        let toks: Vec<&str> = text.split('\0').filter(|t| !t.is_empty()).collect();
 
-        let mut staged = self.inner.diff_tree_to_index(
-            head_tree.as_ref(),
-            Some(&index),
-            Some(git2::DiffOptions::new().patience(true)),
-        )?;
-        staged.find_similar(Some(&mut git2::DiffFindOptions::new()))?;
+        let mut staged: Vec<FileDiff> = Vec::new();
+        let mut unstaged: Vec<FileDiff> = Vec::new();
 
-        let mut wt_opts = git2::DiffOptions::new();
-        wt_opts
-            .patience(true)
-            .include_untracked(true)
-            .recurse_untracked_dirs(true);
-        let mut unstaged = self
-            .inner
-            .diff_index_to_workdir(Some(&index), Some(&mut wt_opts))?;
-        unstaged.find_similar(Some(&mut git2::DiffFindOptions::new()))?;
+        let mut i = 0;
+        while i < toks.len() {
+            let rec = toks[i];
+            i += 1;
+            // Each record is "XY<space>path": X = index/staged status,
+            // Y = working-tree/unstaged status.
+            let bytes = rec.as_bytes();
+            if bytes.len() < 3 {
+                continue;
+            }
+            let x = bytes[0] as char;
+            let y = bytes[1] as char;
+            let path = rec[3..].to_string();
 
-        Ok(StatusLists {
-            staged: collect_summaries(&staged),
-            unstaged: collect_summaries(&unstaged),
-        })
+            // Renames/copies carry the original path as the next NUL record.
+            let mut old_path = None;
+            if matches!(x, 'R' | 'C') || matches!(y, 'R' | 'C') {
+                if i < toks.len() {
+                    old_path = Some(toks[i].to_string());
+                    i += 1;
+                }
+            }
+
+            // Untracked ("??") is a single unstaged entry.
+            if x == '?' && y == '?' {
+                unstaged.push(FileDiff {
+                    path,
+                    old_path: None,
+                    status: ChangeKind::Untracked,
+                    hunks: Vec::new(),
+                });
+                continue;
+            }
+
+            if let Some(status) = kind_from_code(x) {
+                staged.push(FileDiff {
+                    path: path.clone(),
+                    old_path: old_path.clone(),
+                    status,
+                    hunks: Vec::new(),
+                });
+            }
+            if let Some(status) = kind_from_code(y) {
+                unstaged.push(FileDiff {
+                    path,
+                    old_path,
+                    status,
+                    hunks: Vec::new(),
+                });
+            }
+        }
+
+        Ok(StatusLists { staged, unstaged })
     }
 
     /// The full diff (with hunks) for a single `path`, either staged
@@ -160,5 +200,19 @@ impl Repo {
                 .diff_index_to_workdir(Some(&index), Some(&mut opts))?
         };
         Ok(diff)
+    }
+}
+
+/// Map a `git status --porcelain` status column (X = staged, Y = unstaged) to a
+/// `ChangeKind`. Returns `None` for a blank column (no change on that side);
+/// untracked (`?`) and ignored (`!`) are handled by the caller.
+fn kind_from_code(code: char) -> Option<ChangeKind> {
+    match code {
+        'M' | 'T' | 'U' => Some(ChangeKind::Modified),
+        'A' => Some(ChangeKind::Added),
+        'D' => Some(ChangeKind::Deleted),
+        'R' => Some(ChangeKind::Renamed),
+        'C' => Some(ChangeKind::Copied),
+        _ => None,
     }
 }
