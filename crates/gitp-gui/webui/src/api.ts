@@ -11,6 +11,8 @@ import type {
   FileCommit,
   FileDiff,
   LogPage,
+  RebaseCommit,
+  RebaseStep,
   Refs,
   ResetMode,
   StatusLists,
@@ -301,6 +303,37 @@ export async function pushBranch(name: string): Promise<string> {
 export async function fastForwardBranch(name: string): Promise<string> {
   if (!isTauri()) return `Fast-forwarded ${name} (preview mock)`;
   return invoke<string>("fast_forward_branch", { name });
+}
+
+export async function setUpstream(branch: string, upstream: string): Promise<string> {
+  if (!isTauri()) return `${branch} now tracks ${upstream} (preview mock)`;
+  return invoke<string>("set_upstream", { branch, upstream });
+}
+
+export async function unsetUpstream(branch: string): Promise<string> {
+  if (!isTauri()) return `${branch} no longer tracks an upstream (preview mock)`;
+  return invoke<string>("unset_upstream", { branch });
+}
+
+export async function createPullRequest(branch: string): Promise<string> {
+  if (!isTauri()) return `https://example.com/compare/${branch} (preview mock)`;
+  return invoke<string>("create_pull_request", { branch });
+}
+
+export async function fetchRebaseTodo(onto: string): Promise<RebaseCommit[]> {
+  if (!isTauri()) {
+    return [
+      { sha: "1".repeat(40), short_sha: "1111111", subject: "feat: add widget" },
+      { sha: "2".repeat(40), short_sha: "2222222", subject: "fix: typo in widget" },
+      { sha: "3".repeat(40), short_sha: "3333333", subject: "refactor: tidy widget" },
+    ];
+  }
+  return invoke<RebaseCommit[]>("get_rebase_todo", { onto });
+}
+
+export async function interactiveRebase(onto: string, steps: RebaseStep[]): Promise<string> {
+  if (!isTauri()) return `Rebased onto ${onto} with ${steps.length} step(s) (preview mock)`;
+  return invoke<string>("interactive_rebase", { onto, steps });
 }
 
 export async function pull(): Promise<string> {

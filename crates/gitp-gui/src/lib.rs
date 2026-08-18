@@ -13,7 +13,7 @@ use std::sync::Mutex;
 
 use gitp_core::{
     BlameLine, CommitDetail, CommitRow, ConfigEntry, ConfigScope, FileCommit, FileDiff, LogOptions,
-    Refs, Repo, ResetMode, StatusLists,
+    RebaseCommit, RebaseStep, Refs, Repo, ResetMode, StatusLists,
 };
 use serde::Serialize;
 use tauri::State;
@@ -414,6 +414,51 @@ fn fast_forward_branch_impl(state: &RepoState, name: String) -> Result<String, S
     with_active_repo_invalidating(state, |repo| repo.fast_forward_branch(&name))
 }
 
+/// Set `branch`'s upstream. No commit change, so the log stays.
+fn set_upstream_impl(state: &RepoState, branch: String, upstream: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.set_upstream(&branch, &upstream))
+}
+
+/// Clear `branch`'s upstream.
+fn unset_upstream_impl(state: &RepoState, branch: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.unset_upstream(&branch))
+}
+
+/// Compute the pull/merge-request URL for `branch` and open it in the default
+/// browser. Returns the URL for display.
+fn create_pull_request_impl(state: &RepoState, branch: String) -> Result<String, String> {
+    let url = with_repo(state, |repo| repo.pull_request_url(&branch))?;
+    open_in_browser(&url).map_err(|e| e.to_string())?;
+    Ok(url)
+}
+
+/// The commits that a rebase onto `onto` would replay, for the editor UI.
+fn get_rebase_todo_impl(state: &RepoState, onto: String) -> Result<Vec<RebaseCommit>, String> {
+    with_repo(state, |repo| repo.rebase_todo(&onto))
+}
+
+/// Run an interactive rebase onto `onto` following `steps`. Invalidates the log.
+fn interactive_rebase_impl(
+    state: &RepoState,
+    onto: String,
+    steps: Vec<RebaseStep>,
+) -> Result<String, String> {
+    with_active_repo_invalidating(state, |repo| repo.interactive_rebase(&onto, &steps))
+}
+
+/// Open `url` in the OS default browser.
+fn open_in_browser(url: &str) -> std::io::Result<()> {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program).arg(url).spawn()?;
+    Ok(())
+}
+
 // --- Tauri command wrappers -------------------------------------------------
 
 #[tauri::command]
@@ -596,6 +641,35 @@ fn fast_forward_branch(name: String, state: State<RepoState>) -> Result<String, 
 }
 
 #[tauri::command]
+fn set_upstream(branch: String, upstream: String, state: State<RepoState>) -> Result<String, String> {
+    set_upstream_impl(&state, branch, upstream)
+}
+
+#[tauri::command]
+fn unset_upstream(branch: String, state: State<RepoState>) -> Result<String, String> {
+    unset_upstream_impl(&state, branch)
+}
+
+#[tauri::command]
+fn create_pull_request(branch: String, state: State<RepoState>) -> Result<String, String> {
+    create_pull_request_impl(&state, branch)
+}
+
+#[tauri::command]
+fn get_rebase_todo(onto: String, state: State<RepoState>) -> Result<Vec<RebaseCommit>, String> {
+    get_rebase_todo_impl(&state, onto)
+}
+
+#[tauri::command]
+fn interactive_rebase(
+    onto: String,
+    steps: Vec<RebaseStep>,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    interactive_rebase_impl(&state, onto, steps)
+}
+
+#[tauri::command]
 fn pull(state: State<RepoState>) -> Result<String, String> {
     pull_impl(&state)
 }
@@ -690,6 +764,11 @@ pub fn run() {
             merge_branch,
             push_branch,
             fast_forward_branch,
+            set_upstream,
+            unset_upstream,
+            create_pull_request,
+            get_rebase_todo,
+            interactive_rebase,
             pull,
             push,
             stash,

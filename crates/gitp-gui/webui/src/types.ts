@@ -123,6 +123,21 @@ export type ConfigScope = "Local" | "Global" | "System" | "Other";
 // How far a reset moves the branch (mirrors gitp-core's ResetMode).
 export type ResetMode = "Soft" | "Mixed" | "Hard";
 
+// A commit in an interactive-rebase plan.
+export interface RebaseCommit {
+  sha: string;
+  short_sha: string;
+  subject: string;
+}
+
+export type RebaseAction = "pick" | "reword" | "squash" | "drop";
+
+export interface RebaseStep {
+  sha: string;
+  action: RebaseAction;
+  message: string | null;
+}
+
 export interface ConfigEntry {
   name: string;
   value: string;

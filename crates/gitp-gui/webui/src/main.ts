@@ -10,6 +10,7 @@ import {
   confirmDialog,
   createBranch,
   createBranchAt,
+  createPullRequest,
   createTagAt,
   deleteBranch,
   discardHunk,
@@ -22,8 +23,10 @@ import {
   fetchFileDiff,
   fetchLocalChangeCount,
   fetchLogPage,
+  fetchRebaseTodo,
   fetchRefs,
   fetchStatusSummary,
+  interactiveRebase,
   isTauri,
   listRepos,
   mergeBranch,
@@ -36,6 +39,8 @@ import {
   resetTo,
   revertCommit,
   saveConfig,
+  setUpstream,
+  unsetUpstream,
   stage,
   stageAll,
   stageHunk,
@@ -51,6 +56,7 @@ import { GRAPH_METRICS } from "./graph";
 import { renderLog, type RefLabel } from "./views/log";
 import { showCommitMenu, closeCommitMenu } from "./views/commit-menu";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
+import { openRebaseModal } from "./views/rebase";
 import { setupDetail, type DetailHandle } from "./views/detail";
 import { setupChanges, type ChangesHandle } from "./views/changes";
 import { renderConfig } from "./views/config";
@@ -632,6 +638,10 @@ function onBranchMenu(b: BranchRef, x: number, y: number): void {
           () => rebaseOnto(b.name),
         ),
     });
+    items.push({
+      label: `Interactively Rebase ${current} onto ${b.name}…`,
+      run: () => void openInteractiveRebase(b),
+    });
   }
 
   items.push({ separator: true });
@@ -642,6 +652,17 @@ function onBranchMenu(b: BranchRef, x: number, y: number): void {
       run: () => void runBranchOp(`Fast-forwarding ${b.name}`, () => fastForwardBranch(b.name), true),
     });
   }
+  items.push({ label: "Create Pull Request on origin", run: () => void createPullRequestAction(b) });
+
+  items.push({ separator: true });
+  items.push({
+    label: "Set Upstream…",
+    prompt: {
+      placeholder: "Upstream (e.g. origin/main)",
+      onSubmit: (up) => void runBranchOp(`Setting upstream of ${b.name}`, () => setUpstream(b.name, up), false),
+    },
+  });
+  items.push({ label: "Unset Upstream", run: () => void runBranchOp(`Unsetting upstream of ${b.name}`, () => unsetUpstream(b.name), false) });
 
   items.push({ separator: true });
   items.push({
@@ -722,6 +743,46 @@ async function deleteBranchAction(b: BranchRef): Promise<void> {
     } else {
       setStatus(`Delete failed: ${msg}`);
     }
+  }
+}
+
+// Open the branch's pull-request page in the browser (URL derived from origin).
+async function createPullRequestAction(b: BranchRef): Promise<void> {
+  setStatus(`Opening pull request for ${b.name}…`);
+  try {
+    const url = await createPullRequest(b.name);
+    setStatus(`Opened pull request page: ${url}`);
+  } catch (err) {
+    setStatus(`Create pull request failed: ${String(err)}`);
+  }
+}
+
+// Load the commits that would be replayed, then open the interactive-rebase
+// editor. Runs the resulting plan against the current branch.
+async function openInteractiveRebase(b: BranchRef): Promise<void> {
+  const current = state.refs.head ?? "HEAD";
+  setStatus(`Preparing rebase of ${current} onto ${b.name}…`);
+  try {
+    const commits = await fetchRebaseTodo(b.name);
+    if (commits.length === 0) {
+      setStatus(`Nothing to rebase — ${current} has no commits ahead of ${b.name}.`);
+      return;
+    }
+    openRebaseModal(b.name, current, commits, (steps) => {
+      void (async () => {
+        setStatus(`Rebasing ${current} onto ${b.name}…`);
+        try {
+          const out = (await interactiveRebase(b.name, steps)).trim();
+          showView("history");
+          await Promise.all([refreshHistory(), loadSidebar()]);
+          setStatus(out || `Rebased ${current} onto ${b.name}.`);
+        } catch (err) {
+          setStatus(`Rebase failed: ${String(err)}`);
+        }
+      })();
+    });
+  } catch (err) {
+    setStatus(`Rebase preparation failed: ${String(err)}`);
   }
 }
 
