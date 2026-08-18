@@ -58,6 +58,30 @@ fn working_changes_reports_modified_and_untracked_files() {
 }
 
 #[test]
+fn checkout_is_blocked_when_local_changes_would_be_overwritten() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let c1 = fx.repo.head().unwrap().peel_to_commit().unwrap();
+    fx.repo.branch("other", &c1, false).unwrap();
+    fx.commit_file("a.txt", "two\n", "c2"); // master diverges from `other`
+
+    // An uncommitted edit that conflicts with switching to `other`.
+    std::fs::write(fx.path().join("a.txt"), "precious edits\n").unwrap();
+
+    let repo = Repo::open(fx.path()).unwrap();
+    let err = repo.checkout_branch("other").unwrap_err().to_string();
+    assert!(err.contains("Can't switch"), "actionable message, got: {err}");
+
+    // Blocked cleanly: HEAD didn't move and the edit is intact (no data loss).
+    assert_eq!(repo.refs().unwrap().head.as_deref(), Some("master"), "still on master");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "precious edits\n",
+        "local changes preserved"
+    );
+}
+
+#[test]
 fn checkout_branch_moves_head_and_updates_the_worktree() {
     let fx = FixtureRepo::init();
     fx.commit_file("a.txt", "one\n", "c1");

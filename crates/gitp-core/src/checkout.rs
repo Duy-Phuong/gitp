@@ -1,18 +1,30 @@
 //! Branch checkout — the first operation that mutates the working tree.
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::repo::Repo;
 
 impl Repo {
     /// Check out `name` (a branch or any revision), updating the working tree and
-    /// HEAD. A *safe* checkout: it errors rather than clobbering uncommitted local
-    /// modifications, so a dirty tree surfaces as an error instead of data loss.
+    /// HEAD. A *safe* checkout: it refuses rather than clobbering uncommitted
+    /// local modifications. When switching would overwrite conflicting changes,
+    /// nothing is touched — HEAD stays put and the working tree is preserved —
+    /// and a clear, actionable error is returned instead of git2's cryptic one.
     pub fn checkout_branch(&self, name: &str) -> Result<()> {
         let (object, reference) = self.inner.revparse_ext(name)?;
 
         let mut checkout = git2::build::CheckoutBuilder::new();
         checkout.safe();
-        self.inner.checkout_tree(&object, Some(&mut checkout))?;
+        if let Err(e) = self.inner.checkout_tree(&object, Some(&mut checkout)) {
+            // A safe checkout aborts (touching nothing) when local changes would
+            // be overwritten. Turn that into a message that says what to do.
+            if e.code() == git2::ErrorCode::Conflict {
+                return Err(Error::Message(format!(
+                    "Can't switch to {name}: you have uncommitted changes that would be \
+                     overwritten. Commit or stash them first — nothing was changed."
+                )));
+            }
+            return Err(e.into());
+        }
 
         // Point HEAD at the branch ref when there is one; otherwise detach.
         match reference.as_ref().and_then(git2::Reference::name) {
