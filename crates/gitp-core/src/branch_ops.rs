@@ -80,6 +80,16 @@ impl Repo {
         }
     }
 
+    /// Fetch `name`'s remote and then advance the local branch to its upstream —
+    /// i.e. fetch + fast-forward. Only advances when it's a true fast-forward
+    /// (no divergence), so no merge commit is ever created and nothing is lost;
+    /// a diverged branch surfaces git's fast-forward error to resolve manually.
+    pub fn fetch_and_update_branch(&self, name: &str) -> Result<String> {
+        let fetched = self.fetch_branch(name)?;
+        let updated = self.fast_forward_branch(name)?;
+        Ok(format!("{fetched}\n{updated}").trim().to_string())
+    }
+
     /// Fast-forward branch `name` to its configured upstream. The current branch
     /// is advanced with `merge --ff-only`; another branch is advanced by a local
     /// fetch into it, which git only allows when it's a true fast-forward.

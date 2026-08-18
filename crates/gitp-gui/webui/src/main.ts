@@ -15,6 +15,7 @@ import {
   deleteBranch,
   discardHunk,
   fastForwardBranch,
+  fetchAndUpdateBranch,
   fetchBlame,
   fetchBranch,
   fetchCommitDetail,
@@ -647,6 +648,10 @@ function onBranchMenu(b: BranchRef, x: number, y: number): void {
 
   items.push({ separator: true });
   items.push({ label: "Fetch", run: () => void runBranchOp(`Fetching updates for ${b.name}`, () => fetchBranch(b.name), false) });
+  items.push({
+    label: "Fetch and Update (fast-forward)",
+    run: () => void runBranchOp(`Fetching and updating ${b.name}`, () => fetchAndUpdateBranch(b.name), true),
+  });
   items.push({ label: "Push to origin", run: () => void runBranchOp(`Pushing ${b.name}`, () => pushBranch(b.name), false) });
   if (b.behind > 0) {
     items.push({

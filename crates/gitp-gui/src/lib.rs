@@ -414,6 +414,12 @@ fn fetch_branch_impl(state: &RepoState, name: String) -> Result<String, String> 
     with_repo(state, |repo| repo.fetch_branch(&name))
 }
 
+/// Fetch and fast-forward `name`. Invalidates the cached log because the branch
+/// (possibly the current one) advances.
+fn fetch_and_update_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
+    with_active_repo_invalidating(state, |repo| repo.fetch_and_update_branch(&name))
+}
+
 /// Fast-forward `name` to its upstream. Invalidates the cached log (it may be
 /// the current branch).
 fn fast_forward_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
@@ -647,6 +653,11 @@ fn fetch_branch(name: String, state: State<RepoState>) -> Result<String, String>
 }
 
 #[tauri::command]
+fn fetch_and_update_branch(name: String, state: State<RepoState>) -> Result<String, String> {
+    fetch_and_update_branch_impl(&state, name)
+}
+
+#[tauri::command]
 fn fast_forward_branch(name: String, state: State<RepoState>) -> Result<String, String> {
     fast_forward_branch_impl(&state, name)
 }
@@ -775,6 +786,7 @@ pub fn run() {
             merge_branch,
             push_branch,
             fetch_branch,
+            fetch_and_update_branch,
             fast_forward_branch,
             set_upstream,
             unset_upstream,
