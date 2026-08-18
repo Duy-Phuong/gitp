@@ -5,7 +5,7 @@
 // full geometry is computed once (cheap math); only rendering is windowed.
 
 import { avatarUrl } from "../avatar";
-import { clear, el, svg } from "../dom";
+import { clear, el, svg, tagIcon } from "../dom";
 import { fitLaneWidth, GRAPH_METRICS, layoutGraph } from "../graph";
 import type { CommitRow } from "../types";
 
@@ -124,19 +124,16 @@ export function renderLog(
       rowEl.append(el("span", { class: "commit-summary", text: row.summary }));
 
       // Ref chips (branch/tag/remote pointing at this commit) — placed after the
-      // summary so the message stays readable, revealed on hover, colored per
-      // kind. Capped so a heavily-tagged commit can't crowd out the row.
+      // summary, always shown, colored per kind. Tags carry a tag glyph. Capped
+      // so a heavily-tagged commit can't crowd out the row.
       const refs = refsAt?.(row.id) ?? [];
       if (refs.length) {
         const box = el("span", { class: "commit-refs" });
         for (const r of refs.slice(0, MAX_REF_CHIPS)) {
-          box.append(
-            el("span", {
-              class: `commit-ref ${r.kind}`,
-              text: r.kind === "head" ? `✓ ${r.name}` : r.name,
-              title: r.name,
-            }),
-          );
+          const chip = el("span", { class: `commit-ref ${r.kind}`, title: r.name });
+          if (r.kind === "tag") chip.append(tagIcon());
+          chip.append(el("span", { class: "commit-ref-name", text: r.kind === "head" ? `✓ ${r.name}` : r.name }));
+          box.append(chip);
         }
         if (refs.length > MAX_REF_CHIPS) {
           box.append(el("span", { class: "commit-ref more", text: `+${refs.length - MAX_REF_CHIPS}` }));

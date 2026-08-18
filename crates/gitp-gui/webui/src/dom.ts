@@ -54,3 +54,20 @@ export function chevronIcon(): SVGElement {
   );
   return s;
 }
+
+// A small tag/label glyph, colored via `currentColor` so it inherits the chip's
+// text color. Used on tag ref chips in the commit log.
+export function tagIcon(): SVGElement {
+  const s = svg("svg", { viewBox: "0 0 16 16", class: "tag-icon" });
+  s.appendChild(
+    svg("path", {
+      d: "M7.6 1.8H2.6a.8.8 0 0 0-.8.8v5a.8.8 0 0 0 .24.57l6 6a.8.8 0 0 0 1.13 0l5-5a.8.8 0 0 0 0-1.13l-6-6a.8.8 0 0 0-.57-.24Z",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": "1.2",
+      "stroke-linejoin": "round",
+    }),
+  );
+  s.appendChild(svg("circle", { cx: "5", cy: "5", r: "1", fill: "currentColor" }));
+  return s;
+}
