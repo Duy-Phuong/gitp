@@ -9,6 +9,8 @@ import { clear, el } from "../dom";
 import type { CommitRow, ResetMode } from "../types";
 
 export interface CommitMenuHandlers {
+  // Name of the current branch, for the "Rebase '<branch>' to Here" label.
+  currentBranch: string;
   copySha: () => void;
   checkoutCommit: () => void;
   newBranch: (name: string) => void;
@@ -16,7 +18,14 @@ export interface CommitMenuHandlers {
   cherryPick: () => void;
   revert: () => void;
   reset: (mode: ResetMode) => void;
-  rebaseOnto: () => void;
+  // Open the interactive-rebase editor with this commit and everything after it.
+  rebaseToHere: () => void;
+  // One-commit quick actions applied to this commit alone.
+  rewordCommit: (message: string) => void;
+  editCommit: () => void;
+  squashIntoParent: () => void;
+  fixupIntoParent: () => void;
+  dropCommit: () => void;
 }
 
 // The one open menu, if any, plus the listeners that dismiss it.
@@ -107,7 +116,7 @@ function buildRoot(menu: HTMLElement, row: CommitRow, h: CommitMenuHandlers): vo
     sep(),
     item("Cherry-pick Commit", h.cherryPick),
     item("Revert Commit", h.revert),
-    item("Rebase current branch onto here", h.rebaseOnto),
+    submenuItem("Interactive Rebase ▸", () => buildRebaseSubmenu(menu, row, h)),
     sep(),
     // Reset is destructive, so the three modes stay spelled out inline rather
     // than hidden behind a submenu, and hard-reset is flagged.
@@ -120,6 +129,25 @@ function buildRoot(menu: HTMLElement, row: CommitRow, h: CommitMenuHandlers): vo
   );
 }
 
+// Swap the menu for the interactive-rebase actions: open the full editor "to
+// here", or apply a one-commit quick action. "‹ Back" returns to the root.
+function buildRebaseSubmenu(menu: HTMLElement, row: CommitRow, h: CommitMenuHandlers): void {
+  clear(menu);
+  menu.append(
+    item(`Interactively Rebase '${h.currentBranch}' to Here…`, h.rebaseToHere),
+    el("div", { class: "menu-label", text: "Quick Actions" }),
+    submenuItem("Reword Message…", () =>
+      promptName(menu, row, h, "New commit message", h.rewordCommit, row.summary),
+    ),
+    item("Edit (stop for amending)", h.editCommit),
+    item("Squash into Parent", h.squashIntoParent),
+    item("Fixup into Parent", h.fixupIntoParent),
+    item("Drop", h.dropCommit, true),
+    sep(),
+    submenuItem("‹ Back", () => buildRoot(menu, row, h)),
+  );
+}
+
 // Swap the whole menu for a single name input with a Create button; Enter
 // submits, Escape returns to the root menu.
 function promptName(
@@ -128,10 +156,11 @@ function promptName(
   handlers: CommitMenuHandlers,
   placeholder: string,
   onSubmit: (name: string) => void,
+  value = "",
 ): void {
   clear(menu);
-  const input = el("input", { placeholder, spellcheck: false }) as HTMLInputElement;
-  const create = el("button", { class: "btn small", text: "Create" });
+  const input = el("input", { placeholder, value, spellcheck: false }) as HTMLInputElement;
+  const create = el("button", { class: "btn small", text: "OK" });
   const submit = () => {
     const name = input.value.trim();
     if (!name) return;
@@ -145,5 +174,8 @@ function promptName(
     else if (e.key === "Escape") buildRoot(menu, row, handlers);
   });
   menu.append(el("div", { class: "menu-newbranch" }, [input, create]));
-  requestAnimationFrame(() => input.focus());
+  requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+  });
 }

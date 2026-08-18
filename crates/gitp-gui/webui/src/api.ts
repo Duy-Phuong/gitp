@@ -12,6 +12,7 @@ import type {
   FileDiff,
   LogPage,
   RebaseCommit,
+  RebaseStatus,
   RebaseStep,
   Refs,
   ResetMode,
@@ -281,6 +282,12 @@ export async function renameBranch(oldName: string, newName: string): Promise<st
   return invoke<string>("rename_branch", { old: oldName, new: newName });
 }
 
+// Create a branch at HEAD without checking it out (rebase backup).
+export async function createBackupBranch(name: string): Promise<string> {
+  if (!isTauri()) return `Created backup branch ${name} (preview mock)`;
+  return invoke<string>("create_backup_branch", { name });
+}
+
 export async function deleteBranch(name: string, force: boolean): Promise<string> {
   if (!isTauri()) {
     const i = MOCK_REFS.branches.findIndex((x) => x.name === name);
@@ -341,9 +348,55 @@ export async function fetchRebaseTodo(onto: string): Promise<RebaseCommit[]> {
   return invoke<RebaseCommit[]>("get_rebase_todo", { onto });
 }
 
-export async function interactiveRebase(onto: string, steps: RebaseStep[]): Promise<string> {
-  if (!isTauri()) return `Rebased onto ${onto} with ${steps.length} step(s) (preview mock)`;
-  return invoke<string>("interactive_rebase", { onto, steps });
+export async function interactiveRebase(
+  onto: string,
+  steps: RebaseStep[],
+  updateRefs: boolean,
+): Promise<string> {
+  if (!isTauri()) {
+    const editStep = steps.find((s) => s.action === "edit");
+    if (editStep) {
+      // Simulate git pausing at the edit step so the in-progress UI is exercisable.
+      MOCK_REBASE_STATUS.in_progress = true;
+      MOCK_REBASE_STATUS.paused_for = "edit";
+      MOCK_REBASE_STATUS.current_sha = editStep.sha;
+      MOCK_REBASE_STATUS.current_subject = "edited commit";
+      MOCK_REBASE_STATUS.done = 1;
+      MOCK_REBASE_STATUS.total = steps.length;
+      return `Stopped at an edit step (preview mock)`;
+    }
+    return `Rebased onto ${onto} with ${steps.length} step(s)${updateRefs ? ", refs updated" : ""} (preview mock)`;
+  }
+  return invoke<string>("interactive_rebase", { onto, steps, updateRefs });
+}
+
+export async function fetchRebaseStatus(): Promise<RebaseStatus> {
+  if (!isTauri()) return MOCK_REBASE_STATUS;
+  return invoke<RebaseStatus>("rebase_status", {});
+}
+
+export async function rebaseContinue(): Promise<string> {
+  if (!isTauri()) {
+    MOCK_REBASE_STATUS.in_progress = false;
+    return "Continued rebase (preview mock)";
+  }
+  return invoke<string>("rebase_continue", {});
+}
+
+export async function rebaseSkip(): Promise<string> {
+  if (!isTauri()) {
+    MOCK_REBASE_STATUS.in_progress = false;
+    return "Skipped commit (preview mock)";
+  }
+  return invoke<string>("rebase_skip", {});
+}
+
+export async function rebaseAbort(): Promise<string> {
+  if (!isTauri()) {
+    MOCK_REBASE_STATUS.in_progress = false;
+    return "Aborted rebase (preview mock)";
+  }
+  return invoke<string>("rebase_abort", {});
 }
 
 export async function pull(): Promise<string> {
@@ -629,6 +682,18 @@ export const MOCK_FILE_HISTORY: FileCommit[] = MOCK_LOG.slice(0, 4).map((r) => (
 }));
 
 // Mutable staging state for preview mode, so stage/unstage/commit feel real.
+// Not in progress by default; the preview mock flips this on if a rebase step
+// uses "edit" so the in-progress UI can be exercised without a real repo.
+const MOCK_REBASE_STATUS: RebaseStatus = {
+  in_progress: false,
+  paused_for: null,
+  current_sha: null,
+  current_subject: null,
+  conflicted_files: [],
+  done: 0,
+  total: 0,
+};
+
 const MOCK_STATUS: StatusLists = {
   staged: [],
   unstaged: [

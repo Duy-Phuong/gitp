@@ -25,6 +25,8 @@ import {
   fetchFileDiff,
   fetchLocalChangeCount,
   fetchLogPage,
+  createBackupBranch,
+  fetchRebaseStatus,
   fetchRebaseTodo,
   fetchRefs,
   fetchStatusSummary,
@@ -36,6 +38,9 @@ import {
   pull,
   push,
   pushBranch,
+  rebaseAbort,
+  rebaseContinue,
+  rebaseSkip,
   rebaseOnto,
   renameBranch,
   resetTo,
@@ -62,14 +67,26 @@ import { GRAPH_METRICS } from "./graph";
 import { renderLog, type RefLabel } from "./views/log";
 import { showCommitMenu, closeCommitMenu } from "./views/commit-menu";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
-import { openRebaseModal } from "./views/rebase";
+import { openRebaseModal, type RebaseOptions } from "./views/rebase";
 import { openStashApplyModal } from "./views/stash-apply";
 import { setupDetail, type DetailHandle } from "./views/detail";
 import { setupChanges, type ChangesHandle } from "./views/changes";
 import { renderConfig } from "./views/config";
 import { renderSidebar, type SidebarView } from "./views/sidebar";
 import { setupTerminal, type TerminalHandle } from "./views/terminal";
-import type { BranchRef, CommitRow, ConfigScope, Refs, RepoTab, ResetMode, StashRef, Workspace } from "./types";
+import type {
+  BranchRef,
+  CommitRow,
+  ConfigScope,
+  RebaseAction,
+  RebaseStatus,
+  RebaseStep,
+  Refs,
+  RepoTab,
+  ResetMode,
+  StashRef,
+  Workspace,
+} from "./types";
 
 type View = "history" | "changes" | "config";
 
@@ -90,6 +107,7 @@ interface State {
   localChanges: number;
   sbFilter: string;
   sbCollapsed: Set<string>;
+  rebase: RebaseStatus | null;
 }
 
 const state: State = {
@@ -103,6 +121,7 @@ const state: State = {
   localChanges: 0,
   sbFilter: "",
   sbCollapsed: new Set(),
+  rebase: null,
 };
 let terminal: TerminalHandle | null = null;
 let detailView: DetailHandle | null = null;
@@ -411,6 +430,8 @@ async function loadSidebar(): Promise<void> {
     renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu);
     pane.scrollTop = keep;
   }
+  // Surface (or clear) a paused-rebase banner whenever refs are reloaded.
+  void refreshRebaseStatus();
 }
 
 // Show the checked-out branch name as a chip in the top bar (hidden when no
@@ -649,7 +670,7 @@ function onBranchMenu(b: BranchRef, x: number, y: number): void {
     });
     items.push({
       label: `Interactively Rebase ${current} onto ${b.name}…`,
-      run: () => void openInteractiveRebase(b),
+      run: () => void openInteractiveRebase(b.name, b.name),
     });
   }
 
@@ -845,31 +866,151 @@ async function createPullRequestAction(b: BranchRef): Promise<void> {
 }
 
 // Load the commits that would be replayed, then open the interactive-rebase
-// editor. Runs the resulting plan against the current branch.
-async function openInteractiveRebase(b: BranchRef): Promise<void> {
+// editor. Runs the resulting plan against the current branch. `onto` is the
+// base the branch is replayed on — a branch name (branch menu) or a commit's
+// parent for "rebase to here".
+async function openInteractiveRebase(onto: string, ontoLabel: string): Promise<void> {
   const current = state.refs.head ?? "HEAD";
-  setStatus(`Preparing rebase of ${current} onto ${b.name}…`);
+  setStatus(`Preparing rebase of ${current} onto ${ontoLabel}…`);
   try {
-    const commits = await fetchRebaseTodo(b.name);
+    const commits = await fetchRebaseTodo(onto);
     if (commits.length === 0) {
-      setStatus(`Nothing to rebase — ${current} has no commits ahead of ${b.name}.`);
+      setStatus(`Nothing to rebase — ${current} has no commits ahead of ${ontoLabel}.`);
       return;
     }
-    openRebaseModal(b.name, current, commits, (steps) => {
-      void (async () => {
-        setStatus(`Rebasing ${current} onto ${b.name}…`);
-        try {
-          const out = (await interactiveRebase(b.name, steps)).trim();
-          showView("history");
-          await Promise.all([refreshHistory(), loadSidebar()]);
-          setStatus(out || `Rebased ${current} onto ${b.name}.`);
-        } catch (err) {
-          setStatus(`Rebase failed: ${String(err)}`);
-        }
-      })();
+    openRebaseModal(ontoLabel, current, commits, (steps, opts) => {
+      void runRebasePlan(onto, ontoLabel, steps, opts);
     });
   } catch (err) {
     setStatus(`Rebase preparation failed: ${String(err)}`);
+  }
+}
+
+// Execute a planned rebase: optional backup branch, run it (optionally moving
+// dependent refs), then refresh and surface whether it completed or paused.
+async function runRebasePlan(
+  onto: string,
+  ontoLabel: string,
+  steps: RebaseStep[],
+  opts: RebaseOptions,
+): Promise<void> {
+  const current = state.refs.head ?? "HEAD";
+  setStatus(`Rebasing ${current} onto ${ontoLabel}…`);
+  try {
+    if (opts.backup) {
+      const base = current.replace(/[^\w.-]+/g, "-");
+      await createBackupBranch(`${base}-backup-${Date.now()}`);
+    }
+    const out = (await interactiveRebase(onto, steps, opts.updateRefs)).trim();
+    showView("history");
+    await Promise.all([refreshHistory(), loadSidebar()]);
+    await refreshRebaseStatus();
+    if (!state.rebase?.in_progress) setStatus(out || `Rebased ${current} onto ${ontoLabel}.`);
+  } catch (err) {
+    await refreshRebaseStatus();
+    setStatus(`Rebase failed: ${String(err)}`);
+  }
+}
+
+// Interactive rebase of the current branch so `commit` and everything after it
+// are in the todo — i.e. replay onto the commit's first parent ("to here").
+async function rebaseToHere(commit: CommitRow): Promise<void> {
+  await openInteractiveRebase(`${commit.id}~1`, `parent of ${commit.short_id}`);
+}
+
+// A one-commit interactive rebase that applies `action` to `commit` alone
+// (reword / edit / squash-into-parent / fixup-into-parent / drop). The plan
+// replays from the commit's parent; squash/fixup need the parent included too,
+// so those replay from the grandparent with the parent kept as a pick.
+async function quickRebase(commit: CommitRow, action: RebaseAction, message?: string): Promise<void> {
+  const meldsIntoParent = action === "squash" || action === "fixup";
+  const onto = meldsIntoParent ? `${commit.id}~2` : `${commit.id}~1`;
+  const ontoLabel = meldsIntoParent ? `grandparent of ${commit.short_id}` : `parent of ${commit.short_id}`;
+  setStatus(`Preparing ${action} of ${commit.short_id}…`);
+  try {
+    const commits = await fetchRebaseTodo(onto);
+    if (commits.length === 0) {
+      setStatus(`Nothing to rebase for ${commit.short_id}.`);
+      return;
+    }
+    const steps: RebaseStep[] = commits.map((c) => ({
+      sha: c.sha,
+      action: c.sha === commit.id ? action : "pick",
+      message: c.sha === commit.id && action === "reword" ? (message ?? c.subject) : null,
+    }));
+    await runRebasePlan(onto, ontoLabel, steps, { updateRefs: false, backup: false });
+  } catch (err) {
+    setStatus(`${action} failed: ${String(err)}`);
+  }
+}
+
+// --- Rebase in progress (pause / continue / skip / abort) -------------------
+
+// Refresh the paused-rebase state and (re)paint the banner.
+async function refreshRebaseStatus(): Promise<void> {
+  try {
+    state.rebase = await fetchRebaseStatus();
+  } catch {
+    state.rebase = null;
+  }
+  renderRebaseBanner();
+}
+
+// A top bar shown only while a rebase is paused: what it stopped for, on which
+// commit, any conflicts, and Continue / Skip / Abort.
+function renderRebaseBanner(): void {
+  let banner = document.getElementById("rebase-banner");
+  const st = state.rebase;
+  if (!st?.in_progress) {
+    banner?.remove();
+    return;
+  }
+  if (!banner) {
+    banner = el("div", { id: "rebase-banner", class: "rebase-banner" });
+    document.body.append(banner);
+  }
+  clear(banner);
+
+  const conflict = st.paused_for === "conflict";
+  const sha = st.current_sha ? st.current_sha.slice(0, 8) : "";
+  const info = el("div", { class: "rebase-banner-info" }, [
+    el("span", {
+      class: "rebase-banner-title",
+      text: conflict
+        ? `Rebase stopped on a conflict (${st.done}/${st.total})`
+        : `Rebase stopped to edit ${sha} (${st.done}/${st.total})`,
+    }),
+  ]);
+  if (st.current_subject) info.append(el("span", { class: "rebase-banner-sub", text: st.current_subject }));
+  if (conflict && st.conflicted_files.length) {
+    info.append(el("span", { class: "rebase-banner-files", text: `Conflicts: ${st.conflicted_files.join(", ")}` }));
+  } else if (!conflict) {
+    info.append(el("span", { class: "rebase-banner-sub", text: "Amend your changes, then Continue." }));
+  }
+
+  const cont = el("button", { class: "btn small", text: "Continue" });
+  cont.addEventListener("click", () => void rebaseControl("continue"));
+  const skip = el("button", { class: "btn small ghost", text: "Skip" });
+  skip.addEventListener("click", () => void rebaseControl("skip"));
+  const abort = el("button", { class: "btn small danger", text: "Abort" });
+  abort.addEventListener("click", () => void rebaseControl("abort"));
+
+  banner.append(info, el("div", { class: "rebase-banner-actions" }, [cont, skip, abort]));
+}
+
+async function rebaseControl(kind: "continue" | "skip" | "abort"): Promise<void> {
+  const label = kind === "continue" ? "Continuing" : kind === "skip" ? "Skipping" : "Aborting";
+  setStatus(`${label} rebase…`);
+  try {
+    const op = kind === "continue" ? rebaseContinue : kind === "skip" ? rebaseSkip : rebaseAbort;
+    const out = (await op()).trim();
+    showView("history");
+    await Promise.all([refreshHistory(), loadSidebar()]);
+    await refreshRebaseStatus();
+    if (!state.rebase?.in_progress) setStatus(out || `${label} done.`);
+  } catch (err) {
+    await refreshRebaseStatus();
+    setStatus(`${label} failed: ${String(err)}`);
   }
 }
 
@@ -881,6 +1022,7 @@ function onCommitContextMenu(row: CommitRow, x: number, y: number): void {
   const rev = row.id;
   const short = row.short_id;
   showCommitMenu(x, y, row, {
+    currentBranch: state.refs.head ?? "HEAD",
     copySha: () => void copySha(rev),
     checkoutCommit: () => void checkoutCommitAction(rev, short),
     newBranch: (name) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev)),
@@ -888,11 +1030,19 @@ function onCommitContextMenu(row: CommitRow, x: number, y: number): void {
     cherryPick: () => void runCommitOp(`Cherry-picking ${short}`, () => cherryPick(rev)),
     revert: () => void runCommitOp(`Reverting ${short}`, () => revertCommit(rev)),
     reset: (mode) => void resetAction(rev, short, mode),
-    rebaseOnto: () =>
+    rebaseToHere: () => void rebaseToHere(row),
+    rewordCommit: (message) => void quickRebase(row, "reword", message),
+    editCommit: () => void quickRebase(row, "edit"),
+    squashIntoParent: () => void quickRebase(row, "squash"),
+    fixupIntoParent: () => void quickRebase(row, "fixup"),
+    dropCommit: () =>
       void confirmThenRun(
-        `Rebase the current branch onto ${short}? This rewrites commits on the branch.`,
-        `Rebasing onto ${short}`,
-        () => rebaseOnto(rev),
+        `Drop commit ${short}? This rewrites branch history.`,
+        `Dropping ${short}`,
+        async () => {
+          await quickRebase(row, "drop");
+          return "";
+        },
       ),
   });
 }

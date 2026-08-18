@@ -13,7 +13,7 @@ use std::sync::Mutex;
 
 use gitp_core::{
     BlameLine, CommitDetail, CommitRow, ConfigEntry, ConfigScope, FileCommit, FileDiff, LogOptions,
-    RebaseCommit, RebaseStep, Refs, Repo, ResetMode, StatusLists,
+    RebaseCommit, RebaseStatus, RebaseStep, Refs, Repo, ResetMode, StatusLists,
 };
 use serde::Serialize;
 use tauri::State;
@@ -413,6 +413,11 @@ fn rename_branch_impl(state: &RepoState, old: String, new: String) -> Result<Str
     with_active_repo_invalidating(state, |repo| repo.rename_branch(&old, &new))
 }
 
+/// Create branch `name` at HEAD without checking it out (e.g. a rebase backup).
+fn create_backup_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.create_branch_here(&name))
+}
+
 /// Delete branch `name` (force = `-D`). Doesn't move HEAD, so the log stays.
 fn delete_branch_impl(state: &RepoState, name: String, force: bool) -> Result<String, String> {
     with_repo(state, |repo| repo.delete_branch(&name, force))
@@ -474,8 +479,28 @@ fn interactive_rebase_impl(
     state: &RepoState,
     onto: String,
     steps: Vec<RebaseStep>,
+    update_refs: bool,
 ) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.interactive_rebase(&onto, &steps))
+    with_active_repo_invalidating(state, |repo| repo.interactive_rebase(&onto, &steps, update_refs))
+}
+
+/// Snapshot of an in-progress rebase (for the resume UI), or a not-in-progress
+/// status. Does not invalidate the log — it only reads state.
+fn rebase_status_impl(state: &RepoState) -> Result<RebaseStatus, String> {
+    with_repo(state, Repo::rebase_status)
+}
+
+/// Resume / skip / abort a paused rebase. All can move HEAD, so invalidate.
+fn rebase_continue_impl(state: &RepoState) -> Result<String, String> {
+    with_active_repo_invalidating(state, Repo::rebase_continue)
+}
+
+fn rebase_skip_impl(state: &RepoState) -> Result<String, String> {
+    with_active_repo_invalidating(state, Repo::rebase_skip)
+}
+
+fn rebase_abort_impl(state: &RepoState) -> Result<String, String> {
+    with_active_repo_invalidating(state, Repo::rebase_abort)
 }
 
 /// Open `url` in the OS default browser.
@@ -653,6 +678,11 @@ fn rename_branch(old: String, new: String, state: State<RepoState>) -> Result<St
 }
 
 #[tauri::command]
+fn create_backup_branch(name: String, state: State<RepoState>) -> Result<String, String> {
+    create_backup_branch_impl(&state, name)
+}
+
+#[tauri::command]
 fn delete_branch(name: String, force: bool, state: State<RepoState>) -> Result<String, String> {
     delete_branch_impl(&state, name, force)
 }
@@ -706,9 +736,30 @@ fn get_rebase_todo(onto: String, state: State<RepoState>) -> Result<Vec<RebaseCo
 fn interactive_rebase(
     onto: String,
     steps: Vec<RebaseStep>,
+    update_refs: bool,
     state: State<RepoState>,
 ) -> Result<String, String> {
-    interactive_rebase_impl(&state, onto, steps)
+    interactive_rebase_impl(&state, onto, steps, update_refs)
+}
+
+#[tauri::command]
+fn rebase_status(state: State<RepoState>) -> Result<RebaseStatus, String> {
+    rebase_status_impl(&state)
+}
+
+#[tauri::command]
+fn rebase_continue(state: State<RepoState>) -> Result<String, String> {
+    rebase_continue_impl(&state)
+}
+
+#[tauri::command]
+fn rebase_skip(state: State<RepoState>) -> Result<String, String> {
+    rebase_skip_impl(&state)
+}
+
+#[tauri::command]
+fn rebase_abort(state: State<RepoState>) -> Result<String, String> {
+    rebase_abort_impl(&state)
 }
 
 #[tauri::command]
@@ -822,6 +873,7 @@ pub fn run() {
             reset,
             rebase_onto,
             rename_branch,
+            create_backup_branch,
             delete_branch,
             merge_branch,
             push_branch,
@@ -833,6 +885,10 @@ pub fn run() {
             create_pull_request,
             get_rebase_todo,
             interactive_rebase,
+            rebase_status,
+            rebase_continue,
+            rebase_skip,
+            rebase_abort,
             pull,
             push,
             stash,

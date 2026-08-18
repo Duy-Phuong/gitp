@@ -28,7 +28,7 @@ pub use diff::{ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff};
 pub use error::{Error, Result};
 pub use filelog::FileCommit;
 pub use log::{CommitRow, LogOptions};
-pub use rebase::{RebaseAction, RebaseCommit, RebaseStep};
+pub use rebase::{RebaseAction, RebaseCommit, RebaseStatus, RebaseStep};
 pub use refs::{BranchRef, Refs, RemoteBranch, StashRef, TagRef};
 pub use repo::Repo;
 pub use status::StatusLists;

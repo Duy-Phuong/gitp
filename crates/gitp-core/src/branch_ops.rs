@@ -15,6 +15,13 @@ impl Repo {
         self.run_git(&["branch", "-m", old, new])
     }
 
+    /// Create branch `name` at the current HEAD *without* checking it out
+    /// (`git branch <name>`). Used to snapshot state before a rewrite like a
+    /// rebase. Errors if `name` already exists.
+    pub fn create_branch_here(&self, name: &str) -> Result<String> {
+        self.run_git(&["branch", name])
+    }
+
     /// Set `branch`'s upstream (tracking) to `upstream`, e.g. `origin/main`.
     pub fn set_upstream(&self, branch: &str, upstream: &str) -> Result<String> {
         self.run_git(&["branch", &format!("--set-upstream-to={upstream}"), branch])

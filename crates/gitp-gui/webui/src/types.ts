@@ -130,12 +130,22 @@ export interface RebaseCommit {
   subject: string;
 }
 
-export type RebaseAction = "pick" | "reword" | "squash" | "drop";
+export type RebaseAction = "pick" | "edit" | "reword" | "squash" | "fixup" | "drop";
 
 export interface RebaseStep {
   sha: string;
   action: RebaseAction;
   message: string | null;
+}
+
+export interface RebaseStatus {
+  in_progress: boolean;
+  paused_for: "edit" | "conflict" | null;
+  current_sha: string | null;
+  current_subject: string | null;
+  conflicted_files: string[];
+  done: number;
+  total: number;
 }
 
 export interface ConfigEntry {
