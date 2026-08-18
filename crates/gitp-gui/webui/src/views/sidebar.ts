@@ -5,7 +5,7 @@
 // (filter text, which sections/folders are collapsed) and re-renders on change.
 
 import { chevronIcon, clear, el } from "../dom";
-import type { BranchRef, Refs } from "../types";
+import type { BranchRef, Refs, StashRef } from "../types";
 
 export type SidebarView = "history" | "changes";
 
@@ -29,6 +29,10 @@ export interface SidebarCallbacks {
   onBranchCheckout: (b: BranchRef) => void;
   // Right-click a branch: open its actions menu at the cursor.
   onBranchMenu: (b: BranchRef, x: number, y: number) => void;
+  // Single-click a stash: show its diff in the detail view.
+  onStashClick: (s: StashRef) => void;
+  // Right-click a stash: open its actions menu at the cursor.
+  onStashMenu: (s: StashRef, x: number, y: number) => void;
 }
 
 export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCallbacks): void {
@@ -274,6 +278,17 @@ function buildStashes(
   tree.append(row);
   if (collapsed) return;
   for (const stash of s.refs.stashes) {
-    if (match(stash.message)) tree.append(leaf(stash.message, true, `stash@{${stash.index}}`));
+    if (match(stash.message)) tree.append(stashLeaf(stash, cb));
   }
+}
+
+// A stash entry: click shows its diff, right-click opens the actions menu.
+function stashLeaf(stash: StashRef, cb: SidebarCallbacks): HTMLElement {
+  const row = leaf(stash.message, true, `stash@{${stash.index}}\nClick: show changes · Right-click: actions`);
+  row.addEventListener("click", () => cb.onStashClick(stash));
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    cb.onStashMenu(stash, e.clientX, e.clientY);
+  });
+  return row;
 }

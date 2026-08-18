@@ -48,6 +48,10 @@ import {
   stageHunk,
   stash,
   stashPop,
+  applyStash,
+  dropStash,
+  renameStash,
+  saveStashPatch,
   unstage,
   unstageAll,
   unstageHunk,
@@ -59,12 +63,13 @@ import { renderLog, type RefLabel } from "./views/log";
 import { showCommitMenu, closeCommitMenu } from "./views/commit-menu";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { openRebaseModal } from "./views/rebase";
+import { openStashApplyModal } from "./views/stash-apply";
 import { setupDetail, type DetailHandle } from "./views/detail";
 import { setupChanges, type ChangesHandle } from "./views/changes";
 import { renderConfig } from "./views/config";
 import { renderSidebar, type SidebarView } from "./views/sidebar";
 import { setupTerminal, type TerminalHandle } from "./views/terminal";
-import type { BranchRef, CommitRow, ConfigScope, Refs, RepoTab, ResetMode, Workspace } from "./types";
+import type { BranchRef, CommitRow, ConfigScope, Refs, RepoTab, ResetMode, StashRef, Workspace } from "./types";
 
 type View = "history" | "changes" | "config";
 
@@ -446,6 +451,8 @@ function renderSidebarNow(): void {
       onRefJump: (target, label) => void jumpToCommit(target, label),
       onBranchCheckout: (b) => void checkoutBranchAction(b),
       onBranchMenu: (b, x, y) => onBranchMenu(b, x, y),
+      onStashClick: (s) => void showStashDetail(s),
+      onStashMenu: (s, x, y) => onStashMenu(s, x, y),
     },
   );
 }
@@ -686,6 +693,79 @@ function onBranchMenu(b: BranchRef, x: number, y: number): void {
   items.push({ label: "Copy Branch Name", run: () => void copyText(b.name, `Copied ${b.name}`) });
 
   showContextMenu(x, y, items);
+}
+
+// Click a stash: show its diff in the detail view. A stash commit's first
+// parent is the base it was taken from, so fetchCommitDetail surfaces exactly
+// the stashed changes. Switches to History, where the detail pane lives.
+async function showStashDetail(s: StashRef): Promise<void> {
+  showView("history");
+  state.selectedId = null;
+  try {
+    detailView?.show(await fetchCommitDetail(`stash@{${s.index}}`));
+  } catch (err) {
+    setStatus(`Failed to load stash: ${String(err)}`);
+  }
+}
+
+// Right-click a stash: apply (with a delete-after checkbox), rename, save the
+// diff as a patch, or drop.
+function onStashMenu(s: StashRef, x: number, y: number): void {
+  const items: MenuItem[] = [
+    {
+      label: "Apply…",
+      run: () =>
+        openStashApplyModal(s, (drop) => {
+          const verb = drop ? "Popping" : "Applying";
+          void runStashOp(`${verb} stash@{${s.index}}`, () => applyStash(s.index, drop));
+        }),
+    },
+    {
+      label: "Rename…",
+      prompt: {
+        placeholder: "Stash message",
+        value: s.message,
+        onSubmit: (message) => void runStashOp(`Renaming stash@{${s.index}}`, () => renameStash(s.index, message)),
+      },
+    },
+    { label: "Save as Patch…", run: () => void saveStashPatchAction(s) },
+    { separator: true },
+    { label: "Delete…", danger: true, run: () => void deleteStashAction(s) },
+  ];
+  showContextMenu(x, y, items);
+}
+
+// Run a stash op, then refresh the sidebar and — if it's open — the Local
+// Changes view (apply/pop mutate the working tree). Shows git's output.
+async function runStashOp(label: string, op: () => Promise<string>): Promise<void> {
+  setStatus(`${label}…`);
+  try {
+    const out = (await op()).trim();
+    await loadSidebar();
+    if (state.view === "changes") await loadChanges();
+    setStatus(out || `${label} done.`);
+  } catch (err) {
+    setStatus(`${label} failed: ${String(err)}`);
+  }
+}
+
+async function deleteStashAction(s: StashRef): Promise<void> {
+  if (!(await confirmDialog(`Delete stash@{${s.index}}?\n\n${s.message}`))) return;
+  await runStashOp(`Deleting stash@{${s.index}}`, () => dropStash(s.index));
+}
+
+async function saveStashPatchAction(s: StashRef): Promise<void> {
+  setStatus("Saving patch…");
+  try {
+    const out = await saveStashPatch(s.index, `stash-${s.index}.patch`);
+    if (out === null) {
+      setStatus("Save cancelled.");
+      return;
+    }
+    setStatus(out || "Saved patch.");
+  } catch (err) {
+    setStatus(`Save failed: ${String(err)}`);
+  }
 }
 
 // Run a branch op, then refresh the sidebar (and history when the op can move

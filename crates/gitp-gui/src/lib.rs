@@ -305,6 +305,26 @@ fn stash_pop_impl(state: &RepoState) -> Result<String, String> {
     with_repo(state, Repo::stash_pop)
 }
 
+/// Apply stash `index`. `drop` pops (apply + remove) instead of leaving it.
+fn stash_apply_impl(state: &RepoState, index: usize, drop: bool) -> Result<String, String> {
+    with_repo(state, |repo| repo.stash_apply(index, drop))
+}
+
+/// Drop stash `index` from the stack.
+fn stash_drop_impl(state: &RepoState, index: usize) -> Result<String, String> {
+    with_repo(state, |repo| repo.stash_drop(index))
+}
+
+/// Re-message stash `index`.
+fn stash_rename_impl(state: &RepoState, index: usize, message: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.stash_rename(index, &message))
+}
+
+/// Write stash `index`'s diff to `path` as a patch file.
+fn save_stash_patch_impl(state: &RepoState, index: usize, path: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.save_stash_patch(index, path.as_ref()))
+}
+
 /// Every file path in `rev`'s tree, for the File Tree view.
 fn get_commit_tree_impl(state: &RepoState, rev: String) -> Result<Vec<String>, String> {
     with_repo(state, |repo| repo.commit_tree(&rev))
@@ -712,6 +732,26 @@ fn stash_pop(state: State<RepoState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn stash_apply(index: usize, drop: bool, state: State<RepoState>) -> Result<String, String> {
+    stash_apply_impl(&state, index, drop)
+}
+
+#[tauri::command]
+fn stash_drop(index: usize, state: State<RepoState>) -> Result<String, String> {
+    stash_drop_impl(&state, index)
+}
+
+#[tauri::command]
+fn stash_rename(index: usize, message: String, state: State<RepoState>) -> Result<String, String> {
+    stash_rename_impl(&state, index, message)
+}
+
+#[tauri::command]
+fn save_stash_patch(index: usize, path: String, state: State<RepoState>) -> Result<String, String> {
+    save_stash_patch_impl(&state, index, path)
+}
+
+#[tauri::command]
 fn get_commit_tree(rev: String, state: State<RepoState>) -> Result<Vec<String>, String> {
     get_commit_tree_impl(&state, rev)
 }
@@ -797,6 +837,10 @@ pub fn run() {
             push,
             stash,
             stash_pop,
+            stash_apply,
+            stash_drop,
+            stash_rename,
+            save_stash_patch,
             get_commit_tree,
             get_blame,
             get_file_history,

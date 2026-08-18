@@ -374,6 +374,48 @@ export async function stashPop(): Promise<string> {
   return invoke<string>("stash_pop", {});
 }
 
+// --- Stash operations (sidebar right-click menu) ---------------------------
+
+// Apply stash@{index}; `drop` pops (apply + remove) instead of leaving it.
+export async function applyStash(index: number, drop: boolean): Promise<string> {
+  if (!isTauri()) {
+    if (drop) {
+      MOCK_REFS.stashes.splice(index, 1);
+      MOCK_REFS.stashes.forEach((s, i) => (s.index = i));
+    }
+    return `${drop ? "Popped" : "Applied"} stash@{${index}} (preview mock)`;
+  }
+  return invoke<string>("stash_apply", { index, drop });
+}
+
+export async function dropStash(index: number): Promise<string> {
+  if (!isTauri()) {
+    MOCK_REFS.stashes.splice(index, 1);
+    MOCK_REFS.stashes.forEach((s, i) => (s.index = i));
+    return `Dropped stash@{${index}} (preview mock)`;
+  }
+  return invoke<string>("stash_drop", { index });
+}
+
+export async function renameStash(index: number, message: string): Promise<string> {
+  if (!isTauri()) {
+    const s = MOCK_REFS.stashes[index];
+    if (s) s.message = message;
+    return `Renamed stash to "${message}" (preview mock)`;
+  }
+  return invoke<string>("stash_rename", { index, message });
+}
+
+// Prompt for a destination and write stash@{index}'s diff there as a patch.
+// Returns a status string, or null if the user cancelled the save dialog.
+export async function saveStashPatch(index: number, defaultName: string): Promise<string | null> {
+  if (!isTauri()) return `Saved patch for stash@{${index}} (preview mock)`;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const path = await save({ title: "Save Stash as Patch", defaultPath: defaultName });
+  if (!path) return null;
+  return invoke<string>("save_stash_patch", { index, path });
+}
+
 export async function fetchConfig(): Promise<ConfigEntry[]> {
   if (!isTauri()) return MOCK_CONFIG;
   return invoke<ConfigEntry[]>("get_config", {});

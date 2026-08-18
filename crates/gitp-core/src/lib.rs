@@ -17,6 +17,7 @@ mod rebase;
 mod refs;
 mod remote;
 mod repo;
+mod stash_ops;
 mod status;
 mod tree;
 
