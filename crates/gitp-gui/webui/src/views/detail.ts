@@ -7,7 +7,7 @@
 // pane: active tab, selected file, view mode, split flag, current hunk, and the
 // lazily-loaded tree / blame / history (each cached).
 
-import { clear, el, svg } from "../dom";
+import { clear, copyToClipboard, el, svg } from "../dom";
 import type { BlameLine, CommitDetail, FileCommit, FileDiff } from "../types";
 import { wordDiff, type Seg } from "../worddiff";
 import { renderFileTree } from "./tree";
@@ -465,11 +465,30 @@ function fileHead(file: FileDiff): HTMLElement {
 
 // Unified diff: inline +/- lines, with intra-line (word) highlights on paired
 // deletion/addition lines. Shared with the Local Changes view.
+// A hunk's `@@` header plus a Copy button that puts the block's new-side text
+// (context + additions, no markers or line numbers) on the clipboard — a clean
+// copy that manual selection can't give in a split view.
+function hunkHeader(hunk: FileDiff["hunks"][number]): HTMLElement {
+  const header = el("div", { class: "hunk-header" }, [
+    el("span", { class: "hunk-header-text", text: hunk.header }),
+  ]);
+  const copy = el("button", { class: "hunk-copy", text: "Copy", title: "Copy this block" });
+  copy.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const text = hunk.lines.filter((l) => l.origin !== "-").map((l) => l.content).join("\n");
+    void copyToClipboard(text);
+    copy.textContent = "Copied";
+    setTimeout(() => (copy.textContent = "Copy"), 1200);
+  });
+  header.append(copy);
+  return header;
+}
+
 export function renderFile(file: FileDiff): HTMLElement {
   const container = el("div", { class: "file" }, [fileHead(file)]);
   file.hunks.forEach((hunk, i) => {
     const h = el("div", { class: "hunk", "data-hunk": i });
-    h.append(el("div", { class: "hunk-header", text: hunk.header }));
+    h.append(hunkHeader(hunk));
 
     let dels: Line[] = [];
     let adds: Line[] = [];
@@ -511,7 +530,7 @@ export function renderSplitDiff(file: FileDiff): HTMLElement {
   const container = el("div", { class: "file" }, [fileHead(file)]);
   file.hunks.forEach((hunk, i) => {
     const h = el("div", { class: "hunk", "data-hunk": i });
-    h.append(el("div", { class: "hunk-header", text: hunk.header }));
+    h.append(hunkHeader(hunk));
     const table = el("div", { class: "split-table" });
 
     let dels: FileDiff["hunks"][number]["lines"] = [];

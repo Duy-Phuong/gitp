@@ -234,7 +234,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       if (sel.panel === "unstaged") {
         actions.append(
           btn("Stage", false, () => void run(() => cb.stageHunk(sel.path, index))),
-          btn("Discard", true, () => void discardHunkAction(sel.path, index)),
+          btn("Discard…", true, () => void discardHunkAction(sel.path, index)),
         );
       } else {
         actions.append(btn("Unstage", false, () => void run(() => cb.unstageHunk(sel.path, index))));

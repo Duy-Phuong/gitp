@@ -1524,13 +1524,43 @@ body {
   padding: 4px 12px;
   background: var(--bg);
 }
-/* Per-block staging controls: hidden until the block (or its header) is hovered. */
+/* The `@@` text takes the free space, pushing Copy + staging buttons to the
+   right. Not selectable, so it stays out of a copied selection. */
+.hunk-header-text {
+  margin-right: auto;
+  user-select: none;
+}
+/* Copy-this-block button, revealed on hover like the staging controls. */
+.hunk-copy {
+  flex: 0 0 auto;
+  font-family: var(--font, sans-serif);
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elev);
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.hunk:hover .hunk-copy,
+.hunk-copy:focus {
+  opacity: 1;
+}
+.hunk-copy:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* Per-block staging controls: hidden until the block is hovered. */
 .hunk-actions {
-  margin-left: auto;
   display: flex;
   gap: 4px;
   opacity: 0;
   transition: opacity 0.1s;
+  user-select: none;
 }
 .hunk:hover .hunk-actions,
 .hunk-actions:focus-within {

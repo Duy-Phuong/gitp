@@ -52,6 +52,26 @@ export function autoGrowInput(input: HTMLInputElement): void {
   requestAnimationFrame(fit);
 }
 
+// Copy `text` to the clipboard, falling back to a hidden textarea for webviews
+// where the async clipboard API is unavailable.
+export async function copyToClipboard(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.append(ta);
+    ta.select();
+    try {
+      document.execCommand("copy");
+    } finally {
+      ta.remove();
+    }
+  }
+}
+
 // Grow a textarea's height to fit its content as the user types, up to `maxPx`
 // (after which it scrolls). Keeps a long commit description fully visible.
 export function autoGrowTextarea(area: HTMLTextAreaElement, maxPx = 320): void {
