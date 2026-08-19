@@ -1395,6 +1395,7 @@ async function init(): Promise<void> {
       void refreshHistory();
     },
     setStatus,
+    reportError: (title, detail) => showErrorDialog(title, detail),
   });
   if (isTauri()) {
     setStatus("Enter a repository path and press Open.");

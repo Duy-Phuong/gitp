@@ -36,6 +36,9 @@ export interface ChangesCallbacks {
   // After a successful commit (refresh history + sidebar).
   onCommitted: () => void;
   setStatus: (msg: string) => void;
+  // Show git's full (often multi-line) output for a failed operation — e.g. a
+  // pre-commit hook's messages — in a dialog rather than the status line.
+  reportError: (title: string, detail: string) => void;
 }
 
 export interface ChangesHandle {
@@ -118,16 +121,30 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     else selected = null;
   }
 
-  async function run(action: () => Promise<void>, after?: () => void): Promise<void> {
+  async function run(
+    action: () => Promise<void>,
+    after?: () => void,
+    errorTitle = "Operation failed",
+  ): Promise<void> {
     if (busy) return;
     busy = true;
     try {
       await action();
-      after?.();
-      await reload();
+      after?.(); // success-only side effects (clear the commit box, refresh history)
     } catch (err) {
-      cb.setStatus(String(err));
+      // A failed op — e.g. a pre-commit hook that reformats files and aborts the
+      // commit — often still changes the working tree, so surface git's full
+      // output and fall through to reload() so those changes appear.
+      cb.setStatus(`${errorTitle}.`);
+      cb.reportError(errorTitle, String(err));
     } finally {
+      // Always re-read the working tree: hooks (or a partial op) may have
+      // changed files whether or not the command itself succeeded.
+      try {
+        await reload();
+      } catch (err) {
+        cb.setStatus(`Failed to refresh changes: ${String(err)}`);
+      }
       busy = false;
     }
   }
@@ -372,6 +389,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
           amendPrefill = null;
           cb.onCommitted();
         },
+        "Commit failed",
       );
     });
 
