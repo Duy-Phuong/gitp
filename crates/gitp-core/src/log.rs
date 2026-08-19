@@ -36,10 +36,17 @@ pub struct CommitRow {
 }
 
 impl Repo {
-    /// Walk history from HEAD, newest-first (topological + time ordered).
+    /// Walk history across all branches, newest-first (topological + time
+    /// ordered). Every local and remote-tracking branch tip is a starting
+    /// point (plus HEAD, for a detached checkout), so the graph shows commits
+    /// on branches that aren't reachable from HEAD — e.g. a remote branch that
+    /// is ahead of the current one. Categories that don't exist (say, no
+    /// remotes) are simply skipped; an empty repo yields an empty log.
     pub fn log(&self, options: LogOptions) -> Result<Vec<CommitRow>> {
         let mut walk = self.inner.revwalk()?;
-        walk.push_head()?;
+        let _ = walk.push_glob("refs/heads/*");
+        let _ = walk.push_glob("refs/remotes/*");
+        let _ = walk.push_head();
         walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
 
         let mut rows = Vec::new();

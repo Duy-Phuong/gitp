@@ -4,6 +4,46 @@ use common::FixtureRepo;
 use gitp_core::{LogOptions, Repo};
 
 #[test]
+fn log_includes_commits_on_branches_not_reachable_from_head() {
+    use std::process::Command;
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "1\n", "base");
+    let run = |args: &[&str]| {
+        let out = Command::new("git").current_dir(fx.path()).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    let start = String::from_utf8(
+        Command::new("git")
+            .current_dir(fx.path())
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let start = start.trim().to_string();
+
+    // Put a commit on `feature` that HEAD's branch never sees.
+    run(&["checkout", "-q", "-b", "feature"]);
+    std::fs::write(fx.path().join("b.txt"), "on feature\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "only on feature"]);
+    run(&["checkout", "-q", &start]); // back to the base branch (HEAD)
+
+    let summaries: Vec<String> = Repo::open(fx.path())
+        .unwrap()
+        .log(LogOptions::default())
+        .unwrap()
+        .into_iter()
+        .map(|r| r.summary)
+        .collect();
+    assert!(
+        summaries.iter().any(|s| s == "only on feature"),
+        "the log walks all branches, not just HEAD: {summaries:?}"
+    );
+}
+
+#[test]
 fn returns_commits_newest_first() {
     let fixture = FixtureRepo::init();
     fixture.commit_file("a.txt", "1", "first");
