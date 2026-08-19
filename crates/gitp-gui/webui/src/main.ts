@@ -525,7 +525,10 @@ async function checkoutBranchAction(b: BranchRef): Promise<void> {
     await Promise.all([refreshHistory(), loadSidebar()]);
     setStatus(`Checked out ${b.name}`);
   } catch (err) {
-    setStatus(`Checkout failed: ${String(err)}`);
+    // Conflicting local changes ("would be overwritten by checkout") come back
+    // as multi-line git output — show the full reason, not just a status line.
+    setStatus("Checkout failed.");
+    showErrorDialog(`Couldn't switch to ${b.name}`, String(err));
   }
 }
 
@@ -804,7 +807,8 @@ async function runBranchOp(label: string, op: () => Promise<string>, refreshLog:
     }
     setStatus(out || `${label} done.`);
   } catch (err) {
-    setStatus(`${label} failed: ${String(err)}`);
+    setStatus(`${label} failed.`);
+    showErrorDialog(`${label} failed`, String(err));
   }
 }
 
@@ -1063,7 +1067,8 @@ async function runCommitOp(label: string, op: () => Promise<string>): Promise<vo
     await Promise.all([refreshHistory(), loadSidebar()]);
     setStatus(out || `${label} done.`);
   } catch (err) {
-    setStatus(`${label} failed: ${String(err)}`);
+    setStatus(`${label} failed.`);
+    showErrorDialog(`${label} failed`, String(err));
   }
 }
 
