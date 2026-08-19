@@ -87,6 +87,8 @@ export interface BranchRef {
   ahead: number;
   behind: number;
   target: string;
+  // False when the branch has no upstream (never pushed / no remote to compare).
+  has_upstream: boolean;
 }
 
 export interface RemoteBranch {

@@ -439,6 +439,12 @@ fn fetch_branch_impl(state: &RepoState, name: String) -> Result<String, String> 
     with_repo(state, |repo| repo.fetch_branch(&name))
 }
 
+/// Fetch all remotes. Only updates remote-tracking refs, so the cached log
+/// (which walks from HEAD) is unchanged.
+fn fetch_all_impl(state: &RepoState) -> Result<String, String> {
+    with_repo(state, Repo::fetch_all)
+}
+
 /// Fetch and fast-forward `name`. Invalidates the cached log because the branch
 /// (possibly the current one) advances.
 fn fetch_and_update_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
@@ -703,6 +709,11 @@ fn fetch_branch(name: String, state: State<RepoState>) -> Result<String, String>
 }
 
 #[tauri::command]
+fn fetch_all(state: State<RepoState>) -> Result<String, String> {
+    fetch_all_impl(&state)
+}
+
+#[tauri::command]
 fn fetch_and_update_branch(name: String, state: State<RepoState>) -> Result<String, String> {
     fetch_and_update_branch_impl(&state, name)
 }
@@ -878,6 +889,7 @@ pub fn run() {
             merge_branch,
             push_branch,
             fetch_branch,
+            fetch_all,
             fetch_and_update_branch,
             fast_forward_branch,
             set_upstream,

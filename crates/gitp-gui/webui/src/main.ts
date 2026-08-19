@@ -15,6 +15,7 @@ import {
   deleteBranch,
   discardHunk,
   fastForwardBranch,
+  fetchAll,
   fetchAndUpdateBranch,
   fetchBlame,
   fetchBranch,
@@ -546,20 +547,37 @@ function refreshActionButtons(): void {
   $<HTMLButtonElement>("#branch-btn").disabled = blocked;
   $<HTMLButtonElement>("#stash-btn").disabled = blocked || state.localChanges === 0;
   $<HTMLButtonElement>("#pop-btn").disabled = blocked || state.refs.stashes.length === 0;
+  $<HTMLButtonElement>("#refresh-btn").disabled = blocked;
 
-  // Badge the current branch's unpushed (ahead) / unpulled (behind) commit
-  // counts vs its upstream, so "Push"/"Pull" show there's work to sync.
+  // Badge the current branch's sync state vs its upstream. A branch with no
+  // upstream (never pushed) shows a dot on Push instead of a count; otherwise
+  // Push shows commits ahead (unpushed) and Pull shows commits behind.
   const head = state.refs.branches.find((b) => b.is_head);
-  setActionBadge("#push-badge", head?.ahead ?? 0, "commit(s) to push");
+  if (head && !head.has_upstream) {
+    setActionDot("#push-badge", "Branch has no upstream — not pushed yet");
+  } else {
+    setActionBadge("#push-badge", head?.ahead ?? 0, "commit(s) to push");
+  }
   setActionBadge("#pull-badge", head?.behind ?? 0, "commit(s) to pull");
 }
 
 // Show `count` on a toolbar badge (hidden when zero), with a descriptive title.
 function setActionBadge(sel: string, count: number, noun: string): void {
   const badge = $(sel);
+  badge.classList.remove("dot");
   badge.textContent = count > 99 ? "99+" : String(count);
   badge.title = `${count} ${noun}`;
   badge.classList.toggle("hidden", count === 0);
+}
+
+// Show a small dot (no number) on a toolbar badge — "there's something here,
+// but no count to give", e.g. an un-pushed branch with no upstream.
+function setActionDot(sel: string, title: string): void {
+  const badge = $(sel);
+  badge.textContent = "";
+  badge.title = title;
+  badge.classList.add("dot");
+  badge.classList.remove("hidden");
 }
 
 // Disable every toolbar button while a git operation is in flight.
@@ -625,6 +643,25 @@ async function popAction(): Promise<void> {
     setStatus(out || "Popped stash.");
   } catch (err) {
     setStatus(`Pop failed: ${String(err)}`);
+  } finally {
+    setActionsBusy(false);
+  }
+}
+
+// Fetch all remotes, then reload refs/history so every branch's ahead/behind
+// (and the Push/Pull badges) reflect the remote — showing what needs a pull.
+async function refreshAllAction(): Promise<void> {
+  if (!state.repoPath) return;
+  setActionsBusy(true);
+  setStatus("Fetching all remotes…");
+  try {
+    const out = (await fetchAll()).trim();
+    await Promise.all([loadSidebar(), refreshHistory()]);
+    if (state.view === "changes") await loadChanges();
+    setStatus(out || "Refreshed.");
+  } catch (err) {
+    setStatus("Refresh failed.");
+    showErrorDialog("Refresh failed", String(err));
   } finally {
     setActionsBusy(false);
   }
@@ -1360,6 +1397,7 @@ function wireUi(): void {
   $("#push-btn").addEventListener("click", () => void pushAction());
   $("#stash-btn").addEventListener("click", () => void stashAction());
   $("#pop-btn").addEventListener("click", () => void popAction());
+  $("#refresh-btn").addEventListener("click", () => void refreshAllAction());
   setupBranchMenu();
   $("#terminal-toggle").addEventListener("click", toggleTerminal);
   $("#terminal-close").addEventListener("click", toggleTerminal);

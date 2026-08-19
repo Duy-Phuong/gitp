@@ -225,7 +225,7 @@ export async function checkoutBranch(name: string): Promise<void> {
 export async function createBranch(name: string): Promise<void> {
   if (!isTauri()) {
     MOCK_REFS.branches.forEach((b) => (b.is_head = false));
-    MOCK_REFS.branches.push({ name, is_head: true, ahead: 0, behind: 0, target: mockOid("g") });
+    MOCK_REFS.branches.push({ name, is_head: true, ahead: 0, behind: 0, target: mockOid("g"), has_upstream: false });
     MOCK_REFS.head = name;
     return;
   }
@@ -310,6 +310,12 @@ export async function pushBranch(name: string): Promise<string> {
 export async function fetchBranch(name: string): Promise<string> {
   if (!isTauri()) return `Fetched updates for ${name} (preview mock)`;
   return invoke<string>("fetch_branch", { name });
+}
+
+// Fetch all remotes (updates every branch's ahead/behind vs its upstream).
+export async function fetchAll(): Promise<string> {
+  if (!isTauri()) return "Fetched all remotes (preview mock)";
+  return invoke<string>("fetch_all", {});
 }
 
 export async function fetchAndUpdateBranch(name: string): Promise<string> {
@@ -617,21 +623,21 @@ function mockOid(c: string): string {
 export const MOCK_REFS: Refs = {
   head: "develop/3.33.0",
   branches: [
-    { name: "master", is_head: false, ahead: 0, behind: 46, target: mockOid("a") },
-    { name: "bugifx/login-crash", is_head: false, ahead: 0, behind: 0, target: mockOid("b") },
-    { name: "develop/3.33.0", is_head: true, ahead: 2, behind: 0, target: mockOid("g") },
-    { name: "development/api-v2", is_head: false, ahead: 0, behind: 0, target: mockOid("c") },
-    { name: "draft-development/spike", is_head: false, ahead: 0, behind: 0, target: mockOid("d") },
-    { name: "feature/dashboard", is_head: false, ahead: 3, behind: 1, target: mockOid("e") },
-    { name: "feature/export", is_head: false, ahead: 0, behind: 0, target: mockOid("f") },
-    { name: "hotfix/urgent-patch", is_head: false, ahead: 0, behind: 0, target: mockOid("c") },
-    { name: "merge/master-to-develop", is_head: false, ahead: 0, behind: 0, target: mockOid("d") },
-    { name: "pr-2444", is_head: false, ahead: 0, behind: 0, target: mockOid("b") },
-    { name: "pr-2536", is_head: false, ahead: 0, behind: 0, target: mockOid("c") },
-    { name: "pr-2543", is_head: false, ahead: 0, behind: 0, target: mockOid("d") },
-    { name: "pr-2684-review", is_head: false, ahead: 0, behind: 0, target: mockOid("e") },
-    { name: "release-hotfix-3.24.5", is_head: false, ahead: 0, behind: 0, target: mockOid("f") },
-    { name: "release-hotfix-3.29.2", is_head: false, ahead: 0, behind: 0, target: mockOid("a") },
+    { name: "master", is_head: false, ahead: 0, behind: 46, target: mockOid("a"), has_upstream: true },
+    { name: "bugifx/login-crash", is_head: false, ahead: 0, behind: 0, target: mockOid("b"), has_upstream: false },
+    { name: "develop/3.33.0", is_head: true, ahead: 2, behind: 0, target: mockOid("g"), has_upstream: true },
+    { name: "development/api-v2", is_head: false, ahead: 0, behind: 0, target: mockOid("c"), has_upstream: true },
+    { name: "draft-development/spike", is_head: false, ahead: 0, behind: 0, target: mockOid("d"), has_upstream: false },
+    { name: "feature/dashboard", is_head: false, ahead: 3, behind: 1, target: mockOid("e"), has_upstream: true },
+    { name: "feature/export", is_head: false, ahead: 0, behind: 0, target: mockOid("f"), has_upstream: true },
+    { name: "hotfix/urgent-patch", is_head: false, ahead: 0, behind: 0, target: mockOid("c"), has_upstream: true },
+    { name: "merge/master-to-develop", is_head: false, ahead: 0, behind: 0, target: mockOid("d"), has_upstream: true },
+    { name: "pr-2444", is_head: false, ahead: 0, behind: 0, target: mockOid("b"), has_upstream: true },
+    { name: "pr-2536", is_head: false, ahead: 0, behind: 0, target: mockOid("c"), has_upstream: true },
+    { name: "pr-2543", is_head: false, ahead: 0, behind: 0, target: mockOid("d"), has_upstream: true },
+    { name: "pr-2684-review", is_head: false, ahead: 0, behind: 0, target: mockOid("e"), has_upstream: true },
+    { name: "release-hotfix-3.24.5", is_head: false, ahead: 0, behind: 0, target: mockOid("f"), has_upstream: true },
+    { name: "release-hotfix-3.29.2", is_head: false, ahead: 0, behind: 0, target: mockOid("a"), has_upstream: true },
   ],
   remotes: [
     { remote: "origin", name: "origin/master", target: mockOid("a") },

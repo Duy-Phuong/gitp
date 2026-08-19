@@ -20,6 +20,10 @@ pub struct BranchRef {
     pub behind: usize,
     /// Full hex oid of the branch tip, so the UI can jump to that commit.
     pub target: String,
+    /// Whether the branch tracks an upstream. `false` means it has never been
+    /// pushed / has no configured remote branch (so ahead/behind are 0 not
+    /// because it's in sync, but because there's nothing to compare against).
+    pub has_upstream: bool,
 }
 
 /// A remote-tracking branch, e.g. `origin/master`.
@@ -80,6 +84,7 @@ impl Repo {
                 head = Some(name.clone());
             }
             let (ahead, behind) = ahead_behind(repo, &branch);
+            let has_upstream = branch.upstream().is_ok();
             let target = branch
                 .get()
                 .target()
@@ -91,6 +96,7 @@ impl Repo {
                 ahead,
                 behind,
                 target,
+                has_upstream,
             });
         }
         branches.sort_by(|a, b| a.name.cmp(&b.name));

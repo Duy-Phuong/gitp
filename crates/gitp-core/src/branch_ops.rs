@@ -87,6 +87,13 @@ impl Repo {
         }
     }
 
+    /// Fetch every remote (`git fetch --all --prune`), refreshing all
+    /// remote-tracking refs so every branch's ahead/behind reflects the remote.
+    /// Doesn't touch the working tree or any local branch.
+    pub fn fetch_all(&self) -> Result<String> {
+        self.run_git(&["fetch", "--all", "--prune"])
+    }
+
     /// Fetch `name`'s remote and then advance the local branch to its upstream —
     /// i.e. fetch + fast-forward. Only advances when it's a true fast-forward
     /// (no divergence), so no merge commit is ever created and nothing is lost;

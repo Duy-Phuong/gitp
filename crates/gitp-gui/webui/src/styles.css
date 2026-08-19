@@ -195,21 +195,35 @@ body {
   cursor: pointer;
   font-size: 12px;
 }
-/* Unpushed/unpulled count over the icon, e.g. "10" commits ahead of upstream. */
+/* Unpushed/unpulled count over the icon, e.g. "10" commits ahead of upstream.
+   Sits at the button's top-right corner with a ring in the toolbar color so it
+   reads as a badge floating above the icon. */
 .action-badge {
   position: absolute;
-  top: 2px;
-  right: 8px;
-  min-width: 16px;
-  height: 16px;
+  top: 0;
+  right: 4px;
+  min-width: 17px;
+  height: 17px;
   padding: 0 4px;
-  border-radius: 8px;
+  box-sizing: border-box;
+  border-radius: 9px;
+  border: 2px solid var(--bg-elev, var(--bg));
   background: var(--accent);
   color: #fff;
   font-size: 10px;
   font-weight: 600;
-  line-height: 16px;
+  line-height: 13px;
   text-align: center;
+}
+/* Dot form: no number, just a marker (branch has no upstream). */
+.action-badge.dot {
+  min-width: 0;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  top: 3px;
+  right: 10px;
+  border-radius: 50%;
 }
 .action-badge.hidden {
   display: none;
