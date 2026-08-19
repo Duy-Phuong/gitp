@@ -40,6 +40,18 @@ export function clear(node: Element): void {
 
 // A rounded down-pointing chevron for collapsible sections/folders. Points down
 // as-is; callers rotate it (via a CSS class) to point right when collapsed.
+// Grow a text input's width to fit its current value, remeasured on each
+// keystroke. The CSS min-width/max-width bound it, so a long branch/file name
+// stays fully visible instead of scrolling inside a fixed field.
+export function autoGrowInput(input: HTMLInputElement): void {
+  const fit = () => {
+    input.style.width = "0px"; // clamped up to CSS min-width; lets scrollWidth remeasure
+    input.style.width = `${input.scrollWidth + 2}px`;
+  };
+  input.addEventListener("input", fit);
+  requestAnimationFrame(fit);
+}
+
 export function chevronIcon(): SVGElement {
   const s = svg("svg", { viewBox: "0 0 16 16", class: "chevron-icon" });
   s.appendChild(

@@ -121,7 +121,8 @@ const state: State = {
   refs: EMPTY_REFS,
   localChanges: 0,
   sbFilter: "",
-  sbCollapsed: new Set(),
+  // Recent starts collapsed — it's a quick-switch shortcut, not the primary list.
+  sbCollapsed: new Set(["sec:recent"]),
   rebase: null,
 };
 let terminal: TerminalHandle | null = null;

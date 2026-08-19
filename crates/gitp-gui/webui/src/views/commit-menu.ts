@@ -5,7 +5,7 @@
 // collects intent — a branch/tag name, a reset mode — and hands it to the
 // caller's handlers, which own the git call, confirmation, and refresh.
 
-import { clear, el } from "../dom";
+import { autoGrowInput, clear, el } from "../dom";
 import type { CommitRow, ResetMode } from "../types";
 
 export interface CommitMenuHandlers {
@@ -32,7 +32,7 @@ export interface CommitMenuHandlers {
 let openMenu: HTMLElement | null = null;
 let onDocMouseDown: ((e: MouseEvent) => void) | null = null;
 let onKeyDown: ((e: KeyboardEvent) => void) | null = null;
-let onScroll: (() => void) | null = null;
+let onScroll: ((e: Event) => void) | null = null;
 
 export function closeCommitMenu(): void {
   if (!openMenu) return;
@@ -76,8 +76,12 @@ export function showCommitMenu(
   onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") closeCommitMenu();
   };
-  // Any scroll (e.g. the log pane) moves the row out from under the menu.
-  onScroll = () => closeCommitMenu();
+  // A page scroll (e.g. the log pane) moves the row out from under the menu, so
+  // close — but ignore scrolls from inside the menu (a long value scrolling
+  // within the rename/new-branch input must not dismiss it).
+  onScroll = (e: Event) => {
+    if (!menu.contains(e.target as Node)) closeCommitMenu();
+  };
   document.addEventListener("mousedown", onDocMouseDown, true);
   document.addEventListener("keydown", onKeyDown, true);
   document.addEventListener("scroll", onScroll, true);
@@ -174,6 +178,7 @@ function promptName(
     else if (e.key === "Escape") buildRoot(menu, row, handlers);
   });
   menu.append(el("div", { class: "menu-newbranch" }, [input, create]));
+  autoGrowInput(input);
   requestAnimationFrame(() => {
     input.focus();
     input.select();

@@ -241,8 +241,10 @@ body {
   padding: 4px;
 }
 .menu-newbranch input {
-  flex: 1;
-  min-width: 0;
+  /* Longer by default; JS grows it with the typed name up to the cap below. */
+  flex: 0 1 auto;
+  min-width: 240px;
+  max-width: 60vw;
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 6px;

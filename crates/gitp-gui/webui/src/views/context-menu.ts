@@ -6,7 +6,7 @@
 // prompt item swaps the menu in place for a text input + Create button, so
 // "New Branch…", "New Tag…", and "Rename…" collect a value without a dialog.
 
-import { el } from "../dom";
+import { autoGrowInput, el } from "../dom";
 
 export interface MenuItem {
   label?: string;
@@ -19,7 +19,7 @@ export interface MenuItem {
 let openMenu: HTMLElement | null = null;
 let onDocMouseDown: ((e: MouseEvent) => void) | null = null;
 let onKeyDown: ((e: KeyboardEvent) => void) | null = null;
-let onScroll: (() => void) | null = null;
+let onScroll: ((e: Event) => void) | null = null;
 
 export function closeContextMenu(): void {
   if (!openMenu) return;
@@ -57,7 +57,11 @@ export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
   onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") closeContextMenu();
   };
-  onScroll = () => closeContextMenu();
+  // Close when the page scrolls the anchor away, but NOT when the scroll comes
+  // from inside the menu itself (e.g. a long value scrolling within an input).
+  onScroll = (e: Event) => {
+    if (!menu.contains(e.target as Node)) closeContextMenu();
+  };
   document.addEventListener("mousedown", onDocMouseDown, true);
   document.addEventListener("keydown", onKeyDown, true);
   document.addEventListener("scroll", onScroll, true);
@@ -113,6 +117,7 @@ function renderPrompt(
     else if (e.key === "Escape") renderItems(menu, items);
   });
   menu.append(el("div", { class: "menu-newbranch" }, [input, create]));
+  autoGrowInput(input);
   requestAnimationFrame(() => {
     input.focus();
     input.select();
