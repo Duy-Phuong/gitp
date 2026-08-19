@@ -231,6 +231,35 @@ function setStatus(message: string): void {
   $("#statusbar").textContent = message;
 }
 
+// --- Persisted preferences (localStorage) ----------------------------------
+
+const ALL_BRANCHES_KEY = "gitp-all-branches";
+const REPOS_KEY = "gitp-repos";
+
+// The history toggle, persisted across restarts. Defaults to all branches.
+function loadAllBranches(): boolean {
+  return localStorage.getItem(ALL_BRANCHES_KEY) !== "current";
+}
+function saveAllBranches(all: boolean): void {
+  localStorage.setItem(ALL_BRANCHES_KEY, all ? "all" : "current");
+}
+
+// The open repos + which is active, so the last workspace reopens on restart.
+// Only persisted in the desktop shell (preview uses mock repos).
+function saveWorkspace(): void {
+  if (!isTauri()) return;
+  const data = { paths: state.repos.map((r) => r.path), active: state.repoPath };
+  localStorage.setItem(REPOS_KEY, JSON.stringify(data));
+}
+function loadWorkspace(): { paths: string[]; active: string } | null {
+  try {
+    const raw = localStorage.getItem(REPOS_KEY);
+    return raw ? (JSON.parse(raw) as { paths: string[]; active: string }) : null;
+  } catch {
+    return null;
+  }
+}
+
 // --- Theme (System / Light / Dark) -----------------------------------------
 
 type ThemeChoice = "system" | "light" | "dark";
@@ -272,6 +301,37 @@ async function loadRepo(path: string): Promise<void> {
   }
 }
 
+// Reopen the repos from the last session. Skips paths that no longer open
+// (moved/deleted), restores the previously active tab, and loads its history.
+// Returns false when there's nothing saved or nothing could be reopened.
+async function restoreWorkspace(): Promise<boolean> {
+  const saved = loadWorkspace();
+  if (!saved || saved.paths.length === 0) return false;
+
+  let opened = 0;
+  for (const path of saved.paths) {
+    try {
+      applyWorkspace(await openRepo(path));
+      opened++;
+    } catch {
+      // Repo moved or deleted since last run — drop it silently.
+    }
+  }
+  if (opened === 0) return false;
+
+  if (saved.active && saved.active !== state.repoPath && state.repos.some((r) => r.path === saved.active)) {
+    try {
+      applyWorkspace(await activateRepo(saved.active));
+    } catch {
+      // fall back to whatever is active
+    }
+  }
+  showView("history");
+  await Promise.all([refreshHistory(), loadSidebar()]);
+  setStatus(`Reopened ${opened} repo${opened === 1 ? "" : "s"} · ${state.total} commits`);
+  return true;
+}
+
 // Adopt the backend's workspace as the source of truth for the tab bar and the
 // active repo. Does not itself load history — callers decide when to refresh.
 function applyWorkspace(ws: Workspace): void {
@@ -282,6 +342,7 @@ function applyWorkspace(ws: Workspace): void {
   $("#action-bar").classList.toggle("hidden", state.repos.length === 0);
   $<HTMLInputElement>("#repo-input").value = state.repoPath;
   if (state.repoPath) terminal?.setCwd(state.repoPath);
+  saveWorkspace();
 }
 
 function renderRepoTabs(): void {
@@ -1416,9 +1477,13 @@ function wireUi(): void {
 function setupBranchToggle(): void {
   const all = $("#branches-all");
   const current = $("#branches-current");
+  // Reflect the persisted choice (already loaded into state) in the buttons.
+  all.classList.toggle("active", state.allBranches);
+  current.classList.toggle("active", !state.allBranches);
   const set = (allBranches: boolean) => {
     if (state.allBranches === allBranches) return;
     state.allBranches = allBranches;
+    saveAllBranches(allBranches);
     all.classList.toggle("active", allBranches);
     current.classList.toggle("active", !allBranches);
     void refreshHistory();
@@ -1429,6 +1494,7 @@ function setupBranchToggle(): void {
 
 async function init(): Promise<void> {
   applyTheme(currentTheme());
+  state.allBranches = loadAllBranches(); // before wireUi so the toggle reflects it
   wireUi();
   detailView = setupDetail($("#detail-pane"), {
     onSelectCommit: (id) => void jumpToCommit(id, id.slice(0, 10)),
@@ -1470,9 +1536,11 @@ async function init(): Promise<void> {
     reportError: (title, detail) => showErrorDialog(title, detail),
   });
   if (isTauri()) {
-    setStatus("Enter a repository path and press Open.");
-    detailView?.showEmpty();
-    renderSidebarNow();
+    if (!(await restoreWorkspace())) {
+      setStatus("Enter a repository path and press Open.");
+      detailView?.showEmpty();
+      renderSidebarNow();
+    }
   } else {
     applyWorkspace(await listRepos());
     showView("history");
