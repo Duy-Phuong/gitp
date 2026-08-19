@@ -52,6 +52,17 @@ export function autoGrowInput(input: HTMLInputElement): void {
   requestAnimationFrame(fit);
 }
 
+// Grow a textarea's height to fit its content as the user types, up to `maxPx`
+// (after which it scrolls). Keeps a long commit description fully visible.
+export function autoGrowTextarea(area: HTMLTextAreaElement, maxPx = 320): void {
+  const fit = () => {
+    area.style.height = "auto";
+    area.style.height = `${Math.min(maxPx, area.scrollHeight)}px`;
+  };
+  area.addEventListener("input", fit);
+  requestAnimationFrame(fit);
+}
+
 export function chevronIcon(): SVGElement {
   const s = svg("svg", { viewBox: "0 0 16 16", class: "chevron-icon" });
   s.appendChild(

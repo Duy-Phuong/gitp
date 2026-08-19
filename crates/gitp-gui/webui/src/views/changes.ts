@@ -3,7 +3,7 @@
 // Amend + Commit). A stateful controller owns the selection, per-panel collapse
 // state, and the commit fields, reloading from the backend after each mutation.
 
-import { clear, el } from "../dom";
+import { autoGrowTextarea, clear, el } from "../dom";
 import type { CommitDetail, FileDiff, StatusLists } from "../types";
 import { showContextMenu } from "./context-menu";
 import { renderFile, renderSplitDiff } from "./detail";
@@ -180,6 +180,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     if (hasDiff) {
       body.append(splitView ? renderSplitDiff(selectedDiff!) : renderFile(selectedDiff!));
       attachHunkMenus(body);
+      // Amend-only files (shown while amending) aren't in the index — their
+      // blocks can't be staged/unstaged, so skip the per-hunk controls.
+      if (!amendOnly(selected.path)) attachHunkControls(body);
     } else if (!diffLoaded) {
       body.append(el("div", { class: "detail-empty", text: "Loading changes…" }));
     } else {
@@ -207,6 +210,37 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       mk("Unified", !splitView, false),
       mk("Split", splitView, true),
     ]);
+  }
+
+  // Per-block action buttons on each hunk header, revealed on hover: Stage /
+  // Discard for unstaged blocks, Unstage for staged ones. The same operations
+  // are also on the block's right-click menu (attachHunkMenus).
+  function attachHunkControls(body: HTMLElement): void {
+    const sel = selected;
+    if (!sel) return;
+    for (const hunkEl of body.querySelectorAll<HTMLElement>(".hunk[data-hunk]")) {
+      const header = hunkEl.querySelector(".hunk-header");
+      if (!header) continue;
+      const index = Number(hunkEl.dataset.hunk);
+      const actions = el("div", { class: "hunk-actions" });
+      const btn = (label: string, danger: boolean, onClick: () => void) => {
+        const b = el("button", { class: `hunk-btn${danger ? " danger" : ""}`, text: label });
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          onClick();
+        });
+        return b;
+      };
+      if (sel.panel === "unstaged") {
+        actions.append(
+          btn("Stage", false, () => void run(() => cb.stageHunk(sel.path, index))),
+          btn("Discard", true, () => void discardHunkAction(sel.path, index)),
+        );
+      } else {
+        actions.append(btn("Unstage", false, () => void run(() => cb.unstageHunk(sel.path, index))));
+      }
+      header.append(actions);
+    }
   }
 
   // Right-click a hunk block → stage / discard (unstaged) or unstage (staged)
@@ -311,6 +345,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     bodyInput.addEventListener("input", () => {
       body = bodyInput.value;
     });
+    autoGrowTextarea(bodyInput);
 
     const amendBox = el("input", { type: "checkbox" }) as HTMLInputElement;
     amendBox.checked = amend;

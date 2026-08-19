@@ -1515,11 +1515,45 @@ body {
   color: var(--text-dim);
 }
 .hunk-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--text-dim);
   padding: 4px 12px;
   background: var(--bg);
+}
+/* Per-block staging controls: hidden until the block (or its header) is hovered. */
+.hunk-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.hunk:hover .hunk-actions,
+.hunk-actions:focus-within {
+  opacity: 1;
+}
+.hunk-btn {
+  font-family: var(--font, sans-serif);
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elev);
+  color: var(--text);
+  cursor: pointer;
+}
+.hunk-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.hunk-btn.danger:hover {
+  border-color: var(--danger, #ff7b72);
+  color: var(--danger, #ff7b72);
 }
 .diff-line {
   font-family: var(--mono);

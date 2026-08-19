@@ -6,6 +6,35 @@ use common::FixtureRepo;
 use gitp_core::Repo;
 
 #[test]
+fn stage_hunk_stages_only_the_chosen_block_of_a_multi_hunk_file() {
+    let fx = FixtureRepo::init();
+    // A file with two regions far enough apart to diff as two separate hunks.
+    let base: String = (1..=20).map(|n| format!("line {n}\n")).collect();
+    fx.commit_file("a.txt", &base, "c1");
+    // Change line 2 (first hunk) and line 19 (second hunk).
+    let edited = base.replace("line 2\n", "LINE TWO\n").replace("line 19\n", "LINE NINETEEN\n");
+    std::fs::write(fx.path().join("a.txt"), &edited).unwrap();
+
+    let repo = Repo::open(fx.path()).unwrap();
+    let hunks = repo.file_diff("a.txt", false).unwrap().unwrap().hunks.len();
+    assert_eq!(hunks, 2, "the two edits form two separate hunks");
+
+    // Stage only the first block.
+    repo.stage_hunk("a.txt", 0).unwrap();
+
+    // The staged (index) diff has just the first edit; the working tree still
+    // has the second edit unstaged.
+    let staged = repo.file_diff("a.txt", true).unwrap().unwrap();
+    let staged_text: String = staged.hunks.iter().flat_map(|h| &h.lines).map(|l| l.content.as_str()).collect();
+    assert!(staged_text.contains("LINE TWO"), "first block is staged");
+    assert!(!staged_text.contains("LINE NINETEEN"), "second block is NOT staged");
+
+    let unstaged = repo.file_diff("a.txt", false).unwrap().unwrap();
+    let unstaged_text: String = unstaged.hunks.iter().flat_map(|h| &h.lines).map(|l| l.content.as_str()).collect();
+    assert!(unstaged_text.contains("LINE NINETEEN"), "second block remains unstaged");
+}
+
+#[test]
 fn status_splits_staged_from_unstaged_and_stage_moves_between_them() {
     let fx = FixtureRepo::init();
     fx.commit_file("a.txt", "one\n", "c1");
