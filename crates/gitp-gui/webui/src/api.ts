@@ -60,11 +60,15 @@ export async function browseForRepo(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
-export async function fetchLogPage(offset: number, limit: number): Promise<LogPage> {
+export async function fetchLogPage(
+  offset: number,
+  limit: number,
+  allBranches: boolean,
+): Promise<LogPage> {
   if (!isTauri()) {
     return { rows: MOCK_LOG.slice(offset, offset + limit), total: MOCK_LOG.length };
   }
-  return invoke<LogPage>("get_log_page", { offset, limit });
+  return invoke<LogPage>("get_log_page", { offset, limit, allBranches });
 }
 
 export async function fetchCommitDetail(rev: string): Promise<CommitDetail> {

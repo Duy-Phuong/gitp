@@ -12,6 +12,10 @@ use crate::repo::Repo;
 pub struct LogOptions {
     /// Stop after this many commits. `None` walks the whole reachable history.
     pub max_count: Option<usize>,
+    /// Seed the walk from every local and remote branch tip (plus HEAD) rather
+    /// than HEAD alone, so the graph shows all branches. Default `false`
+    /// (current branch only).
+    pub all_branches: bool,
 }
 
 /// One commit in the log, as plain data for frontends to render.
@@ -36,16 +40,18 @@ pub struct CommitRow {
 }
 
 impl Repo {
-    /// Walk history across all branches, newest-first (topological + time
-    /// ordered). Every local and remote-tracking branch tip is a starting
-    /// point (plus HEAD, for a detached checkout), so the graph shows commits
-    /// on branches that aren't reachable from HEAD — e.g. a remote branch that
-    /// is ahead of the current one. Categories that don't exist (say, no
-    /// remotes) are simply skipped; an empty repo yields an empty log.
+    /// Walk history newest-first (topological + time ordered), starting from
+    /// HEAD. With `options.all_branches`, also seed from every local and
+    /// remote-tracking branch tip, so the graph shows commits on branches not
+    /// reachable from HEAD — e.g. a remote branch ahead of the current one.
+    /// Missing categories (say, no remotes) are skipped; an empty repo yields
+    /// an empty log.
     pub fn log(&self, options: LogOptions) -> Result<Vec<CommitRow>> {
         let mut walk = self.inner.revwalk()?;
-        let _ = walk.push_glob("refs/heads/*");
-        let _ = walk.push_glob("refs/remotes/*");
+        if options.all_branches {
+            let _ = walk.push_glob("refs/heads/*");
+            let _ = walk.push_glob("refs/remotes/*");
+        }
         let _ = walk.push_head();
         walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
 

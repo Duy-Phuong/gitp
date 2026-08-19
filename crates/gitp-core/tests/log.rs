@@ -30,7 +30,21 @@ fn log_includes_commits_on_branches_not_reachable_from_head() {
     run(&["commit", "-qm", "only on feature"]);
     run(&["checkout", "-q", &start]); // back to the base branch (HEAD)
 
+    let opts = LogOptions { all_branches: true, ..Default::default() };
     let summaries: Vec<String> = Repo::open(fx.path())
+        .unwrap()
+        .log(opts)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.summary)
+        .collect();
+    assert!(
+        summaries.iter().any(|s| s == "only on feature"),
+        "all_branches walks every branch, not just HEAD: {summaries:?}"
+    );
+
+    // And the default (HEAD only) must NOT include the off-HEAD branch.
+    let head_only: Vec<String> = Repo::open(fx.path())
         .unwrap()
         .log(LogOptions::default())
         .unwrap()
@@ -38,8 +52,8 @@ fn log_includes_commits_on_branches_not_reachable_from_head() {
         .map(|r| r.summary)
         .collect();
     assert!(
-        summaries.iter().any(|s| s == "only on feature"),
-        "the log walks all branches, not just HEAD: {summaries:?}"
+        !head_only.iter().any(|s| s == "only on feature"),
+        "HEAD-only walk excludes the off-HEAD branch: {head_only:?}"
     );
 }
 

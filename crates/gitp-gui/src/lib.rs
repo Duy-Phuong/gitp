@@ -28,6 +28,9 @@ struct Session {
     name: String,
     repo: Repo,
     log: Option<Vec<CommitRow>>,
+    /// Which mode the cached `log` was built in (all branches vs HEAD only), so
+    /// a toggle change recomputes it.
+    log_all: bool,
 }
 
 /// All open repositories plus which one is active. Commands that read a repo
@@ -123,6 +126,7 @@ fn open_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, Stri
         name,
         repo,
         log: None,
+        log_all: false,
     });
     guard.active = Some(guard.sessions.len() - 1);
     Ok(guard.view())
@@ -164,16 +168,23 @@ fn close_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, Str
 
 /// Return the `[offset, offset+limit)` slice of the active repo's log, computing
 /// and caching the full log on first use so lanes are consistent across pages.
-fn get_log_page_impl(state: &RepoState, offset: usize, limit: usize) -> Result<LogPage, String> {
+fn get_log_page_impl(
+    state: &RepoState,
+    offset: usize,
+    limit: usize,
+    all_branches: bool,
+) -> Result<LogPage, String> {
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
-    if session.log.is_none() {
+    // Recompute when there's no cache or the toggle flipped since it was built.
+    if session.log.is_none() || session.log_all != all_branches {
         let rows = session
             .repo
-            .log(LogOptions::default())
+            .log(LogOptions { all_branches, ..Default::default() })
             .map_err(to_message)?;
         session.log = Some(rows);
+        session.log_all = all_branches;
     }
     let log = session.log.as_ref().unwrap();
     let total = log.len();
@@ -545,8 +556,13 @@ fn close_repo(path: String, state: State<RepoState>) -> Result<WorkspaceView, St
 }
 
 #[tauri::command]
-fn get_log_page(offset: usize, limit: usize, state: State<RepoState>) -> Result<LogPage, String> {
-    get_log_page_impl(&state, offset, limit)
+fn get_log_page(
+    offset: usize,
+    limit: usize,
+    all_branches: bool,
+    state: State<RepoState>,
+) -> Result<LogPage, String> {
+    get_log_page_impl(&state, offset, limit, all_branches)
 }
 
 #[tauri::command]

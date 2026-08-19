@@ -92,7 +92,15 @@
         <div id="sidebar-divider" class="pane-divider" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
         <div id="main-panel" class="main-panel">
           <section id="history-view" class="view">
-            <div id="log-pane" class="log-pane"></div>
+            <div id="log-col" class="log-col">
+              <div id="log-toolbar" class="log-toolbar">
+                <div class="seg-toggle" role="group" aria-label="Which branches to show">
+                  <button id="branches-all" class="seg active" title="Show commits from every branch">All branches</button>
+                  <button id="branches-current" class="seg" title="Show only the current branch's history">Current</button>
+                </div>
+              </div>
+              <div id="log-pane" class="log-pane"></div>
+            </div>
             <div id="pane-divider" class="pane-divider" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
             <div id="detail-pane" class="detail-pane"></div>
           </section>

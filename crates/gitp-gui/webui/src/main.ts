@@ -110,6 +110,8 @@ interface State {
   sbFilter: string;
   sbCollapsed: Set<string>;
   rebase: RebaseStatus | null;
+  // History graph shows all branches (true) or just the current branch (false).
+  allBranches: boolean;
 }
 
 const state: State = {
@@ -124,6 +126,7 @@ const state: State = {
   sbFilter: "",
   // Recent starts collapsed — it's a quick-switch shortcut, not the primary list.
   sbCollapsed: new Set(["sec:recent"]),
+  allBranches: true,
   rebase: null,
 };
 let terminal: TerminalHandle | null = null;
@@ -338,7 +341,7 @@ async function closeRepoTab(path: string): Promise<void> {
 }
 
 async function refreshHistory(): Promise<void> {
-  const page = await fetchLogPage(0, PAGE_SIZE);
+  const page = await fetchLogPage(0, PAGE_SIZE, state.allBranches);
   state.rows = page.rows;
   state.total = page.total;
   state.selectedId = state.rows[0]?.id ?? null;
@@ -354,7 +357,7 @@ async function loadMoreCommits(): Promise<void> {
   if (loadingMore || state.rows.length >= state.total) return;
   loadingMore = true;
   try {
-    const page = await fetchLogPage(state.rows.length, PAGE_SIZE);
+    const page = await fetchLogPage(state.rows.length, PAGE_SIZE, state.allBranches);
     state.rows = state.rows.concat(page.rows);
     state.total = page.total;
     const host = $("#log-pane");
@@ -1405,6 +1408,23 @@ function wireUi(): void {
   setupPaneResizer();
   setupSidebarResizer();
   setupSettingsMenu();
+  setupBranchToggle();
+}
+
+// Wire the All-branches / Current segmented toggle above the log. Switching
+// reloads the history from the new walk.
+function setupBranchToggle(): void {
+  const all = $("#branches-all");
+  const current = $("#branches-current");
+  const set = (allBranches: boolean) => {
+    if (state.allBranches === allBranches) return;
+    state.allBranches = allBranches;
+    all.classList.toggle("active", allBranches);
+    current.classList.toggle("active", !allBranches);
+    void refreshHistory();
+  };
+  all.addEventListener("click", () => set(true));
+  current.addEventListener("click", () => set(false));
 }
 
 async function init(): Promise<void> {

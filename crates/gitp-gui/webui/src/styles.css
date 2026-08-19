@@ -1033,9 +1033,48 @@ body {
 }
 
 /* Log -------------------------------------------------------------------- */
-.log-pane {
-  overflow: auto;
+.log-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
   border-right: 1px solid var(--border);
+}
+.log-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+}
+/* Segmented All-branches / Current toggle. */
+.seg-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.seg {
+  padding: 3px 10px;
+  font-size: 12px;
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  cursor: pointer;
+}
+.seg + .seg {
+  border-left: 1px solid var(--border);
+}
+.seg.active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.log-pane {
+  flex: 1 1 auto;
+  overflow: auto;
   background: var(--bg);
 }
 .log {
