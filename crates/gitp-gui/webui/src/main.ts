@@ -546,6 +546,20 @@ function refreshActionButtons(): void {
   $<HTMLButtonElement>("#branch-btn").disabled = blocked;
   $<HTMLButtonElement>("#stash-btn").disabled = blocked || state.localChanges === 0;
   $<HTMLButtonElement>("#pop-btn").disabled = blocked || state.refs.stashes.length === 0;
+
+  // Badge the current branch's unpushed (ahead) / unpulled (behind) commit
+  // counts vs its upstream, so "Push"/"Pull" show there's work to sync.
+  const head = state.refs.branches.find((b) => b.is_head);
+  setActionBadge("#push-badge", head?.ahead ?? 0, "commit(s) to push");
+  setActionBadge("#pull-badge", head?.behind ?? 0, "commit(s) to pull");
+}
+
+// Show `count` on a toolbar badge (hidden when zero), with a descriptive title.
+function setActionBadge(sel: string, count: number, noun: string): void {
+  const badge = $(sel);
+  badge.textContent = count > 99 ? "99+" : String(count);
+  badge.title = `${count} ${noun}`;
+  badge.classList.toggle("hidden", count === 0);
 }
 
 // Disable every toolbar button while a git operation is in flight.
