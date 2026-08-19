@@ -1,6 +1,8 @@
 //! Reference listing for the sidebar: local branches (with ahead/behind vs their
 //! upstream), remote-tracking branches, tags, and stashes.
 
+use std::collections::HashSet;
+
 use serde::Serialize;
 
 use crate::error::Result;
@@ -55,6 +57,9 @@ pub struct Refs {
     pub remotes: Vec<RemoteBranch>,
     pub tags: Vec<TagRef>,
     pub stashes: Vec<StashRef>,
+    /// Local branches most recently switched to (from HEAD's reflog), newest
+    /// first, excluding the current branch — for a quick-switch "Recent" list.
+    pub recent: Vec<String>,
 }
 
 impl Repo {
@@ -129,14 +134,56 @@ impl Repo {
             .collect();
         tags.sort_by(|a, b| a.name.cmp(&b.name));
 
+        let existing: HashSet<&str> = branches.iter().map(|b| b.name.as_str()).collect();
+        let recent = read_recent_branches(repo, &existing, head.as_deref(), 8);
+
         Ok(Refs {
             head,
             branches,
             remotes,
             tags,
             stashes: read_stashes(repo),
+            recent,
         })
     }
+}
+
+/// The local branches most recently checked out, newest first, read from
+/// HEAD's reflog ("checkout: moving from A to B" → B). Skips the current
+/// branch, entries whose target no longer exists (e.g. deleted branches or
+/// detached-commit checkouts), and duplicates. Capped at `limit`.
+fn read_recent_branches(
+    repo: &git2::Repository,
+    existing: &HashSet<&str>,
+    head: Option<&str>,
+    limit: usize,
+) -> Vec<String> {
+    let reflog = match repo.reflog("HEAD") {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    // Index 0 is the most recent reflog entry.
+    for i in 0..reflog.len() {
+        let Some(entry) = reflog.get(i) else { continue };
+        // Ref names can't contain spaces, so the " to " separator is unambiguous.
+        let Some(to) = entry
+            .message()
+            .and_then(|m| m.strip_prefix("checkout: moving from "))
+            .and_then(|rest| rest.split_once(" to ").map(|(_, b)| b))
+        else {
+            continue;
+        };
+        if Some(to) == head || !existing.contains(to) || !seen.insert(to.to_string()) {
+            continue;
+        }
+        out.push(to.to_string());
+        if out.len() >= limit {
+            break;
+        }
+    }
+    out
 }
 
 /// Ahead/behind counts for `branch` vs its upstream, or (0, 0) if it has none.

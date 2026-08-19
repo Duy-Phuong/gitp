@@ -66,6 +66,7 @@ export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCal
   const filtering = q !== "";
 
   const tree = el("div", { class: "sb-tree" });
+  buildRecent(tree, s, cb, match);
   buildBranches(tree, s, cb, match, filtering);
   buildRemotes(tree, s, cb, match, filtering);
   buildTags(tree, s, cb, match);
@@ -181,6 +182,28 @@ function jumpLeaf(
 function splitRef(name: string): { folder: string | null; label: string } {
   const i = name.indexOf("/");
   return i === -1 ? { folder: null, label: name } : { folder: name.slice(0, i), label: name.slice(i + 1) };
+}
+
+// Recently switched-to branches (from the backend's HEAD-reflog order), shown
+// above Branches for quick switching. Each is a normal branch leaf, so click /
+// double-click / right-click behave exactly like in Branches. Hidden when empty
+// or while filtering (the filter targets the full ref tree, not this shortcut).
+function buildRecent(
+  tree: HTMLElement,
+  s: SidebarState,
+  cb: SidebarCallbacks,
+  match: (t: string) => boolean,
+): void {
+  const byName = new Map(s.refs.branches.map((b) => [b.name, b]));
+  const recent = s.refs.recent
+    .map((name) => byName.get(name))
+    .filter((b): b is BranchRef => b != null && match(b.name));
+  if (recent.length === 0) return;
+
+  const { row, collapsed } = sectionHeader("sec:recent", "Recent", s, cb);
+  tree.append(row);
+  if (collapsed) return;
+  for (const b of recent) tree.append(branchLeaf(b, b.name, true, cb));
 }
 
 function buildBranches(

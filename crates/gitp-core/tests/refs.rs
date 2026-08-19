@@ -33,6 +33,46 @@ fn refs_lists_local_branches_head_and_tags() {
 }
 
 #[test]
+fn recent_lists_branches_by_last_switch_newest_first_excluding_head() {
+    use std::process::Command;
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "1\n", "base");
+    let run = |args: &[&str]| {
+        let out = Command::new("git").current_dir(fx.path()).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    // Create three branches and switch between them; the reflog records each.
+    run(&["branch", "one"]);
+    run(&["branch", "two"]);
+    run(&["branch", "three"]);
+    run(&["checkout", "one"]);
+    run(&["checkout", "two"]);
+    run(&["checkout", "three"]);
+    run(&["checkout", "one"]); // now on "one"
+
+    let recent = Repo::open(fx.path()).unwrap().refs().unwrap().recent;
+    // Newest switches first; current branch ("one") excluded; deduped.
+    assert_eq!(recent, vec!["three".to_string(), "two".to_string()]);
+}
+
+#[test]
+fn recent_drops_branches_that_no_longer_exist() {
+    use std::process::Command;
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "1\n", "base");
+    let run = |args: &[&str]| {
+        Command::new("git").current_dir(fx.path()).args(args).output().unwrap();
+    };
+    run(&["branch", "temp"]);
+    run(&["checkout", "temp"]);
+    run(&["checkout", "-"]); // back to the base branch
+    run(&["branch", "-D", "temp"]); // delete the branch we visited
+
+    let recent = Repo::open(fx.path()).unwrap().refs().unwrap().recent;
+    assert!(!recent.contains(&"temp".to_string()), "deleted branch is filtered out");
+}
+
+#[test]
 fn working_changes_reports_modified_and_untracked_files() {
     let fx = FixtureRepo::init();
     fx.commit_file("a.txt", "hello\n", "first");

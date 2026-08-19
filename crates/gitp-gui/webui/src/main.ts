@@ -91,7 +91,7 @@ import type {
 
 type View = "history" | "changes" | "config";
 
-const EMPTY_REFS: Refs = { head: null, branches: [], remotes: [], tags: [], stashes: [] };
+const EMPTY_REFS: Refs = { head: null, branches: [], remotes: [], tags: [], stashes: [], recent: [] };
 
 // Commits loaded per page. The first page makes the repo openable instantly;
 // more are appended as the user scrolls (see loadMoreCommits).

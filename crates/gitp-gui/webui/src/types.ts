@@ -111,6 +111,8 @@ export interface Refs {
   remotes: RemoteBranch[];
   tags: TagRef[];
   stashes: StashRef[];
+  // Local branch names most recently switched to, newest first (excludes HEAD).
+  recent: string[];
 }
 
 export interface Workspace {

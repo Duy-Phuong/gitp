@@ -647,6 +647,16 @@ export const MOCK_REFS: Refs = {
     { index: 0, message: "config 3.31.2" },
     { index: 1, message: "config 3.31 for mock" },
   ],
+  recent: [
+    "feature/dashboard",
+    "development/api-v2",
+    "master",
+    "draft-development/spike",
+    "feature/export",
+    "hotfix/urgent-patch",
+    "pr-2444",
+    "release-hotfix-3.24.5",
+  ],
 };
 
 // A sample repository tree for the File Tree tab in preview mode. Includes the
