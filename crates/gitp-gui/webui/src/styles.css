@@ -1095,7 +1095,8 @@ body {
   white-space: nowrap;
   border: 1px solid transparent;
 }
-.commit-ref .tag-icon {
+.commit-ref .tag-icon,
+.commit-ref .remote-icon {
   width: 10px;
   height: 10px;
   flex: 0 0 auto;

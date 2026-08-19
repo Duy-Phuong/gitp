@@ -5,7 +5,7 @@
 // full geometry is computed once (cheap math); only rendering is windowed.
 
 import { avatarUrl } from "../avatar";
-import { clear, el, svg, tagIcon } from "../dom";
+import { clear, el, githubIcon, svg, tagIcon } from "../dom";
 import { fitLaneWidth, GRAPH_METRICS, layoutGraph } from "../graph";
 import type { CommitRow } from "../types";
 
@@ -132,6 +132,7 @@ export function renderLog(
         for (const r of refs.slice(0, MAX_REF_CHIPS)) {
           const chip = el("span", { class: `commit-ref ${r.kind}`, title: r.name });
           if (r.kind === "tag") chip.append(tagIcon());
+          else if (r.kind === "remote") chip.append(githubIcon());
           chip.append(el("span", { class: "commit-ref-name", text: r.kind === "head" ? `✓ ${r.name}` : r.name }));
           box.append(chip);
         }
