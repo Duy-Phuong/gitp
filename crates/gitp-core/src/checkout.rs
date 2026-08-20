@@ -47,6 +47,34 @@ impl Repo {
         Ok(())
     }
 
+    /// Check out a remote-tracking branch (e.g. `origin/draft-develop/3.34.0`).
+    /// If a local branch of the corresponding name already exists, just switch
+    /// to it; otherwise create a local branch tracking the remote and switch.
+    /// Returns git's output for display.
+    pub fn checkout_remote(&self, remote_ref: &str) -> Result<String> {
+        let local = self.local_name_for_remote(remote_ref);
+        if self.inner.find_branch(&local, git2::BranchType::Local).is_ok() {
+            self.checkout_branch(&local)?;
+            return Ok(format!("Switched to {local}"));
+        }
+        // Shelling out gives git's DWIM tracking setup, hooks, and reflog.
+        self.run_git(&["checkout", "-b", &local, "--track", remote_ref])
+    }
+
+    /// The local branch name for a remote-tracking ref: strip the remote name
+    /// prefix (`origin/foo/bar` → `foo/bar`). Falls back to dropping the first
+    /// path segment when the remote can't be matched.
+    fn local_name_for_remote(&self, remote_ref: &str) -> String {
+        if let Ok(remotes) = self.inner.remotes() {
+            for remote in remotes.iter().flatten() {
+                if let Some(rest) = remote_ref.strip_prefix(&format!("{remote}/")) {
+                    return rest.to_string();
+                }
+            }
+        }
+        remote_ref.split_once('/').map_or(remote_ref, |x| x.1).to_string()
+    }
+
     /// Create a branch named `name` at the current HEAD commit and check it out.
     /// Errors if the branch already exists.
     pub fn create_branch(&self, name: &str) -> Result<()> {

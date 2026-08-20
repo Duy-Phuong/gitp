@@ -33,6 +33,8 @@ export interface SidebarCallbacks {
   onStashClick: (s: StashRef) => void;
   // Right-click a stash: open its actions menu at the cursor.
   onStashMenu: (s: StashRef, x: number, y: number) => void;
+  // Right-click a remote branch: open its actions menu (checkout, copy name).
+  onRemoteMenu: (name: string, target: string, x: number, y: number) => void;
 }
 
 export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCallbacks): void {
@@ -177,6 +179,22 @@ function jumpLeaf(
   return row;
 }
 
+// A remote branch: click jumps to its tip, right-click opens its actions menu.
+function remoteLeaf(
+  label: string,
+  full: string,
+  target: string,
+  cb: SidebarCallbacks,
+): HTMLElement {
+  const row = leaf(label, true, `${full}\nClick: jump to tip · Right-click: actions`);
+  if (target) row.addEventListener("click", () => cb.onRefJump(target, full));
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    cb.onRemoteMenu(full, target, e.clientX, e.clientY);
+  });
+  return row;
+}
+
 // --- sections ---------------------------------------------------------------
 
 function splitRef(name: string): { folder: string | null; label: string } {
@@ -272,7 +290,7 @@ function buildRemotes(
     const rcollapsed = s.collapsed.has(rkey) && !filtering;
     tree.append(folderRow(rkey, remote, rcollapsed, cb));
     if (!rcollapsed) {
-      for (const r of shown) tree.append(jumpLeaf(r.label, r.full, r.target, cb));
+      for (const r of shown) tree.append(remoteLeaf(r.label, r.full, r.target, cb));
     }
   }
 }

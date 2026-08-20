@@ -74,6 +74,39 @@ fn checkout_branch_updates_recent_like_the_cli() {
 }
 
 #[test]
+fn checkout_remote_creates_a_local_tracking_branch() {
+    use std::process::Command;
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "1\n", "base");
+    let run = |args: &[&str]| {
+        let out = Command::new("git").current_dir(fx.path()).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+
+    // A bare remote holding an extra branch that has no local counterpart.
+    let remote = tempfile::TempDir::new().unwrap();
+    Command::new("git").args(["init", "-q", "--bare", remote.path().to_str().unwrap()]).status().unwrap();
+    run(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    run(&["branch", "feature/x"]);
+    run(&["push", "-q", "origin", "--all"]);
+    run(&["branch", "-D", "feature/x"]); // drop the local; only origin/feature/x remains
+    run(&["fetch", "-q", "origin"]);
+
+    let repo = Repo::open(fx.path()).unwrap();
+    assert!(
+        !repo.refs().unwrap().branches.iter().any(|b| b.name == "feature/x"),
+        "no local branch yet"
+    );
+
+    repo.checkout_remote("origin/feature/x").unwrap();
+
+    let refs = repo.refs().unwrap();
+    assert_eq!(refs.head.as_deref(), Some("feature/x"), "now on the new local branch");
+    let b = refs.branches.iter().find(|b| b.name == "feature/x").expect("local branch created");
+    assert!(b.has_upstream, "local branch tracks the remote");
+}
+
+#[test]
 fn recent_drops_branches_that_no_longer_exist() {
     use std::process::Command;
     let fx = FixtureRepo::init();

@@ -226,6 +226,23 @@ export async function checkoutBranch(name: string): Promise<void> {
   await invoke<void>("checkout_branch", { name });
 }
 
+// Check out a remote branch, creating a local tracking branch if needed.
+export async function checkoutRemoteBranch(name: string): Promise<string> {
+  if (!isTauri()) {
+    const local = name.split("/").slice(1).join("/");
+    MOCK_REFS.branches.forEach((b) => (b.is_head = false));
+    if (!MOCK_REFS.branches.some((b) => b.name === local)) {
+      MOCK_REFS.branches.push({ name: local, is_head: true, ahead: 0, behind: 0, target: mockOid("g"), has_upstream: true });
+    } else {
+      const b = MOCK_REFS.branches.find((x) => x.name === local)!;
+      b.is_head = true;
+    }
+    MOCK_REFS.head = local;
+    return `Switched to ${local} (preview mock)`;
+  }
+  return invoke<string>("checkout_remote", { name });
+}
+
 export async function createBranch(name: string): Promise<void> {
   if (!isTauri()) {
     MOCK_REFS.branches.forEach((b) => (b.is_head = false));

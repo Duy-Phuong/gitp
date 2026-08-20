@@ -3,6 +3,7 @@ import {
   activateRepo,
   browseForRepo,
   checkoutBranch,
+  checkoutRemoteBranch,
   checkoutCommit,
   cherryPick,
   closeRepo,
@@ -549,6 +550,7 @@ function renderSidebarNow(): void {
       onBranchMenu: (b, x, y) => onBranchMenu(b, x, y),
       onStashClick: (s) => void showStashDetail(s),
       onStashMenu: (s, x, y) => onStashMenu(s, x, y),
+      onRemoteMenu: (name, target, x, y) => onRemoteMenu(name, target, x, y),
     },
   );
 }
@@ -892,6 +894,44 @@ function onStashMenu(s: StashRef, x: number, y: number): void {
     { label: "Delete…", danger: true, run: () => void deleteStashAction(s) },
   ];
   showContextMenu(x, y, items);
+}
+
+// Right-click a remote branch: check it out (as a local tracking branch) or
+// copy its name.
+function onRemoteMenu(name: string, target: string, x: number, y: number): void {
+  const items: MenuItem[] = [
+    { label: "Checkout…", run: () => void checkoutRemoteAction(name) },
+    { separator: true },
+    { label: "Copy Branch Name", run: () => void copyText(name, `Copied ${name}`) },
+  ];
+  void target;
+  showContextMenu(x, y, items);
+}
+
+// Check out a remote branch, creating/switching to a local tracking branch.
+// Warns first if the working tree has uncommitted changes (like branch checkout).
+async function checkoutRemoteAction(name: string): Promise<void> {
+  if (state.localChanges > 0) {
+    const n = state.localChanges;
+    const ok = await confirmDialog(
+      `You have ${n} uncommitted change${n === 1 ? "" : "s"}.\n\n` +
+        `Check out "${name}"? Conflicting changes will block it.`,
+    );
+    if (!ok) {
+      setStatus("Checkout cancelled.");
+      return;
+    }
+  }
+  setStatus(`Checking out ${name}…`);
+  try {
+    const out = (await checkoutRemoteBranch(name)).trim();
+    showView("history");
+    await Promise.all([refreshHistory(), loadSidebar()]);
+    setStatus(out || `Checked out ${name}`);
+  } catch (err) {
+    setStatus("Checkout failed.");
+    showErrorDialog(`Couldn't check out ${name}`, String(err));
+  }
 }
 
 // Run a stash op, then refresh the sidebar and — if it's open — the Local

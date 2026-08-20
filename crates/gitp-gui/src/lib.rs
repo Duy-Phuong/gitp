@@ -279,6 +279,12 @@ fn checkout_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Check out a remote-tracking branch (creating a local tracking branch if
+/// needed). Invalidates the cached log because HEAD moves.
+fn checkout_remote_impl(state: &RepoState, name: String) -> Result<String, String> {
+    with_active_repo_invalidating(state, |repo| repo.checkout_remote(&name))
+}
+
 /// Create branch `name` from the current HEAD and check it out. Invalidates the
 /// cached log because HEAD moves to the new branch.
 fn create_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
@@ -655,6 +661,11 @@ fn checkout_branch(name: String, state: State<RepoState>) -> Result<(), String> 
 }
 
 #[tauri::command]
+fn checkout_remote(name: String, state: State<RepoState>) -> Result<String, String> {
+    checkout_remote_impl(&state, name)
+}
+
+#[tauri::command]
 fn create_branch(name: String, state: State<RepoState>) -> Result<(), String> {
     create_branch_impl(&state, name)
 }
@@ -891,6 +902,7 @@ pub fn run() {
             unstage_all,
             commit_changes,
             checkout_branch,
+            checkout_remote,
             create_branch,
             checkout_commit,
             create_branch_at,
