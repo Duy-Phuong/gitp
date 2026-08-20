@@ -236,6 +236,26 @@ body {
   opacity: 0.5;
   cursor: default;
 }
+/* Action in flight: hide the icon and spin a ring in its place, so the busy
+   feedback is right on the button the user clicked. Overrides the disabled dim
+   so the active button stays legible. */
+.action-btn.busy {
+  opacity: 1;
+}
+.action-btn.busy .action-icon {
+  visibility: hidden;
+}
+.action-btn.busy::after {
+  content: "";
+  position: absolute;
+  bottom: 5px;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: status-spin 0.7s linear infinite;
+}
 .action-icon {
   width: 20px;
   height: 20px;

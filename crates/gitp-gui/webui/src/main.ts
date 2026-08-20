@@ -609,6 +609,8 @@ async function checkoutBranchAction(b: BranchRef): Promise<void> {
 // --- Action bar (Pull / Push / Branch) -------------------------------------
 
 let actionsBusy = false;
+// Selector of the toolbar button whose action is in flight, so it can spin.
+let busyActionBtn: string | null = null;
 
 // Enable/disable the toolbar buttons based on the in-flight state and what the
 // active repo supports: nothing to stash → Stash off; empty stack → Pop off.
@@ -620,6 +622,11 @@ function refreshActionButtons(): void {
   $<HTMLButtonElement>("#stash-btn").disabled = blocked || state.localChanges === 0;
   $<HTMLButtonElement>("#pop-btn").disabled = blocked || state.refs.stashes.length === 0;
   $<HTMLButtonElement>("#refresh-btn").disabled = blocked;
+
+  // Spin the button whose action is running.
+  for (const sel of ["#pull-btn", "#push-btn", "#stash-btn", "#pop-btn", "#refresh-btn"]) {
+    $(sel).classList.toggle("busy", busyActionBtn === sel);
+  }
 
   // Badge the current branch's sync state vs its upstream. A branch with no
   // upstream (never pushed) shows a dot on Push instead of a count; otherwise
@@ -652,15 +659,18 @@ function setActionDot(sel: string, title: string): void {
   badge.classList.remove("hidden");
 }
 
-// Disable every toolbar button while a git operation is in flight.
-function setActionsBusy(busy: boolean): void {
+// Disable every toolbar button while a git operation is in flight. `activeSel`
+// is the button that launched it — it shows a spinner over its icon so the
+// feedback is right where the user clicked.
+function setActionsBusy(busy: boolean, activeSel?: string): void {
   actionsBusy = busy;
+  busyActionBtn = busy ? (activeSel ?? null) : null;
   refreshActionButtons();
 }
 
 async function pullAction(): Promise<void> {
   if (!state.repoPath) return;
-  setActionsBusy(true);
+  setActionsBusy(true, "#pull-btn");
   setStatus("Pulling…");
   try {
     const out = await pull();
@@ -675,7 +685,7 @@ async function pullAction(): Promise<void> {
 
 async function pushAction(): Promise<void> {
   if (!state.repoPath) return;
-  setActionsBusy(true);
+  setActionsBusy(true, "#push-btn");
   setStatus("Pushing…");
   try {
     const out = await push();
@@ -690,7 +700,7 @@ async function pushAction(): Promise<void> {
 
 async function stashAction(): Promise<void> {
   if (!state.repoPath) return;
-  setActionsBusy(true);
+  setActionsBusy(true, "#stash-btn");
   setStatus("Stashing…");
   try {
     const out = await stash();
@@ -706,7 +716,7 @@ async function stashAction(): Promise<void> {
 
 async function popAction(): Promise<void> {
   if (!state.repoPath) return;
-  setActionsBusy(true);
+  setActionsBusy(true, "#pop-btn");
   setStatus("Popping stash…");
   try {
     const out = await stashPop();
@@ -724,7 +734,7 @@ async function popAction(): Promise<void> {
 // (and the Push/Pull badges) reflect the remote — showing what needs a pull.
 async function refreshAllAction(): Promise<void> {
   if (!state.repoPath) return;
-  setActionsBusy(true);
+  setActionsBusy(true, "#refresh-btn");
   setStatus("Fetching all remotes…");
   try {
     const out = (await fetchAll()).trim();
