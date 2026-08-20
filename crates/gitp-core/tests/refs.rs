@@ -56,6 +56,24 @@ fn recent_lists_branches_by_last_switch_newest_first_excluding_head() {
 }
 
 #[test]
+fn checkout_branch_updates_recent_like_the_cli() {
+    // Switching via Repo::checkout_branch (what the GUI calls) must record the
+    // HEAD reflog the same way `git checkout` does, so Recent reflects it.
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "1\n", "base");
+    let base = fx.repo.head().unwrap().peel_to_commit().unwrap();
+    fx.repo.branch("feature", &base, false).unwrap();
+
+    let repo = Repo::open(fx.path()).unwrap();
+    let start = repo.refs().unwrap().head.unwrap(); // the base branch
+    repo.checkout_branch("feature").unwrap();
+    repo.checkout_branch(&start).unwrap(); // back to base; "feature" is now recent
+
+    let recent = repo.refs().unwrap().recent;
+    assert_eq!(recent, vec!["feature".to_string()], "GUI checkout feeds Recent: {recent:?}");
+}
+
+#[test]
 fn recent_drops_branches_that_no_longer_exist() {
     use std::process::Command;
     let fx = FixtureRepo::init();

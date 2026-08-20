@@ -27,8 +27,21 @@ impl Repo {
         }
 
         // Point HEAD at the branch ref when there is one; otherwise detach.
+        // Write the same "checkout: moving from A to B" HEAD-reflog message the
+        // `git` CLI uses, so switches made here show up in the Recent list
+        // (which is read from that reflog). git2's plain set_head wouldn't.
         match reference.as_ref().and_then(git2::Reference::name) {
-            Some(refname) => self.inner.set_head(refname)?,
+            Some(refname) => {
+                let from = self
+                    .inner
+                    .head()
+                    .ok()
+                    .and_then(|h| h.shorthand().map(str::to_string))
+                    .unwrap_or_default();
+                let to = reference.as_ref().and_then(git2::Reference::shorthand).unwrap_or(name);
+                let msg = format!("checkout: moving from {from} to {to}");
+                self.inner.reference_symbolic("HEAD", refname, true, &msg)?;
+            }
             None => self.inner.set_head_detached(object.id())?,
         }
         Ok(())

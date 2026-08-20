@@ -227,8 +227,16 @@ const $ = <T extends HTMLElement>(sel: string): T => {
   return node;
 };
 
+// Render a status message. In-progress messages end with an ellipsis (e.g.
+// "Pushing…", "Checking out main…"); those show a spinner so any slow action
+// has clear in-app feedback instead of relying on the OS wait cursor.
 function setStatus(message: string): void {
-  $("#statusbar").textContent = message;
+  const bar = $("#statusbar");
+  const busy = message.trimEnd().endsWith("…") || message.trimEnd().endsWith("...");
+  clear(bar);
+  if (busy) bar.append(el("span", { class: "status-spinner", "aria-hidden": "true" }));
+  bar.append(el("span", { class: "status-text", text: message }));
+  bar.classList.toggle("busy", busy);
 }
 
 // --- Persisted preferences (localStorage) ----------------------------------

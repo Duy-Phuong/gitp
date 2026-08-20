@@ -1798,10 +1798,31 @@ body {
 
 /* Status bar ------------------------------------------------------------- */
 .statusbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 4px 12px;
   font-size: 11px;
   color: var(--text-dim);
   background: var(--bg-elev);
   border-top: 1px solid var(--border);
   min-height: 22px;
+}
+.statusbar.busy .status-text {
+  color: var(--text);
+}
+/* Small in-app spinner shown while an action is in progress. */
+.status-spinner {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: status-spin 0.7s linear infinite;
+}
+@keyframes status-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
