@@ -508,7 +508,43 @@ body {
 .modal-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 8px;
+}
+.modal-actions .spacer {
+  flex: 1;
+}
+
+/* Delete-branch modal ---------------------------------------------------- */
+.delete-modal {
+  width: min(460px, 92vw);
+}
+.delete-branch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 4px;
+}
+.delete-branch-label {
+  color: var(--text-dim);
+}
+.delete-branch-name {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.delete-remote-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn.danger-btn {
+  background: var(--danger, #ff7b72);
 }
 
 /* Interactive rebase editor (extended) ----------------------------------- */

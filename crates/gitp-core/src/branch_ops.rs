@@ -65,6 +65,22 @@ impl Repo {
         self.run_git(&["branch", flag, name])
     }
 
+    /// Delete branch `name` on its remote (`git push <remote> --delete`). Uses
+    /// the branch's configured remote and its remote-side name when known,
+    /// falling back to `origin` and the same name. This affects the remote.
+    pub fn delete_remote_branch(&self, name: &str) -> Result<String> {
+        let remote = match self.run_git(&["config", &format!("branch.{name}.remote")]) {
+            Ok(r) if !r.is_empty() => r,
+            _ => "origin".to_string(),
+        };
+        let remote_branch = self
+            .run_git(&["config", &format!("branch.{name}.merge")])
+            .ok()
+            .and_then(|m| m.trim().strip_prefix("refs/heads/").map(str::to_string))
+            .unwrap_or_else(|| name.to_string());
+        self.run_git(&["push", &remote, "--delete", &remote_branch])
+    }
+
     /// Merge `name` into the current branch (`git merge`). Conflicts leave the
     /// merge in progress and surface as an error.
     pub fn merge_branch(&self, name: &str) -> Result<String> {

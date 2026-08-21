@@ -14,6 +14,7 @@ import {
   createPullRequest,
   createTagAt,
   deleteBranch,
+  deleteRemoteBranch,
   discardHunk,
   fastForwardBranch,
   fetchAll,
@@ -70,6 +71,7 @@ import { renderLog, type RefLabel } from "./views/log";
 import { showCommitMenu, closeCommitMenu } from "./views/commit-menu";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { openRebaseModal, type RebaseOptions } from "./views/rebase";
+import { openDeleteBranchModal } from "./views/delete-branch";
 import { showErrorDialog } from "./views/message-dialog";
 import { openStashApplyModal } from "./views/stash-apply";
 import { setupDetail, type DetailHandle } from "./views/detail";
@@ -999,38 +1001,63 @@ async function renameBranchAction(b: BranchRef, newName: string): Promise<void> 
   }
 }
 
-// Safe delete first; if git refuses because the branch isn't merged, offer a
-// force delete behind a second, explicit confirmation.
-async function deleteBranchAction(b: BranchRef): Promise<void> {
-  if (!(await confirmDialog(`Delete branch ${b.name}?`))) {
-    setStatus("Delete cancelled.");
-    return;
-  }
+// The remote-tracking counterpart of a local branch (e.g. origin/feature/x),
+// if one exists — used to offer "also delete remote" in the delete modal.
+function remoteCounterpart(b: BranchRef): string | null {
+  const exact = state.refs.remotes.find((r) => r.name === `origin/${b.name}`);
+  if (exact) return exact.name;
+  const suffix = state.refs.remotes.find((r) => r.name.endsWith(`/${b.name}`));
+  return suffix ? suffix.name : null;
+}
+
+// Delete a branch. A modal confirms and offers to also delete the remote branch;
+// the local delete is safe (-d) and, if git refuses because it isn't merged,
+// offers a force delete behind a second, explicit confirmation.
+function deleteBranchAction(b: BranchRef): void {
+  const remoteBranch = remoteCounterpart(b);
+  openDeleteBranchModal(b.name, remoteBranch, (deleteRemote) => {
+    void runDelete(b, deleteRemote && remoteBranch != null);
+  });
+}
+
+async function runDelete(b: BranchRef, deleteRemote: boolean): Promise<void> {
+  setStatus(`Deleting ${b.name}…`);
   try {
     await deleteBranch(b.name, false);
-    await loadSidebar();
-    setStatus(`Deleted ${b.name}`);
   } catch (err) {
     const msg = String(err);
-    if (/not fully merged/i.test(msg)) {
-      const force = await confirmDialog(
-        `${b.name} is not fully merged. Force delete? Unmerged commits will be lost.`,
-      );
-      if (!force) {
-        setStatus("Delete cancelled.");
-        return;
-      }
-      try {
-        await deleteBranch(b.name, true);
-        await loadSidebar();
-        setStatus(`Force-deleted ${b.name}`);
-      } catch (err2) {
-        setStatus(`Delete failed: ${String(err2)}`);
-      }
-    } else {
+    if (!/not fully merged/i.test(msg)) {
       setStatus(`Delete failed: ${msg}`);
+      return;
+    }
+    const force = await confirmDialog(
+      `${b.name} is not fully merged. Force delete? Unmerged commits will be lost.`,
+    );
+    if (!force) {
+      setStatus("Delete cancelled.");
+      return;
+    }
+    try {
+      await deleteBranch(b.name, true);
+    } catch (err2) {
+      setStatus(`Delete failed: ${String(err2)}`);
+      return;
     }
   }
+
+  let note = `Deleted ${b.name}`;
+  if (deleteRemote) {
+    try {
+      await deleteRemoteBranch(b.name);
+      note += " (local and remote)";
+    } catch (err) {
+      await loadSidebar();
+      setStatus(`Deleted local ${b.name}, but remote delete failed: ${String(err)}`);
+      return;
+    }
+  }
+  await loadSidebar();
+  setStatus(note);
 }
 
 // Open the branch's pull-request page in the browser (URL derived from origin).

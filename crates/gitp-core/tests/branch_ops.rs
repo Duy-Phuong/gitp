@@ -61,6 +61,37 @@ fn merge_branch_brings_in_another_branchs_commit() {
     assert!(fx.path().join("side.txt").exists(), "side's file merged into master");
 }
 
+#[test]
+fn delete_remote_branch_removes_it_from_the_remote() {
+    use std::process::Command;
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+
+    // A bare repo standing in for `origin`.
+    let remote_dir = tempfile::tempdir().unwrap();
+    let run = |dir: &std::path::Path, args: &[&str]| {
+        let out = Command::new("git").current_dir(dir).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    run(remote_dir.path(), &["init", "--bare", "-q"]);
+    let remote_url = remote_dir.path().to_str().unwrap();
+    run(fx.path(), &["remote", "add", "origin", remote_url]);
+    // Push a feature branch and set it up to track origin.
+    run(fx.path(), &["branch", "feature/x"]);
+    run(fx.path(), &["push", "-u", "origin", "feature/x"]);
+
+    // Precondition: the remote has the branch.
+    let before = run(fx.path(), &["ls-remote", "--heads", "origin", "feature/x"]);
+    assert!(before.contains("feature/x"), "remote has the branch to start");
+
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.delete_remote_branch("feature/x").unwrap();
+
+    let after = run(fx.path(), &["ls-remote", "--heads", "origin", "feature/x"]);
+    assert!(after.is_empty(), "remote branch is gone after delete_remote_branch");
+}
+
 fn branch_names(repo: &Repo) -> Vec<String> {
     repo.refs().unwrap().branches.into_iter().map(|b| b.name).collect()
 }

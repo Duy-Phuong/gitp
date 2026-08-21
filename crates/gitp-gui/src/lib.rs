@@ -440,6 +440,10 @@ fn delete_branch_impl(state: &RepoState, name: String, force: bool) -> Result<St
     with_repo(state, |repo| repo.delete_branch(&name, force))
 }
 
+fn delete_remote_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.delete_remote_branch(&name))
+}
+
 /// Merge `name` into the current branch. Invalidates the cached log.
 fn merge_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
     with_active_repo_invalidating(state, |repo| repo.merge_branch(&name))
@@ -721,6 +725,11 @@ fn delete_branch(name: String, force: bool, state: State<RepoState>) -> Result<S
 }
 
 #[tauri::command]
+fn delete_remote_branch(name: String, state: State<RepoState>) -> Result<String, String> {
+    delete_remote_branch_impl(&state, name)
+}
+
+#[tauri::command]
 fn merge_branch(name: String, state: State<RepoState>) -> Result<String, String> {
     merge_branch_impl(&state, name)
 }
@@ -914,6 +923,7 @@ pub fn run() {
             rename_branch,
             create_backup_branch,
             delete_branch,
+            delete_remote_branch,
             merge_branch,
             push_branch,
             fetch_branch,

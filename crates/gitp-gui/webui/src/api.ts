@@ -318,6 +318,11 @@ export async function deleteBranch(name: string, force: boolean): Promise<string
   return invoke<string>("delete_branch", { name, force });
 }
 
+export async function deleteRemoteBranch(name: string): Promise<string> {
+  if (!isTauri()) return `Deleted remote branch for ${name} (preview mock)`;
+  return invoke<string>("delete_remote_branch", { name });
+}
+
 export async function mergeBranch(name: string): Promise<string> {
   if (!isTauri()) return `Merged ${name} (preview mock)`;
   return invoke<string>("merge_branch", { name });
