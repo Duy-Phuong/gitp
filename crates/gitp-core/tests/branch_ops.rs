@@ -108,6 +108,33 @@ fn delete_remote_branch_removes_it_from_the_remote() {
     );
 }
 
+#[test]
+fn rename_remote_branch_pushes_new_and_deletes_old() {
+    use std::process::Command;
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let remote_dir = tempfile::tempdir().unwrap();
+    let run = |dir: &std::path::Path, args: &[&str]| {
+        let out = Command::new("git").current_dir(dir).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    run(remote_dir.path(), &["init", "--bare", "-q"]);
+    run(fx.path(), &["remote", "add", "origin", remote_dir.path().to_str().unwrap()]);
+    run(fx.path(), &["branch", "old-name"]);
+    run(fx.path(), &["push", "-u", "origin", "old-name"]);
+
+    let repo = Repo::open(fx.path()).unwrap();
+    // Local rename first (as the UI does), then the remote rename.
+    repo.rename_branch("old-name", "new-name").unwrap();
+    repo.rename_remote_branch("new-name").unwrap();
+
+    let has_new = run(fx.path(), &["ls-remote", "--heads", "origin", "new-name"]);
+    let has_old = run(fx.path(), &["ls-remote", "--heads", "origin", "old-name"]);
+    assert!(has_new.contains("new-name"), "remote gained the new name");
+    assert!(has_old.is_empty(), "remote dropped the old name");
+}
+
 fn branch_names(repo: &Repo) -> Vec<String> {
     repo.refs().unwrap().branches.into_iter().map(|b| b.name).collect()
 }

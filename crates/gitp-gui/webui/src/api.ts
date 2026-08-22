@@ -303,6 +303,13 @@ export async function renameBranch(oldName: string, newName: string): Promise<st
   return invoke<string>("rename_branch", { old: oldName, new: newName });
 }
 
+// Rename the branch's remote counterpart (call after renameBranch): pushes the
+// new name and deletes the old remote branch.
+export async function renameRemoteBranch(newName: string): Promise<string> {
+  if (!isTauri()) return `Renamed remote branch to ${newName} (preview mock)`;
+  return invoke<string>("rename_remote_branch", { new: newName });
+}
+
 // Create a branch at HEAD without checking it out (rebase backup).
 export async function createBackupBranch(name: string): Promise<string> {
   if (!isTauri()) return `Created backup branch ${name} (preview mock)`;

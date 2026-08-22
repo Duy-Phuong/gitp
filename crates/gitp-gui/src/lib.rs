@@ -430,6 +430,11 @@ fn rename_branch_impl(state: &RepoState, old: String, new: String) -> Result<Str
     with_active_repo_invalidating(state, |repo| repo.rename_branch(&old, &new))
 }
 
+/// Rename branch `new`'s remote counterpart (run after the local rename).
+fn rename_remote_branch_impl(state: &RepoState, new: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.rename_remote_branch(&new))
+}
+
 /// Create branch `name` at HEAD without checking it out (e.g. a rebase backup).
 fn create_backup_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
     with_repo(state, |repo| repo.create_branch_here(&name))
@@ -719,6 +724,11 @@ fn rename_branch(old: String, new: String, state: State<RepoState>) -> Result<St
 }
 
 #[tauri::command]
+fn rename_remote_branch(new: String, state: State<RepoState>) -> Result<String, String> {
+    rename_remote_branch_impl(&state, new)
+}
+
+#[tauri::command]
 fn create_backup_branch(name: String, state: State<RepoState>) -> Result<String, String> {
     create_backup_branch_impl(&state, name)
 }
@@ -930,6 +940,7 @@ pub fn run() {
             reset,
             rebase_onto,
             rename_branch,
+            rename_remote_branch,
             create_backup_branch,
             delete_branch,
             delete_remote_branch,

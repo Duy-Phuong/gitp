@@ -22,6 +22,19 @@ impl Repo {
         self.run_git(&["branch", name])
     }
 
+    /// Rename branch `new`'s counterpart on the remote, run *after* the local
+    /// rename (so `new` already tracks the old remote branch). Git has no direct
+    /// remote-rename, so this pushes `new` (updating its upstream) and then
+    /// deletes the old remote branch. No-op-ish when the remote name is unchanged.
+    pub fn rename_remote_branch(&self, new: &str) -> Result<String> {
+        let (remote, old_remote) = self.remote_target(new);
+        let pushed = self.run_git(&["push", "-u", &remote, new])?;
+        if old_remote != new {
+            self.run_git(&["push", &remote, "--delete", &old_remote])?;
+        }
+        Ok(format!("{pushed}\nrenamed {remote}/{old_remote} -> {remote}/{new}"))
+    }
+
     /// Set `branch`'s upstream (tracking) to `upstream`, e.g. `origin/main`.
     pub fn set_upstream(&self, branch: &str, upstream: &str) -> Result<String> {
         self.run_git(&["branch", &format!("--set-upstream-to={upstream}"), branch])

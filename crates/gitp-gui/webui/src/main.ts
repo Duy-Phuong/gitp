@@ -47,6 +47,7 @@ import {
   rebaseSkip,
   rebaseOnto,
   renameBranch,
+  renameRemoteBranch,
   resetTo,
   revertCommit,
   saveConfig,
@@ -73,6 +74,7 @@ import { showCommitMenu, closeCommitMenu } from "./views/commit-menu";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { openRebaseModal, type RebaseOptions } from "./views/rebase";
 import { openDeleteBranchModal } from "./views/delete-branch";
+import { openRenameBranchModal } from "./views/rename-branch";
 import { showErrorDialog } from "./views/message-dialog";
 import { openStashApplyModal } from "./views/stash-apply";
 import { setupDetail, type DetailHandle } from "./views/detail";
@@ -768,12 +770,6 @@ async function createBranchAction(name: string): Promise<void> {
 
 // --- Branch right-click menu ------------------------------------------------
 
-// The short (leaf) name of a branch, for prefilling the Rename input.
-function branchLeafName(name: string): string {
-  const i = name.lastIndexOf("/");
-  return i === -1 ? name : name.slice(i + 1);
-}
-
 // Build and open the actions menu for a right-clicked branch.
 function onBranchMenu(b: BranchRef, x: number, y: number): void {
   const current = state.refs.head;
@@ -843,14 +839,7 @@ function onBranchMenu(b: BranchRef, x: number, y: number): void {
   items.push({ label: "Unset Upstream", run: () => void runBranchOp(`Unsetting upstream of ${b.name}`, () => unsetUpstream(b.name), false) });
 
   items.push({ separator: true });
-  items.push({
-    label: "Rename…",
-    prompt: {
-      placeholder: "New name",
-      value: branchLeafName(b.name),
-      onSubmit: (name) => void renameBranchAction(b, name),
-    },
-  });
+  items.push({ label: "Rename…", run: () => void renameBranchAction(b) });
   if (!b.is_head) items.push({ label: "Delete…", danger: true, run: () => void deleteBranchAction(b) });
 
   items.push({ separator: true });
@@ -989,17 +978,39 @@ async function runBranchOp(label: string, op: () => Promise<string>, refreshLog:
   }
 }
 
-async function renameBranchAction(b: BranchRef, newName: string): Promise<void> {
-  if (newName === b.name) return;
-  setStatus(`Renaming ${b.name}…`);
+// Rename a branch. A modal collects the new name and, when the branch exists on
+// its remote (probed live via git ls-remote), offers to rename it there too.
+function renameBranchAction(b: BranchRef): void {
+  const probe = remoteBranchExists(b.name).catch(() => null);
+  openRenameBranchModal(b.name, probe, (newName, renameRemote) => {
+    void runRename(b, newName, renameRemote);
+  });
+}
+
+async function runRename(b: BranchRef, newName: string, renameRemote: boolean): Promise<void> {
+  const oldName = b.name; // capture before any await (mock may mutate the ref)
+  if (newName === oldName) return;
+  setStatus(`Renaming ${oldName}…`);
   try {
-    await renameBranch(b.name, newName);
-    await loadSidebar();
-    if (state.view === "history") await refreshHistory();
-    setStatus(`Renamed ${b.name} → ${newName}`);
+    await renameBranch(oldName, newName);
   } catch (err) {
     setStatus(`Rename failed: ${String(err)}`);
+    return;
   }
+  let note = `Renamed ${oldName} → ${newName}`;
+  if (renameRemote) {
+    try {
+      await renameRemoteBranch(newName);
+      note += " (local and remote)";
+    } catch (err) {
+      await loadSidebar();
+      setStatus(`Renamed local ${b.name}, but remote rename failed: ${String(err)}`);
+      return;
+    }
+  }
+  await loadSidebar();
+  if (state.view === "history") await refreshHistory();
+  setStatus(note);
 }
 
 // Delete a branch. A modal confirms and, when the branch genuinely exists on
