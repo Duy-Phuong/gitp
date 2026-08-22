@@ -323,6 +323,18 @@ export async function deleteRemoteBranch(name: string): Promise<string> {
   return invoke<string>("delete_remote_branch", { name });
 }
 
+// Live check (git ls-remote) of whether the branch exists on its remote right
+// now. Returns the "<remote>/<branch>" label, or null if absent.
+export async function remoteBranchExists(name: string): Promise<string | null> {
+  if (!isTauri()) {
+    const m =
+      MOCK_REFS.remotes.find((r) => r.name === `origin/${name}`) ??
+      MOCK_REFS.remotes.find((r) => r.name.endsWith(`/${name}`));
+    return m ? m.name : null;
+  }
+  return invoke<string | null>("remote_branch_exists", { name });
+}
+
 export async function mergeBranch(name: string): Promise<string> {
   if (!isTauri()) return `Merged ${name} (preview mock)`;
   return invoke<string>("merge_branch", { name });

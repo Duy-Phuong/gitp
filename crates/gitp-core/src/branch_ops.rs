@@ -69,6 +69,27 @@ impl Repo {
     /// the branch's configured remote and its remote-side name when known,
     /// falling back to `origin` and the same name. This affects the remote.
     pub fn delete_remote_branch(&self, name: &str) -> Result<String> {
+        let (remote, remote_branch) = self.remote_target(name);
+        self.run_git(&["push", &remote, "--delete", &remote_branch])
+    }
+
+    /// Whether branch `name` currently exists on its remote, queried live with
+    /// `git ls-remote` (contacts the remote). Returns the display label
+    /// `<remote>/<branch>` when present, `None` when absent. An error (no remote,
+    /// unreachable) propagates so the caller can treat it as "can't confirm".
+    pub fn remote_branch_exists(&self, name: &str) -> Result<Option<String>> {
+        let (remote, remote_branch) = self.remote_target(name);
+        let out = self.run_git(&["ls-remote", "--heads", &remote, &remote_branch])?;
+        Ok(if out.trim().is_empty() {
+            None
+        } else {
+            Some(format!("{remote}/{remote_branch}"))
+        })
+    }
+
+    /// Resolve the remote and remote-side branch name for `name`: its configured
+    /// upstream when set, else `origin` and the same branch name.
+    fn remote_target(&self, name: &str) -> (String, String) {
         let remote = match self.run_git(&["config", &format!("branch.{name}.remote")]) {
             Ok(r) if !r.is_empty() => r,
             _ => "origin".to_string(),
@@ -78,7 +99,7 @@ impl Repo {
             .ok()
             .and_then(|m| m.trim().strip_prefix("refs/heads/").map(str::to_string))
             .unwrap_or_else(|| name.to_string());
-        self.run_git(&["push", &remote, "--delete", &remote_branch])
+        (remote, remote_branch)
     }
 
     /// Merge `name` into the current branch (`git merge`). Conflicts leave the

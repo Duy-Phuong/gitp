@@ -1,13 +1,16 @@
 // Delete-branch confirmation modal. Confirms the local delete and, when the
-// branch has a remote counterpart, offers to also delete it on the remote via a
-// checkbox (unchecked by default — deleting the remote branch is the riskier,
-// opt-in action).
+// branch genuinely exists on its remote, offers to also delete it there via a
+// checkbox (unchecked by default — the riskier, opt-in action).
+//
+// Remote existence is probed live (git ls-remote) and passed in as a promise:
+// the modal shows "Checking remote…" until it resolves, then reveals the
+// checkbox only if the branch is actually present on the remote.
 
 import { el } from "../dom";
 
 export function openDeleteBranchModal(
   branchName: string,
-  remoteBranch: string | null,
+  remoteProbe: Promise<string | null>,
   onConfirm: (deleteRemote: boolean) => void,
 ): void {
   const overlay = el("div", { class: "modal-overlay" });
@@ -15,8 +18,10 @@ export function openDeleteBranchModal(
   overlay.append(modal);
 
   let deleteRemote = false;
+  let closed = false;
 
   const close = () => {
+    closed = true;
     document.removeEventListener("keydown", onKey, true);
     overlay.remove();
   };
@@ -37,17 +42,11 @@ export function openDeleteBranchModal(
     ]),
   );
 
-  if (remoteBranch) {
-    const box = el("input", { type: "checkbox" }) as HTMLInputElement;
-    box.addEventListener("change", () => (deleteRemote = box.checked));
-    modal.append(
-      el("label", { class: "delete-remote-row" }, [
-        el("span", { class: "delete-warn-icon", text: "⚠️" }),
-        box,
-        el("span", { text: `Also delete remote branch ${remoteBranch}` }),
-      ]),
-    );
-  }
+  // Placeholder for the remote-delete option; filled in once the probe resolves.
+  const remoteSlot = el("div", { class: "delete-remote-slot" }, [
+    el("span", { class: "delete-remote-checking", text: "Checking remote…" }),
+  ]);
+  modal.append(remoteSlot);
 
   const cancel = el("button", { class: "btn ghost", text: "Cancel" });
   cancel.addEventListener("click", close);
@@ -56,8 +55,27 @@ export function openDeleteBranchModal(
     close();
     onConfirm(deleteRemote);
   });
-
   modal.append(el("div", { class: "modal-actions" }, [el("span", { class: "spacer" }), cancel, del]));
   document.body.append(overlay);
   requestAnimationFrame(() => del.focus());
+
+  remoteProbe
+    .then((remoteBranch) => {
+      if (closed) return;
+      remoteSlot.replaceChildren();
+      if (!remoteBranch) return; // not on the remote — local-only delete
+      const box = el("input", { type: "checkbox" }) as HTMLInputElement;
+      box.addEventListener("change", () => (deleteRemote = box.checked));
+      remoteSlot.append(
+        el("label", { class: "delete-remote-row" }, [
+          el("span", { class: "delete-warn-icon", text: "⚠️" }),
+          box,
+          el("span", { text: `Also delete remote branch ${remoteBranch}` }),
+        ]),
+      );
+    })
+    .catch(() => {
+      // Couldn't confirm (no remote / unreachable) — offer local delete only.
+      if (!closed) remoteSlot.replaceChildren();
+    });
 }

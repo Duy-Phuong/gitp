@@ -15,6 +15,7 @@ import {
   createTagAt,
   deleteBranch,
   deleteRemoteBranch,
+  remoteBranchExists,
   discardHunk,
   fastForwardBranch,
   fetchAll,
@@ -1001,22 +1002,14 @@ async function renameBranchAction(b: BranchRef, newName: string): Promise<void> 
   }
 }
 
-// The remote-tracking counterpart of a local branch (e.g. origin/feature/x),
-// if one exists — used to offer "also delete remote" in the delete modal.
-function remoteCounterpart(b: BranchRef): string | null {
-  const exact = state.refs.remotes.find((r) => r.name === `origin/${b.name}`);
-  if (exact) return exact.name;
-  const suffix = state.refs.remotes.find((r) => r.name.endsWith(`/${b.name}`));
-  return suffix ? suffix.name : null;
-}
-
-// Delete a branch. A modal confirms and offers to also delete the remote branch;
-// the local delete is safe (-d) and, if git refuses because it isn't merged,
+// Delete a branch. A modal confirms and, when the branch genuinely exists on
+// its remote (probed live via git ls-remote), offers to also delete it there.
+// The local delete is safe (-d) and, if git refuses because it isn't merged,
 // offers a force delete behind a second, explicit confirmation.
 function deleteBranchAction(b: BranchRef): void {
-  const remoteBranch = remoteCounterpart(b);
-  openDeleteBranchModal(b.name, remoteBranch, (deleteRemote) => {
-    void runDelete(b, deleteRemote && remoteBranch != null);
+  const probe = remoteBranchExists(b.name).catch(() => null);
+  openDeleteBranchModal(b.name, probe, (deleteRemote) => {
+    void runDelete(b, deleteRemote);
   });
 }
 

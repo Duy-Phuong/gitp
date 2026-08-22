@@ -86,10 +86,26 @@ fn delete_remote_branch_removes_it_from_the_remote() {
     assert!(before.contains("feature/x"), "remote has the branch to start");
 
     let repo = Repo::open(fx.path()).unwrap();
+
+    // Live probe: present before delete, absent after; unknown branch → None.
+    assert_eq!(
+        repo.remote_branch_exists("feature/x").unwrap().as_deref(),
+        Some("origin/feature/x"),
+        "probe finds the pushed branch on the remote"
+    );
+    assert!(
+        repo.remote_branch_exists("feature/never-pushed").unwrap().is_none(),
+        "probe reports absent branch as None"
+    );
+
     repo.delete_remote_branch("feature/x").unwrap();
 
     let after = run(fx.path(), &["ls-remote", "--heads", "origin", "feature/x"]);
     assert!(after.is_empty(), "remote branch is gone after delete_remote_branch");
+    assert!(
+        repo.remote_branch_exists("feature/x").unwrap().is_none(),
+        "probe reflects the deletion"
+    );
 }
 
 fn branch_names(repo: &Repo) -> Vec<String> {

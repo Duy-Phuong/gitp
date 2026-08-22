@@ -546,6 +546,14 @@ body {
 .btn.danger-btn {
   background: var(--danger, #ff7b72);
 }
+.delete-remote-slot {
+  min-height: 20px;
+  margin: 8px 0 4px;
+}
+.delete-remote-checking {
+  color: var(--text-dim);
+  font-size: 12px;
+}
 
 /* Interactive rebase editor (extended) ----------------------------------- */
 .rebase-modal {
