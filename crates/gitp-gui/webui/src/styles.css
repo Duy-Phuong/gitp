@@ -836,6 +836,22 @@ body {
 .conflict-clean {
   color: var(--add-fg);
 }
+.conflict-editor-count.pending {
+  color: #d29922;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+/* A resolved change dims so it reads as settled. */
+.cf-done {
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+}
+.merge-gutter-done {
+  opacity: 0.45;
+}
+.merge-gutter-done:hover {
+  opacity: 1;
+}
 
 /* 3-column merge grid: Ours | gutter | Result | gutter | Theirs, all in one
    scroll container so the columns scroll together and stay line-aligned. */

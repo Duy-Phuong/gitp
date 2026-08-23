@@ -389,10 +389,17 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   function textEditor(_s: ConflictSides): HTMLElement {
     const box = el("div", { class: "conflict-editor" });
     const total = changedChunks.length;
-    const conflicts = changedChunks.filter((c) => c.conflict).length;
     const unresolved = res.filter((r) => r === null).length;
+    const unresolvedConflicts = changedChunks.reduce(
+      (n, c, i) => n + (c.conflict && res[i] === null ? 1 : 0),
+      0,
+    );
     const touched = res.some((r) => r !== null);
     const anchors: HTMLElement[] = [];
+    const jumpToUnresolved = () => {
+      const i = res.findIndex((r) => r === null);
+      if (i >= 0) anchors[i]?.scrollIntoView({ block: "center" });
+    };
 
     // Bulk actions.
     const acceptAll = (ours: boolean) => {
@@ -429,16 +436,28 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     };
     const save = el("button", { class: "btn", text: "Save" }) as HTMLButtonElement;
     save.disabled = !allResolved();
-    save.title = allResolved() ? "Stage this file as resolved" : "Resolve every change first";
+    save.title = allResolved()
+      ? "Stage this file as resolved"
+      : `Resolve ${unresolved} more change${unresolved !== 1 ? "s" : ""} to save`;
     save.addEventListener("click", () => void saveFile());
+
+    // Remaining-work indicator; decrements as blocks are resolved. Clickable to
+    // jump to the first unresolved change (so it's clear what's blocking Save).
+    const count = el("span", {
+      class: `conflict-editor-count${unresolved ? " pending" : " conflict-clean"}`,
+      text: unresolved
+        ? `${unresolved} unresolved${unresolvedConflicts ? ` · ${unresolvedConflicts} conflict${unresolvedConflicts !== 1 ? "s" : ""}` : ""}`
+        : `all ${total} resolved`,
+    });
+    if (unresolved) {
+      count.title = "Jump to the first unresolved change";
+      count.addEventListener("click", jumpToUnresolved);
+    }
 
     box.append(
       el("div", { class: "conflict-editor-head" }, [
         el("span", { class: "conflict-editor-file", text: selected! }),
-        el("span", {
-          class: `conflict-editor-count${unresolved ? "" : " conflict-clean"}`,
-          text: `${total} change${total !== 1 ? "s" : ""}, ${conflicts} conflict${conflicts !== 1 ? "s" : ""}`,
-        }),
+        count,
         el("div", { class: "conflict-editor-actions" }, [
           tbBtn("↑", "Previous change", () => gotoChange(-1), !total),
           tbBtn("↓", "Next change", () => gotoChange(1), !total),
@@ -483,27 +502,29 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
         continue;
       }
       // Any change (conflict red / non-conflict green) is decided via arrows.
+      // Once resolved the side columns dim to "done" so it's clear it's settled.
       const idx = ci++;
       const r = res[idx];
-      const side: Cell["cls"] = c.conflict ? "conflict" : "new";
+      const resolved = r !== null;
+      const kind: Cell["cls"] = c.conflict ? "conflict" : "new";
+      const side: Cell["cls"] = resolved ? "done" : kind;
       const oursCh = !eqLines(c.ours, c.base);
       const theirsCh = !eqLines(c.theirs, c.base);
       const h = Math.max(c.ours.length, c.theirs.length, r?.length ?? 0, 1);
       for (let x = 0; x < h; x++) {
-        const center: Cell | null =
-          r === null
-            ? { text: "", cls: side, no: null } // undecided gap, tinted by kind
-            : x < r.length
-              ? { text: r[x], cls: "", no: no.c++ }
-              : null;
+        const center: Cell | null = !resolved
+          ? { text: "", cls: kind, no: null } // undecided gap, tinted by kind
+          : x < r.length
+            ? { text: r[x], cls: "", no: no.c++ }
+            : null;
         const row = appendRow(
           grid,
           x < c.ours.length ? { text: c.ours[x], cls: oursCh ? side : "", no: no.o++ } : null,
-          x === 0 ? leftGutter(idx) : null,
+          x === 0 ? leftGutter(idx, resolved) : null,
           center,
-          x === 0 ? rightGutter(idx) : null,
+          x === 0 ? rightGutter(idx, resolved) : null,
           x < c.theirs.length ? { text: c.theirs[x], cls: theirsCh ? side : "", no: no.t++ } : null,
-          r !== null && x < r.length ? { ci: idx, li: x } : null,
+          resolved && x < r.length ? { ci: idx, li: x } : null,
         );
         if (x === 0) anchors.push(row);
       }
@@ -514,7 +535,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
 
   interface Cell {
     text: string;
-    cls: "" | "new" | "conflict";
+    cls: "" | "new" | "conflict" | "done";
     no: number | null;
   }
 
@@ -559,16 +580,18 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     return div;
   }
 
-  function leftGutter(idx: number): HTMLElement {
-    return el("div", { class: "merge-gutter merge-gutter-left" }, [
+  function leftGutter(idx: number, resolved: boolean): HTMLElement {
+    const cls = `merge-gutter merge-gutter-left${resolved ? " merge-gutter-done" : ""}`;
+    return el("div", { class: cls }, [
       iconBtn("≫", "Accept Ours into Result", () => acceptSide(idx, true)),
-      iconBtn("×", "Reset this conflict", () => resetConflict(idx)),
+      iconBtn("×", resolved ? "Reset this change" : "Reset this conflict", () => resetConflict(idx)),
     ]);
   }
-  function rightGutter(idx: number): HTMLElement {
-    return el("div", { class: "merge-gutter merge-gutter-right" }, [
+  function rightGutter(idx: number, resolved: boolean): HTMLElement {
+    const cls = `merge-gutter merge-gutter-right${resolved ? " merge-gutter-done" : ""}`;
+    return el("div", { class: cls }, [
       iconBtn("≪", "Accept Theirs into Result", () => acceptSide(idx, false)),
-      iconBtn("×", "Reset this conflict", () => resetConflict(idx)),
+      iconBtn("×", resolved ? "Reset this change" : "Reset this conflict", () => resetConflict(idx)),
     ]);
   }
   function iconBtn(glyph: string, title: string, onClick: () => void): HTMLElement {

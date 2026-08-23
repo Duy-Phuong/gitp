@@ -438,7 +438,11 @@ async function refreshHistory(): Promise<void> {
   state.selectedId = state.rows[0]?.id ?? null;
   await ensureAvatars(state.rows.map((r) => r.author_email));
   rebuildCommitRefs();
-  renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu);
+  const pane = $("#log-pane");
+  renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu);
+  // An empty log (e.g. right after an abort that left an odd state) should read
+  // as such rather than as a blank pane.
+  if (!state.rows.length) pane.append(el("div", { class: "detail-empty", text: "No commits to show." }));
   if (state.selectedId) await selectCommit(state.selectedId);
   else detailView?.showEmpty();
 }
@@ -1729,10 +1733,15 @@ async function init(): Promise<void> {
     confirm: confirmDialog,
     setStatus,
     reportError: (title, detail) => showErrorDialog(title, detail),
-    onDone: (msg) => {
+    onDone: async (msg) => {
       showView("history");
-      void Promise.all([refreshHistory(), loadSidebar()]);
-      setStatus(msg.trim() || "Done.");
+      try {
+        await Promise.all([refreshHistory(), loadSidebar()]);
+        setStatus(msg.trim() || "Done.");
+      } catch (err) {
+        // Never leave a silently blank pane — surface what went wrong.
+        showErrorDialog("Finished, but refreshing the view failed", String(err));
+      }
     },
   });
   if (isTauri()) {
