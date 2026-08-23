@@ -903,51 +903,68 @@ function mockMoveHunk(from: FileDiff[], to: FileDiff[], path: string, hunkIndex:
 // Preview-mode conflict scenario, resembling the reference screenshots: a merge
 // of origin/merge-conflict into dev with two conflicted files. Mutated by the
 // resolve/abort/finish mocks so the resolver view is fully explorable.
-const OURS_HTML = [
-  "  <ul>",
-  "    <li>The founding was in 2020</li>",
-  "    <li>We build things.</li>",
-  "    <li>May the villagers rejoice.</li>",
-  "  </ul>",
-].join("\n");
-const THEIRS_HTML = [
-  "  <ul>",
-  "    <li>Yoda was a friend of mine.</li>",
-  "    <li>He knew the words to Mr. Brightside.</li>",
-  "    <li>You know you gotta help him out.</li>",
-  "  </ul>",
-].join("\n");
-const WORKING_HTML = [
-  "<section>",
-  "<<<<<<< HEAD",
-  "    <li>The founding was in 2020</li>",
-  "    <li>We build things.</li>",
-  "    <li>May the villagers rejoice.</li>",
-  "=======",
-  "    <li>Yoda was a friend of mine.</li>",
-  "    <li>He knew the words to Mr. Brightside.</li>",
-  "    <li>You know you gotta help him out.</li>",
-  ">>>>>>> origin/merge-conflict",
-  "</section>",
+// Preview scenario resembling the reference repo: a common ancestor (base), and
+// test-2 (ours) / test-1 (theirs) that both changed the summary line (a real
+// conflict) and each added their own non-conflicting lines elsewhere.
+const BASE_README = [
+  "# html-pdf-printer",
+  "Single Spring Boot Application",
+  "Support PDF/A Compliance.",
   "",
-].join("\n");
+  "## Running on local environment",
+  "",
+  "### Using image from registry",
+  "docker run -d -p 8090:8080 img",
+  "",
+  "### Using IDE",
+  "- Import as a maven project",
+  "- Start project",
+  "",
+  "## Sample request/response",
+  "- example one",
+  "- example two",
+  "- example three",
+  "",
+  "## Notes",
+  "note line 1",
+  "note line 2",
+  "note line 3",
+  "",
+];
+// Ours (test-2): rewrites the summary line, and appends its own block.
+const OURS_README = BASE_README.map((l) =>
+  l === "Support PDF/A Compliance." ? "Support PDF/A Compliance. (test-2)" : l,
+).concat(["## From test-2", "- last block on branch test-2", ""]);
+// Theirs (test-1): rewrites the summary line differently, and inserts a block
+// after "- example three".
+const THEIRS_README = BASE_README.flatMap((l) => {
+  if (l === "Support PDF/A Compliance.") return ["Support PDF/A Compliance. (test-1)"];
+  if (l === "- example three") return ["- example three", "- ljandsjkna", "- kajsdnkasd"];
+  return [l];
+});
 
 const MOCK_SIDES: Record<string, ConflictSides> = {
-  "index.html": { ours: OURS_HTML, theirs: THEIRS_HTML, base: null, working: WORKING_HTML, binary: false },
+  "README.md": {
+    ours: `${OURS_README.join("\n")}\n`,
+    theirs: `${THEIRS_README.join("\n")}\n`,
+    base: `${BASE_README.join("\n")}\n`,
+    working: "<<<<<<< HEAD\n(conflict)\n=======\n(conflict)\n>>>>>>> test-1\n",
+    binary: false,
+  },
   "reset.css": {
-    ours: "body { margin: 10px; }\n",
-    theirs: "body { margin: 20px; }\n",
-    base: "body { margin: 0; }\n",
-    working: "body {\n<<<<<<< HEAD\n  margin: 10px;\n=======\n  margin: 20px;\n>>>>>>> origin/merge-conflict\n}\n",
+    ours: "body {\n  margin: 10px;\n}\n",
+    theirs: "body {\n  margin: 20px;\n}\n",
+    base: "body {\n  margin: 0;\n}\n",
+    working: "body {\n<<<<<<< HEAD\n  margin: 10px;\n=======\n  margin: 20px;\n>>>>>>> test-1\n}\n",
     binary: false,
   },
 };
 
 let MOCK_CONFLICT: ConflictStatus = {
   kind: "merge",
-  summary: "Merge remote-tracking branch 'origin/merge-conflict' into dev",
-  conflicted: ["index.html", "reset.css"],
-  message: "Merge remote-tracking branch 'origin/merge-conflict' into dev\n",
+  summary: "Merge remote-tracking branch 'origin/test-1' into test-2",
+  conflicted: ["README.md", "reset.css"],
+  message: "Merge remote-tracking branch 'origin/test-1' into test-2\n",
 };
 
 export const MOCK_CONFIG: ConfigEntry[] = [

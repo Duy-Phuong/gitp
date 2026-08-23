@@ -32,16 +32,23 @@ rebase) once everything is resolved — or abort.
   In **rebase** mode the footer is **Continue Rebase** with no editable message
   (git reuses the replayed commit's message).
 
-**Main 3-pane editor** (per file)
-- Top-left **Ours** (current), top-right **Theirs** (incoming) — read-only, full
-  file, conflict regions highlighted; **conflict N of M** navigation.
-- Bottom **Output** — editable textarea, initialized to the working-tree file.
-  Each conflict region has **Take Ours / Take Theirs / Take Both** buttons that
-  rewrite just that region; free-text editing is allowed (decision **a**).
-- File is resolvable when no `<<<<<<< / ======= / >>>>>>>` markers remain;
-  **Save** writes the Output and, if clean, `git add`s it (→ Resolved + toast).
+**Main merge editor** (per file) — IntelliJ "Merge Revisions" style
+- Built from a full **3-way diff** (`diff3` over base/ours/theirs), so ALL
+  changes appear — not just conflict-marked regions. Line-numbered.
+- Three columns in **one scroll container** so they scroll together and stay
+  line-aligned: **Ours (current)** | **Result** | **Theirs (incoming)**.
+- Every changed chunk is **decided by the user** (nothing auto-applied):
+  **red** = both sides changed the same lines (conflict), **green** =
+  non-conflicting change on one side. Each has **gutter arrows** `≫` (take ours),
+  `≪` (take theirs), `×` (reset); the Result is editable per resolved line.
+- Toolbar: **↑/↓** previous/next change; **Apply non-conflicting** `≫`/`⇄`/`≪`
+  (take all green changes from left / both / right, skipping conflicts);
+  **Accept All Ours / Theirs** (every change from a side); **Cancel** (revert
+  this file's resolutions); **Save**.
+- Header shows "N changes, M conflicts". A file is resolvable when every change
+  is decided; **Save** assembles the result and `git add`s it (→ Resolved).
 - **Binary / delete-modify** files get a reduced UI: only **Take Ours / Take
-  Theirs** (no text editor) (decision **b**).
+  Theirs** (no text editor).
 
 ## Backend — `gitp-core/src/conflict_ops.rs`
 
