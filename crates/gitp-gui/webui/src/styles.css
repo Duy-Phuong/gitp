@@ -1609,6 +1609,14 @@ body {
 .tree-bullet {
   width: 18px;
 }
+.tree-check {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
 .tree-name {
   overflow: hidden;
   text-overflow: ellipsis;

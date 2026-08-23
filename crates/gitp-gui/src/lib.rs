@@ -342,6 +342,37 @@ fn save_stash_patch_impl(state: &RepoState, index: usize, path: String) -> Resul
     with_repo(state, |repo| repo.save_stash_patch(index, path.as_ref()))
 }
 
+/// Discard all local changes to `paths` (revert to HEAD; delete new files).
+fn discard_files_impl(state: &RepoState, paths: Vec<String>) -> Result<(), String> {
+    with_repo(state, |repo| repo.discard_files(&paths))
+}
+
+/// Stash only `paths` away (`git stash push -u -- <paths>`).
+fn stash_files_impl(state: &RepoState, paths: Vec<String>) -> Result<String, String> {
+    with_repo(state, |repo| repo.stash_files(&paths))
+}
+
+/// Write a patch of `paths` (staged or working-tree direction) to `dest`.
+fn save_files_patch_impl(
+    state: &RepoState,
+    paths: Vec<String>,
+    staged: bool,
+    dest: String,
+) -> Result<String, String> {
+    with_repo(state, |repo| repo.save_files_patch(&paths, staged, dest.as_ref()))
+}
+
+/// Append `paths` to the repo's `.gitignore`; returns the number added.
+fn add_to_gitignore_impl(state: &RepoState, paths: Vec<String>) -> Result<usize, String> {
+    with_repo(state, |repo| repo.add_to_gitignore(&paths))
+}
+
+/// Reveal the repo-relative `path` in the OS file manager, selecting the file.
+fn reveal_path_impl(state: &RepoState, path: String) -> Result<(), String> {
+    let full = with_repo(state, |repo| Ok(repo.workdir_path()?.join(&path)))?;
+    reveal_in_file_manager(&full)
+}
+
 /// Every file path in `rev`'s tree, for the File Tree view.
 fn get_commit_tree_impl(state: &RepoState, rev: String) -> Result<Vec<String>, String> {
     with_repo(state, |repo| repo.commit_tree(&rev))
@@ -869,6 +900,36 @@ fn save_stash_patch(index: usize, path: String, state: State<RepoState>) -> Resu
 }
 
 #[tauri::command]
+fn discard_files(paths: Vec<String>, state: State<RepoState>) -> Result<(), String> {
+    discard_files_impl(&state, paths)
+}
+
+#[tauri::command]
+fn stash_files(paths: Vec<String>, state: State<RepoState>) -> Result<String, String> {
+    stash_files_impl(&state, paths)
+}
+
+#[tauri::command]
+fn save_files_patch(
+    paths: Vec<String>,
+    staged: bool,
+    path: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    save_files_patch_impl(&state, paths, staged, path)
+}
+
+#[tauri::command]
+fn add_to_gitignore(paths: Vec<String>, state: State<RepoState>) -> Result<usize, String> {
+    add_to_gitignore_impl(&state, paths)
+}
+
+#[tauri::command]
+fn reveal_path(path: String, state: State<RepoState>) -> Result<(), String> {
+    reveal_path_impl(&state, path)
+}
+
+#[tauri::command]
 fn get_commit_tree(rev: String, state: State<RepoState>) -> Result<Vec<String>, String> {
     get_commit_tree_impl(&state, rev)
 }
@@ -900,6 +961,27 @@ fn set_config(
     state: State<RepoState>,
 ) -> Result<(), String> {
     set_config_impl(&state, scope, name, value)
+}
+
+/// Open the OS file manager with `full` selected (macOS Finder / Windows
+/// Explorer), falling back to opening its parent directory elsewhere.
+fn reveal_in_file_manager(full: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+    let spawn = |mut cmd: Command| cmd.spawn().map(|_| ()).map_err(to_message);
+    if cfg!(target_os = "macos") {
+        let mut cmd = Command::new("open");
+        cmd.arg("-R").arg(full);
+        spawn(cmd)
+    } else if cfg!(target_os = "windows") {
+        let mut cmd = Command::new("explorer");
+        cmd.arg(format!("/select,{}", full.display()));
+        spawn(cmd)
+    } else {
+        let dir = full.parent().unwrap_or(full);
+        let mut cmd = Command::new("xdg-open");
+        cmd.arg(dir);
+        spawn(cmd)
+    }
 }
 
 /// Build and run the desktop app.
@@ -968,6 +1050,11 @@ pub fn run() {
             stash_drop,
             stash_rename,
             save_stash_patch,
+            discard_files,
+            stash_files,
+            save_files_patch,
+            add_to_gitignore,
+            reveal_path,
             get_commit_tree,
             get_blame,
             get_file_history,

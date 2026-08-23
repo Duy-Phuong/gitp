@@ -19,12 +19,57 @@ export interface FileTreeCallbacks {
   onFileClick: (path: string) => void;
   // Optional: double-click a file (used to stage/unstage in the changes view).
   onFileDblClick?: (path: string) => void;
+  // Optional: right-click a changed file (opens the changes-view context menu).
+  onFileContextMenu?: (path: string, e: MouseEvent) => void;
   // Optional: path of the currently selected file, to highlight its row.
   selectedPath?: string;
+  // Optional multi-select checkboxes (changes view). When `checkable`, each file
+  // row gets a checkbox and each folder a tri-state one that toggles its whole
+  // subtree. `onToggleCheck` receives the affected file paths and the new state.
+  checkable?: boolean;
+  checkedPaths?: Set<string>;
+  onToggleCheck?: (paths: string[], checked: boolean) => void;
 }
 
 export function renderFileTree(host: HTMLElement, paths: string[], cb: FileTreeCallbacks): void {
   renderLevel(host, build(paths), 0, cb);
+}
+
+// A folder checkbox's state from its changed descendants: fully checked only
+// when every one is checked, indeterminate (dash) when some but not all are.
+export function folderCheckState(
+  files: string[],
+  checked: Set<string>,
+): { checked: boolean; indeterminate: boolean } {
+  const on = files.filter((p) => checked.has(p)).length;
+  return { checked: on > 0 && on === files.length, indeterminate: on > 0 && on < files.length };
+}
+
+// A checkbox that stops its click/dblclick from reaching the row (which would
+// select the file or toggle the folder). `indeterminate` renders the dash state.
+function checkbox(checked: boolean, indeterminate: boolean, onChange: (checked: boolean) => void) {
+  const box = el("input", { type: "checkbox", class: "tree-check" }) as HTMLInputElement;
+  box.checked = checked;
+  box.indeterminate = indeterminate;
+  box.addEventListener("click", (e) => e.stopPropagation());
+  box.addEventListener("dblclick", (e) => e.stopPropagation());
+  box.addEventListener("change", () => onChange(box.checked));
+  return box;
+}
+
+// The paths of all changed files beneath `node` (folders have a checkbox only
+// over their changed descendants, matching the file rows that show one).
+function changedFilesUnder(node: Node, cb: FileTreeCallbacks): string[] {
+  const out: string[] = [];
+  const walk = (n: Node) => {
+    for (const c of n.children.values()) {
+      if (c.isFile) {
+        if (cb.statusOf(c.path)) out.push(c.path);
+      } else walk(c);
+    }
+  };
+  walk(node);
+  return out;
 }
 
 // Fold the flat "a/b/c.txt" paths into a nested node tree.
@@ -62,6 +107,13 @@ function renderLevel(host: HTMLElement, node: Node, depth: number, cb: FileTreeC
         title: child.path,
       });
       row.style.paddingLeft = `${pad}px`;
+      if (cb.checkable && status) {
+        row.append(
+          checkbox(cb.checkedPaths?.has(child.path) ?? false, false, (on) =>
+            cb.onToggleCheck?.([child.path], on),
+          ),
+        );
+      }
       row.append(
         status
           ? el("span", { class: `status-badge status-${status}`, text: status[0] })
@@ -74,6 +126,9 @@ function renderLevel(host: HTMLElement, node: Node, depth: number, cb: FileTreeC
         // instantly — no artificial delay.
         row.addEventListener("click", () => cb.onFileClick(child.path));
         if (cb.onFileDblClick) row.addEventListener("dblclick", () => cb.onFileDblClick!(child.path));
+        if (cb.onFileContextMenu) {
+          row.addEventListener("contextmenu", (e) => cb.onFileContextMenu!(child.path, e));
+        }
       }
       host.append(row);
     } else {
@@ -82,11 +137,18 @@ function renderLevel(host: HTMLElement, node: Node, depth: number, cb: FileTreeC
       const chevron = el("span", { class: `tree-chevron${collapsed ? "" : " open"}` });
       chevron.append(chevronIcon());
       chevron.addEventListener("click", () => cb.onToggle(child.path));
-      const row = el("div", { class: "tree-row tree-folder", title: child.path }, [
-        chevron,
-        el("span", { class: "tree-name", text: child.name }),
-      ]);
+      const row = el("div", { class: "tree-row tree-folder", title: child.path });
       row.style.paddingLeft = `${pad}px`;
+      if (cb.checkable) {
+        // A folder checkbox reflects and toggles its whole subtree of changed
+        // files: empty / dash (some) / full.
+        const files = changedFilesUnder(child, cb);
+        const st = folderCheckState(files, cb.checkedPaths ?? new Set());
+        row.append(
+          checkbox(st.checked, st.indeterminate, (check) => cb.onToggleCheck?.(files, check)),
+        );
+      }
+      row.append(chevron, el("span", { class: "tree-name", text: child.name }));
       host.append(row);
       if (!collapsed) renderLevel(host, child, depth + 1, cb);
     }

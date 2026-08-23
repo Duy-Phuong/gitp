@@ -9,6 +9,7 @@ mod commit_ops;
 mod config;
 mod diff;
 mod error;
+mod file_ops;
 mod filelog;
 mod graph;
 mod hunk;

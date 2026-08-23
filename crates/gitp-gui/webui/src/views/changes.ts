@@ -3,9 +3,9 @@
 // Amend + Commit). A stateful controller owns the selection, per-panel collapse
 // state, and the commit fields, reloading from the backend after each mutation.
 
-import { autoGrowTextarea, clear, el } from "../dom";
+import { autoGrowTextarea, clear, copyToClipboard, el } from "../dom";
 import type { CommitDetail, FileDiff, StatusLists } from "../types";
-import { showContextMenu } from "./context-menu";
+import { type MenuItem, showContextMenu } from "./context-menu";
 import { renderFile, renderSplitDiff } from "./detail";
 import { renderFileTree } from "./tree";
 
@@ -24,6 +24,16 @@ export interface ChangesCallbacks {
   stageHunk: (path: string, hunkIndex: number) => Promise<void>;
   unstageHunk: (path: string, hunkIndex: number) => Promise<void>;
   discardHunk: (path: string, hunkIndex: number) => Promise<void>;
+  // File-level operations driven by the file-row right-click menu, each acting
+  // on the current checkbox multi-selection (or the right-clicked file).
+  discardFiles: (paths: string[]) => Promise<void>;
+  stashFiles: (paths: string[]) => Promise<string>;
+  saveFilesPatch: (paths: string[], staged: boolean, defaultName: string) => Promise<string | null>;
+  addToGitignore: (paths: string[]) => Promise<number>;
+  revealPath: (path: string) => Promise<void>;
+  // Absolute path of the active repo's working directory (for Copy Absolute
+  // Path). Null when no repo is open.
+  repoRoot: () => string | null;
   // Confirm a destructive action (discard); resolves true to proceed.
   confirm: (message: string) => Promise<boolean>;
   // The current HEAD commit (message + files), for pre-filling an amend and
@@ -59,6 +69,8 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   // is discarded instead of overwriting the current one.
   let diffToken = 0;
   const collapsed: Record<Panel, Set<string>> = { unstaged: new Set(), staged: new Set() };
+  // Checkbox multi-selection per panel, driving the file-row context menu.
+  const checked: Record<Panel, Set<string>> = { unstaged: new Set(), staged: new Set() };
   let subject = "";
   let body = "";
   let amend = false;
@@ -76,6 +88,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     const s = await cb.fetchStatus();
     staged = s.staged;
     unstaged = s.unstaged;
+    pruneChecked();
     resolveSelection();
     render();
     // Distinct changed paths (a file can be both staged and unstaged).
@@ -295,6 +308,117 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     await run(() => cb.discardHunk(path, index));
   }
 
+  // Drop checked paths that no longer exist in their panel (files moved between
+  // panels or disappeared after an operation).
+  function pruneChecked(): void {
+    for (const p of [...checked.unstaged]) {
+      if (!unstaged.some((f) => f.path === p)) checked.unstaged.delete(p);
+    }
+    for (const p of [...checked.staged]) {
+      if (!staged.some((f) => f.path === p)) checked.staged.delete(p);
+    }
+  }
+
+  // Right-click a changed file row → the file-level context menu. Actions target
+  // the panel's checked files when the right-clicked row is checked, otherwise
+  // just that row.
+  function openFileMenu(which: Panel, path: string, e: MouseEvent): void {
+    e.preventDefault();
+    // Amend-only staged rows aren't really in the index — no file ops apply.
+    if (which === "staged" && amendOnly(path)) return;
+
+    const files = which === "unstaged" ? unstaged : staged;
+    const inPanel = new Set(files.map((f) => f.path));
+    let paths = checked[which].has(path)
+      ? [...checked[which]].filter((p) => inPanel.has(p))
+      : [path];
+    if (paths.length === 0) paths = [path];
+    const n = paths.length;
+    const many = n > 1;
+    const label = (verb: string) => (many ? `${verb} ${n} Files` : verb);
+    const statusOf = new Map(files.map((f) => [f.path, f.status]));
+    const allUntracked = paths.every((p) => statusOf.get(p) === "Untracked");
+
+    const copy = (abs: boolean) => {
+      const root = cb.repoRoot();
+      const text = paths.map((p) => (abs && root ? `${root}/${p}` : p)).join("\n");
+      void copyToClipboard(text).then(() => cb.setStatus(`Copied ${n} path${many ? "s" : ""}.`));
+    };
+    const patch = () => {
+      const base = many ? "changes" : (paths[0].split("/").pop() ?? "changes");
+      cb.saveFilesPatch(paths, which === "staged", `${base}.patch`)
+        .then((msg) => {
+          if (msg) cb.setStatus(msg);
+        })
+        .catch((err) => cb.reportError("Save as Patch failed", String(err)));
+    };
+
+    const items: MenuItem[] =
+      which === "unstaged"
+        ? [
+            { label: label("Stage"), run: () => stageEach(paths) },
+            { label: `${label("Discard")}…`, danger: true, run: () => void discardFilesAction(paths) },
+            { separator: true },
+            {
+              label: `${label("Stash")}…`,
+              run: () => run(async () => cb.setStatus(await cb.stashFiles(paths))),
+            },
+            { label: "Save as Patch…", run: patch },
+            { separator: true },
+            { label: "Show in Finder", run: () => void cb.revealPath(path) },
+            { label: "Copy Relative Path", run: () => copy(false) },
+            { label: "Copy Absolute Path", run: () => copy(true) },
+            ...(allUntracked
+              ? [{ label: "Add to .gitignore", run: () => void ignoreAction(paths) }]
+              : []),
+            { separator: true },
+            { label: "Stage All", run: () => run(cb.stageAll) },
+          ]
+        : [
+            { label: label("Unstage"), run: () => unstageEach(paths) },
+            { separator: true },
+            { label: "Save as Patch…", run: patch },
+            { separator: true },
+            { label: "Show in Finder", run: () => void cb.revealPath(path) },
+            { label: "Copy Relative Path", run: () => copy(false) },
+            { label: "Copy Absolute Path", run: () => copy(true) },
+            { separator: true },
+            { label: "Unstage All", run: () => run(cb.unstageAll) },
+          ];
+    showContextMenu(e.clientX, e.clientY, items);
+  }
+
+  function stageEach(paths: string[]): void {
+    run(async () => {
+      for (const p of paths) await cb.stage(p);
+    });
+  }
+
+  function unstageEach(paths: string[]): void {
+    run(async () => {
+      for (const p of paths) await cb.unstage(p);
+    });
+  }
+
+  async function discardFilesAction(paths: string[]): Promise<void> {
+    const what = paths.length > 1 ? `${paths.length} files` : paths[0];
+    const ok = await cb.confirm(`Discard changes to ${what}? This cannot be undone.`);
+    if (!ok) {
+      cb.setStatus("Discard cancelled.");
+      return;
+    }
+    await run(() => cb.discardFiles(paths));
+  }
+
+  async function ignoreAction(paths: string[]): Promise<void> {
+    await run(async () => {
+      const added = await cb.addToGitignore(paths);
+      cb.setStatus(
+        added > 0 ? `Added ${added} entr${added > 1 ? "ies" : "y"} to .gitignore.` : "Already ignored.",
+      );
+    });
+  }
+
   function panel(which: Panel, label: string, files: FileDiff[]): HTMLElement {
     const box = el("div", { class: "stage-panel" });
 
@@ -332,7 +456,16 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
           if (which === "staged" && amendOnly(p)) return;
           run(which === "unstaged" ? () => cb.stage(p) : () => cb.unstage(p));
         },
+        onFileContextMenu: (p, e) => openFileMenu(which, p, e),
         selectedPath: selected?.panel === which ? selected.path : undefined,
+        // Amend-only rows can't be acted on, so no checkboxes while amending the
+        // staged panel; otherwise every changed file gets one.
+        checkable: !(which === "staged" && amend),
+        checkedPaths: checked[which],
+        onToggleCheck: (paths, on) => {
+          for (const p of paths) on ? checked[which].add(p) : checked[which].delete(p);
+          render();
+        },
       });
     }
     box.append(tree);

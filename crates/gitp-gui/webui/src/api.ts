@@ -520,6 +520,60 @@ export async function saveStashPatch(index: number, defaultName: string): Promis
   return invoke<string>("save_stash_patch", { index, path });
 }
 
+// --- Local-changes file operations (changes-view right-click menu) ---------
+
+// Discard all local changes to `paths` (revert to HEAD; delete new files).
+export async function discardFiles(paths: string[]): Promise<void> {
+  if (!isTauri()) {
+    for (const p of paths) {
+      mockMove(MOCK_STATUS.unstaged, [], p);
+      mockMove(MOCK_STATUS.staged, [], p);
+    }
+    return;
+  }
+  await invoke<void>("discard_files", { paths });
+}
+
+// Stash only `paths` away (`git stash push -u -- <paths>`).
+export async function stashFiles(paths: string[]): Promise<string> {
+  if (!isTauri()) {
+    for (const p of paths) {
+      mockMove(MOCK_STATUS.unstaged, [], p);
+      mockMove(MOCK_STATUS.staged, [], p);
+    }
+    MOCK_REFS.stashes.unshift({ index: 0, message: `WIP: ${paths.length} file(s) (preview mock)` });
+    MOCK_REFS.stashes.forEach((s, i) => (s.index = i));
+    return `Stashed ${paths.length} file(s) (preview mock)`;
+  }
+  return invoke<string>("stash_files", { paths });
+}
+
+// Prompt for a destination and write a patch of `paths` (staged or working-tree
+// direction) there. Returns a status string, or null if the user cancelled.
+export async function saveFilesPatch(
+  paths: string[],
+  staged: boolean,
+  defaultName: string,
+): Promise<string | null> {
+  if (!isTauri()) return `Saved patch for ${paths.length} file(s) (preview mock)`;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const dest = await save({ title: "Save as Patch", defaultPath: defaultName });
+  if (!dest) return null;
+  return invoke<string>("save_files_patch", { paths, staged, path: dest });
+}
+
+// Append `paths` to the repo's .gitignore; returns the number actually added.
+export async function addToGitignore(paths: string[]): Promise<number> {
+  if (!isTauri()) return paths.length;
+  return invoke<number>("add_to_gitignore", { paths });
+}
+
+// Reveal the repo-relative `path` in the OS file manager.
+export async function revealPath(path: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("reveal_path", { path });
+}
+
 export async function fetchConfig(): Promise<ConfigEntry[]> {
   if (!isTauri()) return MOCK_CONFIG;
   return invoke<ConfigEntry[]>("get_config", {});
