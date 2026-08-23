@@ -1248,6 +1248,7 @@ async function abortConflictAction(): Promise<void> {
   if (!ok) return;
   try {
     const out = await abortConflict();
+    conflictView?.reset(); // forget partial choices so a re-merge starts fresh
     showView("history");
     await Promise.all([refreshHistory(), loadSidebar()]);
     setStatus(out.trim() || "Merge aborted.");

@@ -27,6 +27,9 @@ export interface ConflictCallbacks {
 
 export interface ConflictHandle {
   reload: () => Promise<void>;
+  // Forget all per-file resolutions and session state, so the next merge/rebase
+  // starts fresh (called when a merge/rebase ends via abort or commit).
+  reset: () => void;
 }
 
 export interface ConflictRegion {
@@ -218,6 +221,22 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   function resolvedList(): string[] {
     const conflicted = new Set(status?.conflicted ?? []);
     return [...initial].filter((p) => !conflicted.has(p));
+  }
+
+  // Drop all session state so a later merge/rebase starts from scratch rather
+  // than replaying the previous session's partial choices.
+  function resetSession(): void {
+    resStore.clear();
+    initial.clear();
+    message = "";
+    messageInit = false;
+    selected = null;
+    sides = null;
+    chunks = [];
+    changedChunks = [];
+    res = [];
+    curChange = 0;
+    status = null;
   }
 
   async function selectFile(path: string): Promise<void> {
@@ -672,6 +691,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   async function finish(): Promise<void> {
     await run(async () => {
       const out = await cb.finish(message);
+      resetSession(); // the session is over — next merge starts fresh
       cb.onDone(out);
     });
   }
@@ -684,9 +704,10 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     }
     await run(async () => {
       const out = await cb.abort();
+      resetSession();
       cb.onDone(out);
     });
   }
 
-  return { reload };
+  return { reload, reset: resetSession };
 }
