@@ -138,7 +138,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  max-width: 240px;
+  flex: none;
   padding: 4px 10px;
   border-radius: 999px;
   background: var(--accent-soft);
@@ -147,8 +147,6 @@ body {
   font-weight: 600;
   font-size: 12px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .branch-chip::before {
   content: "⎇";
@@ -704,6 +702,192 @@ body {
 .rebase-banner-actions {
   display: flex;
   gap: 6px;
+}
+
+/* Conflict resolver ------------------------------------------------------- */
+.conflict-pane {
+  height: 100%;
+  overflow: hidden;
+}
+.conflict {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+.conflict-side {
+  width: 300px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+.conflict-summary {
+  padding: 10px 12px;
+  font-weight: 600;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.conflict-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-dim);
+}
+.conflict-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.conflict-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.conflict-file:hover {
+  background: var(--bg-elev-2);
+}
+.conflict-file.selected {
+  background: var(--accent);
+  color: #fff;
+}
+.conflict-file.resolved {
+  color: var(--text-dim);
+}
+.conflict-file-icon {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  color: #d29922;
+}
+.conflict-file.resolved .conflict-file-icon {
+  color: var(--add-fg);
+}
+.conflict-file.selected .conflict-file-icon {
+  color: #fff;
+}
+.conflict-footer {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.conflict-footer-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.conflict-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.conflict-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.conflict-editor-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.conflict-editor-file {
+  font-weight: 600;
+  font-size: 13px;
+}
+.conflict-editor-count {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.conflict-top {
+  display: flex;
+  gap: 1px;
+  height: 38%;
+  min-height: 0;
+  background: var(--border);
+}
+.cf-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.cf-pane-head {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg-elev-2);
+  border-bottom: 1px solid var(--border);
+}
+.cf-pane-body {
+  flex: 1;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre;
+}
+.conflict-output-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.conflict-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.conflict-take {
+  display: flex;
+  gap: 6px;
+}
+.conflict-clean {
+  color: var(--add-fg);
+}
+.conflict-output {
+  flex: 1;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 8px 10px;
+  border: none;
+  resize: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+}
+.conflict-output:focus {
+  outline: none;
+}
+.conflict-binary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+  font-size: 13px;
 }
 
 /* Error / message dialog -------------------------------------------------- */

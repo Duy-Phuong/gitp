@@ -157,3 +157,20 @@ export interface ConfigEntry {
   value: string;
   scope: ConfigScope;
 }
+
+// The in-progress conflict session (merge or rebase) for the resolver view.
+export interface ConflictStatus {
+  kind: "merge" | "rebase" | "none";
+  summary: string;
+  conflicted: string[];
+  message: string;
+}
+
+// The three staged versions plus the working text of a conflicted file.
+export interface ConflictSides {
+  ours: string | null;
+  theirs: string | null;
+  base: string | null;
+  working: string;
+  binary: boolean;
+}

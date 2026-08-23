@@ -8,6 +8,8 @@ import type {
   CommitRow,
   ConfigEntry,
   ConfigScope,
+  ConflictSides,
+  ConflictStatus,
   FileCommit,
   FileDiff,
   LogPage,
@@ -574,6 +576,53 @@ export async function revealPath(path: string): Promise<void> {
   await invoke<void>("reveal_path", { path });
 }
 
+// --- Conflict resolution (merge/rebase conflict resolver view) -------------
+
+export async function conflictStatus(): Promise<ConflictStatus> {
+  if (!isTauri()) return { ...MOCK_CONFLICT, conflicted: [...MOCK_CONFLICT.conflicted] };
+  return invoke<ConflictStatus>("conflict_status", {});
+}
+
+export async function conflictSides(path: string): Promise<ConflictSides> {
+  if (!isTauri()) {
+    return MOCK_SIDES[path] ?? { ours: "", theirs: "", base: null, working: "", binary: false };
+  }
+  return invoke<ConflictSides>("conflict_sides", { path });
+}
+
+export async function resolveConflict(path: string, content: string): Promise<void> {
+  if (!isTauri()) {
+    if (MOCK_SIDES[path]) MOCK_SIDES[path] = { ...MOCK_SIDES[path], working: content };
+    MOCK_CONFLICT.conflicted = MOCK_CONFLICT.conflicted.filter((p) => p !== path);
+    return;
+  }
+  await invoke<void>("resolve_conflict", { path, content });
+}
+
+export async function resolveConflictSide(path: string, ours: boolean): Promise<void> {
+  if (!isTauri()) {
+    MOCK_CONFLICT.conflicted = MOCK_CONFLICT.conflicted.filter((p) => p !== path);
+    return;
+  }
+  await invoke<void>("resolve_conflict_side", { path, ours });
+}
+
+export async function abortConflict(): Promise<string> {
+  if (!isTauri()) {
+    MOCK_CONFLICT = { kind: "none", summary: "", conflicted: [], message: "" };
+    return "Merge aborted (preview mock)";
+  }
+  return invoke<string>("abort_conflict", {});
+}
+
+export async function finishConflict(message: string): Promise<string> {
+  if (!isTauri()) {
+    MOCK_CONFLICT = { kind: "none", summary: "", conflicted: [], message: "" };
+    return `Committed merge (preview mock): ${message.split("\n")[0]}`;
+  }
+  return invoke<string>("finish_conflict", { message });
+}
+
 export async function fetchConfig(): Promise<ConfigEntry[]> {
   if (!isTauri()) return MOCK_CONFIG;
   return invoke<ConfigEntry[]>("get_config", {});
@@ -850,6 +899,56 @@ function mockMoveHunk(from: FileDiff[], to: FileDiff[], path: string, hunkIndex:
   dst.hunks.push(hunk);
   if (src.hunks.length === 0) mockMove(from, [], path);
 }
+
+// Preview-mode conflict scenario, resembling the reference screenshots: a merge
+// of origin/merge-conflict into dev with two conflicted files. Mutated by the
+// resolve/abort/finish mocks so the resolver view is fully explorable.
+const OURS_HTML = [
+  "  <ul>",
+  "    <li>The founding was in 2020</li>",
+  "    <li>We build things.</li>",
+  "    <li>May the villagers rejoice.</li>",
+  "  </ul>",
+].join("\n");
+const THEIRS_HTML = [
+  "  <ul>",
+  "    <li>Yoda was a friend of mine.</li>",
+  "    <li>He knew the words to Mr. Brightside.</li>",
+  "    <li>You know you gotta help him out.</li>",
+  "  </ul>",
+].join("\n");
+const WORKING_HTML = [
+  "<section>",
+  "<<<<<<< HEAD",
+  "    <li>The founding was in 2020</li>",
+  "    <li>We build things.</li>",
+  "    <li>May the villagers rejoice.</li>",
+  "=======",
+  "    <li>Yoda was a friend of mine.</li>",
+  "    <li>He knew the words to Mr. Brightside.</li>",
+  "    <li>You know you gotta help him out.</li>",
+  ">>>>>>> origin/merge-conflict",
+  "</section>",
+  "",
+].join("\n");
+
+const MOCK_SIDES: Record<string, ConflictSides> = {
+  "index.html": { ours: OURS_HTML, theirs: THEIRS_HTML, base: null, working: WORKING_HTML, binary: false },
+  "reset.css": {
+    ours: "body { margin: 10px; }\n",
+    theirs: "body { margin: 20px; }\n",
+    base: "body { margin: 0; }\n",
+    working: "body {\n<<<<<<< HEAD\n  margin: 10px;\n=======\n  margin: 20px;\n>>>>>>> origin/merge-conflict\n}\n",
+    binary: false,
+  },
+};
+
+let MOCK_CONFLICT: ConflictStatus = {
+  kind: "merge",
+  summary: "Merge remote-tracking branch 'origin/merge-conflict' into dev",
+  conflicted: ["index.html", "reset.css"],
+  message: "Merge remote-tracking branch 'origin/merge-conflict' into dev\n",
+};
 
 export const MOCK_CONFIG: ConfigEntry[] = [
   { name: "user.name", value: "Ada Lovelace", scope: "Global" },

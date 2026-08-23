@@ -12,8 +12,9 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use gitp_core::{
-    BlameLine, CommitDetail, CommitRow, ConfigEntry, ConfigScope, FileCommit, FileDiff, LogOptions,
-    RebaseCommit, RebaseStatus, RebaseStep, Refs, Repo, ResetMode, StatusLists,
+    BlameLine, CommitDetail, CommitRow, ConfigEntry, ConfigScope, ConflictSides, ConflictStatus,
+    FileCommit, FileDiff, LogOptions, RebaseCommit, RebaseStatus, RebaseStep, Refs, Repo, ResetMode,
+    StatusLists,
 };
 use serde::Serialize;
 use tauri::State;
@@ -371,6 +372,36 @@ fn add_to_gitignore_impl(state: &RepoState, paths: Vec<String>) -> Result<usize,
 fn reveal_path_impl(state: &RepoState, path: String) -> Result<(), String> {
     let full = with_repo(state, |repo| Ok(repo.workdir_path()?.join(&path)))?;
     reveal_in_file_manager(&full)
+}
+
+/// The in-progress conflict session (merge or rebase), if any.
+fn conflict_status_impl(state: &RepoState) -> Result<ConflictStatus, String> {
+    with_repo(state, Repo::conflict_status)
+}
+
+/// The ours/theirs/base/working versions of a conflicted file.
+fn conflict_sides_impl(state: &RepoState, path: String) -> Result<ConflictSides, String> {
+    with_repo(state, |repo| repo.conflict_sides(&path))
+}
+
+/// Write the resolved content for `path` and stage it (marks it resolved).
+fn resolve_conflict_impl(state: &RepoState, path: String, content: String) -> Result<(), String> {
+    with_repo(state, |repo| repo.resolve_conflict(&path, &content))
+}
+
+/// Resolve `path` by taking one whole side (ours/theirs), for binary conflicts.
+fn resolve_conflict_side_impl(state: &RepoState, path: String, ours: bool) -> Result<(), String> {
+    with_repo(state, |repo| repo.resolve_conflict_side(&path, ours))
+}
+
+/// Abort the in-progress merge/rebase. Invalidates the cached log (HEAD/tree).
+fn abort_conflict_impl(state: &RepoState) -> Result<String, String> {
+    with_active_repo_invalidating(state, Repo::abort_conflict)
+}
+
+/// Commit the merge / continue the rebase. Invalidates the cached log.
+fn finish_conflict_impl(state: &RepoState, message: String) -> Result<String, String> {
+    with_active_repo_invalidating(state, |repo| repo.finish_conflict(&message))
 }
 
 /// Every file path in `rev`'s tree, for the File Tree view.
@@ -930,6 +961,36 @@ fn reveal_path(path: String, state: State<RepoState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn conflict_status(state: State<RepoState>) -> Result<ConflictStatus, String> {
+    conflict_status_impl(&state)
+}
+
+#[tauri::command]
+fn conflict_sides(path: String, state: State<RepoState>) -> Result<ConflictSides, String> {
+    conflict_sides_impl(&state, path)
+}
+
+#[tauri::command]
+fn resolve_conflict(path: String, content: String, state: State<RepoState>) -> Result<(), String> {
+    resolve_conflict_impl(&state, path, content)
+}
+
+#[tauri::command]
+fn resolve_conflict_side(path: String, ours: bool, state: State<RepoState>) -> Result<(), String> {
+    resolve_conflict_side_impl(&state, path, ours)
+}
+
+#[tauri::command]
+fn abort_conflict(state: State<RepoState>) -> Result<String, String> {
+    abort_conflict_impl(&state)
+}
+
+#[tauri::command]
+fn finish_conflict(message: String, state: State<RepoState>) -> Result<String, String> {
+    finish_conflict_impl(&state, message)
+}
+
+#[tauri::command]
 fn get_commit_tree(rev: String, state: State<RepoState>) -> Result<Vec<String>, String> {
     get_commit_tree_impl(&state, rev)
 }
@@ -1055,6 +1116,12 @@ pub fn run() {
             save_files_patch,
             add_to_gitignore,
             reveal_path,
+            conflict_status,
+            conflict_sides,
+            resolve_conflict,
+            resolve_conflict_side,
+            abort_conflict,
+            finish_conflict,
             get_commit_tree,
             get_blame,
             get_file_history,

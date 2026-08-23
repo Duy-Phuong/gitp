@@ -16,8 +16,13 @@ export function closeMessageDialog(): void {
 
 // Show an error dialog. `detail` is rendered verbatim (e.g. git's stderr), so
 // multi-line messages like "cannot rebase: You have unstaged changes" keep
-// their formatting.
-export function showErrorDialog(title: string, detail: string): void {
+// their formatting. An optional `action` adds a primary button beside Close
+// (e.g. "Resolve Conflicts") that runs and then dismisses the dialog.
+export function showErrorDialog(
+  title: string,
+  detail: string,
+  action?: { label: string; run: () => void },
+): void {
   closeMessageDialog();
 
   overlay = el("div", { class: "modal-overlay" });
@@ -40,6 +45,15 @@ export function showErrorDialog(title: string, detail: string): void {
 
   const close = el("button", { class: "btn", text: "Close" });
   close.addEventListener("click", closeMessageDialog);
-  modal.append(el("div", { class: "modal-actions" }, [close]));
+  const actions = el("div", { class: "modal-actions" }, [close]);
+  if (action) {
+    const primary = el("button", { class: "btn commit-btn", text: action.label });
+    primary.addEventListener("click", () => {
+      closeMessageDialog();
+      action.run();
+    });
+    actions.append(primary);
+  }
+  modal.append(actions);
   requestAnimationFrame(() => close.focus());
 }

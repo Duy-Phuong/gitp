@@ -62,6 +62,12 @@ import {
   dropStash,
   renameStash,
   saveStashPatch,
+  conflictStatus,
+  conflictSides,
+  resolveConflict,
+  resolveConflictSide,
+  abortConflict,
+  finishConflict,
   discardFiles,
   stashFiles,
   saveFilesPatch,
@@ -84,6 +90,7 @@ import { showErrorDialog } from "./views/message-dialog";
 import { openStashApplyModal } from "./views/stash-apply";
 import { setupDetail, type DetailHandle } from "./views/detail";
 import { setupChanges, type ChangesHandle } from "./views/changes";
+import { setupConflict, type ConflictHandle } from "./views/conflict";
 import { renderConfig } from "./views/config";
 import { renderSidebar, type SidebarView } from "./views/sidebar";
 import { setupTerminal, type TerminalHandle } from "./views/terminal";
@@ -91,6 +98,7 @@ import type {
   BranchRef,
   CommitRow,
   ConfigScope,
+  ConflictStatus,
   RebaseAction,
   RebaseStatus,
   RebaseStep,
@@ -101,7 +109,7 @@ import type {
   Workspace,
 } from "./types";
 
-type View = "history" | "changes" | "config";
+type View = "history" | "changes" | "config" | "conflict";
 
 const EMPTY_REFS: Refs = { head: null, branches: [], remotes: [], tags: [], stashes: [], recent: [] };
 
@@ -121,6 +129,7 @@ interface State {
   sbFilter: string;
   sbCollapsed: Set<string>;
   rebase: RebaseStatus | null;
+  conflict: ConflictStatus | null;
   // History graph shows all branches (true) or just the current branch (false).
   allBranches: boolean;
 }
@@ -139,10 +148,12 @@ const state: State = {
   sbCollapsed: new Set(["sec:recent"]),
   allBranches: true,
   rebase: null,
+  conflict: null,
 };
 let terminal: TerminalHandle | null = null;
 let detailView: DetailHandle | null = null;
 let changesView: ChangesHandle | null = null;
+let conflictView: ConflictHandle | null = null;
 let loadingMore = false;
 
 // Labels of refs whose tip is this commit — shown as chips in the Commit tab.
@@ -487,12 +498,15 @@ function showView(view: View): void {
   $("#history-view").classList.toggle("hidden", view !== "history");
   $("#changes-view").classList.toggle("hidden", view !== "changes");
   $("#config-view").classList.toggle("hidden", view !== "config");
+  $("#conflict-view").classList.toggle("hidden", view !== "conflict");
   for (const el of document.querySelectorAll<HTMLElement>(".tab")) {
     el.classList.toggle("active", el.dataset.tab === view);
   }
   renderSidebarNow();
+  renderConflictBanner(); // entering/leaving the resolver toggles the banner
   if (view === "config") void refreshConfig();
   else if (view === "changes") void loadChanges();
+  else if (view === "conflict") void conflictView?.reload();
 }
 
 // Fetch the ref tree + local-change count for the active repo and render the sidebar.
@@ -518,6 +532,7 @@ async function loadSidebar(): Promise<void> {
   }
   // Surface (or clear) a paused-rebase banner whenever refs are reloaded.
   void refreshRebaseStatus();
+  void refreshConflictStatus();
 }
 
 // Show the checked-out branch name as a chip in the top bar (hidden when no
@@ -540,7 +555,8 @@ function renderSidebarNow(): void {
       refs: state.refs,
       localChanges: state.localChanges,
       repoName: active?.name ?? "",
-      activeView: state.view,
+      // The conflict resolver has no sidebar entry; highlight Local Changes.
+      activeView: state.view === "conflict" ? "changes" : state.view,
       filter: state.sbFilter,
       collapsed: state.sbCollapsed,
     },
@@ -979,7 +995,14 @@ async function runBranchOp(label: string, op: () => Promise<string>, refreshLog:
     setStatus(out || `${label} done.`);
   } catch (err) {
     setStatus(`${label} failed.`);
-    showErrorDialog(`${label} failed`, String(err));
+    // A failed merge that left conflicts in progress gets a Resolve action.
+    await refreshConflictStatus();
+    const inConflict = state.conflict?.kind === "merge" && state.conflict.conflicted.length > 0;
+    showErrorDialog(
+      `${label} failed`,
+      String(err),
+      inConflict ? { label: "Resolve Conflicts", run: () => showView("conflict") } : undefined,
+    );
   }
 }
 
@@ -1175,6 +1198,60 @@ async function refreshRebaseStatus(): Promise<void> {
   renderRebaseBanner();
 }
 
+// Refresh the conflict session and (re)paint the merge-conflict banner.
+async function refreshConflictStatus(): Promise<void> {
+  try {
+    const st = await conflictStatus();
+    state.conflict = st.kind === "none" ? null : st;
+  } catch {
+    state.conflict = null;
+  }
+  renderConflictBanner();
+  // A resolved/aborted merge should not strand the user on the conflict view.
+  if (state.view === "conflict" && !state.conflict) showView("history");
+}
+
+// A top bar shown while a MERGE is in conflict, offering Resolve / Abort. Rebase
+// conflicts are surfaced by the rebase banner (which links here too).
+function renderConflictBanner(): void {
+  let banner = document.getElementById("conflict-banner");
+  const st = state.conflict;
+  // No banner while the resolver view itself is open (it would be redundant and
+  // its count only refreshes on sidebar reloads).
+  const show = st?.kind === "merge" && st.conflicted.length > 0 && state.view !== "conflict";
+  if (!show) {
+    banner?.remove();
+    return;
+  }
+  if (!banner) {
+    banner = el("div", { id: "conflict-banner", class: "rebase-banner conflict-banner" });
+    document.body.append(banner);
+  }
+  clear(banner);
+  const info = el("div", { class: "rebase-banner-info" }, [
+    el("span", { class: "rebase-banner-title", text: `Merge conflicts (${st!.conflicted.length})` }),
+    el("span", { class: "rebase-banner-sub", text: st!.summary }),
+  ]);
+  const resolve = el("button", { class: "btn small", text: "Resolve Conflicts" });
+  resolve.addEventListener("click", () => showView("conflict"));
+  const abort = el("button", { class: "btn small danger", text: "Abort" });
+  abort.addEventListener("click", () => void abortConflictAction());
+  banner.append(info, el("div", { class: "rebase-banner-actions" }, [resolve, abort]));
+}
+
+async function abortConflictAction(): Promise<void> {
+  const ok = await confirmDialog("Abort this merge? All conflict resolutions will be discarded.");
+  if (!ok) return;
+  try {
+    const out = await abortConflict();
+    showView("history");
+    await Promise.all([refreshHistory(), loadSidebar()]);
+    setStatus(out.trim() || "Merge aborted.");
+  } catch (err) {
+    showErrorDialog("Abort failed", String(err));
+  }
+}
+
 // A top bar shown only while a rebase is paused: what it stopped for, on which
 // commit, any conflicts, and Continue / Skip / Abort.
 function renderRebaseBanner(): void {
@@ -1207,14 +1284,21 @@ function renderRebaseBanner(): void {
     info.append(el("span", { class: "rebase-banner-sub", text: "Amend your changes, then Continue." }));
   }
 
+  const actions = el("div", { class: "rebase-banner-actions" });
+  if (conflict) {
+    const resolve = el("button", { class: "btn small", text: "Resolve Conflicts" });
+    resolve.addEventListener("click", () => showView("conflict"));
+    actions.append(resolve);
+  }
   const cont = el("button", { class: "btn small", text: "Continue" });
   cont.addEventListener("click", () => void rebaseControl("continue"));
   const skip = el("button", { class: "btn small ghost", text: "Skip" });
   skip.addEventListener("click", () => void rebaseControl("skip"));
   const abort = el("button", { class: "btn small danger", text: "Abort" });
   abort.addEventListener("click", () => void rebaseControl("abort"));
+  actions.append(cont, skip, abort);
 
-  banner.append(info, el("div", { class: "rebase-banner-actions" }, [cont, skip, abort]));
+  banner.append(info, actions);
 }
 
 async function rebaseControl(kind: "continue" | "skip" | "abort"): Promise<void> {
@@ -1634,6 +1718,22 @@ async function init(): Promise<void> {
     },
     setStatus,
     reportError: (title, detail) => showErrorDialog(title, detail),
+  });
+  conflictView = setupConflict($("#conflict-pane"), {
+    fetchStatus: conflictStatus,
+    fetchSides: conflictSides,
+    resolve: resolveConflict,
+    resolveSide: resolveConflictSide,
+    abort: abortConflict,
+    finish: finishConflict,
+    confirm: confirmDialog,
+    setStatus,
+    reportError: (title, detail) => showErrorDialog(title, detail),
+    onDone: (msg) => {
+      showView("history");
+      void Promise.all([refreshHistory(), loadSidebar()]);
+      setStatus(msg.trim() || "Done.");
+    },
   });
   if (isTauri()) {
     if (!(await restoreWorkspace())) {
