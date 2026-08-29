@@ -54,6 +54,41 @@ function relativeTime(unixSeconds: number): string {
 // One ResizeObserver at a time; disconnected when the log is re-rendered.
 let resizeObserver: ResizeObserver | null = null;
 
+// renderLog is called after most actions (checkout, commit, sidebar refresh,
+// even the periodic background remote fetch) — often with the exact same
+// `rows` array as last time, just to reflect an unrelated change elsewhere
+// (ref chips, local-change count). Recomputing the full node/edge geometry and
+// the email lookup for every loaded commit on each of those calls is wasted
+// work once the log is long, so the last result is cached by `rows` identity
+// (rows are always replaced wholesale, never mutated in place — see
+// `state.rows = ...` in main.ts — so reference equality is a valid check) and
+// pane width.
+interface LayoutCache {
+  rows: CommitRow[];
+  hostWidth: number;
+  laneWidth: number;
+  layout: ReturnType<typeof layoutGraph>;
+  emailById: Map<string, string>;
+}
+let layoutCache: LayoutCache | null = null;
+
+function getLayout(rows: CommitRow[], hostWidth: number): LayoutCache {
+  const w = hostWidth || 360;
+  if (layoutCache && layoutCache.rows === rows && layoutCache.hostWidth === w) return layoutCache;
+  // Compress lanes so a repo with many parallel branches doesn't push commit
+  // text off-screen. Based on the pane width available for the graph gutter.
+  const maxLane = rows.reduce((m, r) => Math.max(m, r.lane), 0);
+  const laneWidth = fitLaneWidth(maxLane, w);
+  layoutCache = {
+    rows,
+    hostWidth: w,
+    laneWidth,
+    layout: layoutGraph(rows, laneWidth),
+    emailById: new Map(rows.map((r) => [r.id, r.author_email])),
+  };
+  return layoutCache;
+}
+
 export function renderLog(
   host: HTMLElement,
   rows: CommitRow[],
@@ -72,15 +107,9 @@ export function renderLog(
     return;
   }
 
-  // Compress lanes so a repo with many parallel branches doesn't push commit
-  // text off-screen. Based on the pane width available for the graph gutter.
-  const maxLane = rows.reduce((m, r) => Math.max(m, r.lane), 0);
-  const laneWidth = fitLaneWidth(maxLane, host.clientWidth || 360);
-
-  const layout = layoutGraph(rows, laneWidth);
+  const { layout, emailById } = getLayout(rows, host.clientWidth);
   const rowH = GRAPH_METRICS.rowHeight;
   let currentSelected = selectedId;
-  const emailById = new Map(rows.map((r) => [r.id, r.author_email]));
 
   // A full-height spacer establishes the scrollbar; children are absolutely
   // positioned within it.

@@ -15,6 +15,8 @@ export interface ConflictCallbacks {
   fetchSides: (path: string) => Promise<ConflictSides>;
   resolve: (path: string, content: string) => Promise<void>;
   resolveSide: (path: string, ours: boolean) => Promise<void>;
+  // Open the file in the OS default application (e.g. the user's editor).
+  openInEditor: (path: string) => Promise<void>;
   abort: () => Promise<string>;
   finish: (message: string) => Promise<string>;
   confirm: (message: string) => Promise<boolean>;
@@ -300,7 +302,6 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   }
 
   function leftPanel(): HTMLElement {
-    const rebase = status!.kind === "rebase";
     const box = el("div", { class: "conflict-side" });
     box.append(el("div", { class: "conflict-summary", text: status!.summary || "Resolving conflicts" }));
 
@@ -325,7 +326,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     for (const p of resolved) rList.append(fileRow(p, true));
     box.append(rList);
 
-    box.append(footer(rebase));
+    box.append(footer(status!.kind));
     return box;
   }
 
@@ -340,18 +341,27 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     return row;
   }
 
-  function footer(rebase: boolean): HTMLElement {
+  // Only "merge" collects a fresh commit message here — rebase, cherry-pick,
+  // and revert all continue with their own pending message via `--continue`.
+  function footer(kind: ConflictStatus["kind"]): HTMLElement {
     const box = el("div", { class: "conflict-footer" });
-    if (!rebase) {
+    if (kind === "merge") {
       const msg = el("textarea", { class: "commit-body", placeholder: "Commit Message", rows: 3 }) as HTMLTextAreaElement;
       msg.value = message;
       msg.addEventListener("input", () => (message = msg.value));
       box.append(msg);
     }
     const done = status!.conflicted.length === 0;
+    const finishLabel: Record<ConflictStatus["kind"], string> = {
+      merge: "Commit and Merge",
+      rebase: "Continue Rebase",
+      "cherry-pick": "Continue Cherry-pick",
+      revert: "Continue Revert",
+      none: "Continue",
+    };
     const finishBtn = el("button", {
       class: "btn commit-btn",
-      text: rebase ? "Continue Rebase" : "Commit and Merge",
+      text: finishLabel[kind],
     }) as HTMLButtonElement;
     // `run()` guards against re-entrancy, so no need to also disable on `busy`
     // (render happens inside run() while busy is still true).
@@ -385,7 +395,14 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
 
   function binaryEditor(s: ConflictSides): HTMLElement {
     const box = el("div", { class: "conflict-editor" });
-    box.append(el("div", { class: "conflict-editor-head", text: `${selected} — binary conflict` }));
+    const editBtn = el("button", { class: "btn ghost small", text: "Edit File" });
+    editBtn.addEventListener("click", () => void cb.openInEditor(selected!));
+    box.append(
+      el("div", { class: "conflict-editor-head" }, [
+        el("span", { text: `${selected} — binary conflict` }),
+        editBtn,
+      ]),
+    );
     const take = (glyph: string, title: string, ours: boolean) => {
       const b = el("button", { class: "btn ghost small icon-btn", text: glyph, title });
       b.addEventListener("click", () => void resolveWholeSide(ours));
@@ -415,6 +432,15 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     );
     const touched = res.some((r) => r !== null);
     const anchors: HTMLElement[] = [];
+    // All cells (across all rows) of each changed chunk, so ↑/↓ can highlight the
+    // whole active block — parallel to `anchors`/`changedChunks`.
+    const changeCells: HTMLElement[][] = [];
+    const highlightChange = () => {
+      for (const arr of changeCells) for (const c of arr) c.classList.remove("cf-active");
+      if (curChange >= 0 && curChange < changeCells.length) {
+        for (const c of changeCells[curChange]) c.classList.add("cf-active");
+      }
+    };
     const jumpToUnresolved = () => {
       const i = res.findIndex((r) => r === null);
       if (i >= 0) anchors[i]?.scrollIntoView({ block: "center" });
@@ -438,6 +464,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     const gotoChange = (delta: number) => {
       if (!anchors.length) return;
       curChange = (curChange + delta + anchors.length) % anchors.length;
+      highlightChange();
       anchors[curChange]?.scrollIntoView({ block: "center" });
     };
 
@@ -488,6 +515,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
           txtBtn("Accept All Ours", () => acceptAll(true)),
           txtBtn("Accept All Theirs", () => acceptAll(false)),
           txtBtn("Cancel", () => cancelFile(), !touched),
+          txtBtn("Edit File", () => void cb.openInEditor(selected!)),
           save,
         ]),
       ]),
@@ -530,13 +558,14 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
       const oursCh = !eqLines(c.ours, c.base);
       const theirsCh = !eqLines(c.theirs, c.base);
       const h = Math.max(c.ours.length, c.theirs.length, r?.length ?? 0, 1);
+      const blockCells: HTMLElement[] = [];
       for (let x = 0; x < h; x++) {
         const center: Cell | null = !resolved
           ? { text: "", cls: kind, no: null } // undecided gap, tinted by kind
           : x < r.length
             ? { text: r[x], cls: "", no: no.c++ }
             : null;
-        const row = appendRow(
+        const cells = appendRow(
           grid,
           x < c.ours.length ? { text: c.ours[x], cls: oursCh ? side : "", no: no.o++ } : null,
           x === 0 ? leftGutter(idx, resolved) : null,
@@ -545,10 +574,14 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
           x < c.theirs.length ? { text: c.theirs[x], cls: theirsCh ? side : "", no: no.t++ } : null,
           resolved && x < r.length ? { ci: idx, li: x } : null,
         );
-        if (x === 0) anchors.push(row);
+        blockCells.push(...cells);
+        if (x === 0) anchors.push(cells[0]);
       }
+      changeCells.push(blockCells);
     }
     box.append(grid);
+    grid.addEventListener("copy", onCopy);
+    highlightChange();
     return box;
   }
 
@@ -562,8 +595,40 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     return el("div", { class: "merge-head" }, [el("span", { class: "cf-no" }), el("span", { text })]);
   }
 
+  // Copy handler for the merge grid. The three columns share one grid, so their
+  // cells (and the line-number spans) interleave in DOM order — a native copy of
+  // a multi-line selection would splice in text from the other panels and the
+  // gutters. Restrict the copy to the column the selection started in and take
+  // only the source text, so each panel copies cleanly, without line numbers.
+  function onCopy(e: ClipboardEvent): void {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+    const startEl = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode?.parentElement;
+    const line = startEl?.closest(".cf-left, .cf-center, .cf-right");
+    if (!line) return; // selection began outside a code column — leave default copy
+    const side = line.classList.contains("cf-left")
+      ? "cf-left"
+      : line.classList.contains("cf-center")
+        ? "cf-center"
+        : "cf-right";
+    const grid = line.closest(".merge3");
+    if (!grid) return;
+    const lines: string[] = [];
+    for (const cell of grid.querySelectorAll<HTMLElement>(`.${side}`)) {
+      if (!sel.containsNode(cell, true)) continue;
+      const raw = cell.querySelector<HTMLElement>(".cf-tx")?.dataset.raw;
+      if (raw === undefined) continue; // filler / alignment gap — no line in this column
+      lines.push(raw);
+    }
+    // A single-line (or empty) selection copies fine natively — the line-number
+    // span is user-select:none — so only take over for multi-line selections.
+    if (lines.length < 2) return;
+    e.preventDefault();
+    e.clipboardData?.setData("text/plain", lines.join("\n"));
+  }
+
   // One grid row = 5 cells (Ours, left-gutter, Result, right-gutter, Theirs).
-  // Returns the left cell, used as the scroll anchor for change navigation.
+  // Returns all five, in DOM order; cells[0] (the left cell) is the scroll anchor.
   function appendRow(
     grid: HTMLElement,
     left: Cell | null,
@@ -572,14 +637,14 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     rightG: HTMLElement | null,
     right: Cell | null,
     edit: { ci: number; li: number } | null,
-  ): HTMLElement {
+  ): HTMLElement[] {
     const leftCell = lineCell(left, "cf-left", null);
-    grid.append(leftCell);
-    grid.append(leftG ?? el("div", { class: "merge-gutter" }));
-    grid.append(lineCell(center, "cf-center", edit));
-    grid.append(rightG ?? el("div", { class: "merge-gutter" }));
-    grid.append(lineCell(right, "cf-right", null));
-    return leftCell;
+    const leftGCell = leftG ?? el("div", { class: "merge-gutter" });
+    const centerCell = lineCell(center, "cf-center", edit);
+    const rightGCell = rightG ?? el("div", { class: "merge-gutter" });
+    const rightCell = lineCell(right, "cf-right", null);
+    grid.append(leftCell, leftGCell, centerCell, rightGCell, rightCell);
+    return [leftCell, leftGCell, centerCell, rightGCell, rightCell];
   }
 
   function lineCell(c: Cell | null, side: string, edit: { ci: number; li: number } | null): HTMLElement {
@@ -588,6 +653,9 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     div.append(el("span", { class: "cf-no", text: c && c.no != null ? String(c.no) : "" }));
     const tx = el("span", { class: "cf-tx" });
     tx.textContent = c ? c.text || " " : " ";
+    // The exact source text (blank lines render as " "), so a column copy
+    // reproduces the file verbatim; absent on filler/gap rows so copy skips them.
+    if (c) tx.dataset.raw = c.text;
     if (edit) {
       tx.setAttribute("contenteditable", "plaintext-only");
       tx.addEventListener("input", () => {
@@ -697,7 +765,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   }
 
   async function abort(): Promise<void> {
-    const ok = await cb.confirm("Abort this merge/rebase? All conflict resolutions will be discarded.");
+    const ok = await cb.confirm("Abort this operation? All conflict resolutions will be discarded.");
     if (!ok) {
       cb.setStatus("Abort cancelled.");
       return;

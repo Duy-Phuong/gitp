@@ -25,14 +25,16 @@ import {
   fetchCommitDetail,
   fetchCommitTree,
   fetchConfig,
+  DOTFILE_DISPLAY_PATH,
+  readDotfile,
+  writeDotfile,
   fetchFileHistory,
   fetchFileDiff,
-  fetchLocalChangeCount,
   fetchLogPage,
+  searchLog,
   createBackupBranch,
   fetchRebaseStatus,
   fetchRebaseTodo,
-  fetchRefs,
   fetchStatusSummary,
   interactiveRebase,
   isTauri,
@@ -42,6 +44,8 @@ import {
   pull,
   push,
   pushBranch,
+  undo,
+  redo,
   rebaseAbort,
   rebaseContinue,
   rebaseSkip,
@@ -73,6 +77,8 @@ import {
   saveFilesPatch,
   addToGitignore,
   revealPath,
+  openInEditor,
+  workspaceSnapshot,
   unstage,
   unstageAll,
   unstageHunk,
@@ -92,6 +98,7 @@ import { setupDetail, type DetailHandle } from "./views/detail";
 import { setupChanges, type ChangesHandle } from "./views/changes";
 import { setupConflict, type ConflictHandle } from "./views/conflict";
 import { renderConfig } from "./views/config";
+import { renderDotfiles } from "./views/dotfiles";
 import { renderSidebar, type SidebarView } from "./views/sidebar";
 import { setupTerminal, type TerminalHandle } from "./views/terminal";
 import type {
@@ -99,6 +106,8 @@ import type {
   CommitRow,
   ConfigScope,
   ConflictStatus,
+  DotfileKind,
+  PullMode,
   RebaseAction,
   RebaseStatus,
   RebaseStep,
@@ -106,6 +115,7 @@ import type {
   RepoTab,
   ResetMode,
   StashRef,
+  UndoState,
   Workspace,
 } from "./types";
 
@@ -155,6 +165,10 @@ let detailView: DetailHandle | null = null;
 let changesView: ChangesHandle | null = null;
 let conflictView: ConflictHandle | null = null;
 let loadingMore = false;
+// The commit id whose detail is currently rendered in detailView. Commits are
+// immutable, so re-selecting the same id (e.g. switching back to History)
+// never needs to re-fetch and re-diff it — see selectCommit.
+let shownDetailId: string | null = null;
 
 // Labels of refs whose tip is this commit — shown as chips in the Commit tab.
 function refsAt(id: string): string[] {
@@ -175,7 +189,30 @@ function refLabelsAt(id: string): RefLabel[] {
   return commitRefs.get(id) ?? [];
 }
 
+// rebuildCommitRefs does a BFS from every branch tip over the whole loaded log
+// (O(branches × loaded commits)) — real cost on a repo with many branches or a
+// long history. It's called from loadSidebar() after nearly every action, and
+// now also from the periodic background remote fetch, most of which don't
+// actually move any ref (staging a file, popping a stash, an idle refresh that
+// found nothing new upstream). Skip the rebuild when neither the loaded rows
+// nor the refs' targets have changed since last time.
+let lastCommitRefsRows: CommitRow[] | null = null;
+let lastCommitRefsSig = "";
+
+function refsSignature(): string {
+  const r = state.refs;
+  return [
+    r.branches.map((b) => `${b.name}:${b.target}:${b.is_head ? 1 : 0}`).join(","),
+    r.tags.map((t) => `${t.name}:${t.target}`).join(","),
+    r.remotes.map((rm) => `${rm.name}:${rm.target}`).join(","),
+  ].join("|");
+}
+
 function rebuildCommitRefs(): void {
+  const sig = refsSignature();
+  if (state.rows === lastCommitRefsRows && sig === lastCommitRefsSig) return;
+  lastCommitRefsRows = state.rows;
+  lastCommitRefsSig = sig;
   const byId = new Map(state.rows.map((r) => [r.id, r]));
   // Per commit: candidate labels with the distance (in commits) from the ref tip
   // and a stable tie-break order. Sorted nearest-first so a commit shows the
@@ -265,6 +302,30 @@ function setStatus(message: string): void {
 
 const ALL_BRANCHES_KEY = "gitp-all-branches";
 const REPOS_KEY = "gitp-repos";
+const PULL_DEFAULT_KEY = "gitp-pull-default";
+
+// What the plain Pull button runs. "FetchAll" isn't a real pull (no merge) but
+// is offered alongside the pull strategies, GitKraken-style.
+type PullDefault = "FetchAll" | PullMode;
+const PULL_DEFAULTS: PullDefault[] = ["FetchAll", "FastForward", "FastForwardOnly", "Rebase"];
+const PULL_DEFAULT_LABEL: Record<PullDefault, string> = {
+  FetchAll: "Fetch All",
+  FastForward: "Pull (fast-forward if possible)",
+  FastForwardOnly: "Pull (fast-forward only)",
+  Rebase: "Pull (rebase)",
+};
+
+function loadPullDefault(): PullDefault {
+  const v = localStorage.getItem(PULL_DEFAULT_KEY);
+  return (PULL_DEFAULTS as string[]).includes(v ?? "") ? (v as PullDefault) : "FastForward";
+}
+function savePullDefault(mode: PullDefault): void {
+  localStorage.setItem(PULL_DEFAULT_KEY, mode);
+  updatePullButtonTitle();
+}
+function updatePullButtonTitle(): void {
+  $<HTMLButtonElement>("#pull-btn").title = PULL_DEFAULT_LABEL[loadPullDefault()];
+}
 
 // The history toggle, persisted across restarts. Defaults to all branches.
 function loadAllBranches(): boolean {
@@ -418,6 +479,7 @@ async function closeRepoTab(path: string): Promise<void> {
       state.refs = EMPTY_REFS;
       state.localChanges = 0;
       renderLog($("#log-pane"), [], null, selectCommit, loadMoreCommits);
+      shownDetailId = null;
       detailView?.showEmpty();
       renderSidebarNow();
       setStatus("No repository open.");
@@ -431,20 +493,62 @@ async function closeRepoTab(path: string): Promise<void> {
   }
 }
 
-async function refreshHistory(): Promise<void> {
+// `keepSelection`: preserve the current selection if it's still in the
+// reloaded rows, instead of jumping to the newest commit. Mutating actions
+// (commit/checkout/merge/reset/…) want the default jump-to-HEAD behavior;
+// passive/background refreshes (tab switch, branch click) don't — they'd
+// otherwise yank the view away from whatever the user just clicked.
+async function refreshHistory(opts: { keepSelection?: boolean } = {}): Promise<void> {
   const page = await fetchLogPage(0, PAGE_SIZE, state.allBranches);
   state.rows = page.rows;
   state.total = page.total;
-  state.selectedId = state.rows[0]?.id ?? null;
+  const keep = Boolean(opts.keepSelection && state.selectedId && state.rows.some((r) => r.id === state.selectedId));
+  if (!keep) state.selectedId = state.rows[0]?.id ?? null;
   await ensureAvatars(state.rows.map((r) => r.author_email));
   rebuildCommitRefs();
-  const pane = $("#log-pane");
-  renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu);
-  // An empty log (e.g. right after an abort that left an odd state) should read
-  // as such rather than as a blank pane.
-  if (!state.rows.length) pane.append(el("div", { class: "detail-empty", text: "No commits to show." }));
+  await updateLogView();
   if (state.selectedId) await selectCommit(state.selectedId);
-  else detailView?.showEmpty();
+  else {
+    shownDetailId = null;
+    detailView?.showEmpty();
+  }
+}
+
+// The trimmed commit-search query (empty when the box is empty or absent).
+function logSearchQuery(): string {
+  const input = document.querySelector<HTMLInputElement>("#log-search");
+  return input ? input.value.trim() : "";
+}
+
+// Render the log pane: the paged history normally, or live search results when
+// the search box has text — GitKraken-style commit search over the full graph
+// (matches message, author, or SHA).
+async function updateLogView(): Promise<void> {
+  const pane = $("#log-pane");
+  const query = logSearchQuery();
+  if (!query) {
+    renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu);
+    // An empty log (e.g. right after an abort that left an odd state) should read
+    // as such rather than as a blank pane.
+    if (!state.rows.length) pane.append(el("div", { class: "detail-empty", text: "No commits to show." }));
+    return;
+  }
+  let results: CommitRow[];
+  try {
+    results = await searchLog(query, state.allBranches);
+  } catch (err) {
+    setStatus(`Search failed: ${String(err)}`);
+    return;
+  }
+  // Drop a stale result if the query changed while the search was in flight.
+  if (logSearchQuery() !== query) return;
+  await ensureAvatars(results.map((r) => r.author_email));
+  // No onNeedMore: search returns the complete match set, not a page.
+  renderLog(pane, results, state.selectedId, selectCommit, undefined, refLabelsAt, onCommitContextMenu);
+  if (!results.length) {
+    pane.append(el("div", { class: "detail-empty", text: `No commits match “${query}”.` }));
+  }
+  setStatus(`${results.length} commit${results.length === 1 ? "" : "s"} match “${query}”.`);
 }
 
 // Append the next page when the user scrolls near the end of what's loaded.
@@ -472,14 +576,30 @@ async function loadMoreCommits(): Promise<void> {
 async function selectCommit(id: string): Promise<void> {
   // The log view updates its own highlight on click; here we only load detail.
   state.selectedId = id;
+  // Commits are immutable — re-showing one already on screen (e.g. switching
+  // back to History with the same selection) needs no re-fetch/re-diff.
+  if (id === shownDetailId) return;
   try {
-    detailView?.show(await fetchCommitDetail(id));
+    const detail = await fetchCommitDetail(id);
+    shownDetailId = id;
+    detailView?.show(detail);
   } catch (err) {
     setStatus(`Failed to load commit: ${String(err)}`);
   }
 }
 
+// Which sub-view the Config tab shows: the structured git key/value editor,
+// or the raw ~/.gitconfig + ~/.tigrc panel.
+let configTab: "git" | "dotfiles" = "git";
+
+function setConfigTab(tab: "git" | "dotfiles"): void {
+  configTab = tab;
+  $("#config-seg-git").classList.toggle("active", tab === "git");
+  $("#config-seg-dotfiles").classList.toggle("active", tab === "dotfiles");
+}
+
 async function refreshConfig(): Promise<void> {
+  if (configTab === "dotfiles") return refreshDotfiles();
   const entries = await fetchConfig();
   renderConfig($("#config-editor"), entries, handleConfigSave);
 }
@@ -491,6 +611,53 @@ async function handleConfigSave(scope: ConfigScope, name: string, value: string)
     await refreshConfig();
   } catch (err) {
     setStatus(`Failed to save ${name}: ${String(err)}`);
+  }
+}
+
+const DOTFILE_KINDS: DotfileKind[] = ["GitConfig", "Tigrc"];
+
+async function refreshDotfiles(): Promise<void> {
+  const files = await Promise.all(
+    DOTFILE_KINDS.map(async (kind) => ({
+      kind,
+      path: DOTFILE_DISPLAY_PATH[kind],
+      content: await readDotfile(kind),
+    })),
+  );
+  renderDotfiles($("#config-editor"), files, {
+    confirm: confirmDialog,
+    save: async (kind, content) => {
+      await writeDotfile(kind, content);
+      setStatus(`Saved ${DOTFILE_DISPLAY_PATH[kind]}.`);
+    },
+  });
+}
+
+// Throttle for the background remote fetch triggered by navigation (below).
+// A real fetch is a network round trip (and can prompt for credentials), so it
+// shouldn't fire on every single tab/branch click — this keeps ahead/behind
+// and remote branches "fresh enough" without hammering it. A manual click on
+// the Reload button (refreshAllAction) always bypasses this.
+let lastRemoteFetchAt = 0;
+// Generous: a background fetch is a network round trip plus a full sidebar
+// repaint, and navigation must never feel gated on it. A manual Reload
+// (refreshAllAction) always bypasses this, so 60s costs nothing in freshness
+// the user can't get on demand.
+const REMOTE_REFRESH_THROTTLE_MS = 60_000;
+
+// Fetch all remotes in the background (throttled) and reload the sidebar so
+// ahead/behind counts and remote-tracking refs reflect it. Silent on failure
+// (offline, no cached credentials) — a background refresh must never
+// interrupt navigation with an error dialog, only a status-bar note.
+async function refreshRemoteQuietly(): Promise<void> {
+  if (!state.repoPath || actionsBusy) return;
+  if (Date.now() - lastRemoteFetchAt < REMOTE_REFRESH_THROTTLE_MS) return;
+  lastRemoteFetchAt = Date.now();
+  try {
+    await fetchAll();
+    await loadSidebar();
+  } catch (err) {
+    setStatus(`Background fetch failed: ${String(err)}`);
   }
 }
 
@@ -511,14 +678,38 @@ function showView(view: View): void {
   if (view === "config") void refreshConfig();
   else if (view === "changes") void loadChanges();
   else if (view === "conflict") void conflictView?.reload();
+  // Entering History or Local Changes — including via a branch click, which
+  // routes through here too (see jumpToCommit/checkoutBranchAction) — reloads
+  // the graph (keeping whatever's selected) and, throttled, fetches remotes,
+  // so switching over always shows current local + remote state without a
+  // manual Reload click.
+  if (view === "history") void refreshHistory({ keepSelection: true });
+  // A cheap local check (no network) — re-run on every visit so the Resolve
+  // Conflicts banner (and its pre-filled commit message) stays accurate even
+  // after navigating away from the resolver without finishing or aborting.
+  if (view === "history" || view === "changes") void refreshConflictStatus();
+  if (view === "history" || view === "changes") void refreshRemoteQuietly();
 }
 
-// Fetch the ref tree + local-change count for the active repo and render the sidebar.
+// Re-read everything an action can invalidate — refs, change count, staging
+// lists, rebase/conflict state, undo labels — and repaint from it.
+//
+// This is ONE backend round trip (see workspaceSnapshot). It used to be five,
+// each taking the global backend lock, and two of them independently ran
+// `git status`: once for the sidebar badge and once for the staging lists.
+// Now status runs once and is shared with the Local Changes view.
 async function loadSidebar(): Promise<void> {
   try {
-    const [refs, localChanges] = await Promise.all([fetchRefs(), fetchLocalChangeCount()]);
-    state.refs = refs;
-    state.localChanges = localChanges;
+    const snap = await workspaceSnapshot();
+    state.refs = snap.refs;
+    state.localChanges = snap.local_changes;
+    state.rebase = snap.rebase;
+    undoLabels = snap.undo;
+    // Hand the staging lists straight to Local Changes so it doesn't re-run
+    // `git status` for this same refresh.
+    changesView?.applyStatus(snap.status);
+    renderRebaseBanner();
+    applyConflictStatus(snap.conflict);
   } catch (err) {
     state.refs = EMPTY_REFS;
     setStatus(`Failed to load refs: ${String(err)}`);
@@ -534,9 +725,6 @@ async function loadSidebar(): Promise<void> {
     renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu);
     pane.scrollTop = keep;
   }
-  // Surface (or clear) a paused-rebase banner whenever refs are reloaded.
-  void refreshRebaseStatus();
-  void refreshConflictStatus();
 }
 
 // Show the checked-out branch name as a chip in the top bar (hidden when no
@@ -548,6 +736,8 @@ function renderBranchIndicator(): void {
   chip.title = head ? `On branch ${head}` : "Current branch";
   chip.classList.toggle("hidden", !head);
 }
+
+let sbFilterDebounce: number | undefined;
 
 function renderSidebarNow(): void {
   renderBranchIndicator();
@@ -566,9 +756,18 @@ function renderSidebarNow(): void {
     },
     {
       onSelectView: (v: SidebarView) => showView(v),
+      // Debounced: renderSidebarNow rebuilds the whole branch/tag/remote tree
+      // (including recreating this very input), so filtering on every single
+      // keystroke costs a full tree teardown+rebuild per character on a repo
+      // with many branches. The input itself isn't debounced — the browser
+      // shows what's typed immediately — only the filtered re-render lags a
+      // touch behind, which is imperceptible.
       onFilter: (text) => {
-        state.sbFilter = text;
-        renderSidebarNow();
+        window.clearTimeout(sbFilterDebounce);
+        sbFilterDebounce = window.setTimeout(() => {
+          state.sbFilter = text;
+          renderSidebarNow();
+        }, 120);
       },
       onToggle: (key) => {
         if (state.sbCollapsed.has(key)) state.sbCollapsed.delete(key);
@@ -648,7 +847,16 @@ let busyActionBtn: string | null = null;
 // active repo supports: nothing to stash → Stash off; empty stack → Pop off.
 function refreshActionButtons(): void {
   const blocked = actionsBusy || !state.repoPath;
+  // Undo/Redo: enabled only when the backend has a matching action, and labelled
+  // with it ("Undo Commit"), GitKraken-style.
+  const undoBtn = $<HTMLButtonElement>("#undo-btn");
+  const redoBtn = $<HTMLButtonElement>("#redo-btn");
+  undoBtn.disabled = blocked || !undoLabels.undo;
+  redoBtn.disabled = blocked || !undoLabels.redo;
+  undoBtn.title = undoLabels.undo ? `Undo ${undoLabels.undo}` : "Nothing to undo";
+  redoBtn.title = undoLabels.redo ? `Redo ${undoLabels.redo}` : "Nothing to redo";
   $<HTMLButtonElement>("#pull-btn").disabled = blocked;
+  $<HTMLButtonElement>("#pull-caret-btn").disabled = blocked;
   $<HTMLButtonElement>("#push-btn").disabled = blocked;
   $<HTMLButtonElement>("#branch-btn").disabled = blocked;
   $<HTMLButtonElement>("#stash-btn").disabled = blocked || state.localChanges === 0;
@@ -656,7 +864,7 @@ function refreshActionButtons(): void {
   $<HTMLButtonElement>("#refresh-btn").disabled = blocked;
 
   // Spin the button whose action is running.
-  for (const sel of ["#pull-btn", "#push-btn", "#stash-btn", "#pop-btn", "#refresh-btn"]) {
+  for (const sel of ["#undo-btn", "#redo-btn", "#pull-btn", "#push-btn", "#stash-btn", "#pop-btn", "#refresh-btn"]) {
     $(sel).classList.toggle("busy", busyActionBtn === sel);
   }
 
@@ -700,12 +908,52 @@ function setActionsBusy(busy: boolean, activeSel?: string): void {
   refreshActionButtons();
 }
 
-async function pullAction(): Promise<void> {
+// Labels of the actions Undo/Redo would perform, mirrored from the backend so
+// the buttons enable/disable and show what they'd do.
+let undoLabels: UndoState = { undo: null, redo: null };
+
+async function undoAction(): Promise<void> {
+  if (!state.repoPath || !undoLabels.undo) return;
+  const label = undoLabels.undo;
+  setActionsBusy(true, "#undo-btn");
+  setStatus(`Undoing ${label}…`);
+  try {
+    undoLabels = await undo();
+    await Promise.all([refreshHistory(), loadSidebar()]);
+    if (state.view === "changes") await loadChanges();
+    setStatus(`Undid ${label}.`);
+  } catch (err) {
+    setStatus(`Undo failed: ${String(err)}`);
+    showErrorDialog("Undo failed", String(err));
+  } finally {
+    setActionsBusy(false);
+  }
+}
+
+async function redoAction(): Promise<void> {
+  if (!state.repoPath || !undoLabels.redo) return;
+  const label = undoLabels.redo;
+  setActionsBusy(true, "#redo-btn");
+  setStatus(`Redoing ${label}…`);
+  try {
+    undoLabels = await redo();
+    await Promise.all([refreshHistory(), loadSidebar()]);
+    if (state.view === "changes") await loadChanges();
+    setStatus(`Redid ${label}.`);
+  } catch (err) {
+    setStatus(`Redo failed: ${String(err)}`);
+    showErrorDialog("Redo failed", String(err));
+  } finally {
+    setActionsBusy(false);
+  }
+}
+
+async function pullAction(mode: PullMode): Promise<void> {
   if (!state.repoPath) return;
   setActionsBusy(true, "#pull-btn");
   setStatus("Pulling…");
   try {
-    const out = await pull();
+    const out = await pull(mode);
     await Promise.all([refreshHistory(), loadSidebar()]);
     setStatus(out || "Pull complete.");
   } catch (err) {
@@ -713,6 +961,17 @@ async function pullAction(): Promise<void> {
   } finally {
     setActionsBusy(false);
   }
+}
+
+// Run one of the four pull-menu methods, whichever it is.
+async function runPullMethod(mode: PullDefault): Promise<void> {
+  if (mode === "FetchAll") await refreshAllAction();
+  else await pullAction(mode);
+}
+
+// The plain Pull button: run whatever method is currently the default.
+async function runPullDefault(): Promise<void> {
+  await runPullMethod(loadPullDefault());
 }
 
 async function pushAction(): Promise<void> {
@@ -879,6 +1138,9 @@ function onBranchMenu(b: BranchRef, x: number, y: number): void {
 async function showStashDetail(s: StashRef): Promise<void> {
   showView("history");
   state.selectedId = null;
+  // A stash detail isn't tracked by selectCommit's cache — invalidate it so a
+  // later selectCommit for whatever's now showing doesn't wrongly skip itself.
+  shownDetailId = null;
   try {
     detailView?.show(await fetchCommitDetail(`stash@{${s.index}}`));
   } catch (err) {
@@ -1202,27 +1464,55 @@ async function refreshRebaseStatus(): Promise<void> {
   renderRebaseBanner();
 }
 
-// Refresh the conflict session and (re)paint the merge-conflict banner.
+// Refresh the conflict session and (re)paint the merge-conflict banner. Use
+// this only when no snapshot is at hand (loadSidebar already carries one).
 async function refreshConflictStatus(): Promise<void> {
   try {
-    const st = await conflictStatus();
-    state.conflict = st.kind === "none" ? null : st;
+    applyConflictStatus(await conflictStatus());
   } catch {
-    state.conflict = null;
+    applyConflictStatus(null);
   }
+}
+
+// Adopt a conflict-status result: repaint the banner, carry the pending commit
+// message over to Local Changes, and never strand the user on a resolver view
+// for a session that has ended.
+function applyConflictStatus(st: ConflictStatus | null): void {
+  state.conflict = st && st.kind !== "none" ? st : null;
   renderConflictBanner();
+  // Once conflicts are resolved (files staged) a plain commit correctly
+  // finishes a merge/cherry-pick/revert, same as the command line — so the
+  // pending message should already be sitting in Local Changes, ready to go,
+  // whether the user finishes there or comes back to the resolver.
+  if (state.conflict?.message) {
+    const summary = state.conflict.summary;
+    const rest = state.conflict.message.startsWith(summary)
+      ? state.conflict.message.slice(summary.length)
+      : state.conflict.message;
+    changesView?.prefillMessage(summary, rest.replace(/^\s+/, "").trimEnd());
+  }
   // A resolved/aborted merge should not strand the user on the conflict view.
   if (state.view === "conflict" && !state.conflict) showView("history");
 }
 
-// A top bar shown while a MERGE is in conflict, offering Resolve / Abort. Rebase
-// conflicts are surfaced by the rebase banner (which links here too).
+// Title for each non-rebase conflict kind, used by both the banner and error
+// dialogs. Rebase conflicts are surfaced by the rebase banner instead.
+const CONFLICT_BANNER_TITLE: Record<string, string> = {
+  merge: "Merge conflicts",
+  "cherry-pick": "Cherry-pick conflicts",
+  revert: "Revert conflicts",
+};
+
+// A top bar shown while a merge/cherry-pick/revert is in conflict, offering
+// Resolve / Abort. Rebase conflicts are surfaced by the rebase banner (which
+// links here too).
 function renderConflictBanner(): void {
   let banner = document.getElementById("conflict-banner");
   const st = state.conflict;
+  const title = st ? CONFLICT_BANNER_TITLE[st.kind] : undefined;
   // No banner while the resolver view itself is open (it would be redundant and
   // its count only refreshes on sidebar reloads).
-  const show = st?.kind === "merge" && st.conflicted.length > 0 && state.view !== "conflict";
+  const show = Boolean(title) && st!.conflicted.length > 0 && state.view !== "conflict";
   if (!show) {
     banner?.remove();
     return;
@@ -1233,7 +1523,7 @@ function renderConflictBanner(): void {
   }
   clear(banner);
   const info = el("div", { class: "rebase-banner-info" }, [
-    el("span", { class: "rebase-banner-title", text: `Merge conflicts (${st!.conflicted.length})` }),
+    el("span", { class: "rebase-banner-title", text: `${title} (${st!.conflicted.length})` }),
     el("span", { class: "rebase-banner-sub", text: st!.summary }),
   ]);
   const resolve = el("button", { class: "btn small", text: "Resolve Conflicts" });
@@ -1244,14 +1534,14 @@ function renderConflictBanner(): void {
 }
 
 async function abortConflictAction(): Promise<void> {
-  const ok = await confirmDialog("Abort this merge? All conflict resolutions will be discarded.");
+  const ok = await confirmDialog("Abort this operation? All conflict resolutions will be discarded.");
   if (!ok) return;
   try {
     const out = await abortConflict();
     conflictView?.reset(); // forget partial choices so a re-merge starts fresh
     showView("history");
     await Promise.all([refreshHistory(), loadSidebar()]);
-    setStatus(out.trim() || "Merge aborted.");
+    setStatus(out.trim() || "Aborted.");
   } catch (err) {
     showErrorDialog("Abort failed", String(err));
   }
@@ -1334,7 +1624,7 @@ function onCommitContextMenu(row: CommitRow, x: number, y: number): void {
     currentBranch: state.refs.head ?? "HEAD",
     copySha: () => void copySha(rev),
     checkoutCommit: () => void checkoutCommitAction(rev, short),
-    newBranch: (name) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev)),
+    newBranch: (name) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
     newTag: (name) => void tagAction(name, rev, short),
     cherryPick: () => void runCommitOp(`Cherry-picking ${short}`, () => cherryPick(rev)),
     revert: () => void runCommitOp(`Reverting ${short}`, () => revertCommit(rev)),
@@ -1358,17 +1648,52 @@ function onCommitContextMenu(row: CommitRow, x: number, y: number): void {
 
 // Run a HEAD-moving commit op, then reload history + sidebar from the new HEAD.
 // Shows git's own output on success (e.g. cherry-pick/revert summaries).
-async function runCommitOp(label: string, op: () => Promise<string>): Promise<void> {
+//
+// `landRev`: for ops that move HEAD to a SPECIFIC, possibly historical commit
+// (detached checkout, "create branch at" an old commit/tag) — select and
+// scroll to that exact commit afterwards instead of the default "jump to the
+// newest commit", which lands on the wrong row whenever the checked-out
+// commit isn't the newest one in the log (e.g. checking out an old release
+// tag). Ops that move the current branch's tip (commit/cherry-pick/revert/
+// reset/rebase) omit it — their new HEAD genuinely is the newest commit.
+async function runCommitOp(label: string, op: () => Promise<string>, landRev?: string): Promise<void> {
   setStatus(`${label}…`);
   try {
     const out = (await op()).trim();
     showView("history");
-    await Promise.all([refreshHistory(), loadSidebar()]);
+    if (landRev) await Promise.all([landOnCommit(landRev), loadSidebar()]);
+    else await Promise.all([refreshHistory(), loadSidebar()]);
     setStatus(out || `${label} done.`);
   } catch (err) {
     setStatus(`${label} failed.`);
-    showErrorDialog(`${label} failed`, String(err));
+    // A failed op (cherry-pick, revert, rebase, …) may have left a conflict
+    // in progress — offer Resolve Conflicts instead of just the raw git
+    // error, same as runBranchOp already does for a failed merge.
+    await Promise.all([refreshConflictStatus(), refreshRebaseStatus()]);
+    const inConflict =
+      (state.conflict !== null && state.conflict.conflicted.length > 0) ||
+      (state.rebase?.in_progress === true && state.rebase.paused_for === "conflict");
+    showErrorDialog(
+      `${label} failed`,
+      String(err),
+      inConflict ? { label: "Resolve Conflicts", run: () => showView("conflict") } : undefined,
+    );
   }
+}
+
+// Refresh the log, then select and scroll to `rev` — like clicking that
+// commit would — instead of defaulting to the newest one. See runCommitOp's
+// `landRev`.
+async function landOnCommit(rev: string): Promise<void> {
+  await refreshHistory();
+  const idx = state.rows.findIndex((r) => r.id === rev);
+  state.selectedId = rev;
+  renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu);
+  if (idx >= 0) {
+    const pane = $("#log-pane");
+    pane.scrollTop = Math.max(0, idx * GRAPH_METRICS.rowHeight - pane.clientHeight / 2);
+  }
+  await selectCommit(rev);
 }
 
 // Confirm first (destructive/history-rewriting ops), then run.
@@ -1398,7 +1723,7 @@ async function checkoutCommitAction(rev: string, short: string): Promise<void> {
       return;
     }
   }
-  await runCommitOp(`Checking out ${short}`, () => checkoutCommit(rev));
+  await runCommitOp(`Checking out ${short}`, () => checkoutCommit(rev), rev);
 }
 
 async function resetAction(rev: string, short: string, mode: ResetMode): Promise<void> {
@@ -1507,6 +1832,51 @@ function buildBranchMenu(menu: HTMLElement, close: () => void): void {
   requestAnimationFrame(() => input.focus());
 }
 
+// The Pull caret's dropdown: pick a pull method to run once, or hover a row to
+// set it as the plain Pull button's default (GitKraken-style).
+function setupPullMenu(): void {
+  const btn = $("#pull-caret-btn");
+  const menu = $("#pull-menu");
+  const close = () => {
+    menu.classList.add("hidden");
+    btn.setAttribute("aria-expanded", "false");
+  };
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    buildPullMenu(menu, close);
+    const nowHidden = menu.classList.toggle("hidden");
+    btn.setAttribute("aria-expanded", String(!nowHidden));
+  });
+  document.addEventListener("click", (e) => {
+    if (!$("#pull-wrap").contains(e.target as Node)) close();
+  });
+}
+
+function buildPullMenu(menu: HTMLElement, close: () => void): void {
+  clear(menu);
+  const current = loadPullDefault();
+  for (const mode of PULL_DEFAULTS) {
+    const isDefault = mode === current;
+    const row = el("div", { class: `pull-item${isDefault ? " default" : ""}`, role: "menuitemradio" });
+    const setDefault = el("button", { class: "pull-set-default", text: "Set as default" });
+    setDefault.addEventListener("click", (e) => {
+      e.stopPropagation();
+      savePullDefault(mode);
+      buildPullMenu(menu, close); // refresh radios without closing
+    });
+    row.append(
+      el("span", { class: "pull-radio" }),
+      el("span", { class: "pull-label", text: PULL_DEFAULT_LABEL[mode] }),
+      ...(isDefault ? [] : [setDefault]),
+    );
+    row.addEventListener("click", () => {
+      close();
+      void runPullMethod(mode);
+    });
+    menu.append(row);
+  }
+}
+
 // The embedded terminal ran a command (Enter pressed); refresh anything that a
 // commit/checkout/stash would have changed.
 function onTerminalCommand(): void {
@@ -1609,6 +1979,12 @@ function setupSettingsMenu(): void {
   });
   menu.querySelector('[data-action="git-config"]')?.addEventListener("click", () => {
     close();
+    setConfigTab("git");
+    showView("config");
+  });
+  menu.querySelector('[data-action="dotfiles"]')?.addEventListener("click", () => {
+    close();
+    setConfigTab("dotfiles");
     showView("config");
   });
   for (const choice of menu.querySelectorAll<HTMLElement>("[data-theme-choice]")) {
@@ -1640,11 +2016,28 @@ function wireUi(): void {
   for (const tab of document.querySelectorAll<HTMLElement>(".tab")) {
     tab.addEventListener("click", () => showView((tab.dataset.tab as View) ?? "history"));
   }
-  $("#pull-btn").addEventListener("click", () => void pullAction());
+  $("#undo-btn").addEventListener("click", () => void undoAction());
+  $("#redo-btn").addEventListener("click", () => void redoAction());
+  $("#pull-btn").addEventListener("click", () => void runPullDefault());
+  setupPullMenu();
+  updatePullButtonTitle();
   $("#push-btn").addEventListener("click", () => void pushAction());
   $("#stash-btn").addEventListener("click", () => void stashAction());
   $("#pop-btn").addEventListener("click", () => void popAction());
   $("#refresh-btn").addEventListener("click", () => void refreshAllAction());
+  // Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y = redo. Ignored while
+  // typing so the native text-editing undo (commit message, conflict editor)
+  // still works.
+  document.addEventListener("keydown", (e) => {
+    if (!(e.metaKey || e.ctrlKey)) return;
+    const key = e.key.toLowerCase();
+    if (key !== "z" && key !== "y") return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+    e.preventDefault();
+    if (key === "y" || e.shiftKey) void redoAction();
+    else void undoAction();
+  });
   setupBranchMenu();
   $("#terminal-toggle").addEventListener("click", toggleTerminal);
   $("#terminal-close").addEventListener("click", toggleTerminal);
@@ -1653,6 +2046,34 @@ function wireUi(): void {
   setupSidebarResizer();
   setupSettingsMenu();
   setupBranchToggle();
+  setupLogSearch();
+  $("#config-seg-git").addEventListener("click", () => {
+    if (configTab === "git") return;
+    setConfigTab("git");
+    void refreshConfig();
+  });
+  $("#config-seg-dotfiles").addEventListener("click", () => {
+    if (configTab === "dotfiles") return;
+    setConfigTab("dotfiles");
+    void refreshConfig();
+  });
+}
+
+// Live commit search: debounced so typing doesn't fire a query per keystroke;
+// Escape clears it and returns to the normal paged log.
+function setupLogSearch(): void {
+  const input = $<HTMLInputElement>("#log-search");
+  let timer: number | undefined;
+  input.addEventListener("input", () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => void updateLogView(), 150);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && input.value) {
+      input.value = "";
+      void updateLogView();
+    }
+  });
 }
 
 // Wire the All-branches / Current segmented toggle above the log. Switching
@@ -1701,6 +2122,7 @@ async function init(): Promise<void> {
     saveFilesPatch,
     addToGitignore,
     revealPath,
+    openInEditor,
     repoRoot: () => state.repoPath || null,
     confirm: confirmDialog,
     fetchHead: async () => {
@@ -1714,6 +2136,9 @@ async function init(): Promise<void> {
     // Staging doesn't change refs or history, so just update the badge — no ref
     // walk or log rebuild (that's what made each stage/unstage feel slow).
     onChanged: (count) => {
+      // A snapshot-driven refresh already set this and repainted; re-rendering
+      // the whole ref tree again for an unchanged count is pure waste.
+      if (state.localChanges === count) return;
       state.localChanges = count;
       renderSidebarNow();
     },
@@ -1729,6 +2154,7 @@ async function init(): Promise<void> {
     fetchSides: conflictSides,
     resolve: resolveConflict,
     resolveSide: resolveConflictSide,
+    openInEditor,
     abort: abortConflict,
     finish: finishConflict,
     confirm: confirmDialog,

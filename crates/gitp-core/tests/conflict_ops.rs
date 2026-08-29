@@ -93,3 +93,66 @@ fn conflict_status_is_none_on_a_clean_repo() {
     let repo = Repo::open(fx.path()).unwrap();
     assert_eq!(repo.conflict_status().unwrap().kind, "none");
 }
+
+/// A repo where cherry-picking `feature`'s tip commit onto `dev` conflicts on
+/// `f.txt`, leaving CHERRY_PICK_HEAD (not MERGE_HEAD or a rebase directory).
+fn conflicted_cherry_pick_repo() -> (FixtureRepo, String) {
+    let fx = FixtureRepo::init();
+    fx.commit_file("f.txt", "a\nbase\nc\n", "c1");
+    let dir = fx.path();
+    git(dir, &["branch", "-M", "dev"]);
+    git(dir, &["checkout", "-b", "feature"]);
+    std::fs::write(dir.join("f.txt"), "a\nfeature\nc\n").unwrap();
+    git(dir, &["commit", "-am", "feature change"]);
+    let pick = String::from_utf8(Command::new("git").current_dir(dir).args(["rev-parse", "HEAD"]).output().unwrap().stdout)
+        .unwrap()
+        .trim()
+        .to_string();
+    git(dir, &["checkout", "dev"]);
+    std::fs::write(dir.join("f.txt"), "a\ndev\nc\n").unwrap();
+    git(dir, &["commit", "-am", "dev change"]);
+
+    let repo = Repo::open(dir).unwrap();
+    assert!(repo.cherry_pick(&pick).is_err(), "cherry-pick should conflict");
+    (fx, pick)
+}
+
+#[test]
+fn conflict_status_reports_a_cherry_pick_in_progress_with_the_conflicted_file() {
+    let (fx, _) = conflicted_cherry_pick_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    let status = repo.conflict_status().unwrap();
+    assert_eq!(status.kind, "cherry-pick");
+    assert_eq!(status.conflicted, vec!["f.txt"]);
+}
+
+#[test]
+fn resolve_conflict_clears_the_file_and_finish_continues_the_cherry_pick() {
+    let (fx, pick) = conflicted_cherry_pick_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.resolve_conflict("f.txt", "a\nresolved\nc\n").unwrap();
+    assert!(repo.conflict_status().unwrap().conflicted.is_empty());
+
+    // GIT_EDITOR=true must auto-accept the reused commit message — there's no
+    // TTY here, so a real prompt would fail this call.
+    repo.finish_conflict("").unwrap();
+
+    assert_eq!(repo.conflict_status().unwrap().kind, "none");
+    assert_eq!(std::fs::read_to_string(fx.path().join("f.txt")).unwrap(), "a\nresolved\nc\n");
+    let head = repo.commit_detail("HEAD").unwrap();
+    assert_eq!(head.parents.len(), 1, "cherry-pick creates a single-parent commit, not a merge");
+    assert_ne!(head.id, pick, "a new commit was created on dev, not the original");
+}
+
+#[test]
+fn abort_conflict_restores_the_pre_cherry_pick_state() {
+    let (fx, _) = conflicted_cherry_pick_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.abort_conflict().unwrap();
+
+    assert_eq!(repo.conflict_status().unwrap().kind, "none");
+    assert_eq!(std::fs::read_to_string(fx.path().join("f.txt")).unwrap(), "a\ndev\nc\n", "back to dev's version");
+}

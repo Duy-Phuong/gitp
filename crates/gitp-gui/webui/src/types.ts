@@ -122,10 +122,23 @@ export interface Workspace {
   active: number | null;
 }
 
+// Labels for what Undo / Redo would do (null = nothing / button disabled).
+export interface UndoState {
+  undo: string | null;
+  redo: string | null;
+}
+
 export type ConfigScope = "Local" | "Global" | "System" | "Other";
 
 // How far a reset moves the branch (mirrors gitp-core's ResetMode).
 export type ResetMode = "Soft" | "Mixed" | "Hard";
+
+// How `pull` reconciles local and remote history (mirrors gitp-core's PullMode).
+export type PullMode = "FastForward" | "FastForwardOnly" | "Rebase";
+
+// One of the two dotfiles the Settings "Dotfiles" panel edits (mirrors
+// gitp-gui's DotfileKind). Resolved server-side from $HOME.
+export type DotfileKind = "GitConfig" | "Tigrc";
 
 // A commit in an interactive-rebase plan.
 export interface RebaseCommit {
@@ -158,9 +171,22 @@ export interface ConfigEntry {
   scope: ConfigScope;
 }
 
-// The in-progress conflict session (merge or rebase) for the resolver view.
+// Everything refreshed after an action, fetched in one round trip. Replaces
+// five separate calls (refs / change count / rebase / conflict / undo) and, in
+// particular, runs `git status` once instead of twice — see the Rust
+// WorkspaceSnapshot for why that mattered.
+export interface WorkspaceSnapshot {
+  refs: Refs;
+  local_changes: number;
+  status: StatusLists;
+  rebase: RebaseStatus;
+  conflict: ConflictStatus;
+  undo: UndoState;
+}
+
+// The in-progress conflict session for the resolver view.
 export interface ConflictStatus {
-  kind: "merge" | "rebase" | "none";
+  kind: "merge" | "rebase" | "cherry-pick" | "revert" | "none";
   summary: string;
   conflicted: string[];
   message: string;

@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::Command;
 
 use common::FixtureRepo;
-use gitp_core::Repo;
+use gitp_core::{PullMode, Repo};
 use tempfile::TempDir;
 
 /// Run `git <args>` in `dir`, asserting success.
@@ -83,7 +83,7 @@ fn pull_brings_new_commits_from_the_remote() {
 
     // The consumer pulls it down.
     let repo = Repo::open(consumer.path()).unwrap();
-    repo.pull().expect("pull fast-forwards the new commit");
+    repo.pull(PullMode::FastForward).expect("pull fast-forwards the new commit");
 
     assert!(
         consumer.path().join("b.txt").exists(),

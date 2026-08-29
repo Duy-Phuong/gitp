@@ -1,18 +1,20 @@
-//! Merge/rebase conflict resolution driven by the conflict-resolver view:
-//! report the in-progress conflict session, read the three sides of a
-//! conflicted file, mark files resolved, and finish (commit the merge / continue
-//! the rebase) or abort. Everything shells out through `run_git` so git's own
+//! Conflict resolution driven by the conflict-resolver view, for every git
+//! operation that can stop mid-way with conflict markers: merge, rebase,
+//! cherry-pick, and revert. Reports the in-progress session, reads the three
+//! sides of a conflicted file, marks files resolved, and finishes (commit /
+//! continue) or aborts. Everything shells out through `run_git` so git's own
 //! conflict handling and messages apply as-is.
 
 use serde::Serialize;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::repo::Repo;
 
 /// A snapshot of the current conflict session, for the resolver UI.
 #[derive(Debug, Clone, Serialize)]
 pub struct ConflictStatus {
-    /// `"merge"`, `"rebase"`, or `"none"` when nothing is in progress.
+    /// `"merge"`, `"rebase"`, `"cherry-pick"`, `"revert"`, or `"none"` when
+    /// nothing is in progress.
     pub kind: String,
     /// Human summary, e.g. `Merging origin/x into dev` or `Rebasing dev`.
     pub summary: String,
@@ -38,13 +40,16 @@ pub struct ConflictSides {
 }
 
 impl Repo {
-    /// Report the in-progress conflict session (merge or rebase), if any.
+    /// Report the in-progress conflict session (merge, rebase, cherry-pick, or
+    /// revert), if any.
     pub fn conflict_status(&self) -> Result<ConflictStatus> {
         let git_dir = self.inner.path();
         let merging = git_dir.join("MERGE_HEAD").exists();
         let rebasing = git_dir.join("rebase-merge").is_dir() || git_dir.join("rebase-apply").is_dir();
+        let cherry_picking = git_dir.join("CHERRY_PICK_HEAD").exists();
+        let reverting = git_dir.join("REVERT_HEAD").exists();
 
-        if !merging && !rebasing {
+        if !merging && !rebasing && !cherry_picking && !reverting {
             return Ok(ConflictStatus {
                 kind: "none".into(),
                 summary: String::new(),
@@ -55,25 +60,29 @@ impl Repo {
 
         let conflicted = self.unmerged_paths()?;
 
-        if merging {
-            let message = std::fs::read_to_string(git_dir.join("MERGE_MSG")).unwrap_or_default();
+        if rebasing {
             let into = self.current_branch_label();
-            // MERGE_MSG's first line is git's own "Merge …" summary.
-            let summary = message
-                .lines()
-                .next()
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("Merging into {into}"));
-            Ok(ConflictStatus { kind: "merge".into(), summary, conflicted, message })
-        } else {
-            let into = self.current_branch_label();
-            Ok(ConflictStatus {
+            return Ok(ConflictStatus {
                 kind: "rebase".into(),
                 summary: format!("Rebasing {into}"),
                 conflicted,
                 message: String::new(),
-            })
+            });
         }
+
+        // Merge, cherry-pick, and revert all stage their pending commit message
+        // in MERGE_MSG the same way, so they share this summary logic.
+        let kind = if merging { "merge" } else if cherry_picking { "cherry-pick" } else { "revert" };
+        let message = std::fs::read_to_string(git_dir.join("MERGE_MSG")).unwrap_or_default();
+        let into = self.current_branch_label();
+        let default_summary = match kind {
+            "cherry-pick" => format!("Cherry-picking onto {into}"),
+            "revert" => format!("Reverting on {into}"),
+            _ => format!("Merging into {into}"),
+        };
+        // MERGE_MSG's first line is git's own summary (e.g. "Merge …").
+        let summary = message.lines().next().map(str::to_string).unwrap_or(default_summary);
+        Ok(ConflictStatus { kind: kind.into(), summary, conflicted, message })
     }
 
     /// Read the ours/theirs/base staged versions and the working text of `path`.
@@ -117,22 +126,57 @@ impl Repo {
         self.run_git(&["add", "--", path]).map(|_| ())
     }
 
-    /// Abort the in-progress merge or rebase, restoring the pre-op state.
+    /// Abort the in-progress merge, rebase, cherry-pick, or revert, restoring
+    /// the pre-op state.
     pub fn abort_conflict(&self) -> Result<String> {
-        if self.inner.path().join("MERGE_HEAD").exists() {
+        let git_dir = self.inner.path();
+        if git_dir.join("MERGE_HEAD").exists() {
             self.run_git(&["merge", "--abort"])
+        } else if git_dir.join("CHERRY_PICK_HEAD").exists() {
+            self.run_git(&["cherry-pick", "--abort"])
+        } else if git_dir.join("REVERT_HEAD").exists() {
+            self.run_git(&["revert", "--abort"])
         } else {
             self.run_git(&["rebase", "--abort"])
         }
     }
 
-    /// Finish the conflict session once every file is resolved: commit the merge
-    /// with `message`, or continue the rebase (which reuses its own message).
+    /// Finish the conflict session once every file is resolved: commit the
+    /// merge with `message`, or continue the rebase/cherry-pick/revert (each of
+    /// which reuses its own pending message).
     pub fn finish_conflict(&self, message: &str) -> Result<String> {
-        if self.inner.path().join("MERGE_HEAD").exists() {
+        let git_dir = self.inner.path();
+        if git_dir.join("MERGE_HEAD").exists() {
             self.run_git_stdin(&["commit", "-F", "-"], message)
+        } else if git_dir.join("CHERRY_PICK_HEAD").exists() {
+            self.continue_without_editor(&["cherry-pick", "--continue"])
+        } else if git_dir.join("REVERT_HEAD").exists() {
+            self.continue_without_editor(&["revert", "--continue"])
         } else {
             self.run_git(&["rebase", "--continue"])
+        }
+    }
+
+    /// Run a `--continue` that would otherwise pop an editor to confirm the
+    /// pending commit message (cherry-pick and revert both reuse the original
+    /// commit's message by default). There's no TTY here, so GIT_EDITOR=true
+    /// auto-accepts it — same fix as the interactive-rebase reword handling.
+    fn continue_without_editor(&self, args: &[&str]) -> Result<String> {
+        let workdir = self.workdir_path()?;
+        let output = std::process::Command::new("git")
+            .current_dir(workdir)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_EDITOR", "true")
+            .args(args)
+            .output()
+            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
+        combined.push_str(&String::from_utf8_lossy(&output.stderr));
+        let combined = combined.trim().to_string();
+        if output.status.success() {
+            Ok(combined)
+        } else {
+            Err(Error::Message(combined))
         }
     }
 

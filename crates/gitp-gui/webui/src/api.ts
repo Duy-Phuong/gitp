@@ -10,16 +10,20 @@ import type {
   ConfigScope,
   ConflictSides,
   ConflictStatus,
+  DotfileKind,
   FileCommit,
   FileDiff,
   LogPage,
+  PullMode,
   RebaseCommit,
   RebaseStatus,
   RebaseStep,
   Refs,
   ResetMode,
   StatusLists,
+  UndoState,
   Workspace,
+  WorkspaceSnapshot,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -73,6 +77,24 @@ export async function fetchLogPage(
   return invoke<LogPage>("get_log_page", { offset, limit, allBranches });
 }
 
+// Commits whose message, author, or id contain `query` (case-insensitive) —
+// GitKraken-style commit search over the full loaded graph.
+export async function searchLog(query: string, allBranches: boolean): Promise<CommitRow[]> {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  if (!isTauri()) {
+    return MOCK_LOG.filter(
+      (r) =>
+        r.summary.toLowerCase().includes(q) ||
+        r.author_name.toLowerCase().includes(q) ||
+        r.author_email.toLowerCase().includes(q) ||
+        r.id.includes(q) ||
+        r.short_id.includes(q),
+    );
+  }
+  return invoke<CommitRow[]>("search_log", { query, allBranches });
+}
+
 export async function fetchCommitDetail(rev: string): Promise<CommitDetail> {
   if (!isTauri()) return mockDetail(rev);
   return invoke<CommitDetail>("get_commit_detail", { rev });
@@ -98,9 +120,23 @@ export async function fetchFileHistory(rev: string, path: string): Promise<FileC
   return invoke<FileCommit[]>("get_file_history", { rev, path });
 }
 
-export async function fetchLocalChangeCount(): Promise<number> {
-  if (!isTauri()) return mockDetail("x").files.length + 780;
-  return invoke<number>("get_local_change_count", {});
+// One round trip for everything an action invalidates. Prefer this over the
+// individual fetchRefs / fetchRebaseStatus / conflictStatus / undoState calls:
+// it takes the backend lock once, and runs `git status` once for both the
+// sidebar badge and the staging lists.
+export async function workspaceSnapshot(): Promise<WorkspaceSnapshot> {
+  if (!isTauri()) {
+    const [refs, status, rebase, conflict, undo] = await Promise.all([
+      fetchRefs(),
+      fetchStatusSummary(),
+      fetchRebaseStatus(),
+      conflictStatus(),
+      undoState(),
+    ]);
+    const paths = new Set([...status.staged, ...status.unstaged].map((f) => f.path));
+    return { refs, local_changes: paths.size, status, rebase, conflict, undo };
+  }
+  return invoke<WorkspaceSnapshot>("workspace_snapshot", {});
 }
 
 // Staging trees: paths + statuses only (no hunks), so refreshing after each
@@ -183,6 +219,7 @@ export async function commitChanges(
   if (!isTauri()) {
     const n = MOCK_STATUS.staged.length;
     MOCK_STATUS.staged.splice(0);
+    mockRecord(amend ? "Amend commit" : "Commit");
     return `[preview ${amend ? "amend" : "commit"}] ${subject} — ${n} file(s)`;
   }
   return invoke<string>("commit_changes", { subject, body, amend });
@@ -223,6 +260,7 @@ export async function checkoutBranch(name: string): Promise<void> {
   if (!isTauri()) {
     MOCK_REFS.branches.forEach((b) => (b.is_head = b.name === name));
     MOCK_REFS.head = name;
+    mockRecord(`Checkout ${name}`);
     return;
   }
   await invoke<void>("checkout_branch", { name });
@@ -452,9 +490,42 @@ export async function rebaseAbort(): Promise<string> {
   return invoke<string>("rebase_abort", {});
 }
 
-export async function pull(): Promise<string> {
-  if (!isTauri()) return "Already up to date. (preview mock)";
-  return invoke<string>("pull", {});
+export async function pull(mode: PullMode): Promise<string> {
+  if (!isTauri()) {
+    MOCK_UNDO = { undo: null, redo: null }; // a pull clears the undo history
+    return "Already up to date. (preview mock)";
+  }
+  return invoke<string>("pull", { mode });
+}
+
+// Single-level undo/redo of the most recent supported action (GitKraken-style).
+// The labels drive the toolbar buttons' enabled state and tooltips.
+let MOCK_UNDO: UndoState = { undo: null, redo: null };
+
+export async function undoState(): Promise<UndoState> {
+  if (!isTauri()) return { ...MOCK_UNDO };
+  return invoke<UndoState>("undo_state", {});
+}
+
+export async function undo(): Promise<UndoState> {
+  if (!isTauri()) {
+    if (MOCK_UNDO.undo) MOCK_UNDO = { undo: null, redo: MOCK_UNDO.undo };
+    return { ...MOCK_UNDO };
+  }
+  return invoke<UndoState>("undo", {});
+}
+
+export async function redo(): Promise<UndoState> {
+  if (!isTauri()) {
+    if (MOCK_UNDO.redo) MOCK_UNDO = { undo: MOCK_UNDO.redo, redo: null };
+    return { ...MOCK_UNDO };
+  }
+  return invoke<UndoState>("redo", {});
+}
+
+// In preview (mock) mode, record a fake undoable action so the buttons light up.
+function mockRecord(label: string): void {
+  MOCK_UNDO = { undo: label, redo: null };
 }
 
 export async function push(): Promise<string> {
@@ -531,6 +602,7 @@ export async function discardFiles(paths: string[]): Promise<void> {
       mockMove(MOCK_STATUS.unstaged, [], p);
       mockMove(MOCK_STATUS.staged, [], p);
     }
+    mockRecord(`Discard ${paths.length} file${paths.length === 1 ? "" : "s"}`);
     return;
   }
   await invoke<void>("discard_files", { paths });
@@ -574,6 +646,13 @@ export async function addToGitignore(paths: string[]): Promise<number> {
 export async function revealPath(path: string): Promise<void> {
   if (!isTauri()) return;
   await invoke<void>("reveal_path", { path });
+}
+
+// Open the repo-relative `path` in the OS default application (e.g. the
+// user's configured code editor).
+export async function openInEditor(path: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("open_in_editor", { path });
 }
 
 // --- Conflict resolution (merge/rebase conflict resolver view) -------------
@@ -640,6 +719,31 @@ export async function saveConfig(
     return;
   }
   await invoke<void>("set_config", { scope, name, value });
+}
+
+// The path each DotfileKind resolves to, purely for display — the backend
+// re-resolves it server-side from $HOME rather than trusting a path from here.
+export const DOTFILE_DISPLAY_PATH: Record<DotfileKind, string> = {
+  GitConfig: "~/.gitconfig",
+  Tigrc: "~/.tigrc",
+};
+
+const MOCK_DOTFILES: Record<DotfileKind, string> = {
+  GitConfig: "[user]\n\tname = Ada Lovelace\n\temail = ada@example.com\n",
+  Tigrc: "",
+};
+
+export async function readDotfile(kind: DotfileKind): Promise<string> {
+  if (!isTauri()) return MOCK_DOTFILES[kind];
+  return invoke<string>("read_dotfile", { kind });
+}
+
+export async function writeDotfile(kind: DotfileKind, content: string): Promise<void> {
+  if (!isTauri()) {
+    MOCK_DOTFILES[kind] = content;
+    return;
+  }
+  await invoke<void>("write_dotfile", { kind, content });
 }
 
 // ---------------------------------------------------------------------------

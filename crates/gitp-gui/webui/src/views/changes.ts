@@ -31,6 +31,8 @@ export interface ChangesCallbacks {
   saveFilesPatch: (paths: string[], staged: boolean, defaultName: string) => Promise<string | null>;
   addToGitignore: (paths: string[]) => Promise<number>;
   revealPath: (path: string) => Promise<void>;
+  // Open the file in the OS default application (e.g. the user's editor).
+  openInEditor: (path: string) => Promise<void>;
   // Absolute path of the active repo's working directory (for Copy Absolute
   // Path). Null when no repo is open.
   repoRoot: () => string | null;
@@ -53,6 +55,14 @@ export interface ChangesCallbacks {
 
 export interface ChangesHandle {
   reload: () => Promise<void>;
+  // Apply a status snapshot the host already fetched, instead of running
+  // `git status` again ourselves — the single most expensive read on a large
+  // repo, so it should happen once per refresh, not once per view.
+  applyStatus: (status: StatusLists) => void;
+  // Pre-fill the commit subject/body — e.g. a merge/cherry-pick/revert's
+  // pending message, so it's ready to commit here without retyping it. A
+  // no-op once the user has typed anything, so it never clobbers real input.
+  prefillMessage: (subject: string, body: string) => void;
 }
 
 export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHandle {
@@ -62,6 +72,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let unstaged: FileDiff[] = [];
   let selected: { panel: Panel; path: string } | null = null;
   let selectedDiff: FileDiff | null = null;
+  // The status-list summary (path/old_path/status, no hunks) that selectedDiff
+  // was fetched for — lets loadSelectedDiff skip re-fetching on a reload() where
+  // that summary hasn't changed (see loadSelectedDiff).
+  let selectedDiffSummary: FileDiff | null = null;
   // Whether the current selection's diff fetch has completed — distinguishes
   // "still loading" from "loaded but no textual diff" (binary / Git LFS file).
   let diffLoaded = false;
@@ -85,7 +99,13 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let diffHost: HTMLElement | null = null;
 
   async function reload(): Promise<void> {
-    const s = await cb.fetchStatus();
+    applyStatus(await cb.fetchStatus());
+  }
+
+  // Render from an already-fetched status snapshot. The selected file's hunks
+  // are loaded in the background (they have their own loading state and a
+  // staleness token), so callers don't wait on a second round trip.
+  function applyStatus(s: StatusLists): void {
     staged = s.staged;
     unstaged = s.unstaged;
     pruneChecked();
@@ -94,17 +114,19 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     // Distinct changed paths (a file can be both staged and unstaged).
     const paths = new Set([...staged, ...unstaged].map((f) => f.path));
     cb.onChanged(paths.size);
-    await loadSelectedDiff();
+    void loadSelectedDiff();
   }
 
   // Fetch (and render) the hunks for the current selection. No-op to an empty
-  // diff pane when nothing is selected.
+  // diff pane when nothing is selected. Skips the fetch entirely when reload()
+  // brought back the exact same status entry we already have hunks for — a
+  // plain view switch shouldn't re-diff a file nothing happened to.
   async function loadSelectedDiff(): Promise<void> {
     const sel = selected;
-    const token = ++diffToken;
-    selectedDiff = null;
-    diffLoaded = false;
     if (!sel) {
+      selectedDiff = null;
+      diffLoaded = false;
+      selectedDiffSummary = null;
       if (diffHost) renderDiffInto(diffHost);
       return;
     }
@@ -114,15 +136,28 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       if (cached) {
         selectedDiff = cached;
         diffLoaded = true;
+        selectedDiffSummary = null;
         if (diffHost) renderDiffInto(diffHost);
         return;
       }
     }
+    const summary = (sel.panel === "staged" ? staged : unstaged).find((f) => f.path === sel.path) ?? null;
+    if (diffLoaded && selectedDiff && summary && sameSummary(summary, selectedDiffSummary)) {
+      return; // status for this file is unchanged — the hunks we have are still current
+    }
+    const token = ++diffToken;
+    selectedDiff = null;
+    diffLoaded = false;
     const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged");
     if (token !== diffToken) return; // selection moved on; drop this result
     selectedDiff = file;
     diffLoaded = true;
+    selectedDiffSummary = summary;
     if (diffHost) renderDiffInto(diffHost);
+  }
+
+  function sameSummary(a: FileDiff, b: FileDiff | null): boolean {
+    return b !== null && a.path === b.path && a.old_path === b.old_path && a.status === b.status;
   }
 
   // Keep the selection valid after files move between panels or disappear.
@@ -205,7 +240,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       return;
     }
     const hasDiff = selectedDiff != null && selectedDiff.hunks.length > 0;
-    if (hasDiff) pane.append(diffToolbar());
+    pane.append(diffToolbar(hasDiff));
     const body = el("div", { class: "staging-diff-body" });
     if (hasDiff) {
       body.append(splitView ? renderSplitDiff(selectedDiff!) : renderFile(selectedDiff!));
@@ -225,8 +260,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     pane.append(body);
   }
 
-  // Unified / Split toggle above the diff.
-  function diffToolbar(): HTMLElement {
+  // Unified / Split toggle (when there's a diff to show) plus an always-present
+  // Edit File shortcut, above the diff.
+  function diffToolbar(hasDiff: boolean): HTMLElement {
     const mk = (label: string, on: boolean, set: boolean) => {
       const b = el("button", { class: `btn ghost small${on ? " active" : ""}`, text: label });
       b.addEventListener("click", () => {
@@ -236,9 +272,15 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       });
       return b;
     };
+    const editBtn = el("button", {
+      class: "btn ghost small icon-btn",
+      text: "✎",
+      title: "Edit File",
+    });
+    editBtn.addEventListener("click", () => void cb.openInEditor(selected!.path));
     return el("div", { class: "diff-toolbar" }, [
-      mk("Unified", !splitView, false),
-      mk("Split", splitView, true),
+      el("div", { class: "diff-toolbar-group" }, hasDiff ? [mk("Unified", !splitView, false), mk("Split", splitView, true)] : []),
+      editBtn,
     ]);
   }
 
@@ -365,6 +407,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
             },
             { label: "Save as Patch…", run: patch },
             { separator: true },
+            { label: "Edit File", run: () => void cb.openInEditor(path) },
             { label: "Show in Finder", run: () => void cb.revealPath(path) },
             { label: "Copy Relative Path", run: () => copy(false) },
             { label: "Copy Absolute Path", run: () => copy(true) },
@@ -379,6 +422,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
             { separator: true },
             { label: "Save as Patch…", run: patch },
             { separator: true },
+            { label: "Edit File", run: () => void cb.openInEditor(path) },
             { label: "Show in Finder", run: () => void cb.revealPath(path) },
             { label: "Copy Relative Path", run: () => copy(false) },
             { label: "Copy Absolute Path", run: () => copy(true) },
@@ -581,6 +625,13 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     return subject.trim() !== "" && (staged.length > 0 || amend);
   }
 
+  function prefillMessage(newSubject: string, newBody: string): void {
+    if (subject.trim() !== "" || body.trim() !== "") return; // don't clobber what's already typed
+    subject = newSubject;
+    body = newBody;
+    render();
+  }
+
   render();
-  return { reload };
+  return { reload, applyStatus, prefillMessage };
 }

@@ -268,6 +268,37 @@ body {
   margin: 6px 4px;
   background: var(--border);
 }
+/* Small dropdown chevron attached to the right of Pull, opening the pull-method
+   menu — narrower than a full action-btn since it carries no label. */
+.action-caret {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+}
+.action-caret:hover:not(:disabled) {
+  background: var(--bg-elev-2);
+}
+.action-caret:disabled {
+  color: var(--text-dim);
+  opacity: 0.5;
+  cursor: default;
+}
+.caret-icon {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 /* Branch menu is anchored under its button (left-aligned), unlike the
    right-aligned settings menu. */
 #branch-menu {
@@ -277,6 +308,58 @@ body {
   min-width: 220px;
   max-height: 60vh;
   overflow-y: auto;
+}
+/* Pull-method menu: each row picks a method to run now; hovering a non-default
+   row reveals "Set as default" to change what the plain Pull button runs. */
+#pull-menu {
+  left: 0;
+  right: auto;
+  top: calc(100% + 2px);
+  min-width: 260px;
+  padding: 4px;
+}
+.pull-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.pull-item:hover {
+  background: var(--bg-elev-2);
+}
+.pull-item.default {
+  background: var(--accent-soft);
+}
+.pull-radio {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 2px solid var(--text-dim);
+}
+.pull-item.default .pull-radio {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 0 40%, transparent 44%);
+}
+.pull-label {
+  flex: 1 1 auto;
+  font-size: 13px;
+}
+.pull-set-default {
+  flex: 0 0 auto;
+  visibility: hidden;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+.pull-item:hover .pull-set-default {
+  visibility: visible;
 }
 .menu-item.head {
   color: var(--accent);
@@ -846,6 +929,15 @@ body {
   background: var(--bg-elev-2);
   color: var(--text-dim);
 }
+/* The change block ↑/↓ navigation is currently focused on. A translucent accent
+   fill (box-shadow, so it layers over the red/green tints) marks every cell of
+   the block; the left column also gets a solid accent bar. */
+.cf-active {
+  box-shadow: inset 0 0 0 100px var(--accent-soft);
+}
+.cf-active.cf-left {
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 100px var(--accent-soft);
+}
 .merge-gutter-done {
   opacity: 0.45;
 }
@@ -860,7 +952,10 @@ body {
   min-height: 0;
   overflow: auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1fr) 42px minmax(0, 1fr);
+  /* min-content (not 0) so a column never shrinks below its longest line —
+     once all three together exceed the viewport, the grid's own overflow:auto
+     scrolls them horizontally as one unit, keeping every row line-aligned. */
+  grid-template-columns: minmax(min-content, 1fr) 42px minmax(min-content, 1fr) 42px minmax(min-content, 1fr);
   align-content: start;
   font-family: var(--mono);
   font-size: 12px;
@@ -884,7 +979,6 @@ body {
   padding: 0 8px;
   min-height: 1.5em;
   line-height: 1.5;
-  overflow: hidden;
 }
 .cf-no {
   flex: none;
@@ -897,9 +991,7 @@ body {
 }
 .cf-tx {
   flex: 1;
-  min-width: 0;
   white-space: pre;
-  overflow: hidden;
 }
 .cf-center {
   border-left: 1px solid var(--border);
@@ -1308,13 +1400,17 @@ body {
   flex-direction: column;
   overflow: hidden;
 }
-/* Unified / Split toggle above the staging diff. */
+/* Unified / Split toggle + Edit File shortcut above the staging diff. */
 .diff-toolbar {
   display: flex;
-  gap: 4px;
+  justify-content: space-between;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
+}
+.diff-toolbar-group {
+  display: flex;
+  gap: 4px;
 }
 .diff-toolbar .btn.active {
   background: var(--accent-soft);
@@ -1414,6 +1510,42 @@ body {
   background: var(--accent);
   color: #fff;
   font-weight: 600;
+}
+
+/* Commit search box, next to the branch toggle. */
+.log-search {
+  position: relative;
+  flex: 1 1 auto;
+  max-width: 280px;
+  display: flex;
+  align-items: center;
+}
+.log-search-icon {
+  position: absolute;
+  left: 8px;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 2;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+.log-search-input {
+  width: 100%;
+  padding: 4px 8px 4px 28px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+}
+.log-search-input::placeholder {
+  color: var(--text-dim);
+}
+.log-search-input:focus {
+  border-color: var(--accent);
 }
 .log-pane {
   flex: 1 1 auto;
@@ -1613,6 +1745,7 @@ body {
 .changes-split {
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
   display: flex;
 }
 .changes-list {
@@ -2014,8 +2147,12 @@ body {
   font-family: var(--mono);
   font-size: 12px;
   padding: 0 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: pre;
+}
+/* Long lines don't wrap (above) — each hunk scrolls horizontally instead, so
+   indentation/alignment stays intact and nothing is silently clipped. */
+.hunk {
+  overflow-x: auto;
 }
 .diff-line.add {
   background: var(--add-bg);
@@ -2039,8 +2176,18 @@ body {
 }
 
 /* Config ----------------------------------------------------------------- */
+#config-view {
+  display: flex;
+  flex-direction: column;
+}
+.config-toolbar {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
 .config-editor {
-  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   padding: 16px;
 }
@@ -2119,6 +2266,49 @@ body {
 }
 .config-add .key-input {
   flex: 1;
+}
+/* Dotfiles panel: raw view/edit/save for ~/.gitconfig and ~/.tigrc. */
+.dotfiles {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 900px;
+}
+.dotfile-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dotfile-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.dotfile-textarea {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.dotfile-textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.dotfile-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dotfile-status {
+  font-size: 12px;
+  color: var(--text-dim);
 }
 .config-add .val-input {
   flex: 1;

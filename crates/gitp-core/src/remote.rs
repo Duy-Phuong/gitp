@@ -7,14 +7,37 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+use serde::Deserialize;
+
 use crate::error::{Error, Result};
 use crate::repo::Repo;
 
+/// Which strategy `pull` uses to reconcile local and remote history: plain
+/// `git pull` (merges when it can't fast-forward), `--ff-only` (fails instead
+/// of creating a merge commit), or `--rebase` (replays local commits onto the
+/// updated upstream).
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub enum PullMode {
+    FastForward,
+    FastForwardOnly,
+    Rebase,
+}
+
+impl PullMode {
+    fn args(self) -> &'static [&'static str] {
+        match self {
+            PullMode::FastForward => &["pull"],
+            PullMode::FastForwardOnly => &["pull", "--ff-only"],
+            PullMode::Rebase => &["pull", "--rebase"],
+        }
+    }
+}
+
 impl Repo {
-    /// `git pull` in the working directory, honoring the user's pull config
-    /// (merge vs rebase, fast-forward). Returns git's combined output.
-    pub fn pull(&self) -> Result<String> {
-        self.run_git(&["pull"])
+    /// `git pull` in the working directory, using `mode` to decide how to
+    /// reconcile local and remote history. Returns git's combined output.
+    pub fn pull(&self, mode: PullMode) -> Result<String> {
+        self.run_git(mode.args())
     }
 
     /// Push the current branch. If it has no upstream yet, push with

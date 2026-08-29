@@ -13,10 +13,10 @@ use std::sync::Mutex;
 
 use gitp_core::{
     BlameLine, CommitDetail, CommitRow, ConfigEntry, ConfigScope, ConflictSides, ConflictStatus,
-    FileCommit, FileDiff, LogOptions, RebaseCommit, RebaseStatus, RebaseStep, Refs, Repo, ResetMode,
-    StatusLists,
+    FileBlob, FileCommit, FileDiff, LogOptions, PullMode, RebaseCommit, RebaseStatus, RebaseStep,
+    Refs, Repo, ResetMode, StatusLists, Undoable,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use terminal::TerminalState;
@@ -32,6 +32,10 @@ struct Session {
     /// Which mode the cached `log` was built in (all branches vs HEAD only), so
     /// a toggle change recomputes it.
     log_all: bool,
+    /// The single most-recent reversible action (GitKraken-style single-level
+    /// undo), and the action just undone that Redo would re-apply.
+    undo: Option<Undoable>,
+    redo: Option<Undoable>,
 }
 
 /// All open repositories plus which one is active. Commands that read a repo
@@ -83,6 +87,25 @@ pub struct LogPage {
     total: usize,
 }
 
+/// Everything the frontend refreshes after any action, in one round trip.
+///
+/// These five used to be five separate commands, each taking the global lock
+/// and each a separate IPC hop. Worse, the sidebar's change count and the
+/// staging area's file lists both ran `git status` — the single most expensive
+/// read on a large repo — so it ran twice per action. Here it runs once and
+/// the count is derived from the same lists.
+#[derive(Serialize)]
+pub struct WorkspaceSnapshot {
+    refs: Refs,
+    /// Distinct changed paths, for the sidebar badge (derived from `status`).
+    local_changes: usize,
+    /// The staging area (summaries only, no hunks) — also feeds Local Changes.
+    status: StatusLists,
+    rebase: RebaseStatus,
+    conflict: ConflictStatus,
+    undo: UndoView,
+}
+
 fn to_message<E: std::fmt::Display>(err: E) -> String {
     err.to_string()
 }
@@ -128,6 +151,8 @@ fn open_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, Stri
         repo,
         log: None,
         log_all: false,
+        undo: None,
+        redo: None,
     });
     guard.active = Some(guard.sessions.len() - 1);
     Ok(guard.view())
@@ -178,7 +203,17 @@ fn get_log_page_impl(
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
-    // Recompute when there's no cache or the toggle flipped since it was built.
+    let log = ensure_log(session, all_branches)?;
+    let total = log.len();
+    let end = offset.saturating_add(limit).min(total);
+    let rows = log.get(offset..end).map(<[_]>::to_vec).unwrap_or_default();
+    Ok(LogPage { rows, total })
+}
+
+/// The active session's full log, computing and caching it on first use (or when
+/// the all-branches toggle flipped since it was built) so lanes stay globally
+/// consistent across pages and searches.
+fn ensure_log(session: &mut Session, all_branches: bool) -> Result<&[CommitRow], String> {
     if session.log.is_none() || session.log_all != all_branches {
         let rows = session
             .repo
@@ -187,11 +222,36 @@ fn get_log_page_impl(
         session.log = Some(rows);
         session.log_all = all_branches;
     }
-    let log = session.log.as_ref().unwrap();
-    let total = log.len();
-    let end = offset.saturating_add(limit).min(total);
-    let rows = log.get(offset..end).map(<[_]>::to_vec).unwrap_or_default();
-    Ok(LogPage { rows, total })
+    Ok(session.log.as_deref().unwrap())
+}
+
+/// Commits whose summary, author, or id contain `query` (case-insensitive) —
+/// GitKraken-style commit search over the full loaded graph. An empty query
+/// returns nothing (the frontend shows the normal paged log instead).
+fn search_log_impl(
+    state: &RepoState,
+    query: String,
+    all_branches: bool,
+) -> Result<Vec<CommitRow>, String> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let log = ensure_log(session, all_branches)?;
+    Ok(log.iter().filter(|r| row_matches(r, &q)).cloned().collect())
+}
+
+/// Whether a commit matches a lowercased search query, across message subject,
+/// author name/email, and full or short id.
+fn row_matches(r: &CommitRow, q: &str) -> bool {
+    r.summary.to_lowercase().contains(q)
+        || r.author_name.to_lowercase().contains(q)
+        || r.author_email.to_lowercase().contains(q)
+        || r.id.contains(q)
+        || r.short_id.contains(q)
 }
 
 fn get_commit_detail_impl(state: &RepoState, rev: String) -> Result<CommitDetail, String> {
@@ -200,10 +260,6 @@ fn get_commit_detail_impl(state: &RepoState, rev: String) -> Result<CommitDetail
 
 fn get_refs_impl(state: &RepoState) -> Result<Refs, String> {
     with_repo(state, Repo::refs)
-}
-
-fn get_local_change_count_impl(state: &RepoState) -> Result<usize, String> {
-    with_repo(state, Repo::local_change_count)
 }
 
 fn get_working_changes_impl(state: &RepoState) -> Result<Vec<FileDiff>, String> {
@@ -243,7 +299,9 @@ fn unstage_hunk_impl(state: &RepoState, path: String, hunk_index: usize) -> Resu
 }
 
 fn discard_hunk_impl(state: &RepoState, path: String, hunk_index: usize) -> Result<(), String> {
-    with_repo(state, |repo| repo.discard_hunk(&path, hunk_index))
+    // Snapshot the whole file so undo restores the discarded hunk exactly.
+    let paths = [path.clone()];
+    with_recorded_discard(state, &paths, |repo| repo.discard_hunk(&path, hunk_index))
 }
 
 fn stage_all_impl(state: &RepoState) -> Result<(), String> {
@@ -261,66 +319,69 @@ fn commit_changes_impl(
     body: String,
     amend: bool,
 ) -> Result<String, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
-    let idx = guard.active.ok_or("no repository is open")?;
-    let session = &mut guard.sessions[idx];
-    let output = session.repo.commit(&subject, &body, amend).map_err(to_message)?;
-    session.log = None;
-    Ok(output)
+    // Recorded soft: undo moves the tip back but keeps the committed changes
+    // staged, so a mistaken commit can be reworked rather than lost.
+    let label = if amend { "Amend commit" } else { "Commit" };
+    with_recorded_head_move(state, label, true, |repo| repo.commit(&subject, &body, amend))
 }
 
 /// Check out `name` on the active repo. Invalidates the cached log because HEAD
 /// moves, so the next `get_log_page` recomputes the walk from the new HEAD.
 fn checkout_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
-    let idx = guard.active.ok_or("no repository is open")?;
-    let session = &mut guard.sessions[idx];
-    session.repo.checkout_branch(&name).map_err(to_message)?;
-    session.log = None;
-    Ok(())
+    with_recorded_checkout(state, || format!("Checkout {name}"), |repo| repo.checkout_branch(&name))
 }
 
 /// Check out a remote-tracking branch (creating a local tracking branch if
 /// needed). Invalidates the cached log because HEAD moves.
 fn checkout_remote_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.checkout_remote(&name))
+    with_recorded_checkout(state, || format!("Checkout {name}"), |repo| repo.checkout_remote(&name))
 }
 
 /// Create branch `name` from the current HEAD and check it out. Invalidates the
 /// cached log because HEAD moves to the new branch.
 fn create_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
-    let idx = guard.active.ok_or("no repository is open")?;
-    let session = &mut guard.sessions[idx];
-    session.repo.create_branch(&name).map_err(to_message)?;
-    session.log = None;
-    Ok(())
+    with_recorded_branch_create(state, &name, None, |repo| repo.create_branch(&name).map(|()| String::new()))
+        .map(|_| ())
 }
 
-/// `git pull` the active repo. Invalidates the cached log because pulling can
-/// bring in new commits. Returns git's output for display.
-fn pull_impl(state: &RepoState) -> Result<String, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
-    let idx = guard.active.ok_or("no repository is open")?;
-    let session = &mut guard.sessions[idx];
-    let output = session.repo.pull().map_err(to_message)?;
-    session.log = None;
-    Ok(output)
+/// `git pull` the active repo using `mode`. Invalidates the cached log because
+/// pulling can bring in new commits. Returns git's output for display. Runs
+/// unlocked (see `with_repo_networked`) so the UI stays responsive.
+fn pull_impl(state: &RepoState, mode: PullMode) -> Result<String, String> {
+    with_repo_networked(
+        state,
+        |repo| repo.pull(mode),
+        |session| {
+            clear_undo(session); // a pull moves HEAD/tree; a stored undo would be stale
+            session.log = None;
+        },
+    )
 }
 
-/// `git push` the active repo's current branch. Returns git's output.
+/// `git push` the active repo's current branch. Returns git's output. Nothing
+/// local changes, so no cache is invalidated.
 fn push_impl(state: &RepoState) -> Result<String, String> {
-    with_repo(state, Repo::push)
+    with_repo_networked(state, Repo::push, |_| {})
 }
 
 /// `git stash` the active repo's local changes. Returns git's output.
 fn stash_impl(state: &RepoState) -> Result<String, String> {
-    with_repo(state, Repo::stash)
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let out = session.repo.stash().map_err(to_message)?;
+    clear_undo(session); // the working tree changed under any stored undo
+    Ok(out)
 }
 
 /// `git stash pop` on the active repo. Returns git's output.
 fn stash_pop_impl(state: &RepoState) -> Result<String, String> {
-    with_repo(state, Repo::stash_pop)
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let out = session.repo.stash_pop().map_err(to_message)?;
+    clear_undo(session);
+    Ok(out)
 }
 
 /// Apply stash `index`. `drop` pops (apply + remove) instead of leaving it.
@@ -345,7 +406,7 @@ fn save_stash_patch_impl(state: &RepoState, index: usize, path: String) -> Resul
 
 /// Discard all local changes to `paths` (revert to HEAD; delete new files).
 fn discard_files_impl(state: &RepoState, paths: Vec<String>) -> Result<(), String> {
-    with_repo(state, |repo| repo.discard_files(&paths))
+    with_recorded_discard(state, &paths, |repo| repo.discard_files(&paths))
 }
 
 /// Stash only `paths` away (`git stash push -u -- <paths>`).
@@ -372,6 +433,62 @@ fn add_to_gitignore_impl(state: &RepoState, paths: Vec<String>) -> Result<usize,
 fn reveal_path_impl(state: &RepoState, path: String) -> Result<(), String> {
     let full = with_repo(state, |repo| Ok(repo.workdir_path()?.join(&path)))?;
     reveal_in_file_manager(&full)
+}
+
+/// Open the repo-relative `path` for editing: prefer VS Code (the `code` CLI)
+/// when it's on PATH, since the OS's registered default app for a file type
+/// is often not an editor at all (e.g. a terminal app claiming shell scripts).
+/// Falls back to the OS default application otherwise.
+fn open_in_editor_impl(state: &RepoState, path: String) -> Result<(), String> {
+    let full = with_repo(state, |repo| Ok(repo.workdir_path()?.join(&path)))?;
+    if std::process::Command::new("code").arg(&full).spawn().is_ok() {
+        return Ok(());
+    }
+    open_in_default_app(&full)
+}
+
+// --- User dotfiles (~/.gitconfig, ~/.tigrc) ---------------------------------
+// Deliberately scoped to exactly these two named files, resolved server-side
+// from $HOME — the frontend picks a `DotfileKind`, never a path. A generic
+// "read/write any path" command would let any webview code touch arbitrary
+// files on disk; this doesn't need that power, so it doesn't have it. No repo
+// needs to be open: these aren't repo-scoped.
+
+/// One of the two dotfiles the Settings "Dotfiles" panel edits.
+#[derive(Debug, Clone, Copy, Deserialize)]
+enum DotfileKind {
+    GitConfig,
+    Tigrc,
+}
+
+impl DotfileKind {
+    fn file_name(self) -> &'static str {
+        match self {
+            DotfileKind::GitConfig => ".gitconfig",
+            DotfileKind::Tigrc => ".tigrc",
+        }
+    }
+}
+
+fn dotfile_path(kind: DotfileKind) -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+    Ok(Path::new(&home).join(kind.file_name()))
+}
+
+/// The file's current content, or an empty string if it doesn't exist yet
+/// (Save will create it).
+fn read_dotfile_impl(kind: DotfileKind) -> Result<String, String> {
+    match std::fs::read_to_string(dotfile_path(kind)?) {
+        Ok(content) => Ok(content),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Overwrite the file with `content` verbatim — no syntax validation, no
+/// backup. The frontend confirms with the user before calling this.
+fn write_dotfile_impl(kind: DotfileKind, content: String) -> Result<(), String> {
+    std::fs::write(dotfile_path(kind)?, content).map_err(|e| e.to_string())
 }
 
 /// The in-progress conflict session (merge or rebase), if any.
@@ -451,14 +568,284 @@ fn with_active_repo_invalidating<T>(
     Ok(out)
 }
 
+/// Run a **network** git operation (fetch / pull / push) against the active
+/// repo *without* holding the workspace lock, then apply `after` to the
+/// session under a fresh lock.
+///
+/// The lock is global and a network round trip can take seconds; holding it
+/// across one blocks every other command, so a single background fetch would
+/// stall the whole UI (clicking Local Changes would wait on it). These ops all
+/// shell out to `git`, which needs only the working directory — so we read the
+/// path under the lock, release it, and run against our own `Repo` handle
+/// (opening one costs ~1ms).
+///
+/// `after` re-resolves the session **by path** rather than reusing an index:
+/// the user can switch or close tabs during the unlocked window, so the active
+/// index may no longer refer to the repo we just operated on.
+fn with_repo_networked<T>(
+    state: &RepoState,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
+    after: impl FnOnce(&mut Session),
+) -> Result<T, String> {
+    let path = {
+        let guard = state.0.lock().map_err(to_message)?;
+        let idx = guard.active.ok_or("no repository is open")?;
+        guard.sessions[idx].path.clone()
+    }; // lock released here — before the network round trip
+    let repo = Repo::open(&path).map_err(to_message)?;
+    let out = f(&repo).map_err(to_message)?;
+    {
+        let mut guard = state.0.lock().map_err(to_message)?;
+        if let Some(session) = guard.sessions.iter_mut().find(|s| s.path == path) {
+            after(session);
+        }
+    }
+    Ok(out)
+}
+
+// --- undo/redo -------------------------------------------------------------
+// A single supported action is remembered at a time (GitKraken-style). Each
+// recording helper captures the git state around an op and stores it as the
+// session's undo slot, clearing any pending redo (a new action forks history).
+
+/// Labels of what Undo/Redo would do, for the toolbar buttons (null = disabled).
+#[derive(Serialize, Clone, Default)]
+pub struct UndoView {
+    undo: Option<String>,
+    redo: Option<String>,
+}
+
+fn undo_view(session: &Session) -> UndoView {
+    UndoView {
+        undo: session.undo.as_ref().map(|a| a.label().to_string()),
+        redo: session.redo.as_ref().map(|a| a.label().to_string()),
+    }
+}
+
+fn set_undo(session: &mut Session, action: Undoable) {
+    session.undo = Some(action);
+    session.redo = None;
+}
+
+/// Run a HEAD-moving op (commit / reset / merge / cherry-pick / revert /
+/// rebase), recording it as an undo only when the branch tip actually moves.
+/// `soft` keeps the working tree on undo (commit, so undone changes stay
+/// staged); otherwise undo uses a safe `--keep` reset. Invalidates the log.
+fn with_recorded_head_move<T>(
+    state: &RepoState,
+    label: &str,
+    soft: bool,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
+) -> Result<T, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let before = session.repo.head_commit_id().ok(); // None on an unborn HEAD
+    let out = f(&session.repo).map_err(to_message)?;
+    let after = session.repo.head_commit_id().map_err(to_message)?;
+    if let Some(before) = before {
+        if before != after {
+            set_undo(
+                session,
+                Undoable::HeadMoved { label: label.into(), before, after, soft },
+            );
+        }
+    }
+    session.log = None;
+    Ok(out)
+}
+
+/// Run a checkout, recording the switch (branch/commit before → after) so undo
+/// can return to the previous revision. Invalidates the log.
+fn with_recorded_checkout<T>(
+    state: &RepoState,
+    label: impl FnOnce() -> String,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
+) -> Result<T, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let before = session.repo.head_ref_name().ok();
+    let out = f(&session.repo).map_err(to_message)?;
+    let after = session.repo.head_ref_name().map_err(to_message)?;
+    if let Some(before) = before {
+        if before != after {
+            set_undo(
+                session,
+                Undoable::Switched { label: label(), before, after },
+            );
+        }
+    }
+    session.log = None;
+    Ok(out)
+}
+
+/// Run a branch-create that also checks it out (`name` created at `at_rev`, or at
+/// HEAD when `at_rev` is None), recording it so undo returns to the previous
+/// branch and deletes the new one. Invalidates the log.
+fn with_recorded_branch_create(
+    state: &RepoState,
+    name: &str,
+    at_rev: Option<&str>,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<String>,
+) -> Result<String, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let prev = session.repo.head_ref_name().map_err(to_message)?;
+    let at = match at_rev {
+        Some(r) => r.to_string(),
+        None => session.repo.head_commit_id().map_err(to_message)?,
+    };
+    let out = f(&session.repo).map_err(to_message)?;
+    set_undo(
+        session,
+        Undoable::BranchCreated {
+            label: format!("Create branch {name}"),
+            name: name.into(),
+            at,
+            prev,
+        },
+    );
+    session.log = None;
+    Ok(out)
+}
+
+/// Discard `paths`, snapshotting each file's bytes before and after so undo can
+/// restore the discarded content exactly (and redo re-discards).
+fn with_recorded_discard(
+    state: &RepoState,
+    paths: &[String],
+    f: impl FnOnce(&Repo) -> gitp_core::Result<()>,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let befores: Vec<Option<Vec<u8>>> =
+        paths.iter().map(|p| session.repo.read_workfile(p).ok().flatten()).collect();
+    f(&session.repo).map_err(to_message)?;
+    let files = paths
+        .iter()
+        .enumerate()
+        .map(|(i, p)| FileBlob {
+            path: p.clone(),
+            before: befores[i].clone(),
+            after: session.repo.read_workfile(p).ok().flatten(),
+        })
+        .collect();
+    let n = paths.len();
+    set_undo(
+        session,
+        Undoable::Discarded {
+            label: format!("Discard {n} file{}", if n == 1 { "" } else { "s" }),
+            files,
+        },
+    );
+    session.log = None;
+    Ok(())
+}
+
+/// Forget the undo/redo slots — used when a non-tracked op (pull, stash) moves
+/// HEAD or the working tree, which could make a stored action stale.
+fn clear_undo(session: &mut Session) {
+    session.undo = None;
+    session.redo = None;
+}
+
+/// Build the post-action snapshot in one lock acquisition, running `git status`
+/// exactly once (see `WorkspaceSnapshot`).
+fn workspace_snapshot_impl(state: &RepoState) -> Result<WorkspaceSnapshot, String> {
+    let guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &guard.sessions[idx];
+    let repo = &session.repo;
+
+    let status = repo.status_summary().map_err(to_message)?;
+    // A path can appear in both lists (partially staged); the badge counts it once.
+    let local_changes = status
+        .staged
+        .iter()
+        .chain(&status.unstaged)
+        .map(|f| f.path.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+
+    Ok(WorkspaceSnapshot {
+        refs: repo.refs().map_err(to_message)?,
+        local_changes,
+        status,
+        rebase: repo.rebase_status().map_err(to_message)?,
+        conflict: repo.conflict_status().map_err(to_message)?,
+        undo: undo_view(session),
+    })
+}
+
+fn undo_state_impl(state: &RepoState) -> Result<UndoView, String> {
+    let guard = state.0.lock().map_err(to_message)?;
+    let Some(idx) = guard.active else {
+        return Ok(UndoView::default());
+    };
+    Ok(undo_view(&guard.sessions[idx]))
+}
+
+/// Reverse the last recorded action. On failure the undo slot is kept so the
+/// button stays and the user can retry after fixing the cause.
+fn undo_impl(state: &RepoState) -> Result<UndoView, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let action = session.undo.take().ok_or("nothing to undo")?;
+    match session.repo.undo(&action) {
+        Ok(()) => {
+            session.redo = Some(action);
+            session.log = None;
+            Ok(undo_view(session))
+        }
+        Err(e) => {
+            session.undo = Some(action);
+            Err(to_message(e))
+        }
+    }
+}
+
+/// Re-apply the action that was just undone.
+fn redo_impl(state: &RepoState) -> Result<UndoView, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let action = session.redo.take().ok_or("nothing to redo")?;
+    match session.repo.redo(&action) {
+        Ok(()) => {
+            session.undo = Some(action);
+            session.log = None;
+            Ok(undo_view(session))
+        }
+        Err(e) => {
+            session.redo = Some(action);
+            Err(to_message(e))
+        }
+    }
+}
+
 /// Detach HEAD onto `rev`. Invalidates the cached log because HEAD moves.
 fn checkout_commit_impl(state: &RepoState, rev: String) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.checkout_commit(&rev))
+    with_recorded_checkout(state, || format!("Checkout {}", short_rev(&rev)), |repo| {
+        repo.checkout_commit(&rev)
+    })
+}
+
+/// A short display form of a revision for undo labels (12-char id, or the name).
+fn short_rev(rev: &str) -> String {
+    if rev.len() > 12 && rev.bytes().all(|b| b.is_ascii_hexdigit()) {
+        rev[..12].to_string()
+    } else {
+        rev.to_string()
+    }
 }
 
 /// Create branch `name` at `rev` and check it out. Invalidates the cached log.
 fn create_branch_at_impl(state: &RepoState, name: String, rev: String) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.create_branch_at(&name, &rev))
+    with_recorded_branch_create(state, &name, Some(&rev), |repo| repo.create_branch_at(&name, &rev))
 }
 
 /// Tag `rev` as `name`. HEAD doesn't move, so the log cache is left intact.
@@ -468,28 +855,41 @@ fn create_tag_at_impl(state: &RepoState, name: String, rev: String) -> Result<St
 
 /// Cherry-pick `rev` onto the current branch. Invalidates the cached log.
 fn cherry_pick_impl(state: &RepoState, rev: String) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.cherry_pick(&rev))
+    with_recorded_head_move(state, "Cherry-pick", false, |repo| repo.cherry_pick(&rev))
 }
 
 /// Revert `rev` on the current branch. Invalidates the cached log.
 fn revert_impl(state: &RepoState, rev: String) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.revert(&rev))
+    with_recorded_head_move(state, "Revert", false, |repo| repo.revert(&rev))
 }
 
 /// Reset the current branch to `rev`. Invalidates the cached log.
 fn reset_impl(state: &RepoState, rev: String, mode: ResetMode) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.reset(&rev, mode))
+    with_recorded_head_move(state, "Reset", false, |repo| repo.reset(&rev, mode))
 }
 
 /// Rebase the current branch onto `rev`. Invalidates the cached log.
 fn rebase_onto_impl(state: &RepoState, rev: String) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.rebase_onto(&rev))
+    with_recorded_head_move(state, "Rebase", false, |repo| repo.rebase_onto(&rev))
 }
 
 /// Rename branch `old` to `new`. Invalidates the cached log (HEAD's branch name
 /// may change).
 fn rename_branch_impl(state: &RepoState, old: String, new: String) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.rename_branch(&old, &new))
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let out = session.repo.rename_branch(&old, &new).map_err(to_message)?;
+    set_undo(
+        session,
+        Undoable::BranchRenamed {
+            label: format!("Rename branch {old} → {new}"),
+            old: old.clone(),
+            new: new.clone(),
+        },
+    );
+    session.log = None;
+    Ok(out)
 }
 
 /// Rename branch `new`'s remote counterpart (run after the local rename).
@@ -504,7 +904,17 @@ fn create_backup_branch_impl(state: &RepoState, name: String) -> Result<String, 
 
 /// Delete branch `name` (force = `-D`). Doesn't move HEAD, so the log stays.
 fn delete_branch_impl(state: &RepoState, name: String, force: bool) -> Result<String, String> {
-    with_repo(state, |repo| repo.delete_branch(&name, force))
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    // Capture the tip first so undo can recreate the branch exactly.
+    let oid = session.repo.branch_commit_id(&name).map_err(to_message)?;
+    let out = session.repo.delete_branch(&name, force).map_err(to_message)?;
+    set_undo(
+        session,
+        Undoable::BranchDeleted { label: format!("Delete branch {name}"), name: name.clone(), oid },
+    );
+    Ok(out)
 }
 
 fn delete_remote_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
@@ -517,7 +927,7 @@ fn remote_branch_exists_impl(state: &RepoState, name: String) -> Result<Option<S
 
 /// Merge `name` into the current branch. Invalidates the cached log.
 fn merge_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.merge_branch(&name))
+    with_recorded_head_move(state, &format!("Merge {name}"), false, |repo| repo.merge_branch(&name))
 }
 
 /// Push branch `name` to origin. No local change to the log.
@@ -528,19 +938,23 @@ fn push_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
 /// Fetch `name`'s remote. Updates remote-tracking refs only, so the local log
 /// (which walks from HEAD) is unchanged.
 fn fetch_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.fetch_branch(&name))
+    with_repo_networked(state, |repo| repo.fetch_branch(&name), |_| {})
 }
 
 /// Fetch all remotes. Only updates remote-tracking refs, so the cached log
 /// (which walks from HEAD) is unchanged.
 fn fetch_all_impl(state: &RepoState) -> Result<String, String> {
-    with_repo(state, Repo::fetch_all)
+    with_repo_networked(state, Repo::fetch_all, |_| {})
 }
 
 /// Fetch and fast-forward `name`. Invalidates the cached log because the branch
 /// (possibly the current one) advances.
 fn fetch_and_update_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.fetch_and_update_branch(&name))
+    with_repo_networked(
+        state,
+        |repo| repo.fetch_and_update_branch(&name),
+        |session| session.log = None, // the fast-forward advanced a local branch
+    )
 }
 
 /// Fast-forward `name` to its upstream. Invalidates the cached log (it may be
@@ -579,7 +993,9 @@ fn interactive_rebase_impl(
     steps: Vec<RebaseStep>,
     update_refs: bool,
 ) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.interactive_rebase(&onto, &steps, update_refs))
+    with_recorded_head_move(state, "Rebase", false, |repo| {
+        repo.interactive_rebase(&onto, &steps, update_refs)
+    })
 }
 
 /// Snapshot of an in-progress rebase (for the resume UI), or a not-in-progress
@@ -647,6 +1063,15 @@ fn get_log_page(
 }
 
 #[tauri::command]
+fn search_log(
+    query: String,
+    all_branches: bool,
+    state: State<RepoState>,
+) -> Result<Vec<CommitRow>, String> {
+    search_log_impl(&state, query, all_branches)
+}
+
+#[tauri::command]
 fn get_commit_detail(rev: String, state: State<RepoState>) -> Result<CommitDetail, String> {
     get_commit_detail_impl(&state, rev)
 }
@@ -654,11 +1079,6 @@ fn get_commit_detail(rev: String, state: State<RepoState>) -> Result<CommitDetai
 #[tauri::command]
 fn get_refs(state: State<RepoState>) -> Result<Refs, String> {
     get_refs_impl(&state)
-}
-
-#[tauri::command]
-fn get_local_change_count(state: State<RepoState>) -> Result<usize, String> {
-    get_local_change_count_impl(&state)
 }
 
 #[tauri::command]
@@ -718,6 +1138,21 @@ fn stage_all(state: State<RepoState>) -> Result<(), String> {
 #[tauri::command]
 fn unstage_all(state: State<RepoState>) -> Result<(), String> {
     unstage_all_impl(&state)
+}
+
+#[tauri::command]
+fn undo_state(state: State<RepoState>) -> Result<UndoView, String> {
+    undo_state_impl(&state)
+}
+
+#[tauri::command]
+fn undo(state: State<RepoState>) -> Result<UndoView, String> {
+    undo_impl(&state)
+}
+
+#[tauri::command]
+fn redo(state: State<RepoState>) -> Result<UndoView, String> {
+    redo_impl(&state)
 }
 
 #[tauri::command]
@@ -891,8 +1326,8 @@ fn rebase_abort(state: State<RepoState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn pull(state: State<RepoState>) -> Result<String, String> {
-    pull_impl(&state)
+fn pull(mode: PullMode, state: State<RepoState>) -> Result<String, String> {
+    pull_impl(&state, mode)
 }
 
 #[tauri::command]
@@ -958,6 +1393,26 @@ fn add_to_gitignore(paths: Vec<String>, state: State<RepoState>) -> Result<usize
 #[tauri::command]
 fn reveal_path(path: String, state: State<RepoState>) -> Result<(), String> {
     reveal_path_impl(&state, path)
+}
+
+#[tauri::command]
+fn workspace_snapshot(state: State<RepoState>) -> Result<WorkspaceSnapshot, String> {
+    workspace_snapshot_impl(&state)
+}
+
+#[tauri::command]
+fn open_in_editor(path: String, state: State<RepoState>) -> Result<(), String> {
+    open_in_editor_impl(&state, path)
+}
+
+#[tauri::command]
+fn read_dotfile(kind: DotfileKind) -> Result<String, String> {
+    read_dotfile_impl(kind)
+}
+
+#[tauri::command]
+fn write_dotfile(kind: DotfileKind, content: String) -> Result<(), String> {
+    write_dotfile_impl(kind, content)
 }
 
 #[tauri::command]
@@ -1045,6 +1500,25 @@ fn reveal_in_file_manager(full: &std::path::Path) -> Result<(), String> {
     }
 }
 
+/// Open `full` with the OS default application for its file type.
+fn open_in_default_app(full: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+    let spawn = |mut cmd: Command| cmd.spawn().map(|_| ()).map_err(to_message);
+    if cfg!(target_os = "macos") {
+        let mut cmd = Command::new("open");
+        cmd.arg(full);
+        spawn(cmd)
+    } else if cfg!(target_os = "windows") {
+        let mut cmd = Command::new("explorer");
+        cmd.arg(full);
+        spawn(cmd)
+    } else {
+        let mut cmd = Command::new("xdg-open");
+        cmd.arg(full);
+        spawn(cmd)
+    }
+}
+
 /// Build and run the desktop app.
 pub fn run() {
     tauri::Builder::default()
@@ -1057,9 +1531,9 @@ pub fn run() {
             activate_repo,
             close_repo,
             get_log_page,
+            search_log,
             get_commit_detail,
             get_refs,
-            get_local_change_count,
             get_working_changes,
             get_status,
             get_status_summary,
@@ -1071,6 +1545,9 @@ pub fn run() {
             discard_hunk,
             stage_all,
             unstage_all,
+            undo_state,
+            undo,
+            redo,
             commit_changes,
             checkout_branch,
             checkout_remote,
@@ -1116,6 +1593,10 @@ pub fn run() {
             save_files_patch,
             add_to_gitignore,
             reveal_path,
+            workspace_snapshot,
+            open_in_editor,
+            read_dotfile,
+            write_dotfile,
             conflict_status,
             conflict_sides,
             resolve_conflict,
