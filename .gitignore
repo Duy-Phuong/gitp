@@ -12,3 +12,7 @@ crates/gitp-gui/gen/
 # OS / editor
 .DS_Store
 *.log
+
+# Local compose overrides (proxy CA paths, personal tweaks) — see README.md
+compose.override.yaml
+compose.override.yml

@@ -1,0 +1,11 @@
+# The host's build output is macOS-native and ~10 GB — never send it to a build
+# context or an image.
+target/
+**/node_modules/
+crates/gitp-gui/webui/dist/
+crates/gitp-gui/gen/
+
+.git/
+remote.git/
+.DS_Store
+*.log

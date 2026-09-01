@@ -1,0 +1,60 @@
+# gitp development stack.
+#
+# This stack does NOT build or run the desktop app, and can't: gitp is a Tauri
+# app that links against macOS's system WebKit and opens a native window, so a
+# Linux container can neither produce that binary nor display it. Build and run
+# the app natively — see README.md.
+#
+# What it does give you, identically on any machine:
+#   webui  — the frontend dev server on :5173, against mock data
+#   core   — gitp-core's test suite, on Linux
+#
+# Works the same under `docker compose` and `podman compose`.
+
+name: gitp
+
+services:
+  # The frontend runs standalone in a browser: api.ts falls back to mock data
+  # whenever `window.__TAURI__` is absent, so UI work needs no desktop build and
+  # no repository access.
+  webui:
+    image: node:22-bookworm-slim
+    working_dir: /app/crates/gitp-gui/webui
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      # node_modules is a named volume rather than the host's: esbuild, rollup
+      # and friends ship platform-specific binaries, and the macOS ones the host
+      # installed cannot execute in here.
+      - webui_node_modules:/app/crates/gitp-gui/webui/node_modules
+    environment:
+      # Vite's watcher doesn't get inotify events through a bind mount from the
+      # host, so edits only show up if it polls.
+      CHOKIDAR_USEPOLLING: "true"
+
+  # gitp-core only. gitp-gui pulls in Tauri, which on Linux wants webkit2gtk and
+  # a display — a large amount of build for a binary that could never run here.
+  core:
+    build:
+      context: .
+      dockerfile: docker/core.Dockerfile
+    working_dir: /app
+    command: cargo test -p gitp-core
+    volumes:
+      - .:/app
+      # The host's target/ holds macOS artifacts and is ~10 GB; Linux builds get
+      # their own. The registry cache makes the second run quick.
+      - cargo_target:/app/target
+      - cargo_registry:/usr/local/cargo/registry
+    environment:
+      CARGO_TERM_COLOR: always
+    # Behind a TLS-intercepting proxy, cargo can't reach crates.io from in here.
+    # See "Behind a TLS-intercepting proxy" in README.md — the fix is a local,
+    # gitignored compose.override.yaml, so no one's certificate path is committed.
+
+volumes:
+  webui_node_modules:
+  cargo_target:
+  cargo_registry:
