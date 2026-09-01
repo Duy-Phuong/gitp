@@ -41,7 +41,7 @@ export function openRenameBranchModal(
   const input = el("input", {
     class: "rename-input",
     value: currentName,
-    spellcheck: false,
+    spellcheck: "false",
   }) as HTMLInputElement;
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") submit();

@@ -51,6 +51,24 @@ impl Repo {
         }
     }
 
+    /// Force-push the current branch with `--force-with-lease`: it refuses
+    /// instead of overwriting if the remote has commits this repo hasn't
+    /// seen, so it can't clobber a teammate's push that landed since.
+    ///
+    /// That safety check compares against our remote-tracking ref, which is
+    /// only as fresh as our last fetch — exactly what's stale for the "your
+    /// branch is behind" case this exists for, so without an explicit fetch
+    /// here `--force-with-lease` would refuse with "(stale info)" on almost
+    /// every real use. Fetching immediately before narrows the actual race
+    /// window (a concurrent push landing in between) down to a few
+    /// milliseconds, which is the same window every other force-push tool
+    /// (GitKraken, Fork, `gh`) accepts.
+    pub fn push_force(&self) -> Result<String> {
+        let fetched = self.run_git(&["fetch"])?;
+        let pushed = self.run_git(&["push", "--force-with-lease"])?;
+        Ok(format!("{fetched}\n{pushed}").trim().to_string())
+    }
+
     /// Stage `path` (`git add`), handling new, modified, and deleted files.
     pub fn stage(&self, path: &str) -> Result<()> {
         self.run_git(&["add", "--", path]).map(|_| ())

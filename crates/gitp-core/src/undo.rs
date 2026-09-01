@@ -16,6 +16,18 @@ use std::fs;
 use crate::error::{Error, Result};
 use crate::repo::Repo;
 
+/// A deleted branch's tip and tracking config, enough to recreate it exactly.
+#[derive(Debug, Clone)]
+pub struct DeletedBranch {
+    pub name: String,
+    /// Hex id the branch pointed at. The commits stay in the object database,
+    /// so recreating the ref here restores the branch whole.
+    pub oid: String,
+    /// Its upstream, e.g. `origin/main`, when it had one. `None` for a branch
+    /// that was never pushed.
+    pub upstream: Option<String>,
+}
+
 /// One file's content on both sides of a discard, so it can be restored exactly.
 /// `None` means the file was absent on that side (a new file discarded, or the
 /// original when the discard deleted it).
@@ -53,11 +65,16 @@ pub enum Undoable {
         at: String,
         prev: String,
     },
-    /// A branch was deleted; recreate it at `oid` to undo.
-    BranchDeleted {
+    /// One or more branches were deleted; recreate each at its recorded tip to
+    /// undo.
+    ///
+    /// A list rather than a single branch because undo is single-level: a bulk
+    /// delete recorded one branch at a time would leave only the last one
+    /// recoverable, which is precisely backwards — the more branches an action
+    /// removes, the more it matters that Undo brings all of them back.
+    BranchesDeleted {
         label: String,
-        name: String,
-        oid: String,
+        branches: Vec<DeletedBranch>,
     },
     /// A branch was renamed `old` → `new`.
     BranchRenamed {
@@ -77,7 +94,7 @@ impl Undoable {
             Undoable::HeadMoved { label, .. }
             | Undoable::Switched { label, .. }
             | Undoable::BranchCreated { label, .. }
-            | Undoable::BranchDeleted { label, .. }
+            | Undoable::BranchesDeleted { label, .. }
             | Undoable::BranchRenamed { label, .. }
             | Undoable::Discarded { label, .. } => label,
         }
@@ -135,8 +152,22 @@ impl Repo {
                 self.checkout_branch(prev)?;
                 self.run_git(&["branch", "-D", name]).map(|_| ())
             }
-            Undoable::BranchDeleted { name, oid, .. } => {
-                self.run_git(&["branch", name, oid]).map(|_| ())
+            Undoable::BranchesDeleted { branches, .. } => {
+                for b in branches {
+                    self.run_git(&["branch", &b.name, &b.oid])?;
+                    // Re-point it at its upstream if that still exists. It often
+                    // won't — a branch deleted *because* its upstream was gone
+                    // has nothing to track — so a failure here is expected and
+                    // must not lose the branch we just restored.
+                    if let Some(upstream) = &b.upstream {
+                        let _ = self.run_git(&[
+                            "branch",
+                            &format!("--set-upstream-to={upstream}"),
+                            &b.name,
+                        ]);
+                    }
+                }
+                Ok(())
             }
             Undoable::BranchRenamed { old, new, .. } => {
                 self.run_git(&["branch", "-m", new, old]).map(|_| ())
@@ -153,8 +184,11 @@ impl Repo {
             Undoable::BranchCreated { name, at, .. } => {
                 self.run_git(&["checkout", "-b", name, at]).map(|_| ())
             }
-            Undoable::BranchDeleted { name, .. } => {
-                self.run_git(&["branch", "-D", name]).map(|_| ())
+            Undoable::BranchesDeleted { branches, .. } => {
+                for b in branches {
+                    self.run_git(&["branch", "-D", &b.name])?;
+                }
+                Ok(())
             }
             Undoable::BranchRenamed { old, new, .. } => {
                 self.run_git(&["branch", "-m", old, new]).map(|_| ())

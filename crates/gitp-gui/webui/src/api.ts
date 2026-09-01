@@ -13,6 +13,7 @@ import type {
   DotfileKind,
   FileCommit,
   FileDiff,
+  DeleteBranchesResult,
   LogPage,
   PullMode,
   RebaseCommit,
@@ -21,6 +22,7 @@ import type {
   Refs,
   ResetMode,
   StatusLists,
+  TagDetail,
   UndoState,
   Workspace,
   WorkspaceSnapshot,
@@ -79,6 +81,14 @@ export async function fetchLogPage(
 
 // Commits whose message, author, or id contain `query` (case-insensitive) —
 // GitKraken-style commit search over the full loaded graph.
+// Where `rev` sits in the full log, or null when it isn't in it. The frontend
+// only holds the pages it has scrolled through, so this is how a sidebar click
+// finds out how far down a tag or an older branch actually is.
+export async function logIndexOf(rev: string, allBranches: boolean): Promise<number | null> {
+  if (!isTauri()) return null;
+  return invoke<number | null>("log_index_of", { rev, allBranches });
+}
+
 export async function searchLog(query: string, allBranches: boolean): Promise<CommitRow[]> {
   const q = query.trim().toLowerCase();
   if (!q) return [];
@@ -311,6 +321,49 @@ export async function createTagAt(name: string, rev: string): Promise<string> {
   return invoke<string>("create_tag_at", { name, rev });
 }
 
+export async function fetchTagDetail(name: string): Promise<TagDetail> {
+  if (!isTauri()) {
+    const target = MOCK_REFS.tags.find((t) => t.name === name)?.target ?? mockOid("a");
+    // Alternate annotated/lightweight in preview mode so both layouts of the
+    // details dialog are reachable without a real repo.
+    const annotated = name.endsWith("0");
+    return {
+      name,
+      target,
+      annotated,
+      tagger_name: annotated ? "Ada Lovelace" : null,
+      tagger_email: annotated ? "ada@example.com" : null,
+      tagger_time: annotated ? 1_700_000_000 : null,
+      message: annotated ? `Release ${name}\n\nMock annotation shown in preview mode.` : null,
+      target_summary: "Mock commit",
+    };
+  }
+  return invoke<TagDetail>("tag_detail", { name });
+}
+
+export async function pushTag(name: string): Promise<string> {
+  if (!isTauri()) return `Pushed ${name} to origin (preview mock)`;
+  return invoke<string>("push_tag", { name });
+}
+
+export async function deleteTag(name: string): Promise<string> {
+  if (!isTauri()) {
+    MOCK_REFS.tags = MOCK_REFS.tags.filter((t) => t.name !== name);
+    return `Deleted tag ${name} (preview mock)`;
+  }
+  return invoke<string>("delete_tag", { name });
+}
+
+export async function deleteRemoteTag(name: string): Promise<string> {
+  if (!isTauri()) return `Deleted ${name} on origin (preview mock)`;
+  return invoke<string>("delete_remote_tag", { name });
+}
+
+export async function remoteTagExists(name: string): Promise<boolean> {
+  if (!isTauri()) return name.endsWith("0");
+  return invoke<boolean>("remote_tag_exists", { name });
+}
+
 export async function cherryPick(rev: string): Promise<string> {
   if (!isTauri()) return `Cherry-picked ${rev.slice(0, 10)} (preview mock)`;
   return invoke<string>("cherry_pick", { rev });
@@ -365,6 +418,16 @@ export async function deleteBranch(name: string, force: boolean): Promise<string
   return invoke<string>("delete_branch", { name, force });
 }
 
+// Delete several branches as ONE undoable action. Undo is single-level, so
+// looping `deleteBranch` would leave only the last one recoverable.
+export async function deleteBranches(
+  names: string[],
+  force: boolean,
+): Promise<DeleteBranchesResult> {
+  if (!isTauri()) return { output: `Deleted ${names.length} branches (preview mock)`, failed: [] };
+  return invoke<DeleteBranchesResult>("delete_branches", { names, force });
+}
+
 export async function deleteRemoteBranch(name: string): Promise<string> {
   if (!isTauri()) return `Deleted remote branch for ${name} (preview mock)`;
   return invoke<string>("delete_remote_branch", { name });
@@ -398,6 +461,18 @@ export async function fetchBranch(name: string): Promise<string> {
 }
 
 // Fetch all remotes (updates every branch's ahead/behind vs its upstream).
+// Local branches whose upstream was deleted on the remote — `git branch -vv`'s
+// `[gone]`. Run a fetch with pruning first, or the answer is stale.
+export async function goneBranches(): Promise<string[]> {
+  if (!isTauri()) return ["feature/merged-already", "bugfix/old-thing"];
+  return invoke<string[]>("gone_branches", {});
+}
+
+export async function fetchRemote(remote: string): Promise<string> {
+  if (!isTauri()) return `Fetched ${remote} (preview mock)`;
+  return invoke<string>("fetch_remote", { remote });
+}
+
 export async function fetchAll(): Promise<string> {
   if (!isTauri()) return "Fetched all remotes (preview mock)";
   return invoke<string>("fetch_all", {});
@@ -531,6 +606,13 @@ function mockRecord(label: string): void {
 export async function push(): Promise<string> {
   if (!isTauri()) return "Everything up-to-date (preview mock)";
   return invoke<string>("push", {});
+}
+
+// Force-push with --force-with-lease (see gitp-core's Repo::push_force) —
+// offered when a plain push is rejected because the local branch is behind.
+export async function pushForce(): Promise<string> {
+  if (!isTauri()) return "Forced update (preview mock)";
+  return invoke<string>("push_force", {});
 }
 
 export async function stash(): Promise<string> {

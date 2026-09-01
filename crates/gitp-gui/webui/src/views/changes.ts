@@ -4,12 +4,12 @@
 // state, and the commit fields, reloading from the backend after each mutation.
 
 import { autoGrowTextarea, clear, copyToClipboard, el } from "../dom";
-import type { CommitDetail, FileDiff, StatusLists } from "../types";
+import type { ChangeKind, CommitDetail, FileDiff, StatusLists } from "../types";
 import { type MenuItem, showContextMenu } from "./context-menu";
 import { renderFile, renderSplitDiff } from "./detail";
 import { renderFileTree } from "./tree";
 
-type Panel = "unstaged" | "staged";
+export type Panel = "unstaged" | "staged";
 
 export interface ChangesCallbacks {
   // Staging trees: paths + statuses only, no hunks (cheap to refresh).
@@ -48,6 +48,9 @@ export interface ChangesCallbacks {
   // After a successful commit (refresh history + sidebar).
   onCommitted: () => void;
   setStatus: (msg: string) => void;
+  // An async outcome worth a toast as well as the status line (a commit
+  // landing, a stash being written) — see main.ts's reportDone.
+  reportDone: (msg: string) => void;
   // Show git's full (often multi-line) output for a failed operation — e.g. a
   // pre-commit hook's messages — in a dialog rather than the status line.
   reportError: (title: string, detail: string) => void;
@@ -55,6 +58,11 @@ export interface ChangesCallbacks {
 
 export interface ChangesHandle {
   reload: () => Promise<void>;
+  // Whether an operation is in flight here. A passive refresh (window focus,
+  // user interaction) must not repaint a snapshot taken before an operation the
+  // user just started — that would put the pre-op state back over an optimistic
+  // staging update, until the operation's own reload undid it again.
+  isBusy: () => boolean;
   // Apply a status snapshot the host already fetched, instead of running
   // `git status` again ourselves — the single most expensive read on a large
   // repo, so it should happen once per refresh, not once per view.
@@ -173,6 +181,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     action: () => Promise<void>,
     after?: () => void,
     errorTitle = "Operation failed",
+    // Undo an optimistic update (see runStaging) before the error is reported,
+    // so the panels aren't still claiming a file is staged while the dialog
+    // explains that staging it failed.
+    rollback?: () => void,
   ): Promise<void> {
     if (busy) return;
     busy = true;
@@ -180,10 +192,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       await action();
       after?.(); // success-only side effects (clear the commit box, refresh history)
     } catch (err) {
+      rollback?.();
       // A failed op — e.g. a pre-commit hook that reformats files and aborts the
       // commit — often still changes the working tree, so surface git's full
       // output and fall through to reload() so those changes appear.
-      cb.setStatus(`${errorTitle}.`);
       cb.reportError(errorTitle, String(err));
     } finally {
       // Always re-read the working tree: hooks (or a partial op) may have
@@ -191,13 +203,45 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       try {
         await reload();
       } catch (err) {
-        cb.setStatus(`Failed to refresh changes: ${String(err)}`);
+        cb.reportError("Failed to refresh changes", String(err));
       }
       busy = false;
     }
   }
 
+  // Text fields whose focus and caret must survive a re-render. Keyed by a
+  // selector because render() builds brand-new nodes every time.
+  const KEEP_FOCUS = [".commit-subject", ".commit-body"];
+
+  interface FocusSnapshot {
+    selector: string;
+    start: number | null;
+    end: number | null;
+  }
+
+  function captureFocus(): FocusSnapshot | null {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) return null;
+    if (!host.contains(active)) return null;
+    const selector = KEEP_FOCUS.find((s) => active.matches(s));
+    return selector ? { selector, start: active.selectionStart, end: active.selectionEnd } : null;
+  }
+
+  function restoreFocus(snap: FocusSnapshot | null): void {
+    if (!snap) return;
+    const next = host.querySelector<HTMLInputElement | HTMLTextAreaElement>(snap.selector);
+    if (!next) return;
+    next.focus();
+    if (snap.start !== null && snap.end !== null) next.setSelectionRange(snap.start, snap.end);
+  }
+
   function render(): void {
+    // render() rebuilds everything, including the commit box, and it runs on any
+    // refresh — a background fetch, an external change picked up on window
+    // focus, a file being staged. Without this, a refresh landing while someone
+    // is writing a commit message drops them out of the field mid-word and
+    // sends the caret back to the start.
+    const focus = captureFocus();
     clear(host);
     const wrap = el("div", { class: "staging" });
     const left = el("div", { class: "staging-left" });
@@ -210,6 +254,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     renderDiffInto(diffHost);
     wrap.append(left, diffHost);
     host.append(wrap);
+    restoreFocus(focus);
   }
 
   // Selecting a file updates only the highlight + diff — it must NOT rebuild the
@@ -403,7 +448,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
             { separator: true },
             {
               label: `${label("Stash")}…`,
-              run: () => run(async () => cb.setStatus(await cb.stashFiles(paths))),
+              run: () => run(async () => cb.reportDone(await cb.stashFiles(paths))),
             },
             { label: "Save as Patch…", run: patch },
             { separator: true },
@@ -415,7 +460,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
               ? [{ label: "Add to .gitignore", run: () => void ignoreAction(paths) }]
               : []),
             { separator: true },
-            { label: "Stage All", run: () => run(cb.stageAll) },
+            { label: "Stage All", run: stageAllAction },
           ]
         : [
             { label: label("Unstage"), run: () => unstageEach(paths) },
@@ -427,21 +472,60 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
             { label: "Copy Relative Path", run: () => copy(false) },
             { label: "Copy Absolute Path", run: () => copy(true) },
             { separator: true },
-            { label: "Unstage All", run: () => run(cb.unstageAll) },
+            { label: "Unstage All", run: unstageAllAction },
           ];
     showContextMenu(e.clientX, e.clientY, items);
   }
 
+  // Staging is the action taken most often in the app, and it used to wait on
+  // the round trip *plus* a full `git status` before the row moved. Paint the
+  // move first and let the reload reconcile: the guess only has to hold for the
+  // few hundred ms in between, and run()'s reload() is still the authority.
+  function runStaging(paths: string[], to: Panel, op: () => Promise<void>): void {
+    if (busy || paths.length === 0) return;
+    // moveFiles reassigns rather than mutating, so these stay intact as the
+    // pre-op snapshot to roll back to.
+    const before = { staged, unstaged };
+    moveFiles(paths, to);
+    pruneChecked();
+    resolveSelection();
+    render();
+    // The sidebar's badge counts distinct changed paths — same as applyStatus.
+    cb.onChanged(new Set([...staged, ...unstaged].map((f) => f.path)).size);
+    void run(op, undefined, to === "staged" ? "Stage failed" : "Unstage failed", () => {
+      staged = before.staged;
+      unstaged = before.unstaged;
+      pruneChecked();
+      resolveSelection();
+      render();
+    });
+  }
+
+  // The selected file's hunks are deliberately left alone — they reload with
+  // the status, and re-fetching them here would put a loading flicker in the
+  // diff pane for no gain.
+  function moveFiles(paths: string[], to: Panel): void {
+    ({ staged, unstaged } = movedBetweenPanels({ staged, unstaged }, paths, to));
+  }
+
   function stageEach(paths: string[]): void {
-    run(async () => {
+    runStaging(paths, "staged", async () => {
       for (const p of paths) await cb.stage(p);
     });
   }
 
   function unstageEach(paths: string[]): void {
-    run(async () => {
+    runStaging(paths, "unstaged", async () => {
       for (const p of paths) await cb.unstage(p);
     });
+  }
+
+  function stageAllAction(): void {
+    runStaging(unstaged.map((f) => f.path), "staged", cb.stageAll);
+  }
+
+  function unstageAllAction(): void {
+    runStaging(staged.map((f) => f.path), "unstaged", cb.unstageAll);
   }
 
   async function discardFilesAction(paths: string[]): Promise<void> {
@@ -475,7 +559,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     }) as HTMLButtonElement;
     allBtn.disabled = files.length === 0;
     allBtn.addEventListener("click", () =>
-      run(which === "unstaged" ? cb.stageAll : cb.unstageAll),
+      which === "unstaged" ? stageAllAction() : unstageAllAction(),
     );
     head.append(allBtn);
     box.append(head);
@@ -498,7 +582,8 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         onFileDblClick: (p) => {
           // Amend-only rows aren't really staged, so there's nothing to unstage.
           if (which === "staged" && amendOnly(p)) return;
-          run(which === "unstaged" ? () => cb.stage(p) : () => cb.unstage(p));
+          if (which === "unstaged") runStaging([p], "staged", () => cb.stage(p));
+          else runStaging([p], "unstaged", () => cb.unstage(p));
         },
         onFileContextMenu: (p, e) => openFileMenu(which, p, e),
         selectedPath: selected?.panel === which ? selected.path : undefined,
@@ -523,7 +608,13 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       class: "commit-subject",
       placeholder: "Commit subject",
       value: subject,
-      spellcheck: false,
+      // A commit subject is code-adjacent prose — `fix(gui):`, file paths,
+      // ticket ids — so the platform capitalising the first letter and
+      // "correcting" identifiers is a hindrance, not a help.
+      spellcheck: "false",
+      autocapitalize: "none",
+      autocorrect: "off",
+      autocomplete: "off",
     }) as HTMLInputElement;
     subjectInput.addEventListener("input", () => {
       subject = subjectInput.value;
@@ -534,6 +625,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       class: "commit-body",
       placeholder: "Description",
       rows: 3,
+      spellcheck: "false",
+      autocapitalize: "none",
+      autocorrect: "off",
     }) as HTMLTextAreaElement;
     bodyInput.value = body;
     bodyInput.addEventListener("input", () => {
@@ -556,7 +650,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       run(
         async () => {
           const out = await cb.commit(subj, bdy, am);
-          cb.setStatus(out || "Committed.");
+          cb.reportDone(out || "Committed.");
         },
         () => {
           subject = "";
@@ -633,5 +727,42 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   }
 
   render();
-  return { reload, applyStatus, prefillMessage };
+  return { reload, isBusy: () => busy, applyStatus, prefillMessage };
+}
+
+// The status a file takes on the other side of a stage/unstage. `git add` on an
+// untracked file makes it an Added index entry, and unstaging an Added entry
+// leaves the file untracked again; every other kind reads the same on both
+// sides. Used by the optimistic move — see moveFiles.
+function stagedStatus(status: ChangeKind): ChangeKind {
+  return status === "Untracked" ? "Added" : status;
+}
+
+function unstagedStatus(status: ChangeKind): ChangeKind {
+  return status === "Added" ? "Untracked" : status;
+}
+
+// Move whole files between the staged and unstaged panels the way `git add
+// <path>` / `git reset <path>` will, returning new lists rather than mutating
+// the given ones — the originals stay usable as the snapshot to roll back to.
+// Pure, so the guess the optimistic update makes can be tested directly.
+export function movedBetweenPanels(
+  lists: StatusLists,
+  paths: string[],
+  to: Panel,
+): StatusLists {
+  const set = new Set(paths);
+  const source = to === "staged" ? lists.unstaged : lists.staged;
+  const target = to === "staged" ? lists.staged : lists.unstaged;
+  const restatus = to === "staged" ? stagedStatus : unstagedStatus;
+  // A partially-staged file already has an entry on the destination side;
+  // staging the rest of it doesn't add a second row for the same path.
+  const present = new Set(target.map((f) => f.path));
+  const arrivals = source
+    .filter((f) => set.has(f.path) && !present.has(f.path))
+    .map((f) => ({ ...f, status: restatus(f.status) }));
+  const kept = source.filter((f) => !set.has(f.path));
+  return to === "staged"
+    ? { staged: [...target, ...arrivals], unstaged: kept }
+    : { staged: kept, unstaged: [...target, ...arrivals] };
 }

@@ -7,12 +7,15 @@
 // pane: active tab, selected file, view mode, split flag, current hunk, and the
 // lazily-loaded tree / blame / history (each cached).
 
-import { clear, copyToClipboard, el, svg } from "../dom";
+import { clear, copyToClipboard, el, statusBadge, svg } from "../dom";
 import type { BlameLine, CommitDetail, FileCommit, FileDiff } from "../types";
 import { wordDiff, type Seg } from "../worddiff";
 import { renderFileTree } from "./tree";
 
-type Tab = "commit" | "changes" | "tree";
+// Which pane of the commit detail is showing. Exported so the host can persist
+// the user's choice — see initialTab / onTabChange below.
+export type DetailTab = "commit" | "changes" | "tree";
+type Tab = DetailTab;
 type FileMode = "diff" | "blame" | "history";
 
 export interface DetailCallbacks {
@@ -25,6 +28,13 @@ export interface DetailCallbacks {
   // Fetch per-line blame / commit history for a file at a commit.
   fetchBlame: (id: string, path: string) => Promise<BlameLine[]>;
   fetchFileHistory: (id: string, path: string) => Promise<FileCommit[]>;
+  // Which tab to open with. The pane keeps whichever tab you last used as you
+  // move between commits; this is the starting point, restored across restarts
+  // by the host. Defaults to Changes — clicking a commit to see what changed in
+  // it and landing on its metadata instead cost a second click every time.
+  initialTab?: DetailTab;
+  // Called when the user switches tabs, so the host can persist it.
+  onTabChange?: (tab: DetailTab) => void;
 }
 
 export interface DetailHandle {
@@ -34,6 +44,10 @@ export interface DetailHandle {
   refresh: () => void;
   // Switch to the Commit tab — used when jumping to a commit via a link.
   focusCommit: () => void;
+  // Open one of the selected commit's changed files in the given mode, from
+  // outside the pane (Quick Launch's Blame/File History). Returns false when
+  // the path isn't among them, so the caller can say so.
+  openFile: (path: string, mode: "diff" | "blame" | "history") => boolean;
 }
 
 // A single-entry cache keyed by `${commitId}:${path}`.
@@ -44,7 +58,7 @@ interface Cached<T> {
 
 export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandle {
   let detail: CommitDetail | null = null;
-  let tab: Tab = "commit";
+  let tab: Tab = cb.initialTab ?? "changes";
   let selectedFile = 0;
   let fileMode: FileMode = "diff";
   let splitView = false;
@@ -74,19 +88,26 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
 
   function setTab(next: Tab): void {
     tab = next;
+    cb.onTabChange?.(next);
     render();
   }
 
-  // Show a specific file's diff in the Changes tab (from Commit list / File Tree).
-  function openFileDiff(path: string): void {
-    if (!detail) return;
+  // Show a specific file in the Changes tab (from Commit list / File Tree /
+  // Quick Launch). `false` means this commit doesn't touch that path.
+  function openFile(path: string, mode: FileMode): boolean {
+    if (!detail) return false;
     const idx = detail.files.findIndex((f) => f.path === path);
-    if (idx < 0) return;
+    if (idx < 0) return false;
     selectedFile = idx;
     currentHunk = 0;
-    fileMode = "diff";
+    fileMode = mode;
     tab = "changes";
     render();
+    return true;
+  }
+
+  function openFileDiff(path: string): void {
+    openFile(path, "diff");
   }
 
   function render(): void {
@@ -399,7 +420,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
 
   function fileRow(file: FileDiff, active: boolean, onClick: () => void): HTMLElement {
     const row = el("div", { class: `file-item${active ? " active" : ""}`, title: file.path });
-    row.append(el("span", { class: `status-badge status-${file.status}`, text: file.status[0] }));
+    row.append(statusBadge(file.status));
     const label =
       file.old_path && file.old_path !== file.path ? `${file.old_path} → ${file.path}` : file.path;
     row.append(el("span", { class: "file-item-path", text: label }));
@@ -417,6 +438,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     focusCommit: () => {
       if (detail) setTab("commit");
     },
+    openFile,
   };
 }
 
@@ -456,7 +478,7 @@ function sep(): HTMLElement {
 
 function fileHead(file: FileDiff): HTMLElement {
   const head = el("div", { class: "file-head" });
-  head.append(el("span", { class: `status-badge status-${file.status}`, text: file.status }));
+  head.append(statusBadge(file.status, true));
   const label =
     file.old_path && file.old_path !== file.path ? `${file.old_path} → ${file.path}` : file.path;
   head.append(el("span", { text: label }));
@@ -517,10 +539,24 @@ export function renderFile(file: FileDiff): HTMLElement {
 
 function unifiedLine(line: Line, kind: "del" | "add" | "ctx", segs: Seg[] | null): HTMLElement {
   const cls = kind === "add" ? "diff-line add" : kind === "del" ? "diff-line del" : "diff-line";
-  const div = el("div", { class: cls }, [el("span", { class: "diff-origin", text: `${line.origin} ` })]);
+  // The old/new line numbers and the +/-/space marker are drawn by CSS
+  // (`::before { content: attr(...) }`) rather than being text nodes:
+  // `user-select: none` still lets them ride along into the selection
+  // highlight and the clipboard, generated content cannot.
+  const div = el("div", { class: cls }, [
+    el("span", { class: "diff-ln", "data-ln": lineno(line.old_lineno) }),
+    el("span", { class: "diff-ln", "data-ln": lineno(line.new_lineno) }),
+    el("span", { class: "diff-origin", "data-origin": line.origin }),
+  ]);
   if (segs) appendSegs(div, segs, kind === "del" ? "word-del" : "word-add");
   else div.append(document.createTextNode(line.content));
   return div;
+}
+
+// A line number for the gutter; blank on the side where the line doesn't exist
+// (no old number on an addition, no new number on a deletion).
+function lineno(no: number | null | undefined): string {
+  return no != null ? String(no) : "";
 }
 
 const renderUnifiedDiff = renderFile;
@@ -551,10 +587,36 @@ export function renderSplitDiff(file: FileDiff): HTMLElement {
     }
     flush();
 
+    isolateSplitColumnDrag(table);
     h.append(table);
     container.append(h);
   });
   return container;
+}
+
+// The old/new columns are DOM siblings within each `.split-row` (a plain
+// flex row), so a native drag-select spanning multiple rows passes through
+// both columns' text in DOM order — the browser has no idea they're meant to
+// be two independent panels. Selecting a paragraph on the left would silently
+// pull the corresponding lines from the right into both the visible
+// highlight and the clipboard.
+//
+// Fix at the source: while a drag is in progress, make the *other* column
+// unselectable, so the browser's native selection can't extend into it at
+// all — the highlight and the copy are correct as a direct consequence,
+// without needing a `copy` handler to clean up after the fact.
+function isolateSplitColumnDrag(table: HTMLElement): void {
+  table.addEventListener("mousedown", (e) => {
+    const cell = (e.target as HTMLElement).closest(".split-cell");
+    if (!cell) return;
+    const side = cell.parentElement?.firstElementChild === cell ? "left" : "right";
+    table.classList.add(`dragging-${side}`);
+    window.addEventListener(
+      "mouseup",
+      () => table.classList.remove("dragging-left", "dragging-right"),
+      { once: true },
+    );
+  });
 }
 
 type Line = FileDiff["hunks"][number]["lines"][number];
@@ -577,7 +639,8 @@ function sideCell(line: Line | null, side: "left" | "right", segs: Seg[] | null)
   if (segs) appendSegs(code, segs, side === "left" ? "word-del" : "word-add");
   else code.append(document.createTextNode(line.content));
   return el("div", { class: `split-cell${changed ? (side === "left" ? " del" : " add") : ""}` }, [
-    el("span", { class: "split-ln", text: no != null ? String(no) : "" }),
+    // Line number as CSS generated content — see the note in `unifiedLine`.
+    el("span", { class: "split-ln", "data-ln": no != null ? String(no) : "" }),
     code,
   ]);
 }

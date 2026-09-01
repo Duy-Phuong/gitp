@@ -7,6 +7,8 @@ export const GRAPH_METRICS = {
   laneWidth: 16,
   rowHeight: 28,
   marginX: 14,
+  /// Radius of the rounded right-angle corners where an edge changes lane.
+  cornerRadius: 7,
 };
 
 export interface GraphNode {
@@ -22,6 +24,13 @@ export interface GraphEdge {
   toX: number;
   toY: number;
   color: number;
+  /// True when this is a link to a merge parent (any parent but the first).
+  ///
+  /// Decides which end of the edge the corner sits at, which is what makes the
+  /// graph readable: a merge line leaves its commit sideways straight away and
+  /// then runs down the parent's lane, whereas a branch that ends runs down its
+  /// own lane and only turns in at the very bottom, next to the parent.
+  merge: boolean;
 }
 
 export interface GraphLayout {
@@ -61,17 +70,18 @@ export function layoutGraph(
 
   const edges: GraphEdge[] = [];
   rows.forEach((r, i) => {
-    for (const parentId of r.parents) {
+    r.parents.forEach((parentId, k) => {
       const j = indexById.get(parentId);
-      if (j === undefined) continue;
+      if (j === undefined) return;
       edges.push({
         fromX: laneX(r.lane),
         fromY: rowY(i),
         toX: laneX(rows[j].lane),
         toY: rowY(j),
         color: r.color,
+        merge: k > 0,
       });
-    }
+    });
   });
 
   const maxLane = rows.reduce((m, r) => Math.max(m, r.lane), 0);
@@ -79,6 +89,33 @@ export function layoutGraph(
   const height = rows.length * GRAPH_METRICS.rowHeight;
 
   return { nodes, edges, width, height };
+}
+
+/**
+ * The SVG path for one edge: straight down when the lanes match, otherwise a
+ * right angle with a rounded corner, in the style of GitKraken and Fork.
+ *
+ * The corner is a quadratic curve whose control point is the corner itself,
+ * which is both simpler and less error-prone than an elliptical arc (no sweep
+ * flags to get backwards) and indistinguishable at this radius.
+ *
+ * The radius shrinks to fit edges shorter than a full corner — a lane change
+ * between adjacent rows, or between adjacent lanes on a compressed graph —
+ * so the curve never overshoots either endpoint.
+ */
+export function edgePath(edge: GraphEdge): string {
+  const { fromX, fromY, toX, toY } = edge;
+  if (fromX === toX) return `M ${fromX} ${fromY} L ${toX} ${toY}`;
+
+  const dir = toX > fromX ? 1 : -1;
+  const r = Math.min(GRAPH_METRICS.cornerRadius, Math.abs(toX - fromX), Math.abs(toY - fromY));
+
+  if (edge.merge) {
+    // Corner at the top: out sideways from the commit, then down the parent lane.
+    return `M ${fromX} ${fromY} L ${toX - dir * r} ${fromY} Q ${toX} ${fromY} ${toX} ${fromY + r} L ${toX} ${toY}`;
+  }
+  // Corner at the bottom: down this commit's own lane, turning in at the parent.
+  return `M ${fromX} ${fromY} L ${fromX} ${toY - r} Q ${fromX} ${toY} ${fromX + dir * r} ${toY} L ${toX} ${toY}`;
 }
 
 /**

@@ -21,6 +21,7 @@ mod remote;
 mod repo;
 mod stash_ops;
 mod status;
+mod tag_ops;
 mod tree;
 mod undo;
 
@@ -37,4 +38,5 @@ pub use refs::{BranchRef, Refs, RemoteBranch, StashRef, TagRef};
 pub use remote::PullMode;
 pub use repo::Repo;
 pub use status::StatusLists;
-pub use undo::{FileBlob, Undoable};
+pub use tag_ops::TagDetail;
+pub use undo::{DeletedBranch, FileBlob, Undoable};

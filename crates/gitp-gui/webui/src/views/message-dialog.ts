@@ -14,14 +14,23 @@ export function closeMessageDialog(): void {
   onKey = null;
 }
 
+export interface MessageDialogAction {
+  label: string;
+  run: () => void;
+  // Styled like other destructive actions (e.g. Abort) — red, not the default accent.
+  danger?: boolean;
+}
+
 // Show an error dialog. `detail` is rendered verbatim (e.g. git's stderr), so
 // multi-line messages like "cannot rebase: You have unstaged changes" keep
-// their formatting. An optional `action` adds a primary button beside Close
-// (e.g. "Resolve Conflicts") that runs and then dismisses the dialog.
+// their formatting. Optional `actions` add buttons beside Close (e.g.
+// "Resolve Conflicts", or "Pull" + "Force Push" together) — each runs and
+// then dismisses the dialog. A bare `{label, run}` object is also accepted,
+// for the common single-action case.
 export function showErrorDialog(
   title: string,
   detail: string,
-  action?: { label: string; run: () => void },
+  action?: MessageDialogAction | MessageDialogAction[],
 ): void {
   closeMessageDialog();
 
@@ -45,15 +54,15 @@ export function showErrorDialog(
 
   const close = el("button", { class: "btn", text: "Close" });
   close.addEventListener("click", closeMessageDialog);
-  const actions = el("div", { class: "modal-actions" }, [close]);
-  if (action) {
-    const primary = el("button", { class: "btn commit-btn", text: action.label });
-    primary.addEventListener("click", () => {
+  const actionsRow = el("div", { class: "modal-actions" }, [close]);
+  for (const a of action ? (Array.isArray(action) ? action : [action]) : []) {
+    const btn = el("button", { class: `btn${a.danger ? " danger-btn" : " commit-btn"}`, text: a.label });
+    btn.addEventListener("click", () => {
       closeMessageDialog();
-      action.run();
+      a.run();
     });
-    actions.append(primary);
+    actionsRow.append(btn);
   }
-  modal.append(actions);
+  modal.append(actionsRow);
   requestAnimationFrame(() => close.focus());
 }

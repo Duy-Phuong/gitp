@@ -101,7 +101,7 @@ function renderPrompt(
   const input = el("input", {
     placeholder: prompt.placeholder,
     value: prompt.value ?? "",
-    spellcheck: false,
+    spellcheck: "false",
   }) as HTMLInputElement;
   const create = el("button", { class: "btn small", text: "OK" });
   const submit = () => {

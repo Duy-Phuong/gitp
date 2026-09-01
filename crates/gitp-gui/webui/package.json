@@ -7,6 +7,7 @@
     "dev": "vite",
     "tauri": "cd .. && tauri",
     "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

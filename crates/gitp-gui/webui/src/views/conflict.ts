@@ -21,10 +21,15 @@ export interface ConflictCallbacks {
   finish: (message: string) => Promise<string>;
   confirm: (message: string) => Promise<boolean>;
   setStatus: (msg: string) => void;
+  // An async outcome worth a toast as well as the status line — see
+  // main.ts's reportDone.
+  reportDone: (msg: string) => void;
   reportError: (title: string, detail: string) => void;
   // Called after a successful finish/abort so the host can leave the view and
-  // refresh history + sidebar.
-  onDone: (message: string) => void;
+  // refresh history + sidebar. `aborted` distinguishes the two: a caller
+  // driving a multi-step batch (e.g. bulk cherry-pick) through this resolver
+  // resumes the remaining steps on finish, but cancels them on abort.
+  onDone: (message: string, aborted: boolean) => void;
 }
 
 export interface ConflictHandle {
@@ -581,6 +586,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     }
     box.append(grid);
     grid.addEventListener("copy", onCopy);
+    isolateMergeColumnDrag(grid);
     highlightChange();
     return box;
   }
@@ -595,11 +601,30 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     return el("div", { class: "merge-head" }, [el("span", { class: "cf-no" }), el("span", { text })]);
   }
 
-  // Copy handler for the merge grid. The three columns share one grid, so their
-  // cells (and the line-number spans) interleave in DOM order — a native copy of
-  // a multi-line selection would splice in text from the other panels and the
-  // gutters. Restrict the copy to the column the selection started in and take
-  // only the source text, so each panel copies cleanly, without line numbers.
+  // The three columns share one grid, so a multi-row drag started in one
+  // visually bleeds the native selection highlight into the other two — same
+  // cause `isolateSplitColumnDrag` fixes in detail.ts's split diff, applied
+  // here to three sides instead of two. Once the other columns can't be
+  // selected during the drag, `onCopy` below is only a fallback (e.g. a
+  // keyboard-driven "select all" within the pane).
+  function isolateMergeColumnDrag(grid: HTMLElement): void {
+    grid.addEventListener("mousedown", (e) => {
+      const line = (e.target as HTMLElement).closest(".cf-left, .cf-center, .cf-right");
+      if (!line) return;
+      const side = line.classList.contains("cf-left") ? "left" : line.classList.contains("cf-center") ? "center" : "right";
+      grid.classList.add(`dragging-${side}`);
+      window.addEventListener(
+        "mouseup",
+        () => grid.classList.remove("dragging-left", "dragging-center", "dragging-right"),
+        { once: true },
+      );
+    });
+  }
+
+  // Copy handler for the merge grid — a fallback for selections the drag
+  // isolation above doesn't cover (e.g. Cmd/Ctrl+A). Restrict the copy to the
+  // column the selection started in and take only the source text, so each
+  // panel copies cleanly, without line numbers.
   function onCopy(e: ClipboardEvent): void {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
@@ -747,7 +772,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
         resStore.delete(p);
         done++;
       }
-      cb.setStatus(
+      cb.reportDone(
         skipped > 0
           ? `Marked ${done} resolved; ${skipped} still have conflicts.`
           : `Marked ${done} file${done !== 1 ? "s" : ""} resolved.`,
@@ -760,7 +785,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     await run(async () => {
       const out = await cb.finish(message);
       resetSession(); // the session is over — next merge starts fresh
-      cb.onDone(out);
+      cb.onDone(out, false);
     });
   }
 
@@ -773,7 +798,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     await run(async () => {
       const out = await cb.abort();
       resetSession();
-      cb.onDone(out);
+      cb.onDone(out, true);
     });
   }
 

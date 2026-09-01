@@ -1,7 +1,7 @@
 // A collapsible folder tree built from a flat, sorted list of file paths.
 // Used by the commit detail's File Tree tab.
 
-import { chevronIcon, el } from "../dom";
+import { chevronIcon, el, statusBadge } from "../dom";
 
 interface Node {
   name: string;
@@ -115,9 +115,7 @@ function renderLevel(host: HTMLElement, node: Node, depth: number, cb: FileTreeC
         );
       }
       row.append(
-        status
-          ? el("span", { class: `status-badge status-${status}`, text: status[0] })
-          : el("span", { class: "tree-bullet" }),
+        status ? statusBadge(status) : el("span", { class: "tree-bullet" }),
       );
       row.append(el("span", { class: "tree-name", text: child.name }));
       if (status) {

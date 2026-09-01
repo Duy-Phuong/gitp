@@ -17,6 +17,12 @@
           <button class="tab active" data-tab="history">History</button>
           <button class="tab" data-tab="config">Config</button>
         </nav>
+        <button id="quick-launch-btn" class="btn ghost quick-launch-btn" title="Quick Launch (⌘K)">
+          <svg class="ql-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+          </svg>
+          <span>Quick Launch</span>
+        </button>
         <button id="terminal-toggle" class="btn ghost">Terminal</button>
         <div id="settings" class="settings">
           <button id="settings-btn" class="btn ghost icon-btn" title="Settings" aria-haspopup="true" aria-expanded="false">⚙</button>
@@ -132,7 +138,7 @@
               </div>
               <div id="log-pane" class="log-pane"></div>
             </div>
-            <div id="pane-divider" class="pane-divider" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
+            <div id="pane-divider" class="pane-divider horizontal" role="separator" aria-orientation="horizontal" title="Drag to resize"></div>
             <div id="detail-pane" class="detail-pane"></div>
           </section>
           <section id="changes-view" class="view hidden">
@@ -153,15 +159,27 @@
         </div>
       </main>
 
+      <div id="terminal-divider" class="pane-divider horizontal hidden" role="separator" aria-orientation="horizontal" title="Drag to resize"></div>
+
       <section id="terminal-panel" class="terminal-panel hidden">
         <div class="terminal-head">
-          <span>Terminal</span>
-          <button id="terminal-close" class="btn ghost small">Hide</button>
+          <span class="terminal-title">Terminal</span>
+          <span id="terminal-cwd" class="terminal-cwd" title="Working directory"></span>
+          <span class="spacer"></span>
+          <button id="terminal-clear" class="term-btn" title="Clear the terminal">Clear</button>
+          <button id="terminal-close" class="term-btn" title="Hide the terminal" aria-label="Hide the terminal">
+            <svg class="term-btn-icon" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+            </svg>
+          </button>
         </div>
         <div id="terminal-host" class="terminal-host"></div>
       </section>
 
-      <footer id="statusbar" class="statusbar"></footer>
+      <footer id="statusbar" class="statusbar">
+        <span id="status-message" class="status-message"></span>
+        <span id="status-fetched" class="status-fetched hidden" title="How long ago this repository's remotes were last fetched. Ahead/behind counts are only as current as this."></span>
+      </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

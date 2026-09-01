@@ -25,6 +25,11 @@ export function svg(tag: string, attrs: Attrs = {}): SVGElement {
   return node;
 }
 
+// NOTE: `false` means "omit this attribute" — handy for conditional ones, but a
+// trap for *enumerated* attributes, where the string "false" is a real value.
+// `spellcheck: false` silently emits nothing and leaves spellcheck ON; it has to
+// be `spellcheck: "false"`. Same for autocapitalize ("none") and autocorrect
+// ("off").
 function applyAttrs(node: HTMLElement, attrs: Attrs): void {
   for (const [k, v] of Object.entries(attrs)) {
     if (v === undefined || v === false) continue;
@@ -132,4 +137,44 @@ export function tagIcon(): SVGElement {
   );
   s.appendChild(svg("circle", { cx: "5", cy: "5", r: "1", fill: "currentColor" }));
   return s;
+}
+
+// A glyph per file-change kind — plus / pencil / minus / arrow — so add, edit
+// and delete are recognisable at a glance in the file lists and diff headers
+// rather than having to be read off a one-letter badge. Stroke-only, so the
+// `.status-<Kind>` class on the badge colours it via `currentColor`.
+const STATUS_PATHS: Record<string, string[]> = {
+  Added: ["M8 3.5v9", "M3.5 8h9"],
+  Untracked: ["M8 3.5v9", "M3.5 8h9"],
+  Deleted: ["M3.5 8h9"],
+  Modified: ["M10.4 2.9l2.7 2.7-7.4 7.4-3.4.7.7-3.4z"],
+  Renamed: ["M2.5 8h9", "M8 4.5L11.5 8 8 11.5"],
+  Copied: ["M6 6h7v7H6z", "M10 3H3v7"],
+  Other: ["M4 8h8"],
+};
+
+export function statusIcon(status: string): SVGElement {
+  const s = svg("svg", { viewBox: "0 0 16 16", class: "status-glyph" });
+  for (const d of STATUS_PATHS[status] ?? STATUS_PATHS.Other) {
+    s.append(
+      svg("path", {
+        d,
+        fill: "none",
+        stroke: "currentColor",
+        "stroke-width": "1.8",
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+      }),
+    );
+  }
+  return s;
+}
+
+// The badge shown beside a changed file: the glyph alone in the file lists,
+// glyph plus the kind's name in the wider diff file header.
+export function statusBadge(status: string, withLabel = false): HTMLElement {
+  const badge = el("span", { class: `status-badge status-${status}`, title: status });
+  badge.append(statusIcon(status));
+  if (withLabel) badge.append(el("span", { text: status }));
+  return badge;
 }

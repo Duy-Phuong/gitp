@@ -76,6 +76,12 @@ export interface FileCommit {
   time: number;
 }
 
+/// Outcome of a bulk branch delete: git's output plus the branches it refused.
+export interface DeleteBranchesResult {
+  output: string;
+  failed: string[];
+}
+
 export interface RepoTab {
   path: string;
   name: string;
@@ -182,6 +188,19 @@ export interface WorkspaceSnapshot {
   rebase: RebaseStatus;
   conflict: ConflictStatus;
   undo: UndoState;
+}
+
+// What a tag is and what it points at, for the tag details dialog. A
+// lightweight tag is only a ref, so it has no tagger and no message of its own.
+export interface TagDetail {
+  name: string;
+  target: string;
+  annotated: boolean;
+  tagger_name: string | null;
+  tagger_email: string | null;
+  tagger_time: number | null;
+  message: string | null;
+  target_summary: string;
 }
 
 // The in-progress conflict session for the resolver view.

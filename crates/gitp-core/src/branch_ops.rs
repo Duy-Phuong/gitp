@@ -137,11 +137,74 @@ impl Repo {
         }
     }
 
+    /// The upstream a local branch tracks, e.g. `origin/main`, or `None` when it
+    /// has none (never pushed) or the tracking ref no longer exists.
+    pub fn branch_upstream(&self, name: &str) -> Result<Option<String>> {
+        let branch = self.inner.find_branch(name, git2::BranchType::Local)?;
+        Ok(branch
+            .upstream()
+            .ok()
+            .and_then(|up| up.name().ok().flatten().map(str::to_string)))
+    }
+
+    /// Local branches whose configured upstream no longer exists — the ones
+    /// `git branch -vv` marks `[gone]`, typically because their pull request
+    /// was merged and the remote branch deleted.
+    ///
+    /// Read from `for-each-ref` rather than by grepping `git branch -vv`: the
+    /// track field is machine-readable and stable, whereas the `-vv` line is
+    /// display output whose layout depends on branch-name width and whose
+    /// `: gone]` marker also appears inside commit subjects.
+    ///
+    /// A branch with no upstream configured at all is *not* gone — it was never
+    /// pushed — so it is never reported here. Neither is the current branch,
+    /// which cannot be deleted anyway.
+    pub fn gone_branches(&self) -> Result<Vec<String>> {
+        let head = self
+            .inner
+            .head()
+            .ok()
+            .filter(|h| h.is_branch())
+            .and_then(|h| h.shorthand().map(str::to_string));
+
+        let raw = self.run_git(&[
+            "for-each-ref",
+            // Tab-separated: git refuses tabs in ref names, so it can't collide.
+            "--format=%(refname:short)%09%(upstream)%09%(upstream:track)",
+            "refs/heads",
+        ])?;
+
+        let mut gone = Vec::new();
+        for line in raw.lines() {
+            let mut fields = line.split('\t');
+            let (Some(name), Some(upstream), Some(track)) =
+                (fields.next(), fields.next(), fields.next())
+            else {
+                continue;
+            };
+            // No upstream configured → never pushed, not gone.
+            if upstream.is_empty() || track.trim() != "[gone]" {
+                continue;
+            }
+            if Some(name) == head.as_deref() {
+                continue;
+            }
+            gone.push(name.to_string());
+        }
+        Ok(gone)
+    }
+
     /// Fetch every remote (`git fetch --all --prune`), refreshing all
     /// remote-tracking refs so every branch's ahead/behind reflects the remote.
     /// Doesn't touch the working tree or any local branch.
     pub fn fetch_all(&self) -> Result<String> {
         self.run_git(&["fetch", "--all", "--prune"])
+    }
+
+    /// Fetch a single named remote (`git fetch --prune <remote>`), for when the
+    /// repo has several and only one is worth waiting for.
+    pub fn fetch_remote(&self, remote: &str) -> Result<String> {
+        self.run_git(&["fetch", "--prune", remote])
     }
 
     /// Fetch `name`'s remote and then advance the local branch to its upstream —

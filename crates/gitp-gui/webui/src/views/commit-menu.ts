@@ -163,7 +163,7 @@ function promptName(
   value = "",
 ): void {
   clear(menu);
-  const input = el("input", { placeholder, value, spellcheck: false }) as HTMLInputElement;
+  const input = el("input", { placeholder, value, spellcheck: "false" }) as HTMLInputElement;
   const create = el("button", { class: "btn small", text: "OK" });
   const submit = () => {
     const name = input.value.trim();

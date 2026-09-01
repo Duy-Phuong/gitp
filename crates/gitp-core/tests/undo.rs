@@ -4,7 +4,7 @@
 mod common;
 
 use common::FixtureRepo;
-use gitp_core::{FileBlob, Repo, Undoable};
+use gitp_core::{DeletedBranch, FileBlob, Repo, Undoable};
 
 fn read(fx: &FixtureRepo, name: &str) -> Option<String> {
     std::fs::read_to_string(fx.path().join(name)).ok()
@@ -76,16 +76,55 @@ fn undo_delete_branch_recreates_it_at_the_same_commit() {
     repo.delete_branch("feature", true).unwrap();
     assert!(repo.branch_commit_id("feature").is_err(), "branch is gone");
 
-    let action = Undoable::BranchDeleted {
+    let action = Undoable::BranchesDeleted {
         label: "Delete branch feature".into(),
-        name: "feature".into(),
-        oid: oid.clone(),
+        branches: vec![DeletedBranch {
+            name: "feature".into(),
+            oid: oid.clone(),
+            upstream: None,
+        }],
     };
 
     repo.undo(&action).unwrap();
     assert_eq!(repo.branch_commit_id("feature").unwrap(), oid, "recreated at its tip");
     repo.redo(&action).unwrap();
     assert!(repo.branch_commit_id("feature").is_err(), "deleted again");
+}
+
+/// A bulk delete is one action, so undo has to bring back every branch in it —
+/// the case Quick Launch's Clean up depends on.
+#[test]
+fn undo_recreates_every_branch_of_a_multi_branch_delete() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let head = fx.repo.head().unwrap().peel_to_commit().unwrap();
+    for name in ["one", "two", "three"] {
+        fx.repo.branch(name, &head, false).unwrap();
+    }
+
+    let repo = Repo::open(fx.path()).unwrap();
+    let branches: Vec<DeletedBranch> = ["one", "two", "three"]
+        .iter()
+        .map(|name| DeletedBranch {
+            name: (*name).to_string(),
+            oid: repo.branch_commit_id(name).unwrap(),
+            upstream: None,
+        })
+        .collect();
+    for b in &branches {
+        repo.delete_branch(&b.name, true).unwrap();
+    }
+
+    let action = Undoable::BranchesDeleted { label: "Delete 3 branches".into(), branches: branches.clone() };
+    repo.undo(&action).unwrap();
+    for b in &branches {
+        assert_eq!(repo.branch_commit_id(&b.name).unwrap(), b.oid, "{} restored", b.name);
+    }
+
+    repo.redo(&action).unwrap();
+    for b in &branches {
+        assert!(repo.branch_commit_id(&b.name).is_err(), "{} deleted again", b.name);
+    }
 }
 
 #[test]

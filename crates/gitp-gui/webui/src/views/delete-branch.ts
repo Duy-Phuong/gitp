@@ -1,14 +1,62 @@
-// Delete-branch confirmation modal. Confirms the local delete and, when the
-// branch genuinely exists on its remote, offers to also delete it there via a
-// checkbox (unchecked by default — the riskier, opt-in action).
+// Delete-ref confirmation modal, shared by branches and tags. Confirms the
+// local delete and, when the ref genuinely exists on the remote, offers to also
+// delete it there via a checkbox (unchecked by default — the riskier, opt-in
+// action).
 //
 // Remote existence is probed live (git ls-remote) and passed in as a promise:
 // the modal shows "Checking remote…" until it resolves, then reveals the
-// checkbox only if the branch is actually present on the remote.
+// checkbox only if the ref is actually present on the remote.
 
 import { el } from "../dom";
 
+// What the modal is deleting. Only the wording differs — the flow is identical.
+interface RefKindCopy {
+  title: string;
+  sub: string;
+  label: string;
+  // How the remote-delete checkbox names its target, given the probe's result.
+  remoteText: (remote: string) => string;
+}
+
+const BRANCH: RefKindCopy = {
+  title: "Delete Branch",
+  sub: "Delete local branch from your repository",
+  label: "Branch:",
+  remoteText: (remote) => `Also delete remote branch ${remote}`,
+};
+
+const TAG: RefKindCopy = {
+  title: "Delete Tag",
+  sub: "Delete local tag from your repository",
+  label: "Tag:",
+  remoteText: (name) => `Also delete tag ${name} on origin`,
+};
+
 export function openDeleteBranchModal(
+  branchName: string,
+  remoteProbe: Promise<string | null>,
+  onConfirm: (deleteRemote: boolean) => void,
+): void {
+  openDeleteRefModal(BRANCH, branchName, remoteProbe, onConfirm);
+}
+
+// A tag's probe answers "is it on origin?" rather than naming a remote ref, so
+// the caller maps true to the tag's own name for the checkbox label.
+export function openDeleteTagModal(
+  tagName: string,
+  remoteProbe: Promise<boolean>,
+  onConfirm: (deleteRemote: boolean) => void,
+): void {
+  openDeleteRefModal(
+    TAG,
+    tagName,
+    remoteProbe.then((exists) => (exists ? tagName : null)),
+    onConfirm,
+  );
+}
+
+function openDeleteRefModal(
+  copy: RefKindCopy,
   branchName: string,
   remoteProbe: Promise<string | null>,
   onConfirm: (deleteRemote: boolean) => void,
@@ -34,10 +82,10 @@ export function openDeleteBranchModal(
   document.addEventListener("keydown", onKey, true);
 
   modal.append(
-    el("div", { class: "modal-title", text: "Delete Branch" }),
-    el("div", { class: "modal-sub", text: "Delete local branch from your repository" }),
+    el("div", { class: "modal-title", text: copy.title }),
+    el("div", { class: "modal-sub", text: copy.sub }),
     el("div", { class: "delete-branch-row" }, [
-      el("span", { class: "delete-branch-label", text: "Branch:" }),
+      el("span", { class: "delete-branch-label", text: copy.label }),
       el("span", { class: "delete-branch-name", text: branchName }),
     ]),
   );
@@ -70,7 +118,7 @@ export function openDeleteBranchModal(
         el("label", { class: "delete-remote-row" }, [
           el("span", { class: "delete-warn-icon", text: "⚠️" }),
           box,
-          el("span", { text: `Also delete remote branch ${remoteBranch}` }),
+          el("span", { text: copy.remoteText(remoteBranch) }),
         ]),
       );
     })

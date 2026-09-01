@@ -31,7 +31,7 @@ function renderPanel(file: DotfileEntry, cb: DotfilesCallbacks): HTMLElement {
 
   const textarea = el("textarea", {
     class: "dotfile-textarea",
-    spellcheck: false,
+    spellcheck: "false",
     placeholder: `${file.path} doesn't exist yet — Save will create it.`,
   }) as HTMLTextAreaElement;
   textarea.value = file.content;

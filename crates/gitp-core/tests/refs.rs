@@ -190,3 +190,23 @@ fn checkout_branch_moves_head_and_updates_the_worktree() {
         "working tree reflects the checked-out branch"
     );
 }
+
+#[test]
+fn tags_are_listed_newest_release_first_with_versions_compared_numerically() {
+    let fx = FixtureRepo::init();
+    let oid = fx.commit_file("a.txt", "one\n", "c1");
+    let repo = Repo::open(fx.path()).unwrap();
+
+    // Deliberately includes the pair a plain string sort gets wrong (3.9 vs
+    // 3.10) and a three-segment tie-break (3.28.3 vs 3.28.10).
+    for name in ["3.9.0", "3.10.0", "3.28.3", "3.28.10", "3.4.0"] {
+        repo.create_tag_at(name, &oid.to_string()).unwrap();
+    }
+
+    let names: Vec<String> = repo.refs().unwrap().tags.into_iter().map(|t| t.name).collect();
+    assert_eq!(
+        names,
+        ["3.28.10", "3.28.3", "3.10.0", "3.9.0", "3.4.0"],
+        "newest first, and 3.10 above 3.9 rather than below it"
+    );
+}

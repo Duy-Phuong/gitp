@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { layoutGraph, fitLaneWidth, GRAPH_METRICS } from "./graph";
+import { edgePath, layoutGraph, fitLaneWidth, GRAPH_METRICS } from "./graph";
 import type { CommitRow } from "./types";
 
 function row(partial: Partial<CommitRow> & { id: string }): CommitRow {
@@ -99,5 +99,43 @@ describe("fitLaneWidth", () => {
     );
     const layout = layoutGraph(rows, laneWidth);
     expect(layout.width).toBeLessThan(paneWidth * 0.6);
+  });
+});
+
+describe("edgePath", () => {
+  const edge = (p: Partial<Parameters<typeof edgePath>[0]>) =>
+    edgePath({ fromX: 0, fromY: 0, toX: 0, toY: 100, color: 0, merge: false, ...p });
+
+  it("draws a straight line down when the lanes match", () => {
+    expect(edge({ fromX: 30, toX: 30, fromY: 10, toY: 40 })).toBe("M 30 10 L 30 40");
+  });
+
+  it("turns at the top for a merge parent, then runs down the parent's lane", () => {
+    const d = edge({ fromX: 0, toX: 60, fromY: 10, toY: 100, merge: true });
+    // Leaves sideways at the commit's own row, ends travelling down lane `toX`.
+    expect(d.startsWith("M 0 10 L 53 10")).toBe(true);
+    expect(d.endsWith("L 60 100")).toBe(true);
+  });
+
+  it("turns at the bottom when a branch ends at a parent on another lane", () => {
+    const d = edge({ fromX: 60, toX: 0, fromY: 10, toY: 100 });
+    // Runs straight down its own lane first, turning in only beside the parent.
+    expect(d.startsWith("M 60 10 L 60 93")).toBe(true);
+    expect(d.endsWith("L 0 100")).toBe(true);
+  });
+
+  it("shrinks the corner so it never overshoots a short edge", () => {
+    // Adjacent rows, adjacent lanes: a full-radius corner would run past both
+    // ends. Every coordinate must stay within the edge's bounding box.
+    const d = edge({ fromX: 0, toX: 4, fromY: 0, toY: 6, merge: true });
+    const coords = [...d.matchAll(/-?[\d.]+ -?[\d.]+/g)].map((m) =>
+      m[0].split(" ").map(Number),
+    );
+    for (const [x, y] of coords) {
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThanOrEqual(4);
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(y).toBeLessThanOrEqual(6);
+    }
   });
 });
