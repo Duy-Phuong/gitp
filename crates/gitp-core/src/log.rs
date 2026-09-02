@@ -65,9 +65,12 @@ impl Repo {
             let oid = oid?;
             let commit = self.inner.find_commit(oid)?;
             let author = commit.author();
+            // Format the oid once: `oid.to_string()` allocates a fresh 40-char
+            // String each call, and this runs for every commit in the walk.
+            let id = oid.to_string();
             rows.push(CommitRow {
-                id: oid.to_string(),
-                short_id: oid.to_string()[..7].to_string(),
+                short_id: id[..7].to_string(),
+                id,
                 summary: commit.summary().unwrap_or("").to_string(),
                 author_name: author.name().unwrap_or("").to_string(),
                 author_email: author.email().unwrap_or("").to_string(),

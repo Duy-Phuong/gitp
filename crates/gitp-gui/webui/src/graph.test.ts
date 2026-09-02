@@ -139,3 +139,50 @@ describe("edgePath", () => {
     }
   });
 });
+
+describe("occupiedLane", () => {
+  // Rows are newest-first; parents come after their children.
+  const row = (id: string, lane: number, parents: string[]) =>
+    ({ id, short_id: id, summary: id, author_name: "a", author_email: "a@b", time: 0, parents, lane, color: 0 });
+
+  it("reports a row's own lane when nothing passes through", () => {
+    const layout = layoutGraph([row("a", 0, ["b"]), row("b", 0, [])]);
+    expect([...layout.occupiedLane]).toEqual([0, 0]);
+  });
+
+  it("keeps a lane busy for every row an edge passes over", () => {
+    // `a` (lane 1) has parent `d` three rows below; b and c sit in lane 0 but
+    // the lane-1 line runs past them, so text must clear lane 1 on those rows.
+    // `d` counts too: the edge bends from lane 1 into lane 0 *at* that row.
+    const rows = [
+      row("a", 1, ["d"]),
+      row("b", 0, ["c"]),
+      row("c", 0, ["d"]),
+      row("d", 0, []),
+    ];
+    expect([...layoutGraph(rows).occupiedLane]).toEqual([1, 1, 1, 1]);
+  });
+
+  it("releases the lane once the edge has landed", () => {
+    // The lane-2 strand only exists from row 1 (where `x` sits) to row 2 (where
+    // it lands on `b`). Row 0 above it and row 3 below it stay at lane 0.
+    const rows = [
+      row("a", 0, ["b"]),
+      row("x", 2, ["b"]),
+      row("b", 0, ["c"]),
+      row("c", 0, []),
+    ];
+    expect([...layoutGraph(rows).occupiedLane]).toEqual([0, 2, 2, 0]);
+  });
+
+  it("reserves the wider of the two lanes an edge bends between", () => {
+    const rows = [row("a", 0, ["b"]), row("gap", 0, []), row("b", 3, [])];
+    // The edge from a (lane 0) to b (lane 3) crosses the gap row.
+    expect([...layoutGraph(rows).occupiedLane]).toEqual([3, 3, 3]);
+  });
+
+  it("ignores parents outside the loaded window", () => {
+    const rows = [row("a", 4, ["missing"]), row("b", 0, [])];
+    expect([...layoutGraph(rows).occupiedLane]).toEqual([4, 0]);
+  });
+});

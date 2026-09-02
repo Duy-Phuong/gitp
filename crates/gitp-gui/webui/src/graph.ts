@@ -38,6 +38,14 @@ export interface GraphLayout {
   edges: GraphEdge[];
   width: number;
   height: number;
+  /// Rightmost lane in use at each row: its own node, plus any edge passing
+  /// through it on the way to a parent further down.
+  ///
+  /// `width` is the widest point of the *whole* log, so sizing the commit-text
+  /// gutter from it means one busy stretch of history indents every row — 220px
+  /// reserved on rows that need 60. This lets the renderer indent to the lanes
+  /// actually on screen instead. Indexed by row.
+  occupiedLane: Int32Array;
 }
 
 function rowY(index: number): number {
@@ -88,7 +96,61 @@ export function layoutGraph(
   const width = laneX(maxLane) + GRAPH_METRICS.marginX;
   const height = rows.length * GRAPH_METRICS.rowHeight;
 
-  return { nodes, edges, width, height };
+  return { nodes, edges, width, height, occupiedLane: occupiedLanes(rows, indexById, maxLane) };
+}
+
+/**
+ * The rightmost lane in use at each row.
+ *
+ * An edge from row `i` down to row `j` keeps a lane busy for every row between
+ * them, so a row's own lane isn't enough — a commit alone in lane 0 can still
+ * have five branch lines running past it. Swept top to bottom keeping a count
+ * of the spans covering each lane, which is O(rows + edges); walking each span
+ * row by row instead would be quadratic on a long-lived branch that spans the
+ * whole log.
+ */
+function occupiedLanes(
+  rows: CommitRow[],
+  indexById: Map<string, number>,
+  maxLane: number,
+): Int32Array {
+  const occupied = new Int32Array(rows.length);
+  // Spans opening at each row, and the lanes to release after each row.
+  const opening = new Map<number, { lane: number; end: number }[]>();
+  rows.forEach((r, i) => {
+    for (const parentId of r.parents) {
+      const j = indexById.get(parentId);
+      if (j === undefined || j <= i) continue;
+      // The edge bends between the two lanes somewhere in the span, so reserve
+      // the wider of them for the whole of it.
+      const lane = Math.max(r.lane, rows[j].lane);
+      const list = opening.get(i);
+      if (list) list.push({ lane, end: j });
+      else opening.set(i, [{ lane, end: j }]);
+    }
+  });
+
+  const active = new Int32Array(maxLane + 2); // spans currently covering each lane
+  const closing = new Map<number, number[]>();
+  let top = 0; // highest lane with a live span
+
+  for (let i = 0; i < rows.length; i++) {
+    for (const span of opening.get(i) ?? []) {
+      active[span.lane] += 1;
+      if (span.lane > top) top = span.lane;
+      const list = closing.get(span.end + 1);
+      if (list) list.push(span.lane);
+      else closing.set(span.end + 1, [span.lane]);
+    }
+    occupied[i] = Math.max(rows[i].lane, top);
+    for (const lane of closing.get(i + 1) ?? []) {
+      active[lane] -= 1;
+    }
+    closing.delete(i + 1);
+    // Walk `top` back down past any lane that just went idle.
+    while (top > 0 && active[top] === 0) top -= 1;
+  }
+  return occupied;
 }
 
 /**

@@ -13,6 +13,16 @@ import type { CommitRow } from "../types";
 const AVATAR_R = 9;
 
 // A ref pointing at a commit, shown as a colored chip on hover.
+// What a log row shows for refs: the nearest few labels to draw, plus how many
+// refs contain the commit in total (the "+N" badge). Only MAX_REF_CHIPS labels
+// are ever drawn, so the producer bounds the list rather than handing over every
+// ref that contains the commit — on a repo with hundreds of branches that list
+// is hundreds long per row and costs seconds to build. See rebuildCommitRefs.
+export interface RefLabels {
+  labels: RefLabel[];
+  total: number;
+}
+
 export interface RefLabel {
   name: string;
   kind: "head" | "branch" | "remote" | "tag";
@@ -106,7 +116,7 @@ export function renderLog(
   selectedId: string | null,
   onSelect: (id: string) => void,
   onNeedMore?: () => void,
-  refsAt?: (id: string) => RefLabel[],
+  refsAt?: (id: string) => RefLabels,
   onContextMenu?: (row: CommitRow, x: number, y: number) => void,
   // The multi-selection (Cmd/Shift-click), for bulk actions — separate from
   // `selectedId`, which is the one row whose diff the detail pane follows.
@@ -125,7 +135,7 @@ export function renderLog(
     return NO_LOG;
   }
 
-  const { layout, emailById } = getLayout(rows, host.clientWidth);
+  const { layout, emailById, laneWidth } = getLayout(rows, host.clientWidth);
   const rowH = GRAPH_METRICS.rowHeight;
   let currentSelected = selectedId;
   // A local mutable copy, same pattern as `currentSelected` — updated
@@ -146,11 +156,27 @@ export function renderLog(
   content.append(graph, rowsLayer);
   host.append(content);
 
+  // Where commit text starts. Sized to the lanes actually in use in the rows on
+  // screen, not to `layout.width`, which is the widest point of the entire
+  // loaded log: one busy stretch of history would otherwise indent every row by
+  // it — measured at 220px reserved (34% of the pane) on rows needing 60px.
+  // Quantised to whole lanes, so it only moves when the lane count on screen
+  // genuinely changes rather than drifting with every pixel of scroll.
+  function textLeftFor(start: number, end: number): number {
+    let widest = 0;
+    for (let i = start; i < end; i++) {
+      const lane = layout.occupiedLane[i];
+      if (lane > widest) widest = lane;
+    }
+    return GRAPH_METRICS.marginX + widest * laneWidth + GRAPH_METRICS.marginX;
+  }
+
   function renderWindow(): void {
     const viewH = host.clientHeight || 600;
     const scrollTop = host.scrollTop;
     const start = Math.max(0, Math.floor(scrollTop / rowH) - BUFFER_ROWS);
     const end = Math.min(rows.length, Math.ceil((scrollTop + viewH) / rowH) + BUFFER_ROWS);
+    const textLeft = textLeftFor(start, end);
     const top = start * rowH;
     const bottom = end * rowH;
 
@@ -167,7 +193,7 @@ export function renderLog(
       });
       rowEl.style.position = "absolute";
       rowEl.style.top = `${i * rowH}px`;
-      rowEl.style.left = `${layout.width}px`;
+      rowEl.style.left = `${textLeft}px`;
       rowEl.style.right = "0";
       rowEl.style.height = `${rowH}px`;
       // Lane-colored bar tying the message to its commit's graph strand/avatar.
@@ -181,18 +207,18 @@ export function renderLog(
       // Ref chips (branch/tag/remote pointing at this commit) — placed after the
       // summary, always shown, colored per kind. Tags carry a tag glyph. Capped
       // so a heavily-tagged commit can't crowd out the row.
-      const refs = refsAt?.(row.id) ?? [];
-      if (refs.length) {
+      const refs = refsAt?.(row.id);
+      if (refs && refs.labels.length) {
         const box = el("span", { class: "commit-refs" });
-        for (const r of refs.slice(0, MAX_REF_CHIPS)) {
+        for (const r of refs.labels.slice(0, MAX_REF_CHIPS)) {
           const chip = el("span", { class: `commit-ref ${r.kind}`, title: r.name });
           if (r.kind === "tag") chip.append(tagIcon());
           else if (r.kind === "remote") chip.append(githubIcon());
           chip.append(el("span", { class: "commit-ref-name", text: r.kind === "head" ? `✓ ${r.name}` : r.name }));
           box.append(chip);
         }
-        if (refs.length > MAX_REF_CHIPS) {
-          box.append(el("span", { class: "commit-ref more", text: `+${refs.length - MAX_REF_CHIPS}` }));
+        if (refs.total > MAX_REF_CHIPS) {
+          box.append(el("span", { class: "commit-ref more", text: `+${refs.total - MAX_REF_CHIPS}` }));
         }
         rowEl.append(box);
       }
@@ -278,12 +304,18 @@ export function renderLog(
       // graph gutter to where its message row begins, so the eye can follow a
       // node on a deeply-nested lane to the text that belongs to it. Drawn
       // first so the avatar sits on top of it.
+      //
+      // It has to stop at `textLeft`, not at `layout.width`: those were the same
+      // thing while every row was indented to the widest point of the whole log,
+      // but the text now starts at the lanes actually on screen, and a line
+      // drawn to the old width runs straight through the message like a
+      // strikethrough.
       if (isSelected) {
         graph.append(
           svg("line", {
             x1: node.x,
             y1: node.y,
-            x2: layout.width,
+            x2: textLeft,
             y2: node.y,
             stroke: color,
             "stroke-width": 2,

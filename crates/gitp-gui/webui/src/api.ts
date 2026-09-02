@@ -68,6 +68,23 @@ export async function browseForRepo(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+// A cheap "has history changed?" probe. Pulling a page to find out costs ~264 KB
+// of JSON for a 1000-row page, serialized, sent over IPC and parsed, almost
+// always to be thrown away — see refreshHistory.
+export async function historyFingerprint(): Promise<string> {
+  if (!isTauri()) {
+    // Mirror the real thing: derive from what the mocks mutate, so preview mode
+    // exercises the same skip path rather than always refetching.
+    const refs = [
+      MOCK_REFS.head ?? "",
+      ...MOCK_REFS.branches.map((b) => `${b.name}:${b.target}`),
+      ...MOCK_REFS.tags.map((t) => `${t.name}:${t.target}`),
+    ].join(",");
+    return `${MOCK_LOG.length}:${refs.length}:${refs.slice(0, 64)}`;
+  }
+  return invoke<string>("history_fingerprint", {});
+}
+
 export async function fetchLogPage(
   offset: number,
   limit: number,

@@ -276,6 +276,17 @@ fn get_log_page_impl(
     Ok(LogPage { rows, total })
 }
 
+/// A cheap stand-in for "has history changed?", for callers that would
+/// otherwise pull a whole page just to compare it.
+///
+/// This is the same fingerprint `ensure_log` uses to decide whether its own
+/// cache is stale, so if it hasn't moved, a page fetch cannot return anything
+/// new. Hex rather than the raw u64: JSON numbers are f64, which cannot hold a
+/// 64-bit hash without silently rounding two different states together.
+fn history_fingerprint_impl(state: &RepoState) -> Result<String, String> {
+    with_repo(state, |repo| repo.state_fingerprint().map(|f| format!("{f:x}")))
+}
+
 /// The active session's full log, computing and caching it on first use (or when
 /// the all-branches toggle flipped since it was built) so lanes stay globally
 /// consistent across pages and searches.
@@ -1484,6 +1495,11 @@ fn create_tag_at(name: String, rev: String, state: State<RepoState>) -> Result<S
 }
 
 #[tauri::command(async)]
+fn history_fingerprint(state: State<RepoState>) -> Result<String, String> {
+    history_fingerprint_impl(&state)
+}
+
+#[tauri::command(async)]
 fn tag_detail(name: String, state: State<RepoState>) -> Result<TagDetail, String> {
     tag_detail_impl(&state, name)
 }
@@ -1893,6 +1909,7 @@ pub fn run() {
             checkout_commit,
             create_branch_at,
             create_tag_at,
+            history_fingerprint,
             tag_detail,
             push_tag,
             delete_tag,
@@ -1967,7 +1984,8 @@ pub fn run() {
 mod tests {
     use super::{
         activate_repo_impl, close_repo_impl, commit_changes_impl, delete_branches_impl,
-        get_commit_detail_impl, get_log_page_impl, list_repos_impl, log_index_of_impl,
+        get_commit_detail_impl, get_log_page_impl, history_fingerprint_impl, list_repos_impl,
+        log_index_of_impl,
         open_repo_impl, stage_impl, undo_impl, undo_state_impl, unstage_impl,
         workspace_snapshot_impl, RepoState,
     };
@@ -2202,6 +2220,40 @@ mod tests {
         let reset = workspace_snapshot_impl(&state).expect("snapshot");
         assert_eq!(reset.status.staged.len(), 0, "an outside unstage must not be served from cache");
         assert_eq!(reset.status.unstaged.len(), 1);
+    }
+
+    // The history fingerprint is what lets the frontend skip pulling a whole
+    // page to find out nothing changed. It has to be stable when history is
+    // stable, and move whenever a page fetch could return something different —
+    // it guards the same cache `ensure_log` guards, so those are the same thing.
+    #[test]
+    fn history_fingerprint_is_stable_until_history_actually_moves() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1", "c2"]);
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
+
+        let base = history_fingerprint_impl(&state).expect("fingerprint");
+        assert_eq!(base, history_fingerprint_impl(&state).unwrap(), "stable when nothing happens");
+
+        // Reading the log must not disturb it either.
+        get_log_page_impl(&state, 0, 100, true).unwrap();
+        assert_eq!(base, history_fingerprint_impl(&state).unwrap(), "reads don't move it");
+
+        // A new commit must move it, or the frontend would keep showing stale history.
+        std::fs::write(dir.path().join("f.txt"), "new\n").unwrap();
+        git(dir.path(), &["add", "f.txt"]);
+        commit_changes_impl(&state, "c3".into(), String::new(), false).expect("commit");
+        let after_commit = history_fingerprint_impl(&state).unwrap();
+        assert_ne!(base, after_commit, "a new commit must be visible to the guard");
+
+        // So must a branch created behind our back, which adds rows in all-branches mode.
+        git(dir.path(), &["branch", "sidebar-branch"]);
+        assert_ne!(
+            after_commit,
+            history_fingerprint_impl(&state).unwrap(),
+            "an outside ref change must be visible to the guard"
+        );
     }
 
     // --- locating a commit in the log --------------------------------------
