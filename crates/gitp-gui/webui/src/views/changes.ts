@@ -51,6 +51,11 @@ export interface ChangesCallbacks {
   // An async outcome worth a toast as well as the status line (a commit
   // landing, a stash being written) — see main.ts's reportDone.
   reportDone: (msg: string) => void;
+  // An operation finished here. reload() below re-reads only the status, which
+  // is much cheaper than a full workspace snapshot but doesn't carry the
+  // undo/redo labels — so without this the Undo button never learns that
+  // staging just became undoable.
+  onActed: () => void;
   // Show git's full (often multi-line) output for a failed operation — e.g. a
   // pre-commit hook's messages — in a dialog rather than the status line.
   reportError: (title: string, detail: string) => void;
@@ -206,6 +211,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         cb.reportError("Failed to refresh changes", String(err));
       }
       busy = false;
+      cb.onActed();
     }
   }
 

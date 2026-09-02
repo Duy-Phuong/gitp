@@ -39,6 +39,7 @@ import {
   fetchFileHistory,
   fetchFileDiff,
   fetchLogPage,
+  undoState,
   historyFingerprint,
   logIndexOf,
   searchLog,
@@ -1438,6 +1439,19 @@ function setActionsBusy(busy: boolean, activeSel?: string): void {
 // Labels of the actions Undo/Redo would perform, mirrored from the backend so
 // the buttons enable/disable and show what they'd do.
 let undoLabels: UndoState = { undo: null, redo: null };
+
+// Re-read just the undo/redo labels. The staging view reloads only the status
+// after an operation — a full workspace snapshot costs a `git status` and a ref
+// walk — so the Undo button needs telling separately that it now has something
+// to offer.
+async function refreshUndoLabels(): Promise<void> {
+  try {
+    undoLabels = await undoState();
+    refreshActionButtons();
+  } catch {
+    // Not worth surfacing: the buttons simply keep the state they had.
+  }
+}
 
 async function undoAction(): Promise<void> {
   if (!state.repoPath || !undoLabels.undo) return;
@@ -3777,6 +3791,7 @@ async function init(): Promise<void> {
     },
     setStatus,
     reportDone,
+    onActed: () => void refreshUndoLabels(),
     reportError: opFailed,
   });
   conflictView = setupConflict($("#conflict-pane"), {

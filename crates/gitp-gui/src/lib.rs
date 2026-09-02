@@ -403,19 +403,19 @@ fn get_file_diff_impl(
 }
 
 fn stage_impl(state: &RepoState, path: String) -> Result<(), String> {
-    with_repo_writing(state, |repo| repo.stage(&path))
+    with_recorded_index(state, "Stage", |repo| repo.stage(&path))
 }
 
 fn unstage_impl(state: &RepoState, path: String) -> Result<(), String> {
-    with_repo_writing(state, |repo| repo.unstage(&path))
+    with_recorded_index(state, "Unstage", |repo| repo.unstage(&path))
 }
 
 fn stage_hunk_impl(state: &RepoState, path: String, hunk_index: usize) -> Result<(), String> {
-    with_repo_writing(state, |repo| repo.stage_hunk(&path, hunk_index))
+    with_recorded_index(state, "Stage block", |repo| repo.stage_hunk(&path, hunk_index))
 }
 
 fn unstage_hunk_impl(state: &RepoState, path: String, hunk_index: usize) -> Result<(), String> {
-    with_repo_writing(state, |repo| repo.unstage_hunk(&path, hunk_index))
+    with_recorded_index(state, "Unstage block", |repo| repo.unstage_hunk(&path, hunk_index))
 }
 
 fn discard_hunk_impl(state: &RepoState, path: String, hunk_index: usize) -> Result<(), String> {
@@ -425,11 +425,11 @@ fn discard_hunk_impl(state: &RepoState, path: String, hunk_index: usize) -> Resu
 }
 
 fn stage_all_impl(state: &RepoState) -> Result<(), String> {
-    with_repo_writing(state, Repo::stage_all)
+    with_recorded_index(state, "Stage all", Repo::stage_all)
 }
 
 fn unstage_all_impl(state: &RepoState) -> Result<(), String> {
-    with_repo_writing(state, Repo::unstage_all)
+    with_recorded_index(state, "Unstage all", Repo::unstage_all)
 }
 
 /// Commit the staged changes. Invalidates the cached log because HEAD moves.
@@ -468,10 +468,15 @@ fn create_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
 /// pulling can bring in new commits. Returns git's output for display. Runs
 /// unlocked (see `with_repo_networked`) so the UI stays responsive.
 fn pull_impl(state: &RepoState, mode: PullMode) -> Result<String, String> {
+    // Captured here rather than in the callback: with_repo_networked releases
+    // the lock for the round trip, and by the time it runs the pull has already
+    // moved HEAD.
+    let before = with_repo(state, Repo::head_commit_id).ok();
     with_repo_networked(
         state,
         |repo| repo.pull(mode),
-        clear_undo, // a pull moves HEAD/tree; a stored undo would be stale
+        // A pull moves HEAD, and moving it back is a plain reset.
+        move |session| record_pull(session, before),
     )
 }
 
@@ -513,7 +518,23 @@ fn stash_apply_impl(state: &RepoState, index: usize, drop: bool) -> Result<Strin
 
 /// Drop stash `index` from the stack.
 fn stash_drop_impl(state: &RepoState, index: usize) -> Result<String, String> {
-    with_repo(state, |repo| repo.stash_drop(index))
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    // The entry's commit and message, before dropping loses the reference to
+    // them. The commit itself survives until gc, which is what makes this
+    // recoverable at all.
+    let oid = session.repo.stash_commit_id(index).map_err(to_message)?;
+    let message = session
+        .repo
+        .stash_message(index)
+        .unwrap_or_else(|_| format!("stash@{{{index}}}"));
+    let out = session.repo.stash_drop(index).map_err(to_message)?;
+    set_undo(
+        session,
+        Undoable::StashDropped { label: "Drop stash".into(), oid, message },
+    );
+    Ok(out)
 }
 
 /// Re-message stash `index`.
@@ -775,6 +796,85 @@ fn with_recorded_head_move<T>(
     Ok(out)
 }
 
+/// Where the staging snapshots for undo/redo live, inside `.git`. Fixed names:
+/// undo is single-level, so at most one pair exists at a time and each new
+/// recording overwrites the last.
+const UNDO_INDEX_BEFORE: &str = "gitp-undo-index-before";
+const UNDO_INDEX_AFTER: &str = "gitp-undo-index-after";
+
+/// Run an index-changing op (stage / unstage, whole file or one hunk),
+/// recording the staging area on each side so undo restores it exactly.
+///
+/// The tree is captured rather than the list of paths touched: a file can be
+/// staged in part, and "unstage all" has to come back to the mixture that was
+/// there before rather than to all-or-nothing. Recording is skipped when the
+/// tree can't be written (a conflicted index) or when nothing actually moved.
+fn with_recorded_index<T>(
+    state: &RepoState,
+    label: &str,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
+) -> Result<T, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let before = session.repo.snapshot_index(UNDO_INDEX_BEFORE).ok().flatten();
+    let out = f(&session.repo).map_err(to_message)?;
+    invalidate_status(session);
+    let after = session.repo.snapshot_index(UNDO_INDEX_AFTER).ok().flatten();
+    if let (Some(before), Some(after)) = (before, after) {
+        // The two paths are fixed, so compare what they hold: an operation that
+        // staged nothing must not light up the Undo button.
+        let changed = match (std::fs::read(&before), std::fs::read(&after)) {
+            (Ok(a), Ok(b)) => a != b,
+            _ => false,
+        };
+        if changed {
+            set_undo(
+                session,
+                Undoable::IndexChanged { label: label.into(), before, after },
+            );
+        }
+    }
+    Ok(out)
+}
+
+/// Run an upstream change, recording what the branch tracked before.
+fn with_recorded_upstream(
+    state: &RepoState,
+    branch: String,
+    label: String,
+    f: impl FnOnce(&Repo, &str) -> gitp_core::Result<String>,
+) -> Result<String, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let before = session.repo.branch_upstream(&branch).ok().flatten();
+    let out = f(&session.repo, &branch).map_err(to_message)?;
+    let after = session.repo.branch_upstream(&branch).ok().flatten();
+    // The upstream lives in .git/config, which the ref fingerprint guarding the
+    // refs cache doesn't hash — without this the sidebar keeps the old tracking
+    // branch and ahead/behind counts.
+    session.refs_cache = None;
+    if before != after {
+        set_undo(session, Undoable::UpstreamChanged { label, branch, before, after });
+    }
+    Ok(out)
+}
+
+/// A pull moves HEAD; record it so Undo is a plain reset back, the same as any
+/// other ref move. The remote-tracking refs it also updated stay where they are
+/// — undo puts *your* branch back, it doesn't un-fetch.
+fn record_pull(session: &mut Session, before: Option<String>) {
+    let Some(before) = before else { return };
+    let Ok(after) = session.repo.head_commit_id() else { return };
+    if before != after {
+        set_undo(
+            session,
+            Undoable::HeadMoved { label: "Pull".into(), before, after, soft: false },
+        );
+    }
+}
+
 /// Run a checkout, recording the switch (branch/commit before → after) so undo
 /// can return to the previous revision. Invalidates the log.
 fn with_recorded_checkout<T>(
@@ -972,7 +1072,12 @@ fn undo_impl(state: &RepoState) -> Result<UndoView, String> {
     match session.repo.undo(&action) {
         Ok(()) => {
             session.redo = Some(action);
-            invalidate_status(session); // undoing a discard restores worktree files
+            // Undoing a discard restores worktree files, and an upstream change
+            // lives in .git/config — which the ref fingerprint guarding the refs
+            // cache can't see. Undo is rare and user-initiated, so dropping both
+            // caches outright is cheaper than reasoning per action kind.
+            invalidate_status(session);
+            session.refs_cache = None;
             Ok(undo_view(session))
         }
         Err(e) => {
@@ -992,6 +1097,7 @@ fn redo_impl(state: &RepoState) -> Result<UndoView, String> {
         Ok(()) => {
             session.undo = Some(action);
             invalidate_status(session);
+            session.refs_cache = None; // same reasoning as undo_impl
             Ok(undo_view(session))
         }
         Err(e) => {
@@ -1024,7 +1130,15 @@ fn create_branch_at_impl(state: &RepoState, name: String, rev: String) -> Result
 
 /// Tag `rev` as `name`. HEAD doesn't move, so the log cache is left intact.
 fn create_tag_at_impl(state: &RepoState, name: String, rev: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.create_tag_at(&name, &rev))
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let out = session.repo.create_tag_at(&name, &rev).map_err(to_message)?;
+    // Read back what the ref actually holds, so redo can recreate it after undo
+    // has removed it.
+    let target = session.repo.tag_ref_target(&name).map_err(to_message)?;
+    set_undo(session, Undoable::TagCreated { label: format!("Tag {name}"), name, target });
+    Ok(out)
 }
 
 /// Read tag `name`'s metadata for the tag details dialog. Read-only.
@@ -1041,7 +1155,18 @@ fn push_tag_impl(state: &RepoState, name: String) -> Result<String, String> {
 /// tagged commit stays reachable from whatever else points at it), so the log
 /// cache stays valid.
 fn delete_tag_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.delete_tag(&name))
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    // Captured before the delete: afterwards the ref is gone and with it any way
+    // to tell which tag object it named.
+    let target = session.repo.tag_ref_target(&name).map_err(to_message)?;
+    let out = session.repo.delete_tag(&name).map_err(to_message)?;
+    set_undo(
+        session,
+        Undoable::TagDeleted { label: format!("Delete tag {name}"), name, target },
+    );
+    Ok(out)
 }
 
 /// Delete tag `name` on origin.
@@ -1247,12 +1372,16 @@ fn fast_forward_branch_impl(state: &RepoState, name: String) -> Result<String, S
 
 /// Set `branch`'s upstream. No commit change, so the log stays.
 fn set_upstream_impl(state: &RepoState, branch: String, upstream: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.set_upstream(&branch, &upstream))
+    with_recorded_upstream(state, branch, format!("Set upstream"), |repo, b| {
+        repo.set_upstream(b, &upstream)
+    })
 }
 
 /// Clear `branch`'s upstream.
 fn unset_upstream_impl(state: &RepoState, branch: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.unset_upstream(&branch))
+    with_recorded_upstream(state, branch, "Unset upstream".into(), |repo, b| {
+        repo.unset_upstream(b)
+    })
 }
 
 /// Compute the pull/merge-request URL for `branch` and open it in the default
@@ -1986,7 +2115,8 @@ mod tests {
         activate_repo_impl, close_repo_impl, commit_changes_impl, delete_branches_impl,
         get_commit_detail_impl, get_log_page_impl, history_fingerprint_impl, list_repos_impl,
         log_index_of_impl,
-        open_repo_impl, stage_impl, undo_impl, undo_state_impl, unstage_impl,
+        create_tag_at_impl, delete_tag_impl, open_repo_impl, redo_impl, stage_all_impl,
+        stage_impl, undo_impl, undo_state_impl, unstage_impl,
         workspace_snapshot_impl, RepoState,
     };
     use std::path::Path;
@@ -2254,6 +2384,121 @@ mod tests {
             history_fingerprint_impl(&state).unwrap(),
             "an outside ref change must be visible to the guard"
         );
+    }
+
+    // --- undo/redo wiring ---------------------------------------------------
+    //
+    // The core tests cover whether a recorded action reverses correctly. These
+    // cover the half that the buttons actually depend on: that the operation
+    // records anything at all, with a label, and that undo/redo through the
+    // command layer put the repository back.
+
+    fn staged_paths(state: &RepoState) -> Vec<String> {
+        let mut v: Vec<String> = workspace_snapshot_impl(state)
+            .unwrap()
+            .status
+            .staged
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn staging_a_file_is_undoable_through_the_command_layer() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
+
+        std::fs::write(dir.path().join("f.txt"), "new\n").unwrap();
+        assert!(staged_paths(&state).is_empty());
+
+        stage_impl(&state, "f.txt".into()).expect("stage");
+        assert_eq!(staged_paths(&state), vec!["f.txt".to_string()]);
+
+        let view = undo_state_impl(&state).unwrap();
+        assert_eq!(view.undo.as_deref(), Some("Stage"), "the button has something to offer");
+
+        undo_impl(&state).expect("undo");
+        assert!(staged_paths(&state).is_empty(), "undo unstaged it");
+        // And the snapshot the UI reads must reflect it, not a cached status.
+        assert_eq!(undo_state_impl(&state).unwrap().redo.as_deref(), Some("Stage"));
+
+        redo_impl(&state).expect("redo");
+        assert_eq!(staged_paths(&state), vec!["f.txt".to_string()], "redo staged it again");
+    }
+
+    #[test]
+    fn undoing_stage_all_restores_the_partial_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
+
+        std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
+        stage_impl(&state, "a.txt".into()).expect("stage a");
+        assert_eq!(staged_paths(&state), vec!["a.txt".to_string()]);
+
+        stage_all_impl(&state).expect("stage all");
+        assert_eq!(staged_paths(&state), vec!["a.txt".to_string(), "b.txt".to_string()]);
+
+        undo_impl(&state).expect("undo");
+        assert_eq!(
+            staged_paths(&state),
+            vec!["a.txt".to_string()],
+            "back to the partial selection, not to nothing staged"
+        );
+    }
+
+    #[test]
+    fn an_operation_that_changes_nothing_records_no_undo() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
+
+        // Nothing to stage: the index doesn't move, so the Undo button must not
+        // light up offering to reverse a no-op.
+        stage_all_impl(&state).expect("stage all on a clean tree");
+        assert_eq!(undo_state_impl(&state).unwrap().undo, None);
+    }
+
+    #[test]
+    fn creating_and_deleting_a_tag_are_both_undoable() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
+        let head = get_log_page_impl(&state, 0, 1, true).unwrap().rows[0].id.clone();
+
+        create_tag_at_impl(&state, "v1.0".into(), head).expect("tag");
+        assert_eq!(undo_state_impl(&state).unwrap().undo.as_deref(), Some("Tag v1.0"));
+        undo_impl(&state).expect("undo tag create");
+        assert!(!tag_names(&state).contains(&"v1.0".to_string()), "tag removed");
+        redo_impl(&state).expect("redo tag create");
+        assert!(tag_names(&state).contains(&"v1.0".to_string()), "tag back");
+
+        delete_tag_impl(&state, "v1.0".into()).expect("delete tag");
+        assert!(!tag_names(&state).contains(&"v1.0".to_string()));
+        assert_eq!(
+            undo_state_impl(&state).unwrap().undo.as_deref(),
+            Some("Delete tag v1.0")
+        );
+        undo_impl(&state).expect("undo tag delete");
+        assert!(tag_names(&state).contains(&"v1.0".to_string()), "delete undone");
+    }
+
+    fn tag_names(state: &RepoState) -> Vec<String> {
+        workspace_snapshot_impl(state)
+            .unwrap()
+            .refs
+            .tags
+            .into_iter()
+            .map(|t| t.name)
+            .collect()
     }
 
     // --- locating a commit in the log --------------------------------------

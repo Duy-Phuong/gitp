@@ -191,24 +191,36 @@ export async function fetchFileDiff(path: string, staged: boolean): Promise<File
 }
 
 export async function stage(path: string): Promise<void> {
-  if (!isTauri()) return mockMove(MOCK_STATUS.unstaged, MOCK_STATUS.staged, path);
+  if (!isTauri()) {
+    mockRecord("Stage");
+    return mockMove(MOCK_STATUS.unstaged, MOCK_STATUS.staged, path);
+  }
   await invoke<void>("stage", { path });
 }
 
 export async function unstage(path: string): Promise<void> {
-  if (!isTauri()) return mockMove(MOCK_STATUS.staged, MOCK_STATUS.unstaged, path);
+  if (!isTauri()) {
+    mockRecord("Unstage");
+    return mockMove(MOCK_STATUS.staged, MOCK_STATUS.unstaged, path);
+  }
   await invoke<void>("unstage", { path });
 }
 
 // Per-hunk staging (git add -p style). In preview mode, approximate by dropping
 // the affected hunk from the mock file (or moving the file when it empties).
 export async function stageHunk(path: string, hunkIndex: number): Promise<void> {
-  if (!isTauri()) return mockMoveHunk(MOCK_STATUS.unstaged, MOCK_STATUS.staged, path, hunkIndex);
+  if (!isTauri()) {
+    mockRecord("Stage block");
+    return mockMoveHunk(MOCK_STATUS.unstaged, MOCK_STATUS.staged, path, hunkIndex);
+  }
   await invoke<void>("stage_hunk", { path, hunkIndex });
 }
 
 export async function unstageHunk(path: string, hunkIndex: number): Promise<void> {
-  if (!isTauri()) return mockMoveHunk(MOCK_STATUS.staged, MOCK_STATUS.unstaged, path, hunkIndex);
+  if (!isTauri()) {
+    mockRecord("Unstage block");
+    return mockMoveHunk(MOCK_STATUS.staged, MOCK_STATUS.unstaged, path, hunkIndex);
+  }
   await invoke<void>("unstage_hunk", { path, hunkIndex });
 }
 
@@ -225,6 +237,7 @@ export async function discardHunk(path: string, hunkIndex: number): Promise<void
 export async function stageAll(): Promise<void> {
   if (!isTauri()) {
     MOCK_STATUS.staged.push(...MOCK_STATUS.unstaged.splice(0));
+    mockRecord("Stage all");
     return;
   }
   await invoke<void>("stage_all", {});
@@ -233,6 +246,7 @@ export async function stageAll(): Promise<void> {
 export async function unstageAll(): Promise<void> {
   if (!isTauri()) {
     MOCK_STATUS.unstaged.push(...MOCK_STATUS.staged.splice(0));
+    mockRecord("Unstage all");
     return;
   }
   await invoke<void>("unstage_all", {});
