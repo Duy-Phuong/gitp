@@ -29,7 +29,7 @@ pub use blame::BlameLine;
 pub use commit_ops::ResetMode;
 pub use config::{ConfigEntry, ConfigScope};
 pub use conflict_ops::{ConflictSides, ConflictStatus};
-pub use diff::{ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff};
+pub use diff::{ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff, DEFAULT_CONTEXT_LINES};
 pub use error::{Error, Result};
 pub use filelog::FileCommit;
 pub use log::{CommitRow, LogOptions};

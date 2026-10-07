@@ -3,10 +3,11 @@
 // Amend + Commit). A stateful controller owns the selection, per-panel collapse
 // state, and the commit fields, reloading from the backend after each mutation.
 
+import { DEFAULT_CONTEXT_LINES } from "../api";
 import { autoGrowTextarea, clear, copyToClipboard, el } from "../dom";
 import type { ChangeKind, CommitDetail, FileDiff, StatusLists } from "../types";
 import { type MenuItem, showContextMenu } from "./context-menu";
-import { renderFile, renderSplitDiff } from "./detail";
+import { contextControls, renderFile, renderSplitDiff } from "./detail";
 import { renderFileTree } from "./tree";
 
 export type Panel = "unstaged" | "staged";
@@ -14,16 +15,19 @@ export type Panel = "unstaged" | "staged";
 export interface ChangesCallbacks {
   // Staging trees: paths + statuses only, no hunks (cheap to refresh).
   fetchStatus: () => Promise<StatusLists>;
-  // The selected file's full diff (with hunks), fetched on demand.
-  fetchFileDiff: (path: string, staged: boolean) => Promise<FileDiff | null>;
+  // The selected file's full diff (with hunks), fetched on demand with
+  // `contextLines` of unchanged context around each change.
+  fetchFileDiff: (path: string, staged: boolean, contextLines: number) => Promise<FileDiff | null>;
   stage: (path: string) => Promise<void>;
   unstage: (path: string) => Promise<void>;
   stageAll: () => Promise<void>;
   unstageAll: () => Promise<void>;
   // Per-hunk (per-block) operations, driven by the diff's right-click menu.
-  stageHunk: (path: string, hunkIndex: number) => Promise<void>;
-  unstageHunk: (path: string, hunkIndex: number) => Promise<void>;
-  discardHunk: (path: string, hunkIndex: number) => Promise<void>;
+  // `contextLines` must be the context the diff was drawn with: it decides
+  // where blocks split, so it's what makes `hunkIndex` the block clicked.
+  stageHunk: (path: string, hunkIndex: number, contextLines: number) => Promise<void>;
+  unstageHunk: (path: string, hunkIndex: number, contextLines: number) => Promise<void>;
+  discardHunk: (path: string, hunkIndex: number, contextLines: number) => Promise<void>;
   // File-level operations driven by the file-row right-click menu, each acting
   // on the current checkbox multi-selection (or the right-clicked file).
   discardFiles: (paths: string[]) => Promise<void>;
@@ -89,6 +93,8 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   // was fetched for — lets loadSelectedDiff skip re-fetching on a reload() where
   // that summary hasn't changed (see loadSelectedDiff).
   let selectedDiffSummary: FileDiff | null = null;
+  // The context size selectedDiff was fetched with (what its blocks are cut at).
+  let selectedDiffContext = DEFAULT_CONTEXT_LINES;
   // Whether the current selection's diff fetch has completed — distinguishes
   // "still loading" from "loaded but no textual diff" (binary / Git LFS file).
   let diffLoaded = false;
@@ -109,6 +115,8 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let amendPrefill: { subject: string; body: string } | null = null;
   let busy = false;
   let splitView = false;
+  // Unchanged lines shown around each change (toolbar: fewer / more / full).
+  let contextLines = DEFAULT_CONTEXT_LINES;
   let diffHost: HTMLElement | null = null;
 
   async function reload(): Promise<void> {
@@ -155,17 +163,25 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       }
     }
     const summary = (sel.panel === "staged" ? staged : unstaged).find((f) => f.path === sel.path) ?? null;
-    if (diffLoaded && selectedDiff && summary && sameSummary(summary, selectedDiffSummary)) {
+    if (
+      diffLoaded &&
+      selectedDiff &&
+      summary &&
+      sameSummary(summary, selectedDiffSummary) &&
+      selectedDiffContext === contextLines
+    ) {
       return; // status for this file is unchanged — the hunks we have are still current
     }
     const token = ++diffToken;
+    const ctx = contextLines;
     selectedDiff = null;
     diffLoaded = false;
-    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged");
+    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", ctx);
     if (token !== diffToken) return; // selection moved on; drop this result
     selectedDiff = file;
     diffLoaded = true;
     selectedDiffSummary = summary;
+    selectedDiffContext = ctx;
     if (diffHost) renderDiffInto(diffHost);
   }
 
@@ -329,8 +345,17 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       title: "Edit File",
     });
     editBtn.addEventListener("click", () => void cb.openInEditor(selected!.path));
+    const context = contextControls(contextLines, !hasDiff, (next) => {
+      contextLines = next;
+      if (diffHost) renderDiffInto(diffHost);
+      void loadSelectedDiff();
+    });
     return el("div", { class: "diff-toolbar" }, [
-      el("div", { class: "diff-toolbar-group" }, hasDiff ? [mk("Unified", !splitView, false), mk("Split", splitView, true)] : []),
+      el(
+        "div",
+        { class: "diff-toolbar-group" },
+        hasDiff ? [mk("Unified", !splitView, false), mk("Split", splitView, true), ...context] : [],
+      ),
       editBtn,
     ]);
   }
@@ -341,6 +366,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   function attachHunkControls(body: HTMLElement): void {
     const sel = selected;
     if (!sel) return;
+    const ctx = selectedDiffContext;
     for (const hunkEl of body.querySelectorAll<HTMLElement>(".hunk[data-hunk]")) {
       const header = hunkEl.querySelector(".hunk-header");
       if (!header) continue;
@@ -356,11 +382,11 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       };
       if (sel.panel === "unstaged") {
         actions.append(
-          btn("Stage", false, () => void run(() => cb.stageHunk(sel.path, index))),
-          btn("Discard…", true, () => void discardHunkAction(sel.path, index)),
+          btn("Stage", false, () => void run(() => cb.stageHunk(sel.path, index, ctx))),
+          btn("Discard…", true, () => void discardHunkAction(sel.path, index, ctx)),
         );
       } else {
-        actions.append(btn("Unstage", false, () => void run(() => cb.unstageHunk(sel.path, index))));
+        actions.append(btn("Unstage", false, () => void run(() => cb.unstageHunk(sel.path, index, ctx))));
       }
       header.append(actions);
     }
@@ -372,6 +398,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   function attachHunkMenus(body: HTMLElement): void {
     const sel = selected;
     if (!sel) return;
+    const ctx = selectedDiffContext;
     for (const hunkEl of body.querySelectorAll<HTMLElement>(".hunk[data-hunk]")) {
       const index = Number(hunkEl.dataset.hunk);
       hunkEl.addEventListener("contextmenu", (e) => {
@@ -379,26 +406,26 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         const items =
           sel.panel === "unstaged"
             ? [
-                { label: "Stage this block", run: () => run(() => cb.stageHunk(sel.path, index)) },
+                { label: "Stage this block", run: () => run(() => cb.stageHunk(sel.path, index, ctx)) },
                 {
                   label: "Discard this block…",
                   danger: true,
-                  run: () => void discardHunkAction(sel.path, index),
+                  run: () => void discardHunkAction(sel.path, index, ctx),
                 },
               ]
-            : [{ label: "Unstage this block", run: () => run(() => cb.unstageHunk(sel.path, index)) }];
+            : [{ label: "Unstage this block", run: () => run(() => cb.unstageHunk(sel.path, index, ctx)) }];
         showContextMenu(e.clientX, e.clientY, items);
       });
     }
   }
 
-  async function discardHunkAction(path: string, index: number): Promise<void> {
+  async function discardHunkAction(path: string, index: number, ctx: number): Promise<void> {
     const ok = await cb.confirm(`Discard this block of ${path}? This change will be lost.`);
     if (!ok) {
       cb.setStatus("Discard cancelled.");
       return;
     }
-    await run(() => cb.discardHunk(path, index));
+    await run(() => cb.discardHunk(path, index, ctx));
   }
 
   // Drop checked paths that no longer exist in their panel (files moved between

@@ -41,9 +41,9 @@ impl Repo {
         opts.patience(true)
             .include_untracked(true)
             .recurse_untracked_dirs(true);
-        let mut diff =
-            self.inner
-                .diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts))?;
+        let mut diff = self
+            .inner
+            .diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts))?;
         diff.find_similar(Some(&mut git2::DiffFindOptions::new()))?;
         collect_files(&diff)
     }
@@ -161,9 +161,15 @@ impl Repo {
     /// The full diff (with hunks) for a single `path`, either staged
     /// (HEAD → index) or unstaged (index → working tree). Narrowed with a
     /// pathspec so only that one file's blobs are read. Returns `None` if the
-    /// path has no changes in that direction.
-    pub fn file_diff(&self, path: &str, staged: bool) -> Result<Option<FileDiff>> {
-        let diff = self.staging_diff(path, staged)?;
+    /// path has no changes in that direction. `context_lines` is how much
+    /// unchanged text surrounds each change (see `DEFAULT_CONTEXT_LINES`).
+    pub fn file_diff(
+        &self,
+        path: &str,
+        staged: bool,
+        context_lines: u32,
+    ) -> Result<Option<FileDiff>> {
+        let diff = self.staging_diff(path, staged, context_lines)?;
         let mut files = collect_files(&diff)?;
         let idx = files.iter().position(|f| f.path == path);
         Ok(match idx {
@@ -175,8 +181,14 @@ impl Repo {
     /// The raw git2 diff for a single `path` in one direction — staged
     /// (HEAD → index) or unstaged (index → working tree). Shared by `file_diff`
     /// and the per-hunk operations so a hunk's index is identical whether it's
-    /// being rendered or applied.
-    pub(crate) fn staging_diff(&self, path: &str, staged: bool) -> Result<git2::Diff<'_>> {
+    /// being rendered or applied — provided both use the same `context_lines`,
+    /// since more context merges nearby hunks and less splits them.
+    pub(crate) fn staging_diff(
+        &self,
+        path: &str,
+        staged: bool,
+        context_lines: u32,
+    ) -> Result<git2::Diff<'_>> {
         let head_tree = match self.inner.head() {
             Ok(head) => Some(head.peel_to_tree()?),
             Err(_) => None,
@@ -185,7 +197,9 @@ impl Repo {
         index.read(true)?;
 
         let mut opts = git2::DiffOptions::new();
-        opts.patience(true).pathspec(path);
+        opts.patience(true)
+            .context_lines(context_lines)
+            .pathspec(path);
         let diff = if staged {
             self.inner
                 .diff_tree_to_index(head_tree.as_ref(), Some(&index), Some(&mut opts))?

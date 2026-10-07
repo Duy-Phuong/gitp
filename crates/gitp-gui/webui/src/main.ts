@@ -29,6 +29,7 @@ import {
   fetchBlame,
   fetchBranch,
   fetchCommitDetail,
+  fetchCommitFileDiff,
   fetchCommitTree,
   fetchConfig,
   goneBranches,
@@ -3747,6 +3748,8 @@ async function init(): Promise<void> {
     fetchTree: fetchCommitTree,
     fetchBlame,
     fetchFileHistory,
+    fetchFileDiff: (id, file, contextLines) =>
+      fetchCommitFileDiff(id, file.path, file.old_path, contextLines),
     initialTab: loadDetailTab(),
     onTabChange: saveDetailTab,
   });

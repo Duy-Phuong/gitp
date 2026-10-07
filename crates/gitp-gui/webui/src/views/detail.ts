@@ -3,10 +3,12 @@
 //
 // In the Changes tab the selected file has its own toolbar: switch between
 // Diff / Blame / History, step through changes with the arrows, and toggle a
-// unified or split (side-by-side) diff. A single stateful controller owns the
-// pane: active tab, selected file, view mode, split flag, current hunk, and the
-// lazily-loaded tree / blame / history (each cached).
+// unified or split (side-by-side) diff, and show fewer / more / all unchanged
+// lines around each change. A single stateful controller owns the pane: active
+// tab, selected file, view mode, split flag, context size, current hunk, and the
+// lazily-loaded tree / blame / history / re-contexted diff (each cached).
 
+import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT } from "../api";
 import { clear, copyToClipboard, el, statusBadge, svg } from "../dom";
 import type { BlameLine, CommitDetail, FileCommit, FileDiff } from "../types";
 import { wordDiff, type Seg } from "../worddiff";
@@ -28,6 +30,9 @@ export interface DetailCallbacks {
   // Fetch per-line blame / commit history for a file at a commit.
   fetchBlame: (id: string, path: string) => Promise<BlameLine[]>;
   fetchFileHistory: (id: string, path: string) => Promise<FileCommit[]>;
+  // Re-diff one of the commit's files with `contextLines` of context (the
+  // commit detail's own diffs use the default).
+  fetchFileDiff: (id: string, file: FileDiff, contextLines: number) => Promise<FileDiff | null>;
   // Which tab to open with. The pane keeps whichever tab you last used as you
   // move between commits; this is the starting point, restored across restarts
   // by the host. Defaults to Changes — clicking a commit to see what changed in
@@ -62,10 +67,13 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   let selectedFile = 0;
   let fileMode: FileMode = "diff";
   let splitView = false;
+  let contextLines = DEFAULT_CONTEXT_LINES;
   let currentHunk = 0;
   let tree: { id: string; paths: string[] } | null = null;
   let blame: Cached<BlameLine[]> | null = null;
   let history: Cached<FileCommit[]> | null = null;
+  // The selected file re-diffed at a non-default context; key adds the context.
+  let recontexted: Cached<FileDiff | null> | null = null;
   const collapsed = new Set<string>(); // collapsed folders in the File Tree
 
   function show(next: CommitDetail): void {
@@ -230,6 +238,8 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
       sep(),
       iconBtn(["M12 19V5", "M6 11l6-6 6 6"], "Previous change", !diffMode, () => gotoChange(-1)),
       iconBtn(["M12 5v14", "M6 13l6 6 6-6"], "Next change", !diffMode, () => gotoChange(1)),
+      sep(),
+      ...contextControls(contextLines, !diffMode, setContext),
     );
 
     const toggle = el("div", { class: "tb-group" }, [
@@ -244,7 +254,44 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const file = detail!.files[selectedFile];
     if (fileMode === "blame") return renderBlameView(view, file);
     if (fileMode === "history") return renderHistoryView(view, file);
-    view.append(splitView ? renderSplitDiff(file) : renderUnifiedDiff(file));
+    const shown = displayedDiff(selectedFile);
+    if (shown === undefined) return renderRecontexted(view, file);
+    view.append(splitView ? renderSplitDiff(shown) : renderUnifiedDiff(shown));
+  }
+
+  // The file as it should be drawn at the current context: the commit's own
+  // diff at the default, the cached re-diff otherwise, or `undefined` while
+  // that re-diff hasn't been fetched yet.
+  function displayedDiff(idx: number): FileDiff | undefined {
+    const file = detail!.files[idx];
+    if (contextLines === DEFAULT_CONTEXT_LINES) return file;
+    if (recontexted?.key !== contextKey(file)) return undefined;
+    return recontexted.data ?? file;
+  }
+
+  function contextKey(file: FileDiff): string {
+    return `${detail!.id}:${file.path}:${contextLines}`;
+  }
+
+  function renderRecontexted(view: HTMLElement, file: FileDiff): void {
+    view.append(el("div", { class: "detail-empty", text: "Loading…" }));
+    const key = contextKey(file);
+    cb.fetchFileDiff(detail!.id, file, contextLines)
+      .then((data) => {
+        recontexted = { key, data };
+        // Only repaint if the user is still looking at this file and context.
+        if (detail && contextKey(detail.files[selectedFile]) === key) render();
+      })
+      .catch((err) => {
+        clear(view);
+        view.append(el("div", { class: "detail-empty", text: `Diff failed: ${String(err)}` }));
+      });
+  }
+
+  function setContext(next: number): void {
+    contextLines = next;
+    currentHunk = 0;
+    render();
   }
 
   function setFileMode(mode: FileMode): void {
@@ -263,12 +310,14 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const d = detail!;
     let fileIdx = selectedFile;
     let hunk = currentHunk + dir;
-    const count = d.files[fileIdx].hunks.length;
+    // Hunks as drawn — more context merges nearby ones, so count those.
+    const hunkCount = (idx: number) => (displayedDiff(idx) ?? d.files[idx]).hunks.length;
+    const count = hunkCount(fileIdx);
 
     if (hunk < 0) {
       if (fileIdx === 0) return; // already at the first change
       fileIdx -= 1;
-      hunk = Math.max(0, d.files[fileIdx].hunks.length - 1);
+      hunk = Math.max(0, hunkCount(fileIdx) - 1);
     } else if (hunk >= count) {
       if (fileIdx === d.files.length - 1) return; // already at the last change
       fileIdx += 1;
@@ -472,6 +521,33 @@ function icon(paths: string[]): SVGElement {
 
 function sep(): HTMLElement {
   return el("span", { class: "tb-sep" });
+}
+
+// How many lines "fewer" / "more" moves the context by — git's default size.
+const CONTEXT_STEP = 3;
+const LINES_ICON = ["M11 6h10", "M11 12h10", "M11 18h10"];
+
+// Show fewer / more unchanged lines around each change, or the full file.
+// Shared with the Local Changes diff. `ctx` is the current context size;
+// leaving full-file mode (either button) returns to the default.
+export function contextControls(ctx: number, disabled: boolean, onChange: (next: number) => void): HTMLElement[] {
+  const full = ctx >= FULL_FILE_CONTEXT;
+  const now = full ? "full file" : `${ctx} line${ctx === 1 ? "" : "s"}`;
+  return [
+    iconBtn([...LINES_ICON, "M3 12h5"], `Show fewer lines around changes (now ${now})`, disabled || ctx === 0, () =>
+      onChange(full ? DEFAULT_CONTEXT_LINES : Math.max(0, ctx - CONTEXT_STEP)),
+    ),
+    iconBtn([...LINES_ICON, "M3 12h5", "M5.5 9.5v5"], `Show more lines around changes (now ${now})`, disabled || full, () =>
+      onChange(ctx + CONTEXT_STEP),
+    ),
+    iconBtn(
+      [...LINES_ICON, "M6 3v18", "M3 6l3-3 3 3", "M3 18l3 3 3-3"],
+      full ? "Show changes only" : "Show full file",
+      disabled,
+      () => onChange(full ? DEFAULT_CONTEXT_LINES : FULL_FILE_CONTEXT),
+      full && !disabled,
+    ),
+  ];
 }
 
 // --- diff renderers ---------------------------------------------------------

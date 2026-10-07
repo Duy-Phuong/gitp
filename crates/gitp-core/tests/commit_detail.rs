@@ -57,3 +57,67 @@ fn reports_a_modification_with_added_and_removed_lines() {
     assert!(added_lines(file).iter().any(|l| l.contains("CHANGED")));
     assert!(removed_lines(file).iter().any(|l| l.trim() == "2"));
 }
+
+#[test]
+fn commit_file_diff_follows_the_requested_context() {
+    let fixture = FixtureRepo::init();
+    let base: String = (1..=12).map(|n| format!("line {n}\n")).collect();
+    fixture.commit_file("f.txt", &base, "base");
+    let edited = base
+        .replace("line 2\n", "LINE 2\n")
+        .replace("line 11\n", "LINE 11\n");
+    let c = fixture.commit_file("f.txt", &edited, "edit");
+    let repo = Repo::open(fixture.path()).unwrap();
+    let rev = c.to_string();
+
+    let default = repo
+        .commit_file_diff(&rev, "f.txt", None, 3)
+        .unwrap()
+        .unwrap();
+    assert_eq!(default.hunks.len(), 2);
+
+    let full = repo
+        .commit_file_diff(&rev, "f.txt", None, u32::MAX)
+        .unwrap()
+        .unwrap();
+    assert_eq!(full.hunks.len(), 1);
+    assert_eq!(full.hunks[0].lines.len(), 14, "every line of the file");
+    assert_eq!(added_lines(&full), vec!["LINE 2", "LINE 11"]);
+
+    assert!(repo
+        .commit_file_diff(&rev, "missing.txt", None, 3)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn commit_file_diff_keeps_a_rename_paired() {
+    let fixture = FixtureRepo::init();
+    let body: String = (1..=20).map(|n| format!("line {n}\n")).collect();
+    fixture.commit_file("old.txt", &body, "add");
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git")
+            .current_dir(fixture.path())
+            .args(args)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?}");
+    };
+    git(&["mv", "old.txt", "new.txt"]);
+    std::fs::write(
+        fixture.path().join("new.txt"),
+        body.replace("line 5\n", "LINE 5\n"),
+    )
+    .unwrap();
+    git(&["commit", "-qam", "rename"]);
+    let repo = Repo::open(fixture.path()).unwrap();
+
+    let file = repo
+        .commit_file_diff("HEAD", "new.txt", Some("old.txt"), 3)
+        .unwrap()
+        .unwrap();
+    assert_eq!(file.status, ChangeKind::Renamed);
+    assert_eq!(file.old_path.as_deref(), Some("old.txt"));
+    assert_eq!(added_lines(&file), vec!["LINE 5"]);
+}

@@ -127,6 +127,25 @@ export async function fetchCommitDetail(rev: string): Promise<CommitDetail> {
   return invoke<CommitDetail>("get_commit_detail", { rev });
 }
 
+// Lines of unchanged context around each change: git's default, which is what
+// fetchCommitDetail's diffs use.
+export const DEFAULT_CONTEXT_LINES = 3;
+// "Full file": more context than any file has lines, so the whole file comes
+// back as one block. Kept well under 2^31 — libgit2 doubles it internally.
+export const FULL_FILE_CONTEXT = 1_000_000_000;
+
+// One file of a commit re-diffed with `contextLines` of context — the diff
+// pane's show more / show less / full file. `oldPath` keeps a rename paired.
+export async function fetchCommitFileDiff(
+  rev: string,
+  path: string,
+  oldPath: string | null,
+  contextLines: number,
+): Promise<FileDiff | null> {
+  if (!isTauri()) return mockDetail(rev).files.find((f) => f.path === path) ?? null;
+  return invoke<FileDiff | null>("get_commit_file_diff", { rev, path, oldPath, contextLines });
+}
+
 export async function fetchRefs(): Promise<Refs> {
   if (!isTauri()) return MOCK_REFS;
   return invoke<Refs>("get_refs", {});
@@ -182,12 +201,16 @@ export async function fetchStatusSummary(): Promise<StatusLists> {
 
 // The full diff (with hunks) for one file, in the staged (HEAD→index) or
 // unstaged (index→worktree) direction. Null when the path has no such change.
-export async function fetchFileDiff(path: string, staged: boolean): Promise<FileDiff | null> {
+export async function fetchFileDiff(
+  path: string,
+  staged: boolean,
+  contextLines: number,
+): Promise<FileDiff | null> {
   if (!isTauri()) {
     const list = staged ? MOCK_STATUS.staged : MOCK_STATUS.unstaged;
     return list.find((f) => f.path === path) ?? null;
   }
-  return invoke<FileDiff | null>("get_file_diff", { path, staged });
+  return invoke<FileDiff | null>("get_file_diff", { path, staged, contextLines });
 }
 
 export async function stage(path: string): Promise<void> {
@@ -208,30 +231,32 @@ export async function unstage(path: string): Promise<void> {
 
 // Per-hunk staging (git add -p style). In preview mode, approximate by dropping
 // the affected hunk from the mock file (or moving the file when it empties).
-export async function stageHunk(path: string, hunkIndex: number): Promise<void> {
+// `contextLines` is the context the diff was shown with — it decides which
+// block `hunkIndex` is.
+export async function stageHunk(path: string, hunkIndex: number, contextLines: number): Promise<void> {
   if (!isTauri()) {
     mockRecord("Stage block");
     return mockMoveHunk(MOCK_STATUS.unstaged, MOCK_STATUS.staged, path, hunkIndex);
   }
-  await invoke<void>("stage_hunk", { path, hunkIndex });
+  await invoke<void>("stage_hunk", { path, hunkIndex, contextLines });
 }
 
-export async function unstageHunk(path: string, hunkIndex: number): Promise<void> {
+export async function unstageHunk(path: string, hunkIndex: number, contextLines: number): Promise<void> {
   if (!isTauri()) {
     mockRecord("Unstage block");
     return mockMoveHunk(MOCK_STATUS.staged, MOCK_STATUS.unstaged, path, hunkIndex);
   }
-  await invoke<void>("unstage_hunk", { path, hunkIndex });
+  await invoke<void>("unstage_hunk", { path, hunkIndex, contextLines });
 }
 
-export async function discardHunk(path: string, hunkIndex: number): Promise<void> {
+export async function discardHunk(path: string, hunkIndex: number, contextLines: number): Promise<void> {
   if (!isTauri()) {
     const f = MOCK_STATUS.unstaged.find((x) => x.path === path);
     f?.hunks.splice(hunkIndex, 1);
     if (f && f.hunks.length === 0) mockMove(MOCK_STATUS.unstaged, [], path);
     return;
   }
-  await invoke<void>("discard_hunk", { path, hunkIndex });
+  await invoke<void>("discard_hunk", { path, hunkIndex, contextLines });
 }
 
 export async function stageAll(): Promise<void> {

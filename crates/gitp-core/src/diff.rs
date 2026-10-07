@@ -78,6 +78,10 @@ pub struct CommitDetail {
     pub files: Vec<FileDiff>,
 }
 
+/// Lines of unchanged context around each change — git's default, and what
+/// every diff uses unless the viewer asks for more or fewer.
+pub const DEFAULT_CONTEXT_LINES: u32 = 3;
+
 impl Repo {
     /// Detail for the commit named by `rev` (a full/short oid or ref name).
     /// The diff compares the commit against its first parent (or the empty tree
@@ -87,21 +91,8 @@ impl Repo {
         let commit = obj.peel_to_commit()?;
         let author = commit.author();
 
-        let new_tree = commit.tree()?;
-        let parent_tree = match commit.parent(0) {
-            Ok(parent) => Some(parent.tree()?),
-            Err(_) => None,
-        };
-
-        let mut diff = self.inner.diff_tree_to_tree(
-            parent_tree.as_ref(),
-            Some(&new_tree),
-            Some(git2::DiffOptions::new().patience(true)),
-        )?;
-        // Detect renames so ChangeKind::Renamed is reported.
-        diff.find_similar(Some(&mut git2::DiffFindOptions::new()))?;
-
-        let files = collect_files(&diff)?;
+        let mut opts = git2::DiffOptions::new();
+        let files = collect_files(&self.commit_diff(&commit, opts.patience(true))?)?;
 
         Ok(CommitDetail {
             id: commit.id().to_string(),
@@ -113,6 +104,49 @@ impl Repo {
             parents: commit.parent_ids().map(|p| p.to_string()).collect(),
             files,
         })
+    }
+
+    /// One file of the commit named by `rev`, diffed with `context_lines` of
+    /// unchanged context around each change — the diff pane's show more / show
+    /// less / full file. `old_path` is a rename's source path: both sides must
+    /// be in the diff for the pair to be detected as a rename. `None` when the
+    /// commit doesn't touch `path`.
+    pub fn commit_file_diff(
+        &self,
+        rev: &str,
+        path: &str,
+        old_path: Option<&str>,
+        context_lines: u32,
+    ) -> Result<Option<FileDiff>> {
+        let commit = self.inner.revparse_single(rev)?.peel_to_commit()?;
+        let mut opts = git2::DiffOptions::new();
+        opts.patience(true)
+            .context_lines(context_lines)
+            .pathspec(path);
+        if let Some(old) = old_path {
+            opts.pathspec(old);
+        }
+        let files = collect_files(&self.commit_diff(&commit, &mut opts)?)?;
+        Ok(files.into_iter().find(|f| f.path == path))
+    }
+
+    /// `commit` against its first parent (or the empty tree for a root commit),
+    /// with renames detected so ChangeKind::Renamed is reported.
+    fn commit_diff(
+        &self,
+        commit: &git2::Commit,
+        opts: &mut git2::DiffOptions,
+    ) -> Result<git2::Diff<'_>> {
+        let new_tree = commit.tree()?;
+        let parent_tree = match commit.parent(0) {
+            Ok(parent) => Some(parent.tree()?),
+            Err(_) => None,
+        };
+        let mut diff =
+            self.inner
+                .diff_tree_to_tree(parent_tree.as_ref(), Some(&new_tree), Some(opts))?;
+        diff.find_similar(Some(&mut git2::DiffFindOptions::new()))?;
+        Ok(diff)
     }
 }
 
@@ -155,7 +189,9 @@ pub(crate) fn collect_files(diff: &git2::Diff) -> Result<Vec<FileDiff>> {
                     });
                 }
                 file.hunks.push(DiffHunk {
-                    header: String::from_utf8_lossy(hunk.header()).trim_end().to_string(),
+                    header: String::from_utf8_lossy(hunk.header())
+                        .trim_end()
+                        .to_string(),
                     lines,
                 });
             }

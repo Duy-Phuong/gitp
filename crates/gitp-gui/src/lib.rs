@@ -374,6 +374,18 @@ fn get_commit_detail_impl(state: &RepoState, rev: String) -> Result<CommitDetail
     with_repo(state, |repo| repo.commit_detail(&rev))
 }
 
+fn get_commit_file_diff_impl(
+    state: &RepoState,
+    rev: String,
+    path: String,
+    old_path: Option<String>,
+    context_lines: u32,
+) -> Result<Option<FileDiff>, String> {
+    with_repo(state, |repo| {
+        repo.commit_file_diff(&rev, &path, old_path.as_deref(), context_lines)
+    })
+}
+
 fn get_refs_impl(state: &RepoState) -> Result<Refs, String> {
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
@@ -398,8 +410,9 @@ fn get_file_diff_impl(
     state: &RepoState,
     path: String,
     staged: bool,
+    context_lines: u32,
 ) -> Result<Option<FileDiff>, String> {
-    with_repo(state, |repo| repo.file_diff(&path, staged))
+    with_repo(state, |repo| repo.file_diff(&path, staged, context_lines))
 }
 
 fn stage_impl(state: &RepoState, path: String) -> Result<(), String> {
@@ -410,18 +423,41 @@ fn unstage_impl(state: &RepoState, path: String) -> Result<(), String> {
     with_recorded_index(state, "Unstage", |repo| repo.unstage(&path))
 }
 
-fn stage_hunk_impl(state: &RepoState, path: String, hunk_index: usize) -> Result<(), String> {
-    with_recorded_index(state, "Stage block", |repo| repo.stage_hunk(&path, hunk_index))
+// The hunk ops take the context the diff was shown with, so `hunk_index`
+// names the same block the user clicked (see gitp-core's hunk.rs).
+fn stage_hunk_impl(
+    state: &RepoState,
+    path: String,
+    hunk_index: usize,
+    context_lines: u32,
+) -> Result<(), String> {
+    with_recorded_index(state, "Stage block", |repo| {
+        repo.stage_hunk(&path, hunk_index, context_lines)
+    })
 }
 
-fn unstage_hunk_impl(state: &RepoState, path: String, hunk_index: usize) -> Result<(), String> {
-    with_recorded_index(state, "Unstage block", |repo| repo.unstage_hunk(&path, hunk_index))
+fn unstage_hunk_impl(
+    state: &RepoState,
+    path: String,
+    hunk_index: usize,
+    context_lines: u32,
+) -> Result<(), String> {
+    with_recorded_index(state, "Unstage block", |repo| {
+        repo.unstage_hunk(&path, hunk_index, context_lines)
+    })
 }
 
-fn discard_hunk_impl(state: &RepoState, path: String, hunk_index: usize) -> Result<(), String> {
+fn discard_hunk_impl(
+    state: &RepoState,
+    path: String,
+    hunk_index: usize,
+    context_lines: u32,
+) -> Result<(), String> {
     // Snapshot the whole file so undo restores the discarded hunk exactly.
     let paths = [path.clone()];
-    with_recorded_discard(state, &paths, |repo| repo.discard_hunk(&path, hunk_index))
+    with_recorded_discard(state, &paths, |repo| {
+        repo.discard_hunk(&path, hunk_index, context_lines)
+    })
 }
 
 fn stage_all_impl(state: &RepoState) -> Result<(), String> {
@@ -1505,6 +1541,17 @@ fn get_commit_detail(rev: String, state: State<RepoState>) -> Result<CommitDetai
 }
 
 #[tauri::command(async)]
+fn get_commit_file_diff(
+    rev: String,
+    path: String,
+    old_path: Option<String>,
+    context_lines: u32,
+    state: State<RepoState>,
+) -> Result<Option<FileDiff>, String> {
+    get_commit_file_diff_impl(&state, rev, path, old_path, context_lines)
+}
+
+#[tauri::command(async)]
 fn get_refs(state: State<RepoState>) -> Result<Refs, String> {
     get_refs_impl(&state)
 }
@@ -1528,9 +1575,10 @@ fn get_status_summary(state: State<RepoState>) -> Result<StatusLists, String> {
 fn get_file_diff(
     path: String,
     staged: bool,
+    context_lines: u32,
     state: State<RepoState>,
 ) -> Result<Option<FileDiff>, String> {
-    get_file_diff_impl(&state, path, staged)
+    get_file_diff_impl(&state, path, staged, context_lines)
 }
 
 #[tauri::command(async)]
@@ -1544,18 +1592,33 @@ fn unstage(path: String, state: State<RepoState>) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
-fn stage_hunk(path: String, hunk_index: usize, state: State<RepoState>) -> Result<(), String> {
-    stage_hunk_impl(&state, path, hunk_index)
+fn stage_hunk(
+    path: String,
+    hunk_index: usize,
+    context_lines: u32,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    stage_hunk_impl(&state, path, hunk_index, context_lines)
 }
 
 #[tauri::command(async)]
-fn unstage_hunk(path: String, hunk_index: usize, state: State<RepoState>) -> Result<(), String> {
-    unstage_hunk_impl(&state, path, hunk_index)
+fn unstage_hunk(
+    path: String,
+    hunk_index: usize,
+    context_lines: u32,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    unstage_hunk_impl(&state, path, hunk_index, context_lines)
 }
 
 #[tauri::command(async)]
-fn discard_hunk(path: String, hunk_index: usize, state: State<RepoState>) -> Result<(), String> {
-    discard_hunk_impl(&state, path, hunk_index)
+fn discard_hunk(
+    path: String,
+    hunk_index: usize,
+    context_lines: u32,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    discard_hunk_impl(&state, path, hunk_index, context_lines)
 }
 
 #[tauri::command(async)]
@@ -2016,6 +2079,7 @@ pub fn run() {
             search_log,
             log_index_of,
             get_commit_detail,
+            get_commit_file_diff,
             get_refs,
             get_working_changes,
             get_status,
