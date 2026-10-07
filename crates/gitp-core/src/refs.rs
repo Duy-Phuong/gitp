@@ -280,7 +280,9 @@ pub(crate) fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// The length of the leading run of digits (or of non-digits) in `s`.
 fn run_len(s: &[u8], digits: bool) -> usize {
-    s.iter().take_while(|c| c.is_ascii_digit() == digits).count()
+    s.iter()
+        .take_while(|c| c.is_ascii_digit() == digits)
+        .count()
 }
 
 fn parse_run(run: &[u8]) -> Option<u64> {
@@ -335,7 +337,10 @@ mod natural_cmp_tests {
 
     #[test]
     fn non_version_names_still_order_sensibly_and_totally() {
-        assert_eq!(sorted(&["zeta", "alpha", "beta"]), ["alpha", "beta", "zeta"]);
+        assert_eq!(
+            sorted(&["zeta", "alpha", "beta"]),
+            ["alpha", "beta", "zeta"]
+        );
         // A prefix sorts before the longer name it prefixes.
         assert_eq!(natural_cmp("release", "release-1"), Ordering::Less);
         assert_eq!(natural_cmp("same", "same"), Ordering::Equal);

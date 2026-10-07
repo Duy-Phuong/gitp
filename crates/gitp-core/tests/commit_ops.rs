@@ -23,7 +23,10 @@ fn checkout_commit_detaches_head_at_that_commit() {
 
     // Detached HEAD: no branch is current, and the tree matches the old commit.
     assert!(repo.refs().unwrap().head.is_none(), "HEAD is detached");
-    assert_eq!(std::fs::read_to_string(fx.path().join("a.txt")).unwrap(), "one\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "one\n"
+    );
 }
 
 #[test]
@@ -34,7 +37,10 @@ fn create_branch_at_makes_and_checks_out_a_branch_at_the_commit() {
     repo.create_branch_at("hotfix", &oids[0]).unwrap();
 
     assert_eq!(repo.refs().unwrap().head.as_deref(), Some("hotfix"));
-    assert_eq!(std::fs::read_to_string(fx.path().join("a.txt")).unwrap(), "one\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "one\n"
+    );
 }
 
 #[test]
@@ -45,7 +51,11 @@ fn create_tag_at_tags_the_commit_without_moving_head() {
     repo.create_tag_at("v1.0", &oids[1]).unwrap();
 
     let refs = repo.refs().unwrap();
-    let tag = refs.tags.iter().find(|t| t.name == "v1.0").expect("tag exists");
+    let tag = refs
+        .tags
+        .iter()
+        .find(|t| t.name == "v1.0")
+        .expect("tag exists");
     assert_eq!(tag.target, oids[1], "tag points at the requested commit");
     assert_eq!(refs.head.as_deref(), Some("master"), "HEAD unchanged");
 }
@@ -59,20 +69,33 @@ fn reset_hard_moves_the_branch_and_discards_later_commits() {
 
     // main now tips at c1; only c1 remains reachable, tree reverted.
     assert_eq!(repo.log(Default::default()).unwrap().len(), 1);
-    assert_eq!(std::fs::read_to_string(fx.path().join("a.txt")).unwrap(), "one\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "one\n"
+    );
 }
 
 #[test]
 fn revert_adds_an_inverse_commit() {
     let (fx, _oids) = linear_repo();
     let repo = Repo::open(fx.path()).unwrap();
-    let head = fx.repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+    let head = fx
+        .repo
+        .head()
+        .unwrap()
+        .peel_to_commit()
+        .unwrap()
+        .id()
+        .to_string();
 
     repo.revert(&head).unwrap();
 
     // A new commit was added on top, undoing c3's change back to "two".
     assert_eq!(repo.log(Default::default()).unwrap().len(), 4);
-    assert_eq!(std::fs::read_to_string(fx.path().join("a.txt")).unwrap(), "two\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "two\n"
+    );
 }
 
 #[test]
@@ -92,5 +115,8 @@ fn cherry_pick_applies_a_commit_from_another_branch() {
     repo.cherry_pick(&side.to_string()).unwrap();
 
     // The cherry-picked file now exists on master.
-    assert!(fx.path().join("side.txt").exists(), "cherry-picked file present on master");
+    assert!(
+        fx.path().join("side.txt").exists(),
+        "cherry-picked file present on master"
+    );
 }

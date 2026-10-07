@@ -71,8 +71,11 @@ impl Repo {
             args.extend_from_slice(&refs);
             self.run_git_raw(&args)?
         } else {
-            let untracked: Vec<&str> =
-                refs.iter().copied().filter(|p| self.is_untracked(p)).collect();
+            let untracked: Vec<&str> = refs
+                .iter()
+                .copied()
+                .filter(|p| self.is_untracked(p))
+                .collect();
             if !untracked.is_empty() {
                 let mut add = vec!["add", "-N", "--"];
                 add.extend_from_slice(&untracked);
@@ -90,8 +93,7 @@ impl Repo {
             out?
         };
 
-        fs::write(dest, &patch)
-            .map_err(|e| Error::Message(format!("can't write patch: {e}")))?;
+        fs::write(dest, &patch).map_err(|e| Error::Message(format!("can't write patch: {e}")))?;
         Ok(format!("Saved patch to {}", dest.display()))
     }
 
@@ -149,8 +151,12 @@ impl Repo {
     /// Whether `path` exists in the current HEAD tree (i.e. it's a committed,
     /// tracked file rather than a newly added/untracked one).
     fn path_in_head(&self, path: &str) -> bool {
-        let Ok(head) = self.inner.head() else { return false };
-        let Ok(tree) = head.peel_to_tree() else { return false };
+        let Ok(head) = self.inner.head() else {
+            return false;
+        };
+        let Ok(tree) = head.peel_to_tree() else {
+            return false;
+        };
         tree.get_path(Path::new(path)).is_ok()
     }
 }

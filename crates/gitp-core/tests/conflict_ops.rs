@@ -11,8 +11,16 @@ use gitp_core::Repo;
 
 /// Run `git <args>` in `dir`, asserting success (test setup helper).
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").current_dir(dir).args(args).output().unwrap();
-    assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// Build a repo whose `dev` and `theirs` branches both changed the middle line
@@ -31,7 +39,10 @@ fn conflicted_repo() -> FixtureRepo {
     git(dir, &["commit", "-am", "ours change"]);
     // Start the merge — it conflicts and leaves the merge in progress.
     let repo = Repo::open(dir).unwrap();
-    assert!(repo.merge_branch("theirs").is_err(), "merge should conflict");
+    assert!(
+        repo.merge_branch("theirs").is_err(),
+        "merge should conflict"
+    );
     fx
 }
 
@@ -43,7 +54,10 @@ fn conflict_status_reports_a_merge_in_progress_with_the_conflicted_file() {
     let status = repo.conflict_status().unwrap();
     assert_eq!(status.kind, "merge");
     assert_eq!(status.conflicted, vec!["f.txt"]);
-    assert!(!status.message.is_empty(), "a default merge message is available");
+    assert!(
+        !status.message.is_empty(),
+        "a default merge message is available"
+    );
 }
 
 #[test]
@@ -52,9 +66,18 @@ fn conflict_sides_reads_ours_theirs_and_working_versions() {
     let repo = Repo::open(fx.path()).unwrap();
 
     let sides = repo.conflict_sides("f.txt").unwrap();
-    assert!(sides.ours.as_deref().unwrap().contains("ours"), "ours side is HEAD's version");
-    assert!(sides.theirs.as_deref().unwrap().contains("theirs"), "theirs side is the incoming version");
-    assert!(sides.working.contains("<<<<<<<") && sides.working.contains(">>>>>>>"), "working file has markers");
+    assert!(
+        sides.ours.as_deref().unwrap().contains("ours"),
+        "ours side is HEAD's version"
+    );
+    assert!(
+        sides.theirs.as_deref().unwrap().contains("theirs"),
+        "theirs side is the incoming version"
+    );
+    assert!(
+        sides.working.contains("<<<<<<<") && sides.working.contains(">>>>>>>"),
+        "working file has markers"
+    );
     assert!(!sides.binary);
 }
 
@@ -64,15 +87,25 @@ fn resolve_conflict_clears_the_file_and_finish_commits_the_merge() {
     let repo = Repo::open(fx.path()).unwrap();
 
     repo.resolve_conflict("f.txt", "a\nresolved\nc\n").unwrap();
-    assert!(repo.conflict_status().unwrap().conflicted.is_empty(), "no conflicts left after resolve");
+    assert!(
+        repo.conflict_status().unwrap().conflicted.is_empty(),
+        "no conflicts left after resolve"
+    );
 
     repo.finish_conflict("Merge theirs into dev").unwrap();
 
     // Merge is done: no conflict session, and the merge commit is HEAD.
     assert_eq!(repo.conflict_status().unwrap().kind, "none");
-    assert_eq!(std::fs::read_to_string(fx.path().join("f.txt")).unwrap(), "a\nresolved\nc\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("f.txt")).unwrap(),
+        "a\nresolved\nc\n"
+    );
     let head = repo.commit_detail("HEAD").unwrap();
-    assert_eq!(head.parents.len(), 2, "a two-parent merge commit was created");
+    assert_eq!(
+        head.parents.len(),
+        2,
+        "a two-parent merge commit was created"
+    );
 }
 
 #[test]
@@ -83,7 +116,11 @@ fn abort_conflict_restores_the_pre_merge_state() {
     repo.abort_conflict().unwrap();
 
     assert_eq!(repo.conflict_status().unwrap().kind, "none");
-    assert_eq!(std::fs::read_to_string(fx.path().join("f.txt")).unwrap(), "a\nours\nc\n", "back to ours");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("f.txt")).unwrap(),
+        "a\nours\nc\n",
+        "back to ours"
+    );
 }
 
 #[test]
@@ -104,16 +141,26 @@ fn conflicted_cherry_pick_repo() -> (FixtureRepo, String) {
     git(dir, &["checkout", "-b", "feature"]);
     std::fs::write(dir.join("f.txt"), "a\nfeature\nc\n").unwrap();
     git(dir, &["commit", "-am", "feature change"]);
-    let pick = String::from_utf8(Command::new("git").current_dir(dir).args(["rev-parse", "HEAD"]).output().unwrap().stdout)
-        .unwrap()
-        .trim()
-        .to_string();
+    let pick = String::from_utf8(
+        Command::new("git")
+            .current_dir(dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
     git(dir, &["checkout", "dev"]);
     std::fs::write(dir.join("f.txt"), "a\ndev\nc\n").unwrap();
     git(dir, &["commit", "-am", "dev change"]);
 
     let repo = Repo::open(dir).unwrap();
-    assert!(repo.cherry_pick(&pick).is_err(), "cherry-pick should conflict");
+    assert!(
+        repo.cherry_pick(&pick).is_err(),
+        "cherry-pick should conflict"
+    );
     (fx, pick)
 }
 
@@ -140,10 +187,20 @@ fn resolve_conflict_clears_the_file_and_finish_continues_the_cherry_pick() {
     repo.finish_conflict("").unwrap();
 
     assert_eq!(repo.conflict_status().unwrap().kind, "none");
-    assert_eq!(std::fs::read_to_string(fx.path().join("f.txt")).unwrap(), "a\nresolved\nc\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("f.txt")).unwrap(),
+        "a\nresolved\nc\n"
+    );
     let head = repo.commit_detail("HEAD").unwrap();
-    assert_eq!(head.parents.len(), 1, "cherry-pick creates a single-parent commit, not a merge");
-    assert_ne!(head.id, pick, "a new commit was created on dev, not the original");
+    assert_eq!(
+        head.parents.len(),
+        1,
+        "cherry-pick creates a single-parent commit, not a merge"
+    );
+    assert_ne!(
+        head.id, pick,
+        "a new commit was created on dev, not the original"
+    );
 }
 
 #[test]
@@ -154,5 +211,9 @@ fn abort_conflict_restores_the_pre_cherry_pick_state() {
     repo.abort_conflict().unwrap();
 
     assert_eq!(repo.conflict_status().unwrap().kind, "none");
-    assert_eq!(std::fs::read_to_string(fx.path().join("f.txt")).unwrap(), "a\ndev\nc\n", "back to dev's version");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("f.txt")).unwrap(),
+        "a\ndev\nc\n",
+        "back to dev's version"
+    );
 }

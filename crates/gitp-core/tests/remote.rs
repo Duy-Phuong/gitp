@@ -39,7 +39,10 @@ fn push_sets_upstream_on_first_push_and_uploads_commits() {
 
     let work = TempDir::new().unwrap();
     init_repo(work.path());
-    git(work.path(), &["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    git(
+        work.path(),
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
     std::fs::write(work.path().join("a.txt"), "hi\n").unwrap();
     git(work.path(), &["add", "."]);
     git(work.path(), &["commit", "-q", "-m", "c1"]);
@@ -67,7 +70,10 @@ fn pull_brings_new_commits_from_the_remote() {
     // Seed the remote with an initial commit.
     let seed = TempDir::new().unwrap();
     init_repo(seed.path());
-    git(seed.path(), &["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    git(
+        seed.path(),
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
     std::fs::write(seed.path().join("a.txt"), "one\n").unwrap();
     git(seed.path(), &["add", "."]);
     git(seed.path(), &["commit", "-q", "-m", "c1"]);
@@ -77,7 +83,12 @@ fn pull_brings_new_commits_from_the_remote() {
     let consumer = TempDir::new().unwrap();
     git(
         Path::new("."),
-        &["clone", "-q", remote.path().to_str().unwrap(), consumer.path().to_str().unwrap()],
+        &[
+            "clone",
+            "-q",
+            remote.path().to_str().unwrap(),
+            consumer.path().to_str().unwrap(),
+        ],
     );
 
     // The seed adds a new commit and pushes it.
@@ -88,7 +99,8 @@ fn pull_brings_new_commits_from_the_remote() {
 
     // The consumer pulls it down.
     let repo = Repo::open(consumer.path()).unwrap();
-    repo.pull(PullMode::FastForward).expect("pull fast-forwards the new commit");
+    repo.pull(PullMode::FastForward)
+        .expect("pull fast-forwards the new commit");
 
     assert!(
         consumer.path().join("b.txt").exists(),
@@ -103,7 +115,10 @@ fn plain_push_is_rejected_when_the_remote_has_commits_this_branch_lacks() {
 
     let seed = TempDir::new().unwrap();
     init_repo(seed.path());
-    git(seed.path(), &["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    git(
+        seed.path(),
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
     std::fs::write(seed.path().join("a.txt"), "one\n").unwrap();
     git(seed.path(), &["add", "."]);
     git(seed.path(), &["commit", "-q", "-m", "c1"]);
@@ -111,7 +126,15 @@ fn plain_push_is_rejected_when_the_remote_has_commits_this_branch_lacks() {
 
     // A second clone pushes a commit the first clone hasn't seen.
     let other = TempDir::new().unwrap();
-    git(Path::new("."), &["clone", "-q", remote.path().to_str().unwrap(), other.path().to_str().unwrap()]);
+    git(
+        Path::new("."),
+        &[
+            "clone",
+            "-q",
+            remote.path().to_str().unwrap(),
+            other.path().to_str().unwrap(),
+        ],
+    );
     git(other.path(), &["config", "user.name", "Other"]);
     git(other.path(), &["config", "user.email", "o@o.io"]);
     std::fs::write(other.path().join("b.txt"), "two\n").unwrap();
@@ -125,9 +148,14 @@ fn plain_push_is_rejected_when_the_remote_has_commits_this_branch_lacks() {
     git(seed.path(), &["commit", "-q", "-m", "c3"]);
 
     let repo = Repo::open(seed.path()).unwrap();
-    let err = repo.push().expect_err("a diverged remote must reject a plain push");
+    let err = repo
+        .push()
+        .expect_err("a diverged remote must reject a plain push");
     let msg = err.to_string();
-    assert!(msg.contains("[rejected]"), "expected a [rejected] marker, got: {msg}");
+    assert!(
+        msg.contains("[rejected]"),
+        "expected a [rejected] marker, got: {msg}"
+    );
     assert!(
         msg.contains("fetch first") || msg.contains("non-fast-forward"),
         "expected the standard non-fast-forward wording, got: {msg}"
@@ -141,7 +169,10 @@ fn push_force_overwrites_a_diverged_remote_branch() {
 
     let seed = TempDir::new().unwrap();
     init_repo(seed.path());
-    git(seed.path(), &["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    git(
+        seed.path(),
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
     std::fs::write(seed.path().join("a.txt"), "one\n").unwrap();
     git(seed.path(), &["add", "."]);
     git(seed.path(), &["commit", "-q", "-m", "c1"]);
@@ -151,7 +182,15 @@ fn push_force_overwrites_a_diverged_remote_branch() {
     // remote-tracking ref (origin/main) is stale, the exact condition that
     // makes a naive --force-with-lease refuse with "(stale info)".
     let other = TempDir::new().unwrap();
-    git(Path::new("."), &["clone", "-q", remote.path().to_str().unwrap(), other.path().to_str().unwrap()]);
+    git(
+        Path::new("."),
+        &[
+            "clone",
+            "-q",
+            remote.path().to_str().unwrap(),
+            other.path().to_str().unwrap(),
+        ],
+    );
     git(other.path(), &["config", "user.name", "Other"]);
     git(other.path(), &["config", "user.email", "o@o.io"]);
     std::fs::write(other.path().join("b.txt"), "two\n").unwrap();
@@ -164,7 +203,8 @@ fn push_force_overwrites_a_diverged_remote_branch() {
     git(seed.path(), &["commit", "-q", "-m", "c3"]);
 
     let repo = Repo::open(seed.path()).unwrap();
-    repo.push_force().expect("push_force fetches first, so the lease is fresh");
+    repo.push_force()
+        .expect("push_force fetches first, so the lease is fresh");
 
     let log = Command::new("git")
         .current_dir(remote.path())
@@ -173,7 +213,10 @@ fn push_force_overwrites_a_diverged_remote_branch() {
         .unwrap();
     let log = String::from_utf8_lossy(&log.stdout);
     assert!(log.contains("c3"), "the forced commit landed on the remote");
-    assert!(!log.contains("c2"), "the other clone's commit was overwritten, not merged");
+    assert!(
+        !log.contains("c2"),
+        "the other clone's commit was overwritten, not merged"
+    );
 }
 
 #[test]
@@ -184,9 +227,14 @@ fn stash_saves_changes_including_untracked_and_pop_restores_them() {
     std::fs::write(fx.path().join("new.txt"), "brand new\n").unwrap(); // untracked
 
     let repo = Repo::open(fx.path()).unwrap();
-    assert_eq!(repo.local_change_count().unwrap(), 2, "one modified + one untracked");
+    assert_eq!(
+        repo.local_change_count().unwrap(),
+        2,
+        "one modified + one untracked"
+    );
 
-    repo.stash().expect("stash saves tracked and untracked changes");
+    repo.stash()
+        .expect("stash saves tracked and untracked changes");
     assert_eq!(
         std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
         "one\n",
@@ -196,11 +244,21 @@ fn stash_saves_changes_including_untracked_and_pop_restores_them() {
         !fx.path().join("new.txt").exists(),
         "untracked file is swept away by stash --include-untracked"
     );
-    assert_eq!(repo.local_change_count().unwrap(), 0, "clean tree after stash");
+    assert_eq!(
+        repo.local_change_count().unwrap(),
+        0,
+        "clean tree after stash"
+    );
 
     repo.stash_pop().expect("pop restores everything");
-    assert_eq!(std::fs::read_to_string(fx.path().join("a.txt")).unwrap(), "two\n");
-    assert!(fx.path().join("new.txt").exists(), "untracked file restored after pop");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "two\n"
+    );
+    assert!(
+        fx.path().join("new.txt").exists(),
+        "untracked file restored after pop"
+    );
 }
 
 #[test]
@@ -228,7 +286,10 @@ fn gone_branches_lists_only_branches_whose_upstream_disappeared() {
 
     let work = TempDir::new().unwrap();
     init_repo(work.path());
-    git(work.path(), &["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    git(
+        work.path(),
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
     std::fs::write(work.path().join("a.txt"), "hi\n").unwrap();
     git(work.path(), &["add", "."]);
     git(work.path(), &["commit", "-q", "-m", "c1"]);

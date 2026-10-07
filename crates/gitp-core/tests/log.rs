@@ -9,8 +9,16 @@ fn log_includes_commits_on_branches_not_reachable_from_head() {
     let fx = FixtureRepo::init();
     fx.commit_file("a.txt", "1\n", "base");
     let run = |args: &[&str]| {
-        let out = Command::new("git").current_dir(fx.path()).args(args).output().unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        let out = Command::new("git")
+            .current_dir(fx.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     };
     let start = String::from_utf8(
         Command::new("git")
@@ -30,7 +38,10 @@ fn log_includes_commits_on_branches_not_reachable_from_head() {
     run(&["commit", "-qm", "only on feature"]);
     run(&["checkout", "-q", &start]); // back to the base branch (HEAD)
 
-    let opts = LogOptions { all_branches: true, ..Default::default() };
+    let opts = LogOptions {
+        all_branches: true,
+        ..Default::default()
+    };
     let summaries: Vec<String> = Repo::open(fx.path())
         .unwrap()
         .log(opts)

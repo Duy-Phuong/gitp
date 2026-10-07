@@ -112,7 +112,10 @@ impl Repo {
     ) -> Result<String> {
         // The first applied (non-dropped) step must land a commit — you can't
         // squash or fix up into a commit that isn't there yet.
-        if let Some(first) = steps.iter().find(|s| !matches!(s.action, RebaseAction::Drop)) {
+        if let Some(first) = steps
+            .iter()
+            .find(|s| !matches!(s.action, RebaseAction::Drop))
+        {
             if matches!(first.action, RebaseAction::Squash | RebaseAction::Fixup) {
                 return Err(Error::Message(
                     "The first commit can't be squashed or fixed up into a previous one.".into(),
@@ -211,7 +214,11 @@ impl Repo {
         // Non-comment, non-blank lines in the done / remaining todo lists.
         let count = |s: &Option<String>| {
             s.as_deref()
-                .map(|t| t.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).count())
+                .map(|t| {
+                    t.lines()
+                        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+                        .count()
+                })
                 .unwrap_or(0)
         };
         let done_list = read("done");
@@ -219,9 +226,13 @@ impl Repo {
         let done = count(&done_list);
         let total = done + count(&todo_list);
 
-        let current_sha = read("stopped-sha").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let current_sha = read("stopped-sha")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         let current_subject = current_sha.as_deref().and_then(|sha| {
-            self.run_git(&["log", "-1", "--format=%s", sha]).ok().map(|s| s.trim().to_string())
+            self.run_git(&["log", "-1", "--format=%s", sha])
+                .ok()
+                .map(|s| s.trim().to_string())
         });
 
         // Unmerged paths mean git stopped on a conflict; otherwise it was an
@@ -233,7 +244,14 @@ impl Repo {
             .filter(|l| !l.trim().is_empty())
             .map(str::to_string)
             .collect();
-        let paused_for = Some(if conflicted_files.is_empty() { "edit" } else { "conflict" }.to_string());
+        let paused_for = Some(
+            if conflicted_files.is_empty() {
+                "edit"
+            } else {
+                "conflict"
+            }
+            .to_string(),
+        );
 
         Ok(RebaseStatus {
             in_progress: true,

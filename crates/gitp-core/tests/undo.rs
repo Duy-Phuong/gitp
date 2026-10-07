@@ -31,12 +31,20 @@ fn undo_commit_moves_the_tip_back_but_keeps_the_change_staged() {
     };
 
     repo.undo(&action).unwrap();
-    assert_eq!(repo.head_commit_id().unwrap(), before, "tip back at the parent");
+    assert_eq!(
+        repo.head_commit_id().unwrap(),
+        before,
+        "tip back at the parent"
+    );
     // A soft reset keeps the working tree, so the committed change is still there.
     assert_eq!(read(&fx, "a.txt").as_deref(), Some("two\n"));
 
     repo.redo(&action).unwrap();
-    assert_eq!(repo.head_commit_id().unwrap(), after, "tip restored to the commit");
+    assert_eq!(
+        repo.head_commit_id().unwrap(),
+        after,
+        "tip restored to the commit"
+    );
 }
 
 #[test]
@@ -86,7 +94,11 @@ fn undo_delete_branch_recreates_it_at_the_same_commit() {
     };
 
     repo.undo(&action).unwrap();
-    assert_eq!(repo.branch_commit_id("feature").unwrap(), oid, "recreated at its tip");
+    assert_eq!(
+        repo.branch_commit_id("feature").unwrap(),
+        oid,
+        "recreated at its tip"
+    );
     repo.redo(&action).unwrap();
     assert!(repo.branch_commit_id("feature").is_err(), "deleted again");
 }
@@ -115,15 +127,27 @@ fn undo_recreates_every_branch_of_a_multi_branch_delete() {
         repo.delete_branch(&b.name, true).unwrap();
     }
 
-    let action = Undoable::BranchesDeleted { label: "Delete 3 branches".into(), branches: branches.clone() };
+    let action = Undoable::BranchesDeleted {
+        label: "Delete 3 branches".into(),
+        branches: branches.clone(),
+    };
     repo.undo(&action).unwrap();
     for b in &branches {
-        assert_eq!(repo.branch_commit_id(&b.name).unwrap(), b.oid, "{} restored", b.name);
+        assert_eq!(
+            repo.branch_commit_id(&b.name).unwrap(),
+            b.oid,
+            "{} restored",
+            b.name
+        );
     }
 
     repo.redo(&action).unwrap();
     for b in &branches {
-        assert!(repo.branch_commit_id(&b.name).is_err(), "{} deleted again", b.name);
+        assert!(
+            repo.branch_commit_id(&b.name).is_err(),
+            "{} deleted again",
+            b.name
+        );
     }
 }
 
@@ -137,15 +161,27 @@ fn undo_discard_restores_the_file_content() {
     let before = repo.read_workfile("a.txt").unwrap();
     repo.discard_files(&["a.txt".into()]).unwrap();
     let after = repo.read_workfile("a.txt").unwrap();
-    assert_eq!(read(&fx, "a.txt").as_deref(), Some("one\n"), "discard reverted to HEAD");
+    assert_eq!(
+        read(&fx, "a.txt").as_deref(),
+        Some("one\n"),
+        "discard reverted to HEAD"
+    );
 
     let action = Undoable::Discarded {
         label: "Discard 1 file".into(),
-        files: vec![FileBlob { path: "a.txt".into(), before, after }],
+        files: vec![FileBlob {
+            path: "a.txt".into(),
+            before,
+            after,
+        }],
     };
 
     repo.undo(&action).unwrap();
-    assert_eq!(read(&fx, "a.txt").as_deref(), Some("two\n"), "discarded edit restored");
+    assert_eq!(
+        read(&fx, "a.txt").as_deref(),
+        Some("two\n"),
+        "discarded edit restored"
+    );
     repo.redo(&action).unwrap();
     assert_eq!(read(&fx, "a.txt").as_deref(), Some("one\n"), "re-discarded");
 }
@@ -164,11 +200,19 @@ fn undo_discard_of_a_new_file_recreates_and_removes_it() {
 
     let action = Undoable::Discarded {
         label: "Discard 1 file".into(),
-        files: vec![FileBlob { path: "new.txt".into(), before, after }],
+        files: vec![FileBlob {
+            path: "new.txt".into(),
+            before,
+            after,
+        }],
     };
 
     repo.undo(&action).unwrap();
-    assert_eq!(read(&fx, "new.txt").as_deref(), Some("hi\n"), "new file recreated");
+    assert_eq!(
+        read(&fx, "new.txt").as_deref(),
+        Some("hi\n"),
+        "new file recreated"
+    );
     repo.redo(&action).unwrap();
     assert_eq!(read(&fx, "new.txt"), None, "removed again");
 }
@@ -211,10 +255,18 @@ fn undo_restores_the_staging_area_exactly_and_redo_reapplies_it() {
     let both = porcelain(&fx);
     assert_ne!(mixed, both, "staging b.txt changed the status");
 
-    let action = Undoable::IndexChanged { label: "Stage".into(), before, after };
+    let action = Undoable::IndexChanged {
+        label: "Stage".into(),
+        before,
+        after,
+    };
 
     repo.undo(&action).unwrap();
-    assert_eq!(porcelain(&fx), mixed, "undo returns to exactly the mixed state");
+    assert_eq!(
+        porcelain(&fx),
+        mixed,
+        "undo returns to exactly the mixed state"
+    );
 
     repo.redo(&action).unwrap();
     assert_eq!(porcelain(&fx), both, "redo stages b.txt again");
@@ -239,7 +291,12 @@ fn undoing_stage_all_returns_to_the_mixture_that_was_there_not_to_nothing_staged
     let status = repo.status_summary().unwrap();
     assert_eq!(status.staged.len(), 2, "stage all staged both");
 
-    repo.undo(&Undoable::IndexChanged { label: "Stage all".into(), before, after }).unwrap();
+    repo.undo(&Undoable::IndexChanged {
+        label: "Stage all".into(),
+        before,
+        after,
+    })
+    .unwrap();
     assert_eq!(
         porcelain(&fx),
         mixed,
@@ -258,7 +315,12 @@ fn undoing_a_stage_leaves_the_working_tree_alone() {
     repo.stage("a.txt").unwrap();
     let after = repo.snapshot_index("t-after").unwrap().unwrap();
 
-    repo.undo(&Undoable::IndexChanged { label: "Stage".into(), before, after }).unwrap();
+    repo.undo(&Undoable::IndexChanged {
+        label: "Stage".into(),
+        before,
+        after,
+    })
+    .unwrap();
 
     // Unstaging must never touch the file itself.
     assert_eq!(
@@ -285,10 +347,16 @@ fn undo_of_a_tag_creation_removes_it_and_redo_puts_it_back() {
     };
 
     repo.undo(&action).unwrap();
-    assert!(!repo.refs().unwrap().tags.iter().any(|t| t.name == "v1.0"), "tag gone");
+    assert!(
+        !repo.refs().unwrap().tags.iter().any(|t| t.name == "v1.0"),
+        "tag gone"
+    );
 
     repo.redo(&action).unwrap();
-    assert!(repo.refs().unwrap().tags.iter().any(|t| t.name == "v1.0"), "tag back");
+    assert!(
+        repo.refs().unwrap().tags.iter().any(|t| t.name == "v1.0"),
+        "tag back"
+    );
 }
 
 #[test]
@@ -297,7 +365,9 @@ fn undo_of_a_tag_delete_restores_an_annotated_tag_with_its_message() {
     let oid = fx.commit_file("a.txt", "one\n", "c1");
     let target = fx.repo.find_object(oid, None).unwrap();
     let sig = git2::Signature::new("T", "t@t.io", &git2::Time::new(1_700_000_000, 0)).unwrap();
-    fx.repo.tag("v2.0", &target, &sig, "the release\n", false).unwrap();
+    fx.repo
+        .tag("v2.0", &target, &sig, "the release\n", false)
+        .unwrap();
 
     let repo = Repo::open(fx.path()).unwrap();
     // The *ref* target: the tag object, not the commit it peels to.
@@ -312,7 +382,10 @@ fn undo_of_a_tag_delete_restores_an_annotated_tag_with_its_message() {
     repo.undo(&action).unwrap();
 
     let detail = repo.tag_detail("v2.0").expect("tag is back");
-    assert!(detail.annotated, "restored as an annotated tag, not a lightweight one");
+    assert!(
+        detail.annotated,
+        "restored as an annotated tag, not a lightweight one"
+    );
     assert_eq!(detail.message.as_deref(), Some("the release\n"));
     assert_eq!(detail.target, oid.to_string());
 
@@ -328,7 +401,8 @@ fn undo_of_a_tag_delete_restores_an_annotated_tag_with_its_message() {
 fn configure_origin(fx: &FixtureRepo) {
     let mut cfg = fx.repo.config().unwrap();
     cfg.set_str("remote.origin.url", ".").unwrap();
-    cfg.set_str("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*").unwrap();
+    cfg.set_str("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+        .unwrap();
 }
 
 #[test]
@@ -336,8 +410,12 @@ fn undo_restores_the_previous_upstream() {
     let fx = FixtureRepo::init();
     let oid = fx.commit_file("a.txt", "one\n", "c1");
     configure_origin(&fx);
-    fx.repo.reference("refs/remotes/origin/one", oid, true, "t").unwrap();
-    fx.repo.reference("refs/remotes/origin/two", oid, true, "t").unwrap();
+    fx.repo
+        .reference("refs/remotes/origin/one", oid, true, "t")
+        .unwrap();
+    fx.repo
+        .reference("refs/remotes/origin/two", oid, true, "t")
+        .unwrap();
     let repo = Repo::open(fx.path()).unwrap();
     let head = repo.refs().unwrap().head.expect("on a branch");
 
@@ -364,7 +442,9 @@ fn undo_of_unset_upstream_puts_the_tracking_back() {
     let fx = FixtureRepo::init();
     let oid = fx.commit_file("a.txt", "one\n", "c1");
     configure_origin(&fx);
-    fx.repo.reference("refs/remotes/origin/one", oid, true, "t").unwrap();
+    fx.repo
+        .reference("refs/remotes/origin/one", oid, true, "t")
+        .unwrap();
     let repo = Repo::open(fx.path()).unwrap();
     let head = repo.refs().unwrap().head.unwrap();
 
@@ -420,11 +500,22 @@ fn undo_of_a_stash_drop_puts_the_entry_back_with_its_message() {
 
     let stashes = repo.refs().unwrap().stashes;
     assert_eq!(stashes.len(), 1, "the entry is back on the stack");
-    assert!(stashes[0].message.contains("my wip"), "and keeps its message: {:?}", stashes[0].message);
-    assert_eq!(repo.stash_commit_id(0).unwrap(), oid, "the same commit, not a new one");
+    assert!(
+        stashes[0].message.contains("my wip"),
+        "and keeps its message: {:?}",
+        stashes[0].message
+    );
+    assert_eq!(
+        repo.stash_commit_id(0).unwrap(),
+        oid,
+        "the same commit, not a new one"
+    );
 
     repo.redo(&action).unwrap();
-    assert!(repo.refs().unwrap().stashes.is_empty(), "redo drops it again");
+    assert!(
+        repo.refs().unwrap().stashes.is_empty(),
+        "redo drops it again"
+    );
 }
 
 #[test]
@@ -445,7 +536,11 @@ fn undoing_a_stash_drop_does_not_disturb_other_entries() {
     repo.stash_drop(1).unwrap();
     assert_eq!(repo.refs().unwrap().stashes.len(), 1);
 
-    let action = Undoable::StashDropped { label: "Drop stash".into(), oid, message };
+    let action = Undoable::StashDropped {
+        label: "Drop stash".into(),
+        oid,
+        message,
+    };
     repo.undo(&action).unwrap();
     let stashes = repo.refs().unwrap().stashes;
     assert_eq!(stashes.len(), 2, "both entries present again");

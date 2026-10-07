@@ -88,7 +88,12 @@ impl Repo {
     /// as an error rather than a `false`, so the caller can tell "no such tag"
     /// apart from "couldn't ask".
     pub fn remote_tag_exists(&self, name: &str) -> Result<bool> {
-        let out = self.run_git(&["ls-remote", "--tags", "origin", &format!("refs/tags/{name}")])?;
+        let out = self.run_git(&[
+            "ls-remote",
+            "--tags",
+            "origin",
+            &format!("refs/tags/{name}"),
+        ])?;
         Ok(!out.trim().is_empty())
     }
 }

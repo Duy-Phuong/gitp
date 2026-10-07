@@ -56,8 +56,14 @@ fn a_conflicting_switch_is_refused_and_keeps_the_uncommitted_work() {
     assert_eq!(head_branch(&repo), "master", "HEAD must not move");
     // The message has to say what to do about it.
     let msg = err.to_string();
-    assert!(msg.contains("uncommitted changes"), "unhelpful message: {msg}");
-    assert!(msg.contains("nothing was changed"), "unhelpful message: {msg}");
+    assert!(
+        msg.contains("uncommitted changes"),
+        "unhelpful message: {msg}"
+    );
+    assert!(
+        msg.contains("nothing was changed"),
+        "unhelpful message: {msg}"
+    );
 }
 
 #[test]
@@ -99,7 +105,11 @@ fn an_untracked_file_the_target_branch_would_overwrite_blocks_the_switch() {
     let result = repo.checkout_branch("feature");
 
     assert!(result.is_err(), "must not clobber an untracked file");
-    assert_eq!(read(&fx, "new.txt"), "mine, untracked\n", "untracked file preserved");
+    assert_eq!(
+        read(&fx, "new.txt"),
+        "mine, untracked\n",
+        "untracked file preserved"
+    );
     assert_eq!(head_branch(&repo), "master", "HEAD must not move");
 }
 

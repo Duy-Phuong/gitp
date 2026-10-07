@@ -27,7 +27,10 @@ fn refs_lists_local_branches_head_and_tags() {
     );
     assert!(refs.tags.iter().any(|t| t.name == "v1.0"), "tag listed");
     assert!(
-        refs.tags.iter().find(|t| t.name == "v1.0").is_some_and(|t| !t.target.is_empty()),
+        refs.tags
+            .iter()
+            .find(|t| t.name == "v1.0")
+            .is_some_and(|t| !t.target.is_empty()),
         "tag resolves to a commit oid"
     );
 }
@@ -38,8 +41,16 @@ fn recent_lists_branches_by_last_switch_newest_first_excluding_head() {
     let fx = FixtureRepo::init();
     fx.commit_file("a.txt", "1\n", "base");
     let run = |args: &[&str]| {
-        let out = Command::new("git").current_dir(fx.path()).args(args).output().unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        let out = Command::new("git")
+            .current_dir(fx.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     };
     // Create three branches and switch between them; the reflog records each.
     run(&["branch", "one"]);
@@ -70,7 +81,11 @@ fn checkout_branch_updates_recent_like_the_cli() {
     repo.checkout_branch(&start).unwrap(); // back to base; "feature" is now recent
 
     let recent = repo.refs().unwrap().recent;
-    assert_eq!(recent, vec!["feature".to_string()], "GUI checkout feeds Recent: {recent:?}");
+    assert_eq!(
+        recent,
+        vec!["feature".to_string()],
+        "GUI checkout feeds Recent: {recent:?}"
+    );
 }
 
 #[test]
@@ -79,13 +94,24 @@ fn checkout_remote_creates_a_local_tracking_branch() {
     let fx = FixtureRepo::init();
     fx.commit_file("a.txt", "1\n", "base");
     let run = |args: &[&str]| {
-        let out = Command::new("git").current_dir(fx.path()).args(args).output().unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        let out = Command::new("git")
+            .current_dir(fx.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     };
 
     // A bare remote holding an extra branch that has no local counterpart.
     let remote = tempfile::TempDir::new().unwrap();
-    Command::new("git").args(["init", "-q", "--bare", remote.path().to_str().unwrap()]).status().unwrap();
+    Command::new("git")
+        .args(["init", "-q", "--bare", remote.path().to_str().unwrap()])
+        .status()
+        .unwrap();
     run(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
     run(&["branch", "feature/x"]);
     run(&["push", "-q", "origin", "--all"]);
@@ -94,15 +120,28 @@ fn checkout_remote_creates_a_local_tracking_branch() {
 
     let repo = Repo::open(fx.path()).unwrap();
     assert!(
-        !repo.refs().unwrap().branches.iter().any(|b| b.name == "feature/x"),
+        !repo
+            .refs()
+            .unwrap()
+            .branches
+            .iter()
+            .any(|b| b.name == "feature/x"),
         "no local branch yet"
     );
 
     repo.checkout_remote("origin/feature/x").unwrap();
 
     let refs = repo.refs().unwrap();
-    assert_eq!(refs.head.as_deref(), Some("feature/x"), "now on the new local branch");
-    let b = refs.branches.iter().find(|b| b.name == "feature/x").expect("local branch created");
+    assert_eq!(
+        refs.head.as_deref(),
+        Some("feature/x"),
+        "now on the new local branch"
+    );
+    let b = refs
+        .branches
+        .iter()
+        .find(|b| b.name == "feature/x")
+        .expect("local branch created");
     assert!(b.has_upstream, "local branch tracks the remote");
 }
 
@@ -112,7 +151,11 @@ fn recent_drops_branches_that_no_longer_exist() {
     let fx = FixtureRepo::init();
     fx.commit_file("a.txt", "1\n", "base");
     let run = |args: &[&str]| {
-        Command::new("git").current_dir(fx.path()).args(args).output().unwrap();
+        Command::new("git")
+            .current_dir(fx.path())
+            .args(args)
+            .output()
+            .unwrap();
     };
     run(&["branch", "temp"]);
     run(&["checkout", "temp"]);
@@ -120,7 +163,10 @@ fn recent_drops_branches_that_no_longer_exist() {
     run(&["branch", "-D", "temp"]); // delete the branch we visited
 
     let recent = Repo::open(fx.path()).unwrap().refs().unwrap().recent;
-    assert!(!recent.contains(&"temp".to_string()), "deleted branch is filtered out");
+    assert!(
+        !recent.contains(&"temp".to_string()),
+        "deleted branch is filtered out"
+    );
 }
 
 #[test]
@@ -161,10 +207,17 @@ fn checkout_is_blocked_when_local_changes_would_be_overwritten() {
 
     let repo = Repo::open(fx.path()).unwrap();
     let err = repo.checkout_branch("other").unwrap_err().to_string();
-    assert!(err.contains("Can't switch"), "actionable message, got: {err}");
+    assert!(
+        err.contains("Can't switch"),
+        "actionable message, got: {err}"
+    );
 
     // Blocked cleanly: HEAD didn't move and the edit is intact (no data loss).
-    assert_eq!(repo.refs().unwrap().head.as_deref(), Some("master"), "still on master");
+    assert_eq!(
+        repo.refs().unwrap().head.as_deref(),
+        Some("master"),
+        "still on master"
+    );
     assert_eq!(
         std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
         "precious edits\n",
@@ -183,7 +236,11 @@ fn checkout_branch_moves_head_and_updates_the_worktree() {
     let repo = Repo::open(fx.path()).unwrap();
     repo.checkout_branch("other").unwrap();
 
-    assert_eq!(repo.refs().unwrap().head.as_deref(), Some("other"), "HEAD on other");
+    assert_eq!(
+        repo.refs().unwrap().head.as_deref(),
+        Some("other"),
+        "HEAD on other"
+    );
     assert_eq!(
         std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
         "one\n",
@@ -203,7 +260,13 @@ fn tags_are_listed_newest_release_first_with_versions_compared_numerically() {
         repo.create_tag_at(name, &oid.to_string()).unwrap();
     }
 
-    let names: Vec<String> = repo.refs().unwrap().tags.into_iter().map(|t| t.name).collect();
+    let names: Vec<String> = repo
+        .refs()
+        .unwrap()
+        .tags
+        .into_iter()
+        .map(|t| t.name)
+        .collect();
     assert_eq!(
         names,
         ["3.28.10", "3.28.3", "3.10.0", "3.9.0", "3.4.0"],

@@ -32,7 +32,9 @@ impl Repo {
         if old_remote != new {
             self.run_git(&["push", &remote, "--delete", &old_remote])?;
         }
-        Ok(format!("{pushed}\nrenamed {remote}/{old_remote} -> {remote}/{new}"))
+        Ok(format!(
+            "{pushed}\nrenamed {remote}/{old_remote} -> {remote}/{new}"
+        ))
     }
 
     /// Set `branch`'s upstream (tracking) to `upstream`, e.g. `origin/main`.
@@ -221,8 +223,8 @@ impl Repo {
     /// is advanced with `merge --ff-only`; another branch is advanced by a local
     /// fetch into it, which git only allows when it's a true fast-forward.
     pub fn fast_forward_branch(&self, name: &str) -> Result<String> {
-        let upstream = self
-            .run_git(&["rev-parse", "--abbrev-ref", &format!("{name}@{{upstream}}")])?;
+        let upstream =
+            self.run_git(&["rev-parse", "--abbrev-ref", &format!("{name}@{{upstream}}")])?;
         let current = self
             .inner
             .head()

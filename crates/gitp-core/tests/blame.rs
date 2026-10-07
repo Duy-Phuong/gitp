@@ -28,7 +28,11 @@ fn blame_attributes_each_line_to_its_last_commit() {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let ok = Command::new("git").current_dir(dir).args(args).status().unwrap();
+    let ok = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .status()
+        .unwrap();
     assert!(ok.success(), "git {args:?}");
 }
 

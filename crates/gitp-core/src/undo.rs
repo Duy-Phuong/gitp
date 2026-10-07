@@ -239,12 +239,7 @@ impl Repo {
     /// The message shown for `stash@{index}`, so a restored entry reads the same
     /// as the one that was dropped.
     pub fn stash_message(&self, index: usize) -> Result<String> {
-        let out = self.run_git(&[
-            "log",
-            "-1",
-            "--format=%s",
-            &format!("stash@{{{index}}}"),
-        ])?;
+        let out = self.run_git(&["log", "-1", "--format=%s", &format!("stash@{{{index}}}")])?;
         Ok(out.trim().to_string())
     }
 
@@ -339,7 +334,8 @@ impl Repo {
 
     /// Put a dropped stash entry back on the stack.
     fn restore_stash(&self, oid: &str, message: &str) -> Result<()> {
-        self.run_git(&["stash", "store", "-m", message, oid]).map(|_| ())
+        self.run_git(&["stash", "store", "-m", message, oid])
+            .map(|_| ())
     }
 
     /// Remove the stash entry whose commit is `oid`, wherever it now sits — a
@@ -350,7 +346,8 @@ impl Repo {
             .lines()
             .position(|line| line.trim() == oid)
             .ok_or_else(|| Error::Message("that stash is no longer on the stack".into()))?;
-        self.run_git(&["stash", "drop", &format!("stash@{{{position}}}")]).map(|_| ())
+        self.run_git(&["stash", "drop", &format!("stash@{{{position}}}")])
+            .map(|_| ())
     }
 
     fn apply_upstream(&self, branch: &str, upstream: Option<&str>) -> Result<()> {
@@ -358,10 +355,11 @@ impl Repo {
             Some(up) => self
                 .run_git(&["branch", &format!("--set-upstream-to={up}"), branch])
                 .map(|_| ()),
-            None => self.run_git(&["branch", "--unset-upstream", branch]).map(|_| ()),
+            None => self
+                .run_git(&["branch", "--unset-upstream", branch])
+                .map(|_| ()),
         }
     }
-
 
     /// Move the current branch to `target`. `soft` keeps the index/working tree
     /// (`--soft`); otherwise `--keep` also updates the working tree but aborts if
@@ -384,8 +382,9 @@ impl Repo {
             match content {
                 Some(bytes) => {
                     if let Some(parent) = full.parent() {
-                        fs::create_dir_all(parent)
-                            .map_err(|e| Error::Message(format!("can't create dir for {}: {e}", f.path)))?;
+                        fs::create_dir_all(parent).map_err(|e| {
+                            Error::Message(format!("can't create dir for {}: {e}", f.path))
+                        })?;
                     }
                     fs::write(&full, bytes)
                         .map_err(|e| Error::Message(format!("can't restore {}: {e}", f.path)))?;

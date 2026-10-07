@@ -38,7 +38,10 @@ impl Repo {
                     .ok()
                     .and_then(|h| h.shorthand().map(str::to_string))
                     .unwrap_or_default();
-                let to = reference.as_ref().and_then(git2::Reference::shorthand).unwrap_or(name);
+                let to = reference
+                    .as_ref()
+                    .and_then(git2::Reference::shorthand)
+                    .unwrap_or(name);
                 let msg = format!("checkout: moving from {from} to {to}");
                 self.inner.reference_symbolic("HEAD", refname, true, &msg)?;
             }
@@ -53,7 +56,11 @@ impl Repo {
     /// Returns git's output for display.
     pub fn checkout_remote(&self, remote_ref: &str) -> Result<String> {
         let local = self.local_name_for_remote(remote_ref);
-        if self.inner.find_branch(&local, git2::BranchType::Local).is_ok() {
+        if self
+            .inner
+            .find_branch(&local, git2::BranchType::Local)
+            .is_ok()
+        {
             self.checkout_branch(&local)?;
             return Ok(format!("Switched to {local}"));
         }
@@ -72,7 +79,10 @@ impl Repo {
                 }
             }
         }
-        remote_ref.split_once('/').map_or(remote_ref, |x| x.1).to_string()
+        remote_ref
+            .split_once('/')
+            .map_or(remote_ref, |x| x.1)
+            .to_string()
     }
 
     /// Create a branch named `name` at the current HEAD commit and check it out.

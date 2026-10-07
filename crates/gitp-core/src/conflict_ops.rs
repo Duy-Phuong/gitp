@@ -45,7 +45,8 @@ impl Repo {
     pub fn conflict_status(&self) -> Result<ConflictStatus> {
         let git_dir = self.inner.path();
         let merging = git_dir.join("MERGE_HEAD").exists();
-        let rebasing = git_dir.join("rebase-merge").is_dir() || git_dir.join("rebase-apply").is_dir();
+        let rebasing =
+            git_dir.join("rebase-merge").is_dir() || git_dir.join("rebase-apply").is_dir();
         let cherry_picking = git_dir.join("CHERRY_PICK_HEAD").exists();
         let reverting = git_dir.join("REVERT_HEAD").exists();
 
@@ -72,7 +73,13 @@ impl Repo {
 
         // Merge, cherry-pick, and revert all stage their pending commit message
         // in MERGE_MSG the same way, so they share this summary logic.
-        let kind = if merging { "merge" } else if cherry_picking { "cherry-pick" } else { "revert" };
+        let kind = if merging {
+            "merge"
+        } else if cherry_picking {
+            "cherry-pick"
+        } else {
+            "revert"
+        };
         let message = std::fs::read_to_string(git_dir.join("MERGE_MSG")).unwrap_or_default();
         let into = self.current_branch_label();
         let default_summary = match kind {
@@ -81,8 +88,17 @@ impl Repo {
             _ => format!("Merging into {into}"),
         };
         // MERGE_MSG's first line is git's own summary (e.g. "Merge …").
-        let summary = message.lines().next().map(str::to_string).unwrap_or(default_summary);
-        Ok(ConflictStatus { kind: kind.into(), summary, conflicted, message })
+        let summary = message
+            .lines()
+            .next()
+            .map(str::to_string)
+            .unwrap_or(default_summary);
+        Ok(ConflictStatus {
+            kind: kind.into(),
+            summary,
+            conflicted,
+            message,
+        })
     }
 
     /// Read the ours/theirs/base staged versions and the working text of `path`.
@@ -97,7 +113,10 @@ impl Repo {
 
         let has_nul = |b: &[u8]| b.contains(&0);
         let binary = has_nul(&working)
-            || [&base, &ours, &theirs].iter().flat_map(|o| o.iter()).any(|b| has_nul(b));
+            || [&base, &ours, &theirs]
+                .iter()
+                .flat_map(|o| o.iter())
+                .any(|b| has_nul(b));
 
         let to_text = |o: Option<Vec<u8>>| o.map(|b| String::from_utf8_lossy(&b).into_owned());
         Ok(ConflictSides {

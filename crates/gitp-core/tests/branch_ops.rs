@@ -15,8 +15,17 @@ fn rename_branch_changes_its_name() {
     let repo = Repo::open(fx.path()).unwrap();
     repo.rename_branch("old-name", "new-name").unwrap();
 
-    let names: Vec<String> = repo.refs().unwrap().branches.into_iter().map(|b| b.name).collect();
-    assert!(names.contains(&"new-name".to_string()), "renamed branch present");
+    let names: Vec<String> = repo
+        .refs()
+        .unwrap()
+        .branches
+        .into_iter()
+        .map(|b| b.name)
+        .collect();
+    assert!(
+        names.contains(&"new-name".to_string()),
+        "renamed branch present"
+    );
     assert!(!names.contains(&"old-name".to_string()), "old name gone");
 }
 
@@ -38,11 +47,20 @@ fn delete_branch_removes_a_merged_branch_but_refuses_unmerged_without_force() {
     assert!(!branch_names(&repo).contains(&"merged".to_string()));
 
     // Safe delete refuses the unmerged branch…
-    assert!(repo.delete_branch("feature", false).is_err(), "unmerged: refused");
-    assert!(branch_names(&repo).contains(&"feature".to_string()), "still there");
+    assert!(
+        repo.delete_branch("feature", false).is_err(),
+        "unmerged: refused"
+    );
+    assert!(
+        branch_names(&repo).contains(&"feature".to_string()),
+        "still there"
+    );
     // …until forced.
     repo.delete_branch("feature", true).unwrap();
-    assert!(!branch_names(&repo).contains(&"feature".to_string()), "force-deleted");
+    assert!(
+        !branch_names(&repo).contains(&"feature".to_string()),
+        "force-deleted"
+    );
 }
 
 #[test]
@@ -58,7 +76,10 @@ fn merge_branch_brings_in_another_branchs_commit() {
     repo.checkout_branch("master").unwrap();
 
     repo.merge_branch("side").unwrap();
-    assert!(fx.path().join("side.txt").exists(), "side's file merged into master");
+    assert!(
+        fx.path().join("side.txt").exists(),
+        "side's file merged into master"
+    );
 }
 
 #[test]
@@ -70,8 +91,16 @@ fn delete_remote_branch_removes_it_from_the_remote() {
     // A bare repo standing in for `origin`.
     let remote_dir = tempfile::tempdir().unwrap();
     let run = |dir: &std::path::Path, args: &[&str]| {
-        let out = Command::new("git").current_dir(dir).args(args).output().unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     };
     run(remote_dir.path(), &["init", "--bare", "-q"]);
@@ -83,7 +112,10 @@ fn delete_remote_branch_removes_it_from_the_remote() {
 
     // Precondition: the remote has the branch.
     let before = run(fx.path(), &["ls-remote", "--heads", "origin", "feature/x"]);
-    assert!(before.contains("feature/x"), "remote has the branch to start");
+    assert!(
+        before.contains("feature/x"),
+        "remote has the branch to start"
+    );
 
     let repo = Repo::open(fx.path()).unwrap();
 
@@ -94,14 +126,19 @@ fn delete_remote_branch_removes_it_from_the_remote() {
         "probe finds the pushed branch on the remote"
     );
     assert!(
-        repo.remote_branch_exists("feature/never-pushed").unwrap().is_none(),
+        repo.remote_branch_exists("feature/never-pushed")
+            .unwrap()
+            .is_none(),
         "probe reports absent branch as None"
     );
 
     repo.delete_remote_branch("feature/x").unwrap();
 
     let after = run(fx.path(), &["ls-remote", "--heads", "origin", "feature/x"]);
-    assert!(after.is_empty(), "remote branch is gone after delete_remote_branch");
+    assert!(
+        after.is_empty(),
+        "remote branch is gone after delete_remote_branch"
+    );
     assert!(
         repo.remote_branch_exists("feature/x").unwrap().is_none(),
         "probe reflects the deletion"
@@ -115,12 +152,28 @@ fn rename_remote_branch_pushes_new_and_deletes_old() {
     fx.commit_file("a.txt", "one\n", "c1");
     let remote_dir = tempfile::tempdir().unwrap();
     let run = |dir: &std::path::Path, args: &[&str]| {
-        let out = Command::new("git").current_dir(dir).args(args).output().unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     };
     run(remote_dir.path(), &["init", "--bare", "-q"]);
-    run(fx.path(), &["remote", "add", "origin", remote_dir.path().to_str().unwrap()]);
+    run(
+        fx.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            remote_dir.path().to_str().unwrap(),
+        ],
+    );
     run(fx.path(), &["branch", "old-name"]);
     run(fx.path(), &["push", "-u", "origin", "old-name"]);
 
@@ -136,5 +189,10 @@ fn rename_remote_branch_pushes_new_and_deletes_old() {
 }
 
 fn branch_names(repo: &Repo) -> Vec<String> {
-    repo.refs().unwrap().branches.into_iter().map(|b| b.name).collect()
+    repo.refs()
+        .unwrap()
+        .branches
+        .into_iter()
+        .map(|b| b.name)
+        .collect()
 }

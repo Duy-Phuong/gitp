@@ -28,7 +28,10 @@ fn tag_detail_reads_an_annotated_tags_tagger_and_message() {
 
     let d = repo.tag_detail("v1.0").unwrap();
     assert_eq!(d.name, "v1.0");
-    assert!(d.annotated, "created with git2::tag, so it has its own object");
+    assert!(
+        d.annotated,
+        "created with git2::tag, so it has its own object"
+    );
     assert_eq!(d.tagger_name.as_deref(), Some("Tagger Person"));
     assert_eq!(d.tagger_email.as_deref(), Some("tagger@example.com"));
     assert_eq!(d.tagger_time, Some(1_700_000_000));

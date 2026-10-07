@@ -44,7 +44,11 @@ fn apply_without_drop_restores_the_change_and_keeps_the_entry() {
         "two\n",
         "the stashed change is back in the working tree"
     );
-    assert_eq!(stash_messages(fx.path()).len(), 1, "apply leaves the entry on the stack");
+    assert_eq!(
+        stash_messages(fx.path()).len(),
+        1,
+        "apply leaves the entry on the stack"
+    );
 }
 
 #[test]
@@ -53,8 +57,14 @@ fn apply_with_drop_pops_the_entry() {
 
     repo.stash_apply(0, true).expect("pop stash@{0}");
 
-    assert_eq!(std::fs::read_to_string(fx.path().join("a.txt")).unwrap(), "two\n");
-    assert!(stash_messages(fx.path()).is_empty(), "pop removes the entry");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "two\n"
+    );
+    assert!(
+        stash_messages(fx.path()).is_empty(),
+        "pop removes the entry"
+    );
 }
 
 #[test]
@@ -77,14 +87,22 @@ fn rename_replaces_the_message_and_preserves_the_content() {
     let before = stash_messages(fx.path());
     assert_eq!(before.len(), 1);
 
-    repo.stash_rename(0, "my saved work").expect("rename stash@{0}");
+    repo.stash_rename(0, "my saved work")
+        .expect("rename stash@{0}");
 
     let after = stash_messages(fx.path());
-    assert_eq!(after, vec!["my saved work".to_string()], "exactly one entry, re-messaged");
+    assert_eq!(
+        after,
+        vec!["my saved work".to_string()],
+        "exactly one entry, re-messaged"
+    );
 
     // The renamed stash still applies its original change.
     repo.stash_apply(0, true).expect("pop the renamed stash");
-    assert_eq!(std::fs::read_to_string(fx.path().join("a.txt")).unwrap(), "two\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "two\n"
+    );
 }
 
 #[test]
@@ -102,16 +120,26 @@ fn rename_targets_the_right_entry_and_moves_it_to_the_top() {
 
     // Rename the older one (index 1). Re-storing lands it at the top, so the
     // renamed entry becomes stash@{0} and the previously-newest shifts down.
-    repo.stash_rename(1, "older renamed").expect("rename stash@{1}");
+    repo.stash_rename(1, "older renamed")
+        .expect("rename stash@{1}");
 
     let msgs = stash_messages(fx.path());
     assert_eq!(msgs.len(), 2, "still two entries after rename");
-    assert_eq!(msgs[0], "older renamed", "the renamed entry moves to the top");
-    assert_eq!(msgs[1], newest_before, "the other entry keeps its own message");
+    assert_eq!(
+        msgs[0], "older renamed",
+        "the renamed entry moves to the top"
+    );
+    assert_eq!(
+        msgs[1], newest_before,
+        "the other entry keeps its own message"
+    );
 
     // Renaming must not have disturbed the renamed stash's content.
     repo.stash_apply(0, true).expect("pop the renamed stash");
-    assert_eq!(std::fs::read_to_string(fx.path().join("a.txt")).unwrap(), "first change\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "first change\n"
+    );
 }
 
 #[test]

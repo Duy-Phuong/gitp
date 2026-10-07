@@ -76,7 +76,8 @@ impl Repo {
 
     /// Unstage `path` (`git reset HEAD -- <path>`).
     pub fn unstage(&self, path: &str) -> Result<()> {
-        self.run_git(&["reset", "-q", "HEAD", "--", path]).map(|_| ())
+        self.run_git(&["reset", "-q", "HEAD", "--", path])
+            .map(|_| ())
     }
 
     /// Stage every change, including untracked and deletions (`git add -A`).

@@ -6,9 +6,7 @@ use std::collections::HashMap;
 
 /// Map summary -> lane for easy assertions regardless of walk order.
 fn lanes_by_summary(rows: &[gitp_core::CommitRow]) -> HashMap<String, usize> {
-    rows.iter()
-        .map(|r| (r.summary.clone(), r.lane))
-        .collect()
+    rows.iter().map(|r| (r.summary.clone(), r.lane)).collect()
 }
 
 #[test]
@@ -22,7 +20,10 @@ fn linear_history_stays_in_lane_zero() {
     let repo = Repo::open(fixture.path()).unwrap();
     let rows = repo.log(LogOptions::default()).unwrap();
 
-    assert!(rows.iter().all(|r| r.lane == 0), "linear history is one lane");
+    assert!(
+        rows.iter().all(|r| r.lane == 0),
+        "linear history is one lane"
+    );
 }
 
 #[test]
