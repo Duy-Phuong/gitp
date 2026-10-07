@@ -407,7 +407,7 @@ body {
 }
 .menu-sep {
   height: 1px;
-  margin: 4px 2px;
+  margin: 3px 2px;
   background: var(--border);
 }
 .menu-newbranch {
@@ -473,7 +473,7 @@ body {
   padding: 4px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   background: var(--bg-elev-2);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -490,8 +490,8 @@ body {
   background: transparent;
   border: none;
   color: var(--text);
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 3px 10px;
+  border-radius: 5px;
   cursor: pointer;
   font-size: 13px;
   /* `normal` left barely 2px between the two lines of a wrapped branch name.
@@ -2672,10 +2672,19 @@ body {
 /* Quick Launch -------------------------------------------------------------
    A command palette overlaid near the top of the window (not centred: the list
    grows downward and a centred panel would jump as it does). */
-.quick-launch-btn {
+.quick-launch-btn,
+.terminal-toggle-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
+}
+/* Narrow windows: the top-bar buttons collapse to their icons (the title
+   attribute still names them). */
+@media (max-width: 1000px) {
+  .topbar .btn-label {
+    display: none;
+  }
 }
 .ql-btn-icon {
   width: 15px;
@@ -2683,6 +2692,7 @@ body {
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
+  stroke-linecap: round;
   stroke-linejoin: round;
 }
 .ql-overlay {
