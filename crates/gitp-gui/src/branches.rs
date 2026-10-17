@@ -7,7 +7,9 @@ use gitp_core::{DeletedBranch, Repo, Undoable};
 use serde::Serialize;
 use tauri::State;
 
-use crate::state::{ensure_refs, to_message, with_repo, with_repo_clearing_undo, RepoState};
+use crate::state::{
+    ensure_refs, to_message, with_repo, with_repo_clearing_undo, with_repo_networked, RepoState,
+};
 use crate::undo::{
     set_undo, with_recorded_branch_create, with_recorded_checkout, with_recorded_head_move,
     with_recorded_upstream,
@@ -107,7 +109,12 @@ fn rename_branch_impl(state: &RepoState, old: String, new: String) -> Result<Str
 
 /// Rename branch `new`'s remote counterpart (run after the local rename).
 fn rename_remote_branch_impl(state: &RepoState, new: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.rename_remote_branch(&new))
+    with_repo_networked(
+        state,
+        "push",
+        |repo| repo.rename_remote_branch(&new),
+        |_| {},
+    )
 }
 
 /// Create branch `name` at HEAD without checking it out (e.g. a rebase backup).
@@ -223,7 +230,12 @@ fn delete_branches_recorded(
 }
 
 fn delete_remote_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.delete_remote_branch(&name))
+    with_repo_networked(
+        state,
+        "push",
+        |repo| repo.delete_remote_branch(&name),
+        |_| {},
+    )
 }
 
 fn remote_branch_exists_impl(state: &RepoState, name: String) -> Result<Option<String>, String> {

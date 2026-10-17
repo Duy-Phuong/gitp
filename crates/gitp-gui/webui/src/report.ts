@@ -1,8 +1,10 @@
 // The status bar, the global progress bar, and the toasts / error dialogs that
 // report how an action went.
 
-import { onPendingChange } from "./api";
+import { cancelNetworkOp, isCancelled, onGitProgress, onNetworkChange, onPendingChange } from "./api";
 import { clear, el, $ } from "./dom";
+import { formatGitProgress } from "./git-progress";
+import type { GitProgress } from "./types";
 import { showErrorDialog, type MessageDialogAction } from "./views/message-dialog";
 import { toast } from "./views/toast";
 
@@ -17,6 +19,7 @@ export function setStatus(message: string): void {
   slot.append(el("span", { class: "status-text", text: message }));
   $("#statusbar").classList.toggle("busy", busy);
   trackStatusElapsed(busy ? slot : null);
+  syncCancel();
 }
 
 // Once a busy status has been up for a couple of seconds, append how long
@@ -71,6 +74,71 @@ export function watchPending(): void {
   });
 }
 
+// --- Network progress and Cancel -------------------------------------------
+// While a fetch / pull / push runs, git's own progress replaces guesswork: the
+// busy status gains the phase and percentage ("Pushing… Writing objects 45%"),
+// the global bar turns determinate, and a Cancel button stops it. Cancel only
+// shows alongside a busy status — a silent background fetch has nothing on
+// screen to cancel.
+let networkBusy = false;
+
+export function watchNetwork(): void {
+  const bar = $("#global-progress");
+  $("#status-cancel").addEventListener("click", cancelNetworkAction);
+  onNetworkChange((count) => {
+    networkBusy = count > 0;
+    if (!networkBusy) {
+      bar.classList.remove("determinate");
+      bar.style.removeProperty("--progress");
+    }
+    syncCancel();
+  });
+  void onGitProgress((p) => showGitProgress(bar, p));
+}
+
+// Whether Cancel is on offer — the status-bar button is showing.
+export function canCancelNetwork(): boolean {
+  return !$("#status-cancel").classList.contains("hidden");
+}
+
+export function cancelNetworkAction(): void {
+  const cancel = $<HTMLButtonElement>("#status-cancel");
+  if (cancel.disabled) return;
+  cancel.disabled = true;
+  setStatusProgress("Cancelling…");
+  void cancelNetworkOp();
+}
+
+function showGitProgress(bar: HTMLElement, p: GitProgress): void {
+  if (!networkBusy || !$("#statusbar").classList.contains("busy")) return;
+  // Once Cancel is pressed, "Cancelling…" stays until git is gone.
+  if ($<HTMLButtonElement>("#status-cancel").disabled) return;
+  setStatusProgress(formatGitProgress(p), p.detail);
+  bar.classList.toggle("determinate", p.percent !== null);
+  if (p.percent !== null) bar.style.setProperty("--progress", `${p.percent}%`);
+}
+
+// Put `text` after the busy status message, replacing any earlier progress.
+// A new setStatus clears the slot, so it never outlives its operation.
+function setStatusProgress(text: string, title = ""): void {
+  const message = document.querySelector("#status-message .status-text");
+  if (!message) return;
+  let span = message.nextElementSibling;
+  if (!span?.classList.contains("status-progress")) {
+    span = el("span", { class: "status-progress" });
+    message.after(span);
+  }
+  span.textContent = text;
+  span.setAttribute("title", title);
+}
+
+function syncCancel(): void {
+  const cancel = $<HTMLButtonElement>("#status-cancel");
+  const show = networkBusy && $("#statusbar").classList.contains("busy");
+  if (show && cancel.classList.contains("hidden")) cancel.disabled = false;
+  cancel.classList.toggle("hidden", !show);
+}
+
 // --- Reporting outcomes ----------------------------------------------------
 //
 // The status bar keeps saying what the app is doing, but on its own it's one
@@ -89,6 +157,7 @@ export function watchPending(): void {
 // status line alone — a toast per keystroke-settled search is noise.
 
 export function readFailed(title: string, err: unknown): void {
+  if (isCancelled(err)) return reportCancelled(title);
   const detail = String(err);
   setStatus(`${title}: ${detail}`);
   toast(title, {
@@ -102,10 +171,19 @@ export function opFailed(
   err: unknown,
   actions?: MessageDialogAction | MessageDialogAction[],
 ): void {
+  if (isCancelled(err)) return reportCancelled(title);
   const detail = String(err);
   setStatus(`${title}: ${detail}`);
   showErrorDialog(title, detail, actions);
   toast(title, { kind: "error", onDetails: () => showErrorDialog(title, detail, actions) });
+}
+
+// A cancelled network operation isn't a failure — the user asked for it — so it
+// gets a neutral toast and no dialog: "Push failed" becomes "Push cancelled."
+function reportCancelled(title: string): void {
+  const message = `${title.replace(/ failed$/, "")} cancelled.`;
+  setStatus(message);
+  toast(message, { kind: "info" });
 }
 
 export function reportDone(message: string): void {

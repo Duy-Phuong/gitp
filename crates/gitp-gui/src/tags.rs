@@ -3,7 +3,7 @@
 use gitp_core::{TagDetail, Undoable};
 use tauri::State;
 
-use crate::state::{to_message, with_repo, RepoState};
+use crate::state::{to_message, with_repo, with_repo_networked, RepoState};
 use crate::undo::set_undo;
 
 /// Tag `rev` as `name`. HEAD doesn't move, so the log cache is left intact.
@@ -40,7 +40,7 @@ fn tag_detail_impl(state: &RepoState, name: String) -> Result<TagDetail, String>
 
 /// Push tag `name` to origin. Nothing local changes.
 fn push_tag_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.push_tag(&name))
+    with_repo_networked(state, "push", |repo| repo.push_tag(&name), |_| {})
 }
 
 /// Delete the local tag `name`. HEAD doesn't move and no commit is lost (the
@@ -67,7 +67,7 @@ pub(crate) fn delete_tag_impl(state: &RepoState, name: String) -> Result<String,
 
 /// Delete tag `name` on origin.
 fn delete_remote_tag_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.delete_remote_tag(&name))
+    with_repo_networked(state, "push", |repo| repo.delete_remote_tag(&name), |_| {})
 }
 
 /// Whether origin has a tag called `name` (live `git ls-remote` probe).

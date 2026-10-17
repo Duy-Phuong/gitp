@@ -2,11 +2,14 @@
 //! `git status`), and the `with_repo*` wrappers every command runs through.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use notify::RecommendedWatcher;
 
-use gitp_core::{CommitRow, LogCache, Refs, Repo, StatusLists, Undoable};
+use gitp_core::{
+    CommitRow, LogCache, NetworkHooks, Progress, ProgressFn, Refs, Repo, StatusLists, Undoable,
+};
 use serde::Serialize;
 
 use crate::undo::clear_undo;
@@ -85,9 +88,89 @@ impl Workspace {
     }
 }
 
-/// The set of open repositories (a workspace of tabs).
+/// The set of open repositories (a workspace of tabs), and the network
+/// operations running against them.
 #[derive(Default)]
-pub(crate) struct RepoState(pub(crate) Mutex<Workspace>);
+pub(crate) struct RepoState(pub(crate) Mutex<Workspace>, pub(crate) NetworkOps);
+
+/// The network operations in flight — kept outside the workspace lock, which
+/// they deliberately don't hold (see [`with_repo_networked`]) — so Cancel can
+/// reach them, plus where their progress is sent.
+#[derive(Default)]
+pub(crate) struct NetworkOps {
+    /// Each running operation's repo path and cancel flag.
+    in_flight: Mutex<Vec<(String, Arc<AtomicBool>)>>,
+    /// Sends a `git-progress` event to the frontend. Set once at startup; unset
+    /// in tests, where progress simply goes nowhere.
+    emit: OnceLock<Emit>,
+}
+
+type Emit = Arc<dyn Fn(ProgressEvent) + Send + Sync>;
+
+/// The `git-progress` event payload: which operation (`"push"`, `"fetch"`, ...)
+/// and git's phase / percentage / detail.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub(crate) struct ProgressEvent {
+    pub(crate) op: &'static str,
+    #[serde(flatten)]
+    pub(crate) progress: Progress,
+}
+
+/// Git rewrites a meter on every percent, hundreds of times a second on a fast
+/// link; ~10 events a second is as fast as anyone can read a number.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+
+impl NetworkOps {
+    pub(crate) fn set_emitter(&self, emit: impl Fn(ProgressEvent) + Send + Sync + 'static) {
+        let _ = self.emit.set(Arc::new(emit));
+    }
+
+    /// Register an operation on `path`, returning the flag that cancels it.
+    fn begin(&self, path: &str) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        if let Ok(mut ops) = self.in_flight.lock() {
+            ops.push((path.to_string(), Arc::clone(&flag)));
+        }
+        flag
+    }
+
+    fn end(&self, flag: &Arc<AtomicBool>) {
+        if let Ok(mut ops) = self.in_flight.lock() {
+            ops.retain(|(_, f)| !Arc::ptr_eq(f, flag));
+        }
+    }
+
+    /// Raise the cancel flag of every operation running on `path`.
+    pub(crate) fn cancel(&self, path: &str) {
+        if let Ok(ops) = self.in_flight.lock() {
+            for (_, flag) in ops.iter().filter(|(p, _)| p == path) {
+                flag.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// A progress callback for `op` that forwards to the frontend, at most
+    /// once per [`PROGRESS_INTERVAL`] — except a new phase, which always goes
+    /// through so a short one isn't skipped entirely.
+    fn reporter(&self, op: &'static str) -> Option<ProgressFn> {
+        let emit = Arc::clone(self.emit.get()?);
+        let last: Mutex<Option<(Instant, String)>> = Mutex::new(None);
+        Some(Box::new(move |p: &Progress| {
+            let Ok(mut last) = last.lock() else { return };
+            let due = match &*last {
+                Some((at, phase)) => *phase != p.phase || at.elapsed() >= PROGRESS_INTERVAL,
+                None => true,
+            };
+            if due {
+                *last = Some((Instant::now(), p.phase.clone()));
+                emit(ProgressEvent {
+                    op,
+                    progress: p.clone(),
+                });
+            }
+        }))
+    }
+}
 
 /// One open repository as shown in the tab bar.
 #[derive(Serialize, Clone)]
@@ -149,12 +232,16 @@ pub(crate) fn with_repo_clearing_undo<T>(
 /// `after` re-resolves the session **by path** rather than reusing an index:
 /// the user can switch or close tabs during the unlocked window, so the active
 /// index may no longer refer to the repo we just operated on.
+///
+/// While it runs, git's progress goes out as `git-progress` events tagged
+/// `op`, and `cancel_network_op` can stop it.
 pub(crate) fn with_repo_networked<T>(
     state: &RepoState,
+    op: &'static str,
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
     after: impl FnOnce(&mut Session),
 ) -> Result<T, String> {
-    with_repo_networked_prepared(state, |_| (), f, |session, ()| after(session))
+    with_repo_networked_prepared(state, op, |_| (), f, |session, ()| after(session))
 }
 
 /// [`with_repo_networked`] with a `prepare` step that reads from the session
@@ -163,6 +250,7 @@ pub(crate) fn with_repo_networked<T>(
 /// would let a tab switch in between pair another repo's value with this one.
 pub(crate) fn with_repo_networked_prepared<P, T>(
     state: &RepoState,
+    op: &'static str,
     prepare: impl FnOnce(&Session) -> P,
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
     after: impl FnOnce(&mut Session, P),
@@ -173,8 +261,15 @@ pub(crate) fn with_repo_networked_prepared<P, T>(
         let session = &guard.sessions[idx];
         (session.path.clone(), prepare(session))
     }; // lock released here — before the network round trip
-    let repo = Repo::open(&path).map_err(to_message)?;
-    let out = f(&repo).map_err(to_message)?;
+    let mut repo = Repo::open(&path).map_err(to_message)?;
+    let cancel = state.1.begin(&path);
+    repo.set_network_hooks(NetworkHooks {
+        on_progress: state.1.reporter(op),
+        cancel: Some(Arc::clone(&cancel)),
+    });
+    let out = f(&repo);
+    state.1.end(&cancel);
+    let out = out.map_err(to_message)?;
     {
         let mut guard = state.0.lock().map_err(to_message)?;
         if let Some(session) = guard.sessions.iter_mut().find(|s| s.path == path) {
@@ -280,7 +375,75 @@ mod tests {
     use crate::test_support::{git, make_repo};
     use crate::workspace::{open_repo_impl, workspace_snapshot_impl};
 
-    // --- cache invalidation ------------------------------------------------
+    // --- network operations ------------------------------------------------
+
+    use super::ProgressEvent;
+    use crate::remote::{cancel_network_op_impl, fetch_all_impl};
+    use gitp_core::Progress;
+    use std::sync::{Arc, Mutex};
+
+    fn meter(phase: &str, percent: u8) -> Progress {
+        Progress {
+            phase: phase.into(),
+            percent: Some(percent),
+            detail: String::new(),
+        }
+    }
+
+    #[test]
+    fn progress_is_throttled_but_a_new_phase_always_gets_through() {
+        let state = RepoState::default();
+        let events: Arc<Mutex<Vec<ProgressEvent>>> = Arc::default();
+        let sink = Arc::clone(&events);
+        state.1.set_emitter(move |e| sink.lock().unwrap().push(e));
+        let report = state.1.reporter("fetch").expect("an emitter is set");
+
+        for pct in 1..=50 {
+            report(&meter("Receiving objects", pct));
+        }
+        report(&meter("Resolving deltas", 3));
+
+        let events = events.lock().unwrap();
+        let phases: Vec<_> = events.iter().map(|e| e.progress.phase.as_str()).collect();
+        assert_eq!(phases, ["Receiving objects", "Resolving deltas"]);
+        assert_eq!(events[0].op, "fetch");
+        assert_eq!(events[0].progress.percent, Some(1));
+    }
+
+    #[test]
+    fn without_an_emitter_there_is_no_reporter() {
+        assert!(RepoState::default().1.reporter("push").is_none());
+    }
+
+    #[test]
+    fn cancel_reaches_only_the_active_repos_operations() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
+        let path = state.0.lock().unwrap().sessions[0].path.clone();
+
+        let ours = state.1.begin(&path);
+        let theirs = state.1.begin("/some/other/repo");
+        cancel_network_op_impl(&state).expect("cancel");
+
+        assert!(ours.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(!theirs.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_finished_operation_is_no_longer_cancellable() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
+
+        // No remotes, so this fetch has nothing to do — it only has to
+        // register and deregister.
+        fetch_all_impl(&state).expect("fetch");
+        assert!(state.1.in_flight.lock().unwrap().is_empty());
+    }
+
     //
     // The log, the ref tree and `git status` are all cached now (see Session).
     // These pin the cases where a cache must NOT be served, since a stale one

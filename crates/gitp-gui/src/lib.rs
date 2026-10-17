@@ -63,6 +63,11 @@ pub fn run() {
                 .lock()
                 .map_err(|e| e.to_string())?
                 .on_change = Some(sink);
+            // Network ops report progress through the same handle.
+            let handle = app.handle().clone();
+            app.state::<RepoState>().1.set_emitter(move |event| {
+                let _ = handle.emit("git-progress", event);
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -128,6 +133,7 @@ pub fn run() {
             branches::set_upstream,
             branches::unset_upstream,
             remote::create_pull_request,
+            remote::cancel_network_op,
             rebase::get_rebase_todo,
             rebase::interactive_rebase,
             rebase::rebase_status,

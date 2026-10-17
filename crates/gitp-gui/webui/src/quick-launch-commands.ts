@@ -33,7 +33,7 @@ import {
 } from "./views/quick-launch";
 import type { BranchRef, ResetMode, StashRef } from "./types";
 import { state, ui } from "./app-state";
-import { readFailed, setStatus } from "./report";
+import { cancelNetworkAction, canCancelNetwork, readFailed, setStatus } from "./report";
 import { forgetRecentRepo, loadRecentRepos, PULL_DEFAULT_LABEL, PULL_DEFAULTS } from "./prefs";
 import { closeRepoTab, loadRepo, selectCommit, showView, switchRepo } from "./shell";
 import {
@@ -429,6 +429,7 @@ function repoCommands(): QuickItem[] {
   }
   if (ui.undoLabels.undo) items.push({ kind: "command", label: `Undo ${ui.undoLabels.undo}`, run: () => void undoAction() });
   if (ui.undoLabels.redo) items.push({ kind: "command", label: `Redo ${ui.undoLabels.redo}`, run: () => void redoAction() });
+  if (canCancelNetwork()) items.push({ kind: "command", label: "Cancel Fetch / Pull / Push", run: cancelNetworkAction });
   items.sort((a, b) => a.label.localeCompare(b.label));
   return items;
 }

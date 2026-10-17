@@ -28,9 +28,9 @@ impl Repo {
     /// deletes the old remote branch. No-op-ish when the remote name is unchanged.
     pub fn rename_remote_branch(&self, new: &str) -> Result<String> {
         let (remote, old_remote) = self.remote_target(new);
-        let pushed = self.run_git(&["push", "-u", &remote, new])?;
+        let pushed = self.run_git_network(&["push", "-u", &remote, new])?;
         if old_remote != new {
-            self.run_git(&["push", &remote, "--delete", &old_remote])?;
+            self.run_git_network(&["push", &remote, "--delete", &old_remote])?;
         }
         Ok(format!(
             "{pushed}\nrenamed {remote}/{old_remote} -> {remote}/{new}"
@@ -85,7 +85,7 @@ impl Repo {
     /// falling back to `origin` and the same name. This affects the remote.
     pub fn delete_remote_branch(&self, name: &str) -> Result<String> {
         let (remote, remote_branch) = self.remote_target(name);
-        self.run_git(&["push", &remote, "--delete", &remote_branch])
+        self.run_git_network(&["push", &remote, "--delete", &remote_branch])
     }
 
     /// Whether branch `name` currently exists on its remote, queried live with
@@ -128,7 +128,7 @@ impl Repo {
 
     /// Push branch `name` to `origin` (`git push origin <name>`).
     pub fn push_branch(&self, name: &str) -> Result<String> {
-        self.run_git(&["push", "origin", name])
+        self.run_git_network(&["push", "origin", name])
     }
 
     /// Fetch updates for `name`'s remote (its configured remote, or all remotes
@@ -137,8 +137,10 @@ impl Repo {
     /// working tree or any local branch.
     pub fn fetch_branch(&self, name: &str) -> Result<String> {
         match self.run_git(&["config", &format!("branch.{name}.remote")]) {
-            Ok(remote) if !remote.is_empty() => self.run_git(&["fetch", "--prune", &remote]),
-            _ => self.run_git(&["fetch", "--all", "--prune"]),
+            Ok(remote) if !remote.is_empty() => {
+                self.run_git_network(&["fetch", "--prune", &remote])
+            }
+            _ => self.run_git_network(&["fetch", "--all", "--prune"]),
         }
     }
 
@@ -203,13 +205,13 @@ impl Repo {
     /// remote-tracking refs so every branch's ahead/behind reflects the remote.
     /// Doesn't touch the working tree or any local branch.
     pub fn fetch_all(&self) -> Result<String> {
-        self.run_git(&["fetch", "--all", "--prune"])
+        self.run_git_network(&["fetch", "--all", "--prune"])
     }
 
     /// Fetch a single named remote (`git fetch --prune <remote>`), for when the
     /// repo has several and only one is worth waiting for.
     pub fn fetch_remote(&self, remote: &str) -> Result<String> {
-        self.run_git(&["fetch", "--prune", remote])
+        self.run_git_network(&["fetch", "--prune", remote])
     }
 
     /// Fetch `name`'s remote and then advance the local branch to its upstream —

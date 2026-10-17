@@ -230,3 +230,13 @@ export interface RepoChanged {
   path: string;
   kinds: ("worktree" | "index" | "refs" | "head")[];
 }
+
+// One `git-progress` event from a running fetch / pull / push: which operation,
+// git's phase ("Receiving objects"), its percentage when git knows one, and the
+// rest of git's line ("(450/1000), 1.2 MiB | 2.0 MiB/s").
+export interface GitProgress {
+  op: string;
+  phase: string;
+  percent: number | null;
+  detail: string;
+}

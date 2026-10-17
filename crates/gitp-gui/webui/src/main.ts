@@ -40,7 +40,7 @@ import { setupDetail } from "./views/detail";
 import { setupChanges } from "./views/changes";
 import { setupConflict } from "./views/conflict";
 import { state, ui, type View } from "./app-state";
-import { opFailed, reportDone, setStatus, watchPending } from "./report";
+import { opFailed, reportDone, setStatus, watchNetwork, watchPending } from "./report";
 import { setupFetchAgeIndicator } from "./fetch-age";
 import {
   applyTheme,
@@ -311,5 +311,6 @@ async function init(): Promise<void> {
 }
 
 watchPending();
+watchNetwork();
 
 void init();

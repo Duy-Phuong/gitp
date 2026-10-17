@@ -3390,3 +3390,38 @@ textarea:focus-visible,
   font-size: 12px;
   color: var(--text-dim);
 }
+/* Network progress in the status bar: git's phase and percentage after the
+   busy message ("Pushing… Writing objects 45%"), and the Cancel button beside
+   it. The global bar becomes determinate while git reports a percentage. */
+.status-progress {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.status-cancel {
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 0 7px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.status-cancel:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.status-cancel:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.status-cancel.hidden {
+  display: none;
+}
+.global-progress.determinate::before {
+  left: 0;
+  width: var(--progress, 0%);
+  animation: none;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}

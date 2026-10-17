@@ -13,6 +13,7 @@ import type {
   DotfileKind,
   FileCommit,
   FileDiff,
+  GitProgress,
   DeleteBranchesResult,
   LogPage,
   PullMode,
@@ -62,6 +63,56 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
   } finally {
     setInFlight(-1);
   }
+}
+
+// --- Network operations -----------------------------------------------------
+// Fetch / pull / push run through `invokeNetwork`, which counts them apart from
+// other calls: while one runs the status bar offers Cancel, and the backend
+// streams git's progress as `git-progress` events (see report.ts). The mocks
+// resolve at once, so preview mode never shows either.
+let networkInFlight = 0;
+const networkListeners = new Set<(count: number) => void>();
+
+/// Subscribe to changes in the number of network operations in flight. Runs
+/// immediately with the current count, then on every change.
+export function onNetworkChange(cb: (count: number) => void): () => void {
+  networkListeners.add(cb);
+  cb(networkInFlight);
+  return () => networkListeners.delete(cb);
+}
+
+function setNetworkInFlight(delta: number): void {
+  networkInFlight = Math.max(0, networkInFlight + delta);
+  for (const cb of networkListeners) cb(networkInFlight);
+}
+
+async function invokeNetwork<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  setNetworkInFlight(1);
+  try {
+    return await invoke<T>(cmd, args);
+  } finally {
+    setNetworkInFlight(-1);
+  }
+}
+
+/// Listen for git's progress during network operations. No-op in preview mode.
+export async function onGitProgress(cb: (progress: GitProgress) => void): Promise<void> {
+  if (!isTauri()) return;
+  const { listen } = await import("@tauri-apps/api/event");
+  await listen<GitProgress>("git-progress", (event) => cb(event.payload));
+}
+
+/// Stop the network operation running on the active repo; it then rejects with
+/// the cancelled error (see `isCancelled`).
+export async function cancelNetworkOp(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("cancel_network_op", {});
+}
+
+/// Whether `err` is a network operation the user cancelled rather than one that
+/// failed. Matches gitp-core's `Error::Cancelled` message.
+export function isCancelled(err: unknown): boolean {
+  return String(err) === "operation cancelled";
 }
 
 // Repo tabs: open/list/activate/close all return the full workspace so the
@@ -477,7 +528,7 @@ export async function fetchTagDetail(name: string): Promise<TagDetail> {
 
 export async function pushTag(name: string): Promise<string> {
   if (!isTauri()) return `Pushed ${name} to origin (preview mock)`;
-  return invoke<string>("push_tag", { name });
+  return invokeNetwork<string>("push_tag", { name });
 }
 
 export async function deleteTag(name: string): Promise<string> {
@@ -490,7 +541,7 @@ export async function deleteTag(name: string): Promise<string> {
 
 export async function deleteRemoteTag(name: string): Promise<string> {
   if (!isTauri()) return `Deleted ${name} on origin (preview mock)`;
-  return invoke<string>("delete_remote_tag", { name });
+  return invokeNetwork<string>("delete_remote_tag", { name });
 }
 
 export async function remoteTagExists(name: string): Promise<boolean> {
@@ -534,7 +585,7 @@ export async function renameBranch(oldName: string, newName: string): Promise<st
 // new name and deletes the old remote branch.
 export async function renameRemoteBranch(newName: string): Promise<string> {
   if (!isTauri()) return `Renamed remote branch to ${newName} (preview mock)`;
-  return invoke<string>("rename_remote_branch", { new: newName });
+  return invokeNetwork<string>("rename_remote_branch", { new: newName });
 }
 
 // Create a branch at HEAD without checking it out (rebase backup).
@@ -564,7 +615,7 @@ export async function deleteBranches(
 
 export async function deleteRemoteBranch(name: string): Promise<string> {
   if (!isTauri()) return `Deleted remote branch for ${name} (preview mock)`;
-  return invoke<string>("delete_remote_branch", { name });
+  return invokeNetwork<string>("delete_remote_branch", { name });
 }
 
 // Live check (git ls-remote) of whether the branch exists on its remote right
@@ -586,12 +637,12 @@ export async function mergeBranch(name: string): Promise<string> {
 
 export async function pushBranch(name: string): Promise<string> {
   if (!isTauri()) return `Pushed ${name} to origin (preview mock)`;
-  return invoke<string>("push_branch", { name });
+  return invokeNetwork<string>("push_branch", { name });
 }
 
 export async function fetchBranch(name: string): Promise<string> {
   if (!isTauri()) return `Fetched updates for ${name} (preview mock)`;
-  return invoke<string>("fetch_branch", { name });
+  return invokeNetwork<string>("fetch_branch", { name });
 }
 
 // Fetch all remotes (updates every branch's ahead/behind vs its upstream).
@@ -604,17 +655,17 @@ export async function goneBranches(): Promise<string[]> {
 
 export async function fetchRemote(remote: string): Promise<string> {
   if (!isTauri()) return `Fetched ${remote} (preview mock)`;
-  return invoke<string>("fetch_remote", { remote });
+  return invokeNetwork<string>("fetch_remote", { remote });
 }
 
 export async function fetchAll(): Promise<string> {
   if (!isTauri()) return "Fetched all remotes (preview mock)";
-  return invoke<string>("fetch_all", {});
+  return invokeNetwork<string>("fetch_all", {});
 }
 
 export async function fetchAndUpdateBranch(name: string): Promise<string> {
   if (!isTauri()) return `Fetched and updated ${name} (preview mock)`;
-  return invoke<string>("fetch_and_update_branch", { name });
+  return invokeNetwork<string>("fetch_and_update_branch", { name });
 }
 
 export async function fastForwardBranch(name: string): Promise<string> {
@@ -704,7 +755,7 @@ export async function pull(mode: PullMode): Promise<string> {
     MOCK_UNDO = { undo: null, redo: null }; // a pull clears the undo history
     return "Already up to date. (preview mock)";
   }
-  return invoke<string>("pull", { mode });
+  return invokeNetwork<string>("pull", { mode });
 }
 
 // Single-level undo/redo of the most recent supported action (GitKraken-style).
@@ -739,14 +790,14 @@ function mockRecord(label: string): void {
 
 export async function push(): Promise<string> {
   if (!isTauri()) return "Everything up-to-date (preview mock)";
-  return invoke<string>("push", {});
+  return invokeNetwork<string>("push", {});
 }
 
 // Force-push with --force-with-lease (see gitp-core's Repo::push_force) —
 // offered when a plain push is rejected because the local branch is behind.
 export async function pushForce(): Promise<string> {
   if (!isTauri()) return "Forced update (preview mock)";
-  return invoke<string>("push_force", {});
+  return invokeNetwork<string>("push_force", {});
 }
 
 export async function stash(): Promise<string> {

@@ -16,6 +16,7 @@ mod graph;
 mod hunk;
 mod line_staging;
 mod log;
+mod progress;
 mod rebase;
 mod refs;
 mod remote;
@@ -35,6 +36,7 @@ pub use diff::{ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff, DEFAULT_C
 pub use error::{Error, Result};
 pub use filelog::FileCommit;
 pub use log::{CommitRow, LogCache, LogOptions, LogRefresh};
+pub use progress::{NetworkHooks, Progress, ProgressFn};
 pub use rebase::{RebaseAction, RebaseCommit, RebaseStatus, RebaseStep};
 pub use refs::{BranchRef, Refs, RemoteBranch, StashRef, TagRef};
 pub use remote::PullMode;

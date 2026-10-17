@@ -11,6 +11,12 @@ pub enum Error {
     /// that exited non-zero, carrying its combined output as the message.
     #[error("{0}")]
     Message(String),
+
+    /// A network operation stopped by its cancel flag (see `NetworkHooks`).
+    /// Frontends match on this text to report a cancel as a cancel, not a
+    /// failure — keep it in step with gitp-gui's `isCancelled`.
+    #[error("operation cancelled")]
+    Cancelled,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

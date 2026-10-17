@@ -37,17 +37,17 @@ impl Repo {
     /// `git pull` in the working directory, using `mode` to decide how to
     /// reconcile local and remote history. Returns git's combined output.
     pub fn pull(&self, mode: PullMode) -> Result<String> {
-        self.run_git(mode.args())
+        self.run_git_network(mode.args())
     }
 
     /// Push the current branch. If it has no upstream yet, push with
     /// `-u origin <branch>` so the upstream is set on first push.
     pub fn push(&self) -> Result<String> {
         if self.has_upstream()? {
-            self.run_git(&["push"])
+            self.run_git_network(&["push"])
         } else {
             let branch = self.current_branch_name()?;
-            self.run_git(&["push", "-u", "origin", &branch])
+            self.run_git_network(&["push", "-u", "origin", &branch])
         }
     }
 
@@ -64,8 +64,8 @@ impl Repo {
     /// milliseconds, which is the same window every other force-push tool
     /// (GitKraken, Fork, `gh`) accepts.
     pub fn push_force(&self) -> Result<String> {
-        let fetched = self.run_git(&["fetch"])?;
-        let pushed = self.run_git(&["push", "--force-with-lease"])?;
+        let fetched = self.run_git_network(&["fetch"])?;
+        let pushed = self.run_git_network(&["push", "--force-with-lease"])?;
         Ok(format!("{fetched}\n{pushed}").trim().to_string())
     }
 

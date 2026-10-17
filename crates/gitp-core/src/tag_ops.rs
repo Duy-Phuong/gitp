@@ -68,7 +68,7 @@ impl Repo {
 
     /// Push tag `name` to `origin` (`git push origin <tag>`).
     pub fn push_tag(&self, name: &str) -> Result<String> {
-        self.run_git(&["push", "origin", name])
+        self.run_git_network(&["push", "origin", name])
     }
 
     /// Delete the local tag `name` (`git tag -d <name>`). Leaves any tag of the
@@ -79,7 +79,7 @@ impl Repo {
 
     /// Delete tag `name` on `origin` (`git push origin --delete <tag>`).
     pub fn delete_remote_tag(&self, name: &str) -> Result<String> {
-        self.run_git(&["push", "origin", "--delete", name])
+        self.run_git_network(&["push", "origin", "--delete", name])
     }
 
     /// Whether `origin` has a tag called `name`, probed live with

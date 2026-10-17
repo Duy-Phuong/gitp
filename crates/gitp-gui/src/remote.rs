@@ -1,10 +1,13 @@
-//! Network operations — pull, push, fetch — plus opening a pull request.
+//! Network operations — pull, push, fetch, and cancelling them — plus opening
+//! a pull request.
 
 use gitp_core::{PullMode, Repo};
 use tauri::State;
 
 use crate::os::open_in_browser;
-use crate::state::{with_repo, with_repo_networked, with_repo_networked_prepared, RepoState};
+use crate::state::{
+    to_message, with_repo, with_repo_networked, with_repo_networked_prepared, RepoState,
+};
 use crate::undo::{clear_undo, record_pull};
 
 /// `git pull` the active repo using `mode`. Invalidates the cached log because
@@ -16,6 +19,7 @@ fn pull_impl(state: &RepoState, mode: PullMode) -> Result<String, String> {
     // tab's HEAD with this repo if the user switched in between.
     with_repo_networked_prepared(
         state,
+        "pull",
         |session| session.repo.head_commit_id().ok(),
         |repo| repo.pull(mode),
         // A pull moves HEAD, and moving it back is a plain reset.
@@ -26,34 +30,34 @@ fn pull_impl(state: &RepoState, mode: PullMode) -> Result<String, String> {
 /// `git push` the active repo's current branch. Returns git's output. Nothing
 /// local changes, so no cache is invalidated.
 fn push_impl(state: &RepoState) -> Result<String, String> {
-    with_repo_networked(state, Repo::push, |_| {})
+    with_repo_networked(state, "push", Repo::push, |_| {})
 }
 
 /// Force-push the active repo's current branch (see `Repo::push_force`).
 fn push_force_impl(state: &RepoState) -> Result<String, String> {
-    with_repo_networked(state, Repo::push_force, |_| ())
+    with_repo_networked(state, "push", Repo::push_force, |_| ())
 }
 
 /// Push branch `name` to origin. No local change to the log.
 fn push_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.push_branch(&name))
+    with_repo_networked(state, "push", |repo| repo.push_branch(&name), |_| {})
 }
 
 /// Fetch `name`'s remote. Updates remote-tracking refs only, so the local log
 /// (which walks from HEAD) is unchanged.
 fn fetch_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_repo_networked(state, |repo| repo.fetch_branch(&name), |_| {})
+    with_repo_networked(state, "fetch", |repo| repo.fetch_branch(&name), |_| {})
 }
 
 /// Fetch all remotes. Only updates remote-tracking refs, so the cached log
 /// (which walks from HEAD) is unchanged.
-fn fetch_all_impl(state: &RepoState) -> Result<String, String> {
-    with_repo_networked(state, Repo::fetch_all, |_| {})
+pub(crate) fn fetch_all_impl(state: &RepoState) -> Result<String, String> {
+    with_repo_networked(state, "fetch", Repo::fetch_all, |_| {})
 }
 
 /// Fetch one named remote, for repos with more than one.
 fn fetch_remote_impl(state: &RepoState, remote: String) -> Result<String, String> {
-    with_repo_networked(state, |repo| repo.fetch_remote(&remote), |_| {})
+    with_repo_networked(state, "fetch", |repo| repo.fetch_remote(&remote), |_| {})
 }
 
 /// Fetch and fast-forward `name`. Invalidates the cached log because the branch
@@ -61,11 +65,25 @@ fn fetch_remote_impl(state: &RepoState, remote: String) -> Result<String, String
 fn fetch_and_update_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
     with_repo_networked(
         state,
+        "fetch",
         |repo| repo.fetch_and_update_branch(&name),
         // The fast-forward advanced a local branch (ensure_log notices); an
         // older recorded action may now be stale, so it is dropped.
         clear_undo,
     )
+}
+
+/// Cancel whatever network operation is running on the active repo: its `git`
+/// is killed and the operation's command returns "operation cancelled". A
+/// no-op when nothing is running.
+pub(crate) fn cancel_network_op_impl(state: &RepoState) -> Result<(), String> {
+    let path = {
+        let guard = state.0.lock().map_err(to_message)?;
+        let idx = guard.active.ok_or("no repository is open")?;
+        guard.sessions[idx].path.clone()
+    };
+    state.1.cancel(&path);
+    Ok(())
 }
 
 /// Compute the pull/merge-request URL for `branch` and open it in the default
@@ -119,6 +137,11 @@ pub(crate) fn fetch_and_update_branch(
     state: State<RepoState>,
 ) -> Result<String, String> {
     fetch_and_update_branch_impl(&state, name)
+}
+
+#[tauri::command(async)]
+pub(crate) fn cancel_network_op(state: State<RepoState>) -> Result<(), String> {
+    cancel_network_op_impl(&state)
 }
 
 #[tauri::command(async)]
