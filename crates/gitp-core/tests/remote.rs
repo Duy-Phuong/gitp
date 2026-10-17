@@ -208,7 +208,8 @@ fn push_force_overwrites_a_diverged_remote_branch() {
 
     let log = Command::new("git")
         .current_dir(remote.path())
-        .args(["log", "--oneline", "main"])
+        // Subjects only: a short hash in `--oneline` output can contain "c2".
+        .args(["log", "--format=%s", "main"])
         .output()
         .unwrap();
     let log = String::from_utf8_lossy(&log.stdout);
