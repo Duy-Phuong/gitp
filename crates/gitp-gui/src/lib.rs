@@ -31,6 +31,7 @@ mod test_support;
 mod undo;
 mod watch;
 mod workspace;
+mod worktrees;
 
 use std::sync::Arc;
 
@@ -193,6 +194,12 @@ pub fn run() {
             bisect::bisect_reset,
             history::get_commit_signature,
             staging::get_signing_config,
+            worktrees::list_worktrees,
+            worktrees::add_worktree,
+            worktrees::remove_worktree,
+            worktrees::lock_worktree,
+            worktrees::unlock_worktree,
+            worktrees::prune_worktrees,
         ])
         .run(tauri::generate_context!())
         .expect("error while running gitp");

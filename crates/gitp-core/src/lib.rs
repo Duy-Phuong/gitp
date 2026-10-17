@@ -31,6 +31,7 @@ mod status;
 mod tag_ops;
 mod tree;
 mod undo;
+mod worktree_ops;
 
 pub use bisect::{BisectMark, BisectStatus};
 pub use blame::BlameLine;
@@ -53,3 +54,4 @@ pub use signature::{CommitSignature, SignatureStatus, SigningConfig};
 pub use status::StatusLists;
 pub use tag_ops::TagDetail;
 pub use undo::{DeletedBranch, FileBlob, Undoable};
+pub use worktree_ops::{Worktree, WorktreeTarget};

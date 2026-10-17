@@ -10,7 +10,7 @@ import type { ChangesHandle } from "./views/changes";
 import type { ConflictHandle } from "./views/conflict";
 import type { TerminalHandle } from "./views/terminal";
 import type { ReflogHandle } from "./views/reflog";
-import type { BisectStatus, CommitRow, ConflictStatus, RebaseStatus, Refs, RepoTab, UndoState } from "./types";
+import type { BisectStatus, CommitRow, ConflictStatus, RebaseStatus, Refs, RepoTab, UndoState, Worktree } from "./types";
 
 export type View = "history" | "changes" | "config" | "conflict" | "reflog";
 
@@ -45,6 +45,8 @@ interface State {
   branchSelectionAnchor: string | null;
   // Refs with an operation in flight — see withBusyRef.
   busyRefs: Set<string>;
+  // The repo's worktrees (main first), refreshed with the sidebar.
+  worktrees: Worktree[];
 }
 
 export const state: State = {
@@ -67,6 +69,7 @@ export const state: State = {
   branchSelection: new Set(),
   branchSelectionAnchor: null,
   busyRefs: new Set(),
+  worktrees: [],
   rebase: null,
   conflict: null,
   bisect: null,

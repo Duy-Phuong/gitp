@@ -5,7 +5,7 @@
 // (filter text, which sections/folders are collapsed) and re-renders on change.
 
 import { chevronIcon, clear, el } from "../dom";
-import type { BranchRef, Refs, StashRef } from "../types";
+import type { BranchRef, Refs, StashRef, Worktree } from "../types";
 
 export type SidebarView = "history" | "changes" | "reflog";
 
@@ -28,6 +28,9 @@ export interface SidebarState {
   // a slow fetch is visibly in progress where the user started it rather than
   // only in the status bar.
   busyRefs: Set<string>;
+  // The repo's worktrees, main first. The section shows only when there's a
+  // linked one beside the main worktree.
+  worktrees: Worktree[];
 }
 
 export interface SidebarCallbacks {
@@ -53,6 +56,10 @@ export interface SidebarCallbacks {
   onRemoteMenu: (name: string, target: string, x: number, y: number) => void;
   // Right-click a tag: open its actions menu at the cursor.
   onTagMenu: (name: string, target: string, x: number, y: number) => void;
+  // Double-click a worktree: open it as a repo tab.
+  onWorktreeOpen: (w: Worktree) => void;
+  // Right-click a worktree: open its actions menu at the cursor.
+  onWorktreeMenu: (w: Worktree, x: number, y: number) => void;
 }
 
 export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCallbacks): void {
@@ -92,6 +99,7 @@ export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCal
   buildRemotes(tree, s, cb, match, filtering);
   buildTags(tree, s, cb, match, filtering);
   buildStashes(tree, s, cb, match);
+  buildWorktrees(tree, s, cb, match);
   host.append(tree);
 
   if (filterWasFocused) {
@@ -455,6 +463,72 @@ function stashLeaf(stash: StashRef, cb: SidebarCallbacks): HTMLElement {
   row.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     cb.onStashMenu(stash, e.clientX, e.clientY);
+  });
+  return row;
+}
+
+// The folder name a worktree is known by in the sidebar.
+export function worktreeName(w: Worktree): string {
+  return w.path.split("/").filter(Boolean).pop() ?? w.path;
+}
+
+// Where a new worktree for `branch` goes by default: beside the main
+// worktree's folder, `../<repo>-<branch>` — relative to the repo, as git
+// resolves it — with the branch's slashes flattened so `feature/x` doesn't
+// become a nested folder.
+export function siblingWorktreePath(mainPath: string, branch: string): string {
+  const repo = mainPath.split("/").filter(Boolean).pop() ?? "repo";
+  return `../${repo}-${branch.replace(/\//g, "-")}`;
+}
+
+// Linked worktrees, each by folder name with what it has checked out. Hidden
+// when the main worktree is the only one, which is nearly every repo.
+function buildWorktrees(
+  tree: HTMLElement,
+  s: SidebarState,
+  cb: SidebarCallbacks,
+  match: (t: string) => boolean,
+): void {
+  if (s.worktrees.length < 2) return;
+  const { row, collapsed } = sectionHeader("sec:worktrees", "Worktrees", s, cb);
+  tree.append(row);
+  if (collapsed) return;
+  for (const w of s.worktrees) {
+    if (match(worktreeName(w)) || match(w.branch ?? "")) tree.append(worktreeLeaf(w, cb));
+  }
+}
+
+// A worktree: click jumps to its commit, double-click opens it as a tab,
+// right-click opens its menu. The current one is accented like HEAD's branch.
+function worktreeLeaf(w: Worktree, cb: SidebarCallbacks): HTMLElement {
+  const checkedOut = w.branch ?? (w.head ? `detached ${w.head.slice(0, 7)}` : "");
+  const notes = [
+    w.is_main ? "main worktree" : null,
+    w.locked ? `locked${w.lock_reason ? `: ${w.lock_reason}` : ""}` : null,
+    w.prunable ? "folder is missing" : null,
+  ].filter(Boolean);
+  const row = el("div", {
+    class: `sb-leaf${w.is_current ? " head" : ""}${w.prunable ? " sb-missing" : ""}`,
+    title: [w.path, ...notes, "Click: jump to commit · Double-click: open · Right-click: actions"].join("\n"),
+  });
+  row.append(el("span", { class: "sb-leaf-label", text: worktreeName(w) }));
+  if (w.locked) row.append(el("span", { class: "sb-badge", text: "locked" }));
+  if (w.prunable) row.append(el("span", { class: "sb-badge", text: "missing" }));
+  if (checkedOut) row.append(el("span", { class: "sb-ab", text: checkedOut }));
+
+  let clickTimer: number | undefined;
+  row.addEventListener("click", () => {
+    window.clearTimeout(clickTimer);
+    if (w.head) clickTimer = window.setTimeout(() => cb.onRefJump(w.head!, worktreeName(w)), 220);
+  });
+  row.addEventListener("dblclick", () => {
+    window.clearTimeout(clickTimer);
+    if (!w.is_current && !w.prunable) cb.onWorktreeOpen(w);
+  });
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    window.clearTimeout(clickTimer);
+    cb.onWorktreeMenu(w, e.clientX, e.clientY);
   });
   return row;
 }

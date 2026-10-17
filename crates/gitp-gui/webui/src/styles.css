@@ -3591,3 +3591,20 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .sig-unverifiable {
   color: var(--text-dim);
 }
+
+/* Worktrees / submodules in the sidebar --------------------------------- */
+/* A short state tag on a row ("locked", "missing", "modified"). */
+.sb-badge {
+  flex: none;
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 5px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+/* A worktree whose folder is gone: still listed (until pruned), but dimmed. */
+.sb-leaf.sb-missing .sb-leaf-label {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}

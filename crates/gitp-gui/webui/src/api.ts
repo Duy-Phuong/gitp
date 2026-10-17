@@ -35,6 +35,8 @@ import type {
   UndoState,
   Workspace,
   WorkspaceSnapshot,
+  Worktree,
+  WorktreeTarget,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -1041,6 +1043,70 @@ export async function writeDotfile(kind: DotfileKind, content: string): Promise<
   await invoke<void>("write_dotfile", { kind, content });
 }
 
+// --- Worktrees --------------------------------------------------------------
+
+// Every worktree of the active repo, the main one first.
+export async function listWorktrees(): Promise<Worktree[]> {
+  if (!isTauri()) {
+    const active = MOCK_WORKSPACE.repos[MOCK_WORKSPACE.active ?? -1]?.path;
+    return MOCK_WORKTREES.map((w) => ({ ...w, is_current: w.path === active }));
+  }
+  return invoke<Worktree[]>("list_worktrees", {});
+}
+
+// `git worktree add`; a relative `path` resolves against the repo's folder.
+// Returns the new worktree's absolute path.
+export async function addWorktree(path: string, target: WorktreeTarget): Promise<string> {
+  if (!isTauri()) {
+    const full = path.startsWith("/") ? path : `${MOCK_WORKSPACE.repos[0]?.path ?? ""}/${path}`;
+    const branch = target.kind === "detached" ? null : target.name;
+    MOCK_WORKTREES.push({ ...MOCK_LINKED_WORKTREE, path: full, branch });
+    return full;
+  }
+  return invoke<string>("add_worktree", { path, target });
+}
+
+// `git worktree remove`. Without `force`, git refuses a worktree with local
+// changes and says to use --force (see removeWorktreeAction).
+export async function removeWorktree(path: string, force: boolean): Promise<string> {
+  if (!isTauri()) {
+    // Every mock worktree has "changes", so preview exercises the force path.
+    if (!force) throw `fatal: '${path}' contains modified or untracked files, use --force to delete it`;
+    const i = MOCK_WORKTREES.findIndex((w) => w.path === path);
+    if (i !== -1) MOCK_WORKTREES.splice(i, 1);
+    return "";
+  }
+  return invoke<string>("remove_worktree", { path, force });
+}
+
+export async function lockWorktree(path: string, reason: string): Promise<string> {
+  if (!isTauri()) {
+    const w = MOCK_WORKTREES.find((x) => x.path === path);
+    if (w) Object.assign(w, { locked: true, lock_reason: reason || null });
+    return "";
+  }
+  return invoke<string>("lock_worktree", { path, reason });
+}
+
+export async function unlockWorktree(path: string): Promise<string> {
+  if (!isTauri()) {
+    const w = MOCK_WORKTREES.find((x) => x.path === path);
+    if (w) Object.assign(w, { locked: false, lock_reason: null });
+    return "";
+  }
+  return invoke<string>("unlock_worktree", { path });
+}
+
+// Forget worktrees whose folders are gone. Returns what git removed.
+export async function pruneWorktrees(): Promise<string> {
+  if (!isTauri()) {
+    const gone = MOCK_WORKTREES.filter((w) => w.prunable);
+    for (const w of gone) MOCK_WORKTREES.splice(MOCK_WORKTREES.indexOf(w), 1);
+    return gone.map((w) => `Removing worktrees/${w.path.split("/").pop()}: gitdir file points to non-existent location`).join("\n");
+  }
+  return invoke<string>("prune_worktrees", {});
+}
+
 // ---------------------------------------------------------------------------
 // Mock data (browser-only)
 // ---------------------------------------------------------------------------
@@ -1585,3 +1651,21 @@ let MOCK_BISECT: BisectStatus | null = {
   first_bad_summary: null,
   original_ref: "develop/3.33.0",
 };
+
+// The mock repo's own worktree plus one linked worktree, so the Worktrees
+// section shows in preview.
+const MOCK_LINKED_WORKTREE: Worktree = {
+  path: "/Users/you/Documents/mideal-feature-dashboard",
+  head: mockOid("e"),
+  branch: "feature/dashboard",
+  is_main: false,
+  is_current: false,
+  locked: false,
+  lock_reason: null,
+  prunable: false,
+};
+
+const MOCK_WORKTREES: Worktree[] = [
+  { ...MOCK_LINKED_WORKTREE, path: "/Users/you/Documents/mideal", head: mockOid("g"), branch: "develop/3.33.0", is_main: true },
+  { ...MOCK_LINKED_WORKTREE },
+];

@@ -31,7 +31,7 @@ import {
   type QuickItem,
   type QuickStage,
 } from "./views/quick-launch";
-import type { BranchRef, ResetMode, StashRef } from "./types";
+import type { BranchRef, ResetMode, StashRef, WorktreeTarget } from "./types";
 import { state, ui } from "./app-state";
 import { cancelNetworkAction, canCancelNetwork, readFailed, setStatus } from "./report";
 import { forgetRecentRepo, loadRecentRepos, PULL_DEFAULT_LABEL, PULL_DEFAULTS } from "./prefs";
@@ -75,6 +75,7 @@ import {
   tagAction,
 } from "./commit-actions";
 import { toggleTerminal } from "./terminal-panel";
+import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
 
 // --- Quick Launch -----------------------------------------------------------
 
@@ -387,6 +388,8 @@ function repoCommands(): QuickItem[] {
           void runBranchOp(`Unsetting upstream of ${b.name}`, () => unsetUpstream(b.name), false, b.name),
         ),
     },
+    { kind: "command", label: "Add Worktree…", next: () => addWorktreeStage() },
+    { kind: "command", label: "Prune Worktrees", run: () => void pruneWorktreesAction() },
     { kind: "command", label: "Stage All Changes", run: () => void stageAllAction() },
     { kind: "command", label: "Unstage All Changes", run: () => void unstageAllAction() },
     ...commitCommands(),
@@ -520,6 +523,40 @@ function applyStashPicked(st: StashRef): void {
     const verb = drop ? "Popping" : "Applying";
     void runStashOp(`${verb} stash@{${st.index}}`, () => applyStash(st.index, drop));
   });
+}
+
+// What a new worktree checks out: a new branch from HEAD, or a local branch no
+// worktree has checked out yet (git refuses the others). Then where it goes.
+function addWorktreeStage(): QuickStage {
+  const askPath = (branch: string, target: WorktreeTarget) =>
+    promptFor("Folder for the new worktree", (path) => void addWorktreeAction(path, target), defaultWorktreePath(branch));
+  return {
+    chip: "Add Worktree",
+    placeholder: "branch",
+    sections: [
+      {
+        title: "New Branch",
+        items: [
+          {
+            kind: "option",
+            label: "New Branch from HEAD…",
+            run: () =>
+              promptFor("New branch name", (name) => askPath(name, { kind: "new_branch", name, start: "HEAD" })),
+          },
+        ],
+      },
+      {
+        title: "Local Branches",
+        items: state.refs.branches
+          .filter((b) => !b.is_head && !worktreeOf(b.name))
+          .map((b) => ({
+            kind: "branch" as const,
+            label: b.name,
+            run: () => askPath(b.name, { kind: "branch", name: b.name }),
+          })),
+      },
+    ],
+  };
 }
 
 function remoteStage(): QuickStage {

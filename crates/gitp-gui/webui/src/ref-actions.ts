@@ -44,6 +44,7 @@ import { copyText } from "./clipboard";
 import {
   clearCommitSelection,
   loadChanges,
+  loadRepo,
   loadSidebar,
   opFailedMaybeConflict,
   refreshConflictStatus,
@@ -54,6 +55,8 @@ import {
 } from "./shell";
 import { checkoutCommitAction, confirmThenRun, openInteractiveRebase } from "./commit-actions";
 import { showComparison } from "./compare";
+import { checkoutInNewWorktreeItem, worktreeOf } from "./worktree-actions";
+import { worktreeName } from "./views/sidebar";
 
 // Double-click a branch: check it out, then reload history + sidebar from the new
 // HEAD. Warns first if the working tree has uncommitted changes.
@@ -79,7 +82,14 @@ export async function checkoutBranchAction(b: BranchRef): Promise<void> {
   } catch (err) {
     // Conflicting local changes ("would be overwritten by checkout") come back
     // as multi-line git output — show the full reason, not just a status line.
-    opFailed(`Couldn't switch to ${b.name}`, err);
+    // A branch another worktree has checked out can't be checked out here too;
+    // that worktree is one click away instead.
+    const wt = worktreeOf(b.name);
+    opFailed(
+      `Couldn't switch to ${b.name}`,
+      err,
+      wt && !wt.is_current ? { label: "Open Worktree", run: () => void loadRepo(wt.path) } : undefined,
+    );
   }
 }
 
@@ -96,6 +106,11 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
 
   if (!b.is_head) items.push({ label: "Checkout", run: () => void checkoutBranchAction(b) });
   if (!b.is_head) items.push(compareWithHeadItem(b.name));
+  // A branch can be checked out in only one worktree: where another has it,
+  // offer that worktree instead of a second checkout.
+  const wt = worktreeOf(b.name);
+  if (wt && !wt.is_current) items.push({ label: `Open Worktree '${worktreeName(wt)}'`, run: () => void loadRepo(wt.path) });
+  else if (!b.is_head) items.push(checkoutInNewWorktreeItem(b));
   items.push({ separator: true });
   items.push({
     label: "New Branch here…",

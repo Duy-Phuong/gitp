@@ -328,3 +328,25 @@ export interface SigningConfig {
   // The effective commit.gpgsign.
   sign_by_default: boolean;
 }
+
+// One working tree of the repository (mirrors gitp-core's Worktree): the main
+// one, listed first, and any linked ones added with `git worktree add`.
+export interface Worktree {
+  path: string;
+  head: string | null;
+  // Short branch name; null when HEAD is detached there.
+  branch: string | null;
+  is_main: boolean;
+  // The worktree the active tab is open in.
+  is_current: boolean;
+  locked: boolean;
+  lock_reason: string | null;
+  // Its folder is gone; Prune Worktrees would forget it.
+  prunable: boolean;
+}
+
+// What a new worktree checks out (mirrors gitp-core's WorktreeTarget).
+export type WorktreeTarget =
+  | { kind: "branch"; name: string }
+  | { kind: "new_branch"; name: string; start: string }
+  | { kind: "detached"; rev: string };

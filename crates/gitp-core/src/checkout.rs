@@ -16,6 +16,14 @@ impl Repo {
         // tag, and attaching HEAD to that makes every later commit move the tag.
         let (object, reference) = match self.inner.find_branch(name, git2::BranchType::Local) {
             Ok(branch) => {
+                // HEAD is attached below with a plain ref write, which (unlike
+                // `git checkout`) wouldn't stop two worktrees sharing a branch.
+                if let Some(path) = self.branch_checked_out_elsewhere(name) {
+                    return Err(Error::Message(format!(
+                        "Can't switch to {name}: it is already checked out in the worktree \
+                         at {path}. Open that worktree instead — nothing was changed."
+                    )));
+                }
                 let reference = branch.into_reference();
                 (reference.peel(git2::ObjectType::Any)?, Some(reference))
             }
