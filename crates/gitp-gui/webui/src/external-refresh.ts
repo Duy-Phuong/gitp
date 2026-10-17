@@ -1,0 +1,67 @@
+// Picking up changes made outside gitp (a terminal, an IDE, another git client).
+
+import { state, ui } from "./app-state";
+import { loadSidebar, operationInFlight, refreshHistory } from "./shell";
+
+// --- Picking up changes made outside gitp ---------------------------------
+//
+// Another app — a terminal, an IDE, another git GUI — can stage, commit, or
+// check out at any moment. The backend already serves fresh data whenever it's
+// asked (its `git status` cache is guarded by a worktree watcher *and* the
+// `.git/index` stamp), but nothing was asking: loadSidebar() ran only after
+// gitp's own actions, so an external `git add` stayed invisible until the user
+// happened to do something in gitp that refreshed.
+//
+// So refresh on the two signals that mean "the user is looking at this now":
+// the window regaining focus (stage elsewhere, switch back — the reported
+// case), and interaction, throttled, for when gitp already had focus.
+
+const INTERACTION_REFRESH_THROTTLE_MS = 3_000;
+
+let lastDiskRefreshAt = 0;
+
+// Re-read refs, staging lists and history from disk. `force` skips the
+// interaction throttle — window focus is deliberate and infrequent, so it
+// shouldn't be swallowed by a click a moment earlier.
+function refreshFromDisk(force: boolean): void {
+  if (!state.repoPath) return;
+  // An operation in flight refreshes on its own when it finishes.
+  if (operationInFlight()) return;
+  const now = Date.now();
+  if (!force && now - lastDiskRefreshAt < INTERACTION_REFRESH_THROTTLE_MS) return;
+  lastDiskRefreshAt = now;
+  void (async () => {
+    await loadSidebar({ abortIfBusy: true });
+    // Commits made outside gitp change history too. This is the passive mode:
+    // it compares the first page and returns without touching anything when
+    // history is unchanged, which is the common case.
+    if (state.view === "history") await refreshHistory({ keepSelection: true });
+    // A file resolved in a terminal/editor must leave the resolver's list too.
+    else if (state.view === "conflict") await ui.conflictView?.reload();
+  })();
+}
+
+export function setupExternalChangeRefresh(): void {
+  // Coming back to the window: the reported case, and the cheapest signal there
+  // is that the user wants to see current state.
+  window.addEventListener("focus", () => refreshFromDisk(true));
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshFromDisk(true);
+  });
+
+  // Already focused: any interaction is a hint the user is here and looking.
+  // Throttled, and skipped while a modal is open — mid-dialog the file lists
+  // aren't what's being looked at, and repainting them underneath is a
+  // surprise, not a service.
+  const onInteract = (e: Event) => {
+    if (document.querySelector(".modal-overlay")) return;
+    // A keystroke inside a text field means the user is writing, not navigating.
+    // Re-reading the workspace mid-sentence rebuilds the staging view under
+    // them; render() puts the caret back, but the churn buys nothing.
+    const t = e.target instanceof HTMLElement ? e.target : null;
+    if (t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+    refreshFromDisk(false);
+  };
+  document.addEventListener("pointerdown", onInteract, true);
+  document.addEventListener("keydown", onInteract, true);
+}

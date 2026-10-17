@@ -178,3 +178,10 @@ export function statusBadge(status: string, withLabel = false): HTMLElement {
   if (withLabel) badge.append(el("span", { text: status }));
   return badge;
 }
+
+// `document.querySelector` that throws on a missing element, typed by the caller.
+export const $ = <T extends HTMLElement>(sel: string): T => {
+  const node = document.querySelector<T>(sel);
+  if (!node) throw new Error(`missing element: ${sel}`);
+  return node;
+};
