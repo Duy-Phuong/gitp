@@ -36,6 +36,21 @@ impl Repo {
             .to_string())
     }
 
+    /// Whether the ignore rules (`.gitignore`s, `info/exclude`,
+    /// `core.excludesFile`) match `rel`, a path relative to the working
+    /// directory — or any directory above it. `dir` says `rel` names a
+    /// directory, so `name/` rules apply even after it has been deleted.
+    /// Only the rules are consulted: a tracked file can still match.
+    pub fn is_ignored(&self, rel: &Path, dir: bool) -> bool {
+        // libgit2 only treats a path as a directory when it exists or ends in
+        // a slash.
+        let mut path = rel.to_string_lossy().into_owned();
+        if dir {
+            path.push('/');
+        }
+        self.inner.is_path_ignored(&path).unwrap_or(false)
+    }
+
     /// Size and mtime of `.git/index`, or `None` if it can't be read.
     ///
     /// A single `stat`. Every operation that stages, unstages, commits, checks

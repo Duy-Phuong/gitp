@@ -222,3 +222,11 @@ export interface ConflictSides {
   working: string;
   binary: boolean;
 }
+
+// Pushed by the backend's filesystem watcher (Tauri event `repo-changed`) when
+// files or refs of the active repo change on disk — debounced, with changes in
+// ignored directories left out.
+export interface RepoChanged {
+  path: string;
+  kinds: ("worktree" | "index" | "refs" | "head")[];
+}

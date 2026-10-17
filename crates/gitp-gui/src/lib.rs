@@ -25,10 +25,15 @@ pub mod terminal;
 #[cfg(test)]
 mod test_support;
 mod undo;
+mod watch;
 mod workspace;
 
+use std::sync::Arc;
+
 use state::RepoState;
+use tauri::{Emitter, Manager};
 use terminal::TerminalState;
+use watch::{ChangeSink, REPO_CHANGED_EVENT};
 
 // --- Tauri command wrappers -------------------------------------------------
 //
@@ -46,6 +51,20 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(RepoState::default())
         .manage(TerminalState::default())
+        .setup(|app| {
+            // Repository watchers push changes on disk to the frontend (see
+            // `watch`); they need the app handle to emit, which exists only now.
+            let handle = app.handle().clone();
+            let sink: ChangeSink = Arc::new(move |change| {
+                let _ = handle.emit(REPO_CHANGED_EVENT, change);
+            });
+            app.state::<RepoState>()
+                .0
+                .lock()
+                .map_err(|e| e.to_string())?
+                .on_change = Some(sink);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             workspace::open_repo,
             workspace::list_repos,

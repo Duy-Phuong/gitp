@@ -2,15 +2,16 @@
 //! frontend refreshes after every action.
 
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use gitp_core::{ConflictStatus, RebaseStatus, Refs, Repo, StatusLists};
 use serde::Serialize;
 use tauri::State;
 
-use crate::state::{
-    ensure_refs, ensure_status, to_message, watch_worktree, RepoState, Session, WorkspaceView,
-};
+use crate::state::{ensure_refs, ensure_status, to_message, RepoState, Session, WorkspaceView};
 use crate::undo::{clear_undo, undo_view, UndoView};
+use crate::watch::watch_worktree;
 
 /// A tab label like `mideal (Documents)`: the repo folder plus its parent.
 fn display_name(path: &str) -> String {
@@ -34,14 +35,20 @@ fn display_name(path: &str) -> String {
 pub(crate) fn open_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, String> {
     let mut guard = state.0.lock().map_err(to_message)?;
     if let Some(i) = guard.sessions.iter().position(|s| s.path == path) {
-        guard.active = Some(i);
+        guard.set_active(Some(i));
         return Ok(guard.view());
     }
     let repo = Repo::open(&path).map_err(to_message)?;
     // Index snapshots from a previous run that didn't get to clean up after itself.
     repo.remove_index_snapshots();
     let name = display_name(&path);
-    let (dirty, watcher) = watch_worktree(repo.workdir());
+    let live = Arc::new(AtomicBool::new(false));
+    let (dirty, watcher) = watch_worktree(
+        repo.workdir(),
+        path.clone(),
+        guard.on_change.clone(),
+        Arc::clone(&live),
+    );
     guard.sessions.push(Session {
         path,
         name,
@@ -52,10 +59,12 @@ pub(crate) fn open_repo_impl(state: &RepoState, path: String) -> Result<Workspac
         status_cache: None,
         worktree_dirty: dirty,
         _watcher: watcher,
+        watch_live: live,
         undo: None,
         redo: None,
     });
-    guard.active = Some(guard.sessions.len() - 1);
+    let last = guard.sessions.len() - 1;
+    guard.set_active(Some(last));
     Ok(guard.view())
 }
 
@@ -71,7 +80,7 @@ fn activate_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, 
         .iter()
         .position(|s| s.path == path)
         .ok_or("repository is not open")?;
-    guard.active = Some(i);
+    guard.set_active(Some(i));
     Ok(guard.view())
 }
 
@@ -85,12 +94,13 @@ fn close_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, Str
         .ok_or("repository is not open")?;
     clear_undo(&mut guard.sessions[i]); // removes its index snapshot files
     guard.sessions.remove(i);
-    guard.active = match guard.active {
+    let active = match guard.active {
         _ if guard.sessions.is_empty() => None,
         Some(a) if i < a => Some(a - 1),
         Some(a) => Some(a.min(guard.sessions.len() - 1)),
         None => None,
     };
+    guard.set_active(active);
     Ok(guard.view())
 }
 

@@ -1,16 +1,16 @@
 //! Session state: the open repositories, their cached reads (log, refs,
 //! `git status`), and the `with_repo*` wrappers every command runs through.
 
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::RecommendedWatcher;
 
 use gitp_core::{CommitRow, LogCache, Refs, Repo, StatusLists, Undoable};
 use serde::Serialize;
 
 use crate::undo::clear_undo;
+use crate::watch::ChangeSink;
 
 /// An open repository plus its lazily-computed, cached reads. The log is
 /// computed once (the expensive walk) so pages can be served cheaply and with
@@ -41,6 +41,9 @@ pub(crate) struct Session {
     pub(crate) worktree_dirty: Option<Arc<AtomicBool>>,
     /// Held only to keep the watcher alive for as long as the session is open.
     pub(crate) _watcher: Option<RecommendedWatcher>,
+    /// Whether this is the active tab — only then does its watcher report
+    /// changes to the frontend (see `watch::watch_worktree`).
+    pub(crate) watch_live: Arc<AtomicBool>,
     /// The single most-recent reversible action (GitKraken-style single-level
     /// undo), and the action just undone that Redo would re-apply.
     pub(crate) undo: Option<Undoable>,
@@ -53,9 +56,20 @@ pub(crate) struct Session {
 pub(crate) struct Workspace {
     pub(crate) sessions: Vec<Session>,
     pub(crate) active: Option<usize>,
+    /// Where watchers report changes on disk; set once the app is running
+    /// (`None` in the command-layer tests).
+    pub(crate) on_change: Option<ChangeSink>,
 }
 
 impl Workspace {
+    /// Make tab `idx` the active one, and let only its watcher report changes.
+    pub(crate) fn set_active(&mut self, idx: Option<usize>) {
+        self.active = idx;
+        for (i, session) in self.sessions.iter().enumerate() {
+            session.watch_live.store(Some(i) == idx, Ordering::SeqCst);
+        }
+    }
+
     pub(crate) fn view(&self) -> WorkspaceView {
         WorkspaceView {
             repos: self
@@ -87,35 +101,6 @@ pub(crate) struct RepoTab {
 pub(crate) struct WorkspaceView {
     pub(crate) repos: Vec<RepoTab>,
     pub(crate) active: Option<usize>,
-}
-
-/// Watch everything under `dir` (the working tree, `.git` included) and raise a
-/// flag on any change, so `ensure_status` knows when a rescan is warranted.
-///
-/// Returns `(None, None)` if a watcher can't be started — an unreadable
-/// directory, or the platform's watch limits being exhausted on a huge tree.
-/// That's not an error worth failing the open over: the caller simply doesn't
-/// cache, and behaviour falls back to scanning every time.
-pub(crate) fn watch_worktree(dir: &Path) -> (Option<Arc<AtomicBool>>, Option<RecommendedWatcher>) {
-    let flag = Arc::new(AtomicBool::new(true));
-    let signal = Arc::clone(&flag);
-    // Any event at all means "rescan"; we deliberately don't inspect paths or
-    // kinds. Working out whether a given write could affect `git status` is
-    // exactly the work `git status` does, so filtering here would cost more
-    // than it saves and risks missing a change.
-    let handler = move |res: notify::Result<notify::Event>| {
-        if res.is_ok() {
-            signal.store(true, Ordering::SeqCst);
-        }
-    };
-    let mut watcher = match notify::recommended_watcher(handler) {
-        Ok(w) => w,
-        Err(_) => return (None, None),
-    };
-    match watcher.watch(dir, RecursiveMode::Recursive) {
-        Ok(()) => (Some(flag), Some(watcher)),
-        Err(_) => (None, None),
-    }
 }
 
 pub(crate) fn to_message<E: std::fmt::Display>(err: E) -> String {
@@ -248,7 +233,7 @@ pub(crate) fn ensure_refs(session: &mut Session) -> Result<Refs, String> {
 /// `status_summary` shells out to `git status --porcelain -u all`, which has to
 /// stat the whole working tree — ~110ms on a large repo, and it ran on every
 /// snapshot: every action, every view switch, and the 60s background poll. The
-/// filesystem watcher (see `watch_worktree`) tells us when that's actually
+/// filesystem watcher (see `watch::watch_worktree`) tells us when that's actually
 /// worth redoing.
 ///
 /// The dirty flag is cleared *before* the scan, so a write that lands while

@@ -245,3 +245,33 @@ fn stage_of_a_glob_like_path_is_literal() {
         .unwrap();
     assert_eq!(d.path, "a1.txt");
 }
+
+#[test]
+fn status_summary_never_rewrites_the_index() {
+    // `git status` normally refreshes stale stat data and writes `.git/index`
+    // back. gitp runs it in the background after every filesystem event, so
+    // that write would be an event of its own — a refresh loop.
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    // Same content, different mtime: the index's stat data is now stale.
+    let file = std::fs::File::options()
+        .write(true)
+        .open(fx.path().join("a.txt"))
+        .unwrap();
+    file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+        .unwrap();
+    drop(file);
+
+    let repo = Repo::open(fx.path()).unwrap();
+    let before = repo.index_stamp();
+    let sum = repo.status_summary().unwrap();
+    assert!(
+        sum.staged.is_empty() && sum.unstaged.is_empty(),
+        "content is unchanged"
+    );
+    assert_eq!(
+        repo.index_stamp(),
+        before,
+        "status must not write the index"
+    );
+}

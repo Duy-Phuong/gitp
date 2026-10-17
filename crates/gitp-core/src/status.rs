@@ -96,7 +96,16 @@ impl Repo {
     pub fn status_summary(&self) -> Result<StatusLists> {
         // -z: NUL-separated records (safe for any path); --untracked-files=all:
         // list individual new files, not just their directories.
-        let raw = self.run_git_raw(&["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;
+        // --no-optional-locks: don't write refreshed stat data back to
+        // `.git/index`. This runs after every filesystem event, so that write
+        // would itself be an event — gitp refreshing itself in a loop.
+        let raw = self.run_git_raw(&[
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        ])?;
         let text = String::from_utf8_lossy(&raw);
         let toks: Vec<&str> = text.split('\0').filter(|t| !t.is_empty()).collect();
 

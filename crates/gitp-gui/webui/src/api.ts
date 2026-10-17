@@ -20,6 +20,7 @@ import type {
   RebaseStatus,
   RebaseStep,
   Refs,
+  RepoChanged,
   ResetMode,
   StatusLists,
   TagDetail,
@@ -227,6 +228,14 @@ export async function workspaceSnapshot(): Promise<WorkspaceSnapshot> {
     return { refs, local_changes: paths.size, status, rebase, conflict, undo };
   }
   return invoke<WorkspaceSnapshot>("workspace_snapshot", {});
+}
+
+// Changes on disk pushed by the backend's watcher (see RepoChanged). There is
+// no watcher in preview mode, so nothing ever arrives there.
+export async function onRepoChanged(cb: (ev: RepoChanged) => void): Promise<void> {
+  if (!isTauri()) return;
+  const { listen } = await import("@tauri-apps/api/event");
+  await listen<RepoChanged>("repo-changed", (event) => cb(event.payload));
 }
 
 // Staging trees: paths + statuses only (no hunks), so refreshing after each
