@@ -9,6 +9,7 @@
 //! before progress existed.
 
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -39,9 +40,10 @@ pub struct Progress {
 /// A progress callback (see [`NetworkHooks`]).
 pub type ProgressFn = Box<dyn Fn(&Progress) + Send>;
 
-/// Where a [`Repo`]'s network commands report progress, and the flag that stops
-/// them. Both are optional; a `Repo` without hooks runs its network commands
-/// exactly as before, just without anyone listening.
+/// Where a [`Repo`]'s network commands report progress, the flag that stops
+/// them, and the program that asks the user for credentials. All optional; a
+/// `Repo` without hooks runs its network commands exactly as before, just
+/// without anyone listening.
 #[derive(Default)]
 pub struct NetworkHooks {
     pub on_progress: Option<ProgressFn>,
@@ -49,6 +51,16 @@ pub struct NetworkHooks {
     /// and the operation returns [`Error::Cancelled`]. Local writes are never
     /// interrupted — see [`Repo::begin_local_step`].
     pub cancel: Option<Arc<AtomicBool>>,
+    /// An askpass program — called with the prompt as its one argument, it
+    /// prints the answer, or exits non-zero to refuse — that git asks for a
+    /// username/password a credential helper couldn't supply, and ssh for a
+    /// key passphrase or to confirm an unknown host key. Without one, those
+    /// fail with git's usual error, as there is no terminal to prompt on.
+    ///
+    /// A `core.askPass` the user configured wins over it. So should a
+    /// `GIT_ASKPASS` / `SSH_ASKPASS` in the process environment, but that is
+    /// the caller's to check: it owns the environment, and leaves this `None`.
+    pub askpass: Option<PathBuf>,
 }
 
 /// How often the run loop wakes to check the cancel flag when git is quiet
@@ -80,13 +92,24 @@ impl Repo {
         full.push("--progress");
         full.extend_from_slice(&args[1..]);
 
-        let mut child = Command::new("git")
-            .current_dir(workdir)
+        let mut cmd = Command::new("git");
+        cmd.current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .args(&full)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(askpass) = &self.net.askpass {
+            if !self.has_own_askpass() {
+                use_askpass(&mut cmd, askpass);
+            }
+        }
+        // Its own process group, so Cancel can stop everything git started —
+        // the remote helper, ssh, and an askpass dialog still waiting for an
+        // answer — not just git itself (see `kill`).
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+        let mut child = cmd
             .spawn()
             .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
 
@@ -161,11 +184,32 @@ impl Repo {
         Ok(())
     }
 
+    /// Whether the user configured `core.askPass`, which our askpass would
+    /// override if set (git ranks `GIT_ASKPASS` above it).
+    fn has_own_askpass(&self) -> bool {
+        self.inner
+            .config()
+            .and_then(|c| c.get_string("core.askPass"))
+            .is_ok_and(|v| !v.is_empty())
+    }
+
     fn cancelled(&self) -> bool {
         self.net
             .cancel
             .as_ref()
             .is_some_and(|c| c.load(Ordering::SeqCst))
+    }
+}
+
+/// Point git (`GIT_ASKPASS`) and ssh (`SSH_ASKPASS`) at `askpass`. ssh only
+/// uses it without a terminal when told to (`SSH_ASKPASS_REQUIRE`, OpenSSH
+/// 8.4+); before that it wanted `DISPLAY` set to anything at all.
+fn use_askpass(cmd: &mut Command, askpass: &Path) {
+    cmd.env("GIT_ASKPASS", askpass)
+        .env("SSH_ASKPASS", askpass)
+        .env("SSH_ASKPASS_REQUIRE", "force");
+    if std::env::var_os("DISPLAY").is_none_or(|d| d.is_empty()) {
+        cmd.env("DISPLAY", ":0");
     }
 }
 
@@ -176,15 +220,19 @@ impl Repo {
 /// stopped while updating refs doesn't leave one behind to block the next git
 /// command. SIGKILL is the fallback for a git that doesn't exit promptly.
 ///
+/// The signals go to git's whole process group: git doesn't pass them on to
+/// what it started, and an askpass dialog left on screen after its git is gone
+/// would be waiting to send an answer nowhere.
+///
 /// The reader threads are left to finish on their own: a helper git spawned
 /// (ssh, a remote helper) can hold the pipes open a little longer, and waiting
 /// on them would be the hang Cancel exists to get out of.
 fn kill(mut child: Child) -> Error {
     #[cfg(unix)]
     {
-        // SAFETY: plain kill(2) on the pid of a child we haven't reaped yet,
-        // so it can't have been recycled for another process.
-        unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
+        // SAFETY: plain kill(2) on the process group led by a child we
+        // haven't reaped yet, so its id can't have been recycled.
+        unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGTERM) };
         for _ in 0..40 {
             if let Ok(Some(_)) = child.try_wait() {
                 return Error::Cancelled;

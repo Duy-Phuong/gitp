@@ -343,6 +343,7 @@ fn open_cancelling(
             }
         })),
         cancel: Some(cancel),
+        ..Default::default()
     });
     (repo, seen)
 }

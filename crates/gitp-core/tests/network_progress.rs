@@ -85,6 +85,7 @@ fn open_recording(dir: &Path, cancel: Arc<AtomicBool>) -> (Repo, Arc<Mutex<Vec<P
             sink.lock().unwrap().push(p.clone())
         })),
         cancel: Some(cancel),
+        ..Default::default()
     });
     (repo, seen)
 }
@@ -172,6 +173,7 @@ fn cancelling_mid_transfer_kills_git_and_says_cancelled() {
             flag.store(true, Ordering::SeqCst)
         })),
         cancel: Some(cancel),
+        ..Default::default()
     });
 
     let err = repo.pull(gitp_core::PullMode::FastForwardOnly);

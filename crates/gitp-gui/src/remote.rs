@@ -6,7 +6,8 @@ use tauri::State;
 
 use crate::os::open_in_browser;
 use crate::state::{
-    to_message, with_repo, with_repo_networked, with_repo_networked_prepared, RepoState,
+    to_message, with_repo, with_repo_networked, with_repo_networked_background,
+    with_repo_networked_prepared, RepoState,
 };
 use crate::undo::{clear_undo, record_pull};
 
@@ -50,9 +51,14 @@ fn fetch_branch_impl(state: &RepoState, name: String) -> Result<String, String> 
 }
 
 /// Fetch all remotes. Only updates remote-tracking refs, so the cached log
-/// (which walks from HEAD) is unchanged.
-pub(crate) fn fetch_all_impl(state: &RepoState) -> Result<String, String> {
-    with_repo_networked(state, "fetch", Repo::fetch_all, |_| {})
+/// (which walks from HEAD) is unchanged. A `background` fetch — the periodic
+/// refresh, not one the user asked for — never prompts for credentials.
+pub(crate) fn fetch_all_impl(state: &RepoState, background: bool) -> Result<String, String> {
+    if background {
+        with_repo_networked_background(state, "fetch", Repo::fetch_all, |_| {})
+    } else {
+        with_repo_networked(state, "fetch", Repo::fetch_all, |_| {})
+    }
 }
 
 /// Fetch one named remote, for repos with more than one.
@@ -122,8 +128,11 @@ pub(crate) fn fetch_branch(name: String, state: State<RepoState>) -> Result<Stri
 }
 
 #[tauri::command(async)]
-pub(crate) fn fetch_all(state: State<RepoState>) -> Result<String, String> {
-    fetch_all_impl(&state)
+pub(crate) fn fetch_all(
+    background: Option<bool>,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    fetch_all_impl(&state, background.unwrap_or(false))
 }
 
 #[tauri::command(async)]

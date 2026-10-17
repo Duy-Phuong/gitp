@@ -454,7 +454,7 @@ export async function leaveComparison(): Promise<void> {
 }
 
 // Throttle for the background remote fetch triggered by navigation (below).
-// A real fetch is a network round trip (and can prompt for credentials), so it
+// A real fetch is a network round trip (it never prompts, though), so it
 // shouldn't fire on every single tab/branch click — this keeps ahead/behind
 // and remote branches "fresh enough" without hammering it. A manual click on
 // the Reload button (refreshAllAction) always bypasses this.
@@ -467,7 +467,8 @@ const REMOTE_REFRESH_THROTTLE_MS = 60_000;
 // Fetch all remotes in the background (throttled) and reload the sidebar so
 // ahead/behind counts and remote-tracking refs reflect it. Silent on failure
 // (offline, no cached credentials) — a background refresh must never
-// interrupt navigation with an error dialog, only a status-bar note.
+// interrupt navigation with an error dialog, only a status-bar note; nor with a
+// credential prompt, so it runs as a background fetch, which never asks.
 async function refreshRemoteQuietly(): Promise<void> {
   if (!state.repoPath || ui.actionsBusy) return;
   const last = remoteFetchedAt.get(state.repoPath);
@@ -476,7 +477,7 @@ async function refreshRemoteQuietly(): Promise<void> {
   // navigation start another one.
   markRemoteFetched();
   try {
-    await fetchAll();
+    await fetchAll({ background: true });
     await loadSidebar();
   } catch (err) {
     readFailed("Background fetch failed", err);

@@ -8,6 +8,7 @@
 //! below (`state` holds the shared session state and caches); each module ends
 //! with its Tauri command wrappers, which `run` registers.
 
+mod askpass;
 mod bisect;
 mod branches;
 mod commits;
@@ -71,6 +72,12 @@ pub fn run() {
             app.state::<RepoState>().1.set_emitter(move |event| {
                 let _ = handle.emit("git-progress", event);
             });
+            // ... and ask for missing credentials in a dialog, which needs the
+            // helper script on disk (it asks through osascript, so macOS only).
+            #[cfg(target_os = "macos")]
+            if let Some(path) = askpass::prepare(&app.path().app_data_dir()?) {
+                app.state::<RepoState>().1.set_askpass(path);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

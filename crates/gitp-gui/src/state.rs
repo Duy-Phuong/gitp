@@ -1,6 +1,7 @@
 //! Session state: the open repositories, their cached reads (log, refs,
 //! `git status`), and the `with_repo*` wrappers every command runs through.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -103,6 +104,9 @@ pub(crate) struct NetworkOps {
     /// Sends a `git-progress` event to the frontend. Set once at startup; unset
     /// in tests, where progress simply goes nowhere.
     emit: OnceLock<Emit>,
+    /// The credential-prompt helper (see `askpass`). Set once at startup;
+    /// unset, git fails for want of a credential as it always did.
+    askpass: OnceLock<PathBuf>,
 }
 
 type Emit = Arc<dyn Fn(ProgressEvent) + Send + Sync>;
@@ -123,6 +127,10 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 impl NetworkOps {
     pub(crate) fn set_emitter(&self, emit: impl Fn(ProgressEvent) + Send + Sync + 'static) {
         let _ = self.emit.set(Arc::new(emit));
+    }
+
+    pub(crate) fn set_askpass(&self, path: PathBuf) {
+        let _ = self.askpass.set(path);
     }
 
     /// Register an operation on `path`, returning the flag that cancels it.
@@ -250,7 +258,8 @@ pub(crate) fn with_repo_unlocked<T>(
 /// index may no longer refer to the repo we just operated on.
 ///
 /// While it runs, git's progress goes out as `git-progress` events tagged
-/// `op`, and `cancel_network_op` can stop it.
+/// `op`, `cancel_network_op` can stop it, and a credential git or ssh can't
+/// find is asked for in a dialog (see `askpass`).
 pub(crate) fn with_repo_networked<T>(
     state: &RepoState,
     op: &'static str,
@@ -271,6 +280,30 @@ pub(crate) fn with_repo_networked_prepared<P, T>(
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
     after: impl FnOnce(&mut Session, P),
 ) -> Result<T, String> {
+    run_networked(state, op, true, prepare, f, after)
+}
+
+/// [`with_repo_networked`] for an operation the user didn't start (the
+/// background fetch): it never asks for credentials — a password dialog out of
+/// nowhere every minute is worse than a stale ahead/behind count — and fails
+/// instead, quietly, as it did before prompts existed.
+pub(crate) fn with_repo_networked_background<T>(
+    state: &RepoState,
+    op: &'static str,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
+    after: impl FnOnce(&mut Session),
+) -> Result<T, String> {
+    run_networked(state, op, false, |_| (), f, |session, ()| after(session))
+}
+
+fn run_networked<P, T>(
+    state: &RepoState,
+    op: &'static str,
+    prompt: bool,
+    prepare: impl FnOnce(&Session) -> P,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
+    after: impl FnOnce(&mut Session, P),
+) -> Result<T, String> {
     let (path, prepared) = {
         let guard = state.0.lock().map_err(to_message)?;
         let idx = guard.active.ok_or("no repository is open")?;
@@ -282,6 +315,7 @@ pub(crate) fn with_repo_networked_prepared<P, T>(
     repo.set_network_hooks(NetworkHooks {
         on_progress: state.1.reporter(op),
         cancel: Some(Arc::clone(&cancel)),
+        askpass: prompt.then(|| state.1.askpass.get().cloned()).flatten(),
     });
     let out = f(&repo);
     state.1.end(&cancel);
@@ -457,8 +491,46 @@ mod tests {
 
         // No remotes, so this fetch has nothing to do — it only has to
         // register and deregister.
-        fetch_all_impl(&state).expect("fetch");
+        fetch_all_impl(&state, false).expect("fetch");
         assert!(state.1.in_flight.lock().unwrap().is_empty());
+    }
+
+    /// Whether a fetch of the active repo, whose remote is an `ext::` command
+    /// that records the environment git gives it, was handed the askpass.
+    #[cfg(unix)]
+    fn fetch_offers_askpass(background: bool) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let tools = tempfile::tempdir().unwrap();
+        let dump = tools.path().join("env.txt");
+        let remote = tools.path().join("remote");
+        std::fs::write(
+            &remote,
+            format!("#!/bin/sh\nenv > '{}'\nexit 1\n", dump.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&remote, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let url = format!("ext::{}", remote.display());
+        git(dir.path(), &["remote", "add", "origin", &url]);
+        git(dir.path(), &["config", "protocol.ext.allow", "always"]);
+
+        let state = RepoState::default();
+        state.1.set_askpass("/opt/gitp/askpass".into());
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
+        let _ = fetch_all_impl(&state, background);
+        let env = std::fs::read_to_string(&dump).expect("the transport ran");
+        env.lines().any(|l| l == "GIT_ASKPASS=/opt/gitp/askpass")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_fetch_the_user_asked_for_may_prompt_for_credentials() {
+        assert!(fetch_offers_askpass(false), "Reload / Fetch prompts");
+        assert!(
+            !fetch_offers_askpass(true),
+            "the background fetch never does"
+        );
     }
 
     //

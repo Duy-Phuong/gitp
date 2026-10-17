@@ -684,9 +684,11 @@ export async function fetchRemote(remote: string): Promise<string> {
   return invokeNetwork<string>("fetch_remote", { remote });
 }
 
-export async function fetchAll(): Promise<string> {
+// `background`: the periodic refresh nobody asked for, which must never pop a
+// credential dialog — it fails quietly instead.
+export async function fetchAll(opts: { background?: boolean } = {}): Promise<string> {
   if (!isTauri()) return "Fetched all remotes (preview mock)";
-  return invokeNetwork<string>("fetch_all", {});
+  return invokeNetwork<string>("fetch_all", { background: opts.background ?? false });
 }
 
 export async function fetchAndUpdateBranch(name: string): Promise<string> {
