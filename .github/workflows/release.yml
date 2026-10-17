@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # One universal binary covers Apple silicon and Intel Macs.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: crates/gitp-gui/webui/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm --prefix crates/gitp-gui/webui ci
+
+      # Builds the frontend first (beforeBuildCommand), then gitp.app and the
+      # .dmg. Ad-hoc signed only (bundle.macOS.signingIdentity "-"), not notarized.
+      - name: Build app
+        run: npm --prefix crates/gitp-gui/webui run tauri build -- --target universal-apple-darwin
+
+      # ditto keeps the bundle's signature and extended attributes intact.
+      - name: Collect artifacts
+        run: |
+          bundle=target/universal-apple-darwin/release/bundle
+          mkdir dist
+          cp "$bundle"/dmg/*.dmg dist/
+          ditto -c -k --keepParent "$bundle/macos/gitp.app" "dist/gitp_${GITHUB_REF_NAME#v}_universal.app.zip"
+          ls -l dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

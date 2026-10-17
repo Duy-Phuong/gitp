@@ -48,31 +48,55 @@ subsequent runs are fast.
 npm --prefix crates/gitp-gui/webui run tauri build
 ```
 
-This type-checks and bundles the frontend (`tsc && vite build`), then compiles
-the Rust binary in release mode. The result is a **plain executable**:
+This type-checks and bundles the frontend (`tsc && vite build`), compiles the
+Rust binary in release mode, then packages it as a macOS app and a disk image:
 
 ```
-target/release/gitp-gui
+target/release/bundle/macos/gitp.app
+target/release/bundle/dmg/gitp_0.1.0_aarch64.dmg   # _x64 on an Intel Mac
 ```
 
-Run it directly with `./target/release/gitp-gui`.
+**Install** by opening the `.dmg` and dragging `gitp.app` onto the
+`Applications` shortcut — or copy the app straight from the build:
 
-> **No `.app` or installer is produced.** `bundle.active` is `false` in
-> [`crates/gitp-gui/tauri.conf.json`](crates/gitp-gui/tauri.conf.json), so the
-> Tauri bundler is skipped. To get a `gitp.app` and a `.dmg` instead, set it to
-> `true` and add the targets you want:
+```bash
+cp -R target/release/bundle/macos/gitp.app /Applications/
+```
+
+> **The app is not notarized.** It is ad-hoc signed (`signingIdentity: "-"` in
+> [`crates/gitp-gui/tauri.conf.json`](crates/gitp-gui/tauri.conf.json)), which
+> is enough to run a build you made yourself. A build downloaded from a GitHub
+> Release is quarantined, and Gatekeeper will refuse to open it with a
+> "can't be checked for malicious software" message. Right-click the app →
+> **Open** once to allow it, or clear the quarantine flag:
 >
-> ```json
-> "bundle": { "active": true, "targets": ["app", "dmg"] }
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/gitp.app
 > ```
->
-> They then appear under `target/release/bundle/`.
+
+**Run directly**, without installing: the bare executable is built alongside
+the bundle.
+
+```bash
+./target/release/gitp-gui
+```
+
+**Releases.** Pushing a `v*` tag runs
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which builds a
+universal (Apple silicon + Intel) `.dmg` and a zipped `gitp.app` and attaches
+them to a GitHub Release for that tag.
 
 ## Uninstall
 
-Nothing is installed system-wide — there is no installer, no `/Applications`
-entry, and no launch agent. Removing gitp means deleting what a build left
-behind.
+Nothing outside the app bundle is installed — no launch agent, no helper, no
+login item. Removing gitp means deleting the app, its data, and what a build
+left behind.
+
+**The app**, if you installed it:
+
+```bash
+rm -rf /Applications/gitp.app
+```
 
 **Build output** (the bulk of it — the Rust target directory runs to several GB):
 
@@ -83,7 +107,8 @@ rm -rf crates/gitp-gui/webui/node_modules crates/gitp-gui/webui/dist
 
 **Per-user application data.** Written only once the app has actually run, and
 only some of these will exist. They hold the WebKit profile backing gitp's
-preferences — theme, open repository tabs, pane sizes, the default pull method:
+preferences — theme, open repository tabs, recent repositories, pane sizes, the
+default pull method:
 
 ```bash
 rm -rf ~/Library/Application\ Support/io.gitp.desktop
@@ -93,13 +118,19 @@ rm -rf ~/Library/Saved\ Application\ State/io.gitp.desktop.savedState
 ```
 
 `io.gitp.desktop` is the bundle identifier from `tauri.conf.json`; change it
-there and these paths change with it.
-
-**If you enabled bundling** and copied the app to `/Applications`:
+there and these paths change with it. Running the bare `gitp-gui` executable
+(or `tauri dev`) has no bundle, so WebKit files its data under the executable
+name instead:
 
 ```bash
-rm -rf /Applications/gitp.app
+rm -rf ~/Library/Caches/gitp-gui
+rm -rf ~/Library/WebKit/gitp-gui
 ```
+
+**Dotfile backups.** Applying a dotfile template saves each file it overwrites
+next to the original as `~/<name>.bak-YYYYMMDD-HHMMSS` (e.g.
+`~/.gitconfig.bak-20261017-080910`). gitp never deletes these; remove them by
+hand once you no longer need them.
 
 Finally, delete the repository clone itself. None of this touches the git
 repositories gitp has opened — gitp only ever reads and writes them through git.
