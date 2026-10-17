@@ -80,6 +80,17 @@ impl Repo {
     /// hooks, and kills git if the cancel flag goes up. Returns the trimmed
     /// combined output minus the meters, or it as an error on failure.
     pub(crate) fn run_git_network(&self, args: &[&str]) -> Result<String> {
+        let mut full = Vec::with_capacity(args.len() + 1);
+        full.extend_from_slice(&args[..1]);
+        full.push("--progress");
+        full.extend_from_slice(&args[1..]);
+        self.run_git_progress(&full)
+    }
+
+    /// [`Repo::run_git_network`] for a command whose `--progress` doesn't go
+    /// right after the first word (`git submodule update --progress`): `args`
+    /// already carry it.
+    pub(crate) fn run_git_progress(&self, args: &[&str]) -> Result<String> {
         if self.cancelled() {
             return Err(Error::Cancelled);
         }
@@ -87,15 +98,11 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        let mut full = Vec::with_capacity(args.len() + 1);
-        full.extend_from_slice(&args[..1]);
-        full.push("--progress");
-        full.extend_from_slice(&args[1..]);
 
         let mut cmd = Command::new("git");
         cmd.current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
-            .args(&full)
+            .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

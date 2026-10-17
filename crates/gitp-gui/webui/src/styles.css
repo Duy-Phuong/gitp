@@ -3608,3 +3608,27 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   color: var(--text-dim);
   text-decoration: line-through;
 }
+/* A submodule that needs attention: another commit checked out, or edits. */
+.sb-badge.sm-modified,
+.sb-badge.sm-dirty {
+  border-color: var(--mod-fg);
+  color: var(--mod-fg);
+}
+/* A submodule in Local Changes: what it moved between, in place of a diff. */
+.submodule-change {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.submodule-change-title {
+  font-weight: 600;
+}
+.submodule-change-ids {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.submodule-change-note {
+  color: var(--text-dim);
+  font-size: 12px;
+}

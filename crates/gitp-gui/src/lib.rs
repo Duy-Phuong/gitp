@@ -23,6 +23,7 @@ mod remote;
 mod staging;
 mod stash;
 mod state;
+mod submodules;
 mod tags;
 mod template;
 pub mod terminal;
@@ -200,6 +201,9 @@ pub fn run() {
             worktrees::lock_worktree,
             worktrees::unlock_worktree,
             worktrees::prune_worktrees,
+            submodules::list_submodules,
+            submodules::update_submodules,
+            submodules::sync_submodules,
         ])
         .run(tauri::generate_context!())
         .expect("error while running gitp");

@@ -5,7 +5,7 @@
 // (filter text, which sections/folders are collapsed) and re-renders on change.
 
 import { chevronIcon, clear, el } from "../dom";
-import type { BranchRef, Refs, StashRef, Worktree } from "../types";
+import type { BranchRef, Refs, StashRef, Submodule, Worktree } from "../types";
 
 export type SidebarView = "history" | "changes" | "reflog";
 
@@ -31,6 +31,8 @@ export interface SidebarState {
   // The repo's worktrees, main first. The section shows only when there's a
   // linked one beside the main worktree.
   worktrees: Worktree[];
+  // The repo's submodules; the section shows only when there are any.
+  submodules: Submodule[];
 }
 
 export interface SidebarCallbacks {
@@ -60,6 +62,10 @@ export interface SidebarCallbacks {
   onWorktreeOpen: (w: Worktree) => void;
   // Right-click a worktree: open its actions menu at the cursor.
   onWorktreeMenu: (w: Worktree, x: number, y: number) => void;
+  // Double-click a submodule: open it as a repo tab.
+  onSubmoduleOpen: (sm: Submodule) => void;
+  // Right-click a submodule: open its actions menu at the cursor.
+  onSubmoduleMenu: (sm: Submodule, x: number, y: number) => void;
 }
 
 export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCallbacks): void {
@@ -100,6 +106,7 @@ export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCal
   buildTags(tree, s, cb, match, filtering);
   buildStashes(tree, s, cb, match);
   buildWorktrees(tree, s, cb, match);
+  buildSubmodules(tree, s, cb, match);
   host.append(tree);
 
   if (filterWasFocused) {
@@ -529,6 +536,56 @@ function worktreeLeaf(w: Worktree, cb: SidebarCallbacks): HTMLElement {
     e.preventDefault();
     window.clearTimeout(clickTimer);
     cb.onWorktreeMenu(w, e.clientX, e.clientY);
+  });
+  return row;
+}
+
+// What a submodule's badge says when it isn't simply up to date.
+const SUBMODULE_BADGE: Record<Submodule["state"], string | null> = {
+  uninitialized: "not initialized",
+  modified: "different commit",
+  dirty: "local changes",
+  up_to_date: null,
+};
+
+function buildSubmodules(
+  tree: HTMLElement,
+  s: SidebarState,
+  cb: SidebarCallbacks,
+  match: (t: string) => boolean,
+): void {
+  if (s.submodules.length === 0) return;
+  const { row, collapsed } = sectionHeader("sec:submodules", "Submodules", s, cb);
+  tree.append(row);
+  if (collapsed) return;
+  for (const sm of s.submodules) if (match(sm.path)) tree.append(submoduleLeaf(sm, cb));
+}
+
+// A submodule: its path, a badge unless it's up to date, and the commit the
+// repo records for it. Double-click opens it, right-click offers update/sync.
+function submoduleLeaf(sm: Submodule, cb: SidebarCallbacks): HTMLElement {
+  const short = (id: string | null) => id?.slice(0, 7) ?? "none";
+  const badge = SUBMODULE_BADGE[sm.state];
+  const row = el("div", {
+    class: "sb-leaf",
+    title: [
+      sm.path,
+      sm.url ?? "",
+      `Recorded: ${short(sm.recorded)} · Checked out: ${short(sm.checked_out)}`,
+      "Double-click: open · Right-click: update, sync",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  });
+  row.append(el("span", { class: "sb-leaf-label", text: sm.path }));
+  if (badge) row.append(el("span", { class: `sb-badge sm-${sm.state}`, text: badge }));
+  if (sm.recorded) row.append(el("span", { class: "sb-ab", text: short(sm.recorded) }));
+  row.addEventListener("dblclick", () => {
+    if (sm.state !== "uninitialized") cb.onSubmoduleOpen(sm);
+  });
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    cb.onSubmoduleMenu(sm, e.clientX, e.clientY);
   });
   return row;
 }

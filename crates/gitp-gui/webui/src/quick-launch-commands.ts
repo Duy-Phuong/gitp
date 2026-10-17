@@ -76,6 +76,7 @@ import {
 } from "./commit-actions";
 import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
+import { syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
 
 // --- Quick Launch -----------------------------------------------------------
 
@@ -440,6 +441,12 @@ function repoCommands(): QuickItem[] {
             void saveStashPatchAction(st);
           }),
       },
+    );
+  }
+  if (state.submodules.length) {
+    items.push(
+      { kind: "command", label: "Update All Submodules", run: () => void updateSubmodulesAction(null) },
+      { kind: "command", label: "Sync Submodule URLs", run: () => void syncSubmodulesAction(null) },
     );
   }
   if (ui.undoLabels.undo) items.push({ kind: "command", label: `Undo ${ui.undoLabels.undo}`, run: () => void undoAction() });

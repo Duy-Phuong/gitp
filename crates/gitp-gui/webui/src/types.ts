@@ -350,3 +350,20 @@ export type WorktreeTarget =
   | { kind: "branch"; name: string }
   | { kind: "new_branch"; name: string; start: string }
   | { kind: "detached"; rev: string };
+
+// Where a submodule stands against the commit the superproject records
+// (mirrors gitp-core's SubmoduleState).
+export type SubmoduleState = "uninitialized" | "up_to_date" | "modified" | "dirty";
+
+// One submodule of the repository (mirrors gitp-core's Submodule).
+export interface Submodule {
+  name: string;
+  // Relative to the repository's folder.
+  path: string;
+  url: string | null;
+  // The commit the superproject records (in its index).
+  recorded: string | null;
+  // The commit checked out in the submodule; null while uninitialized.
+  checked_out: string | null;
+  state: SubmoduleState;
+}

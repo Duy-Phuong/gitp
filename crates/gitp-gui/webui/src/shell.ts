@@ -28,6 +28,7 @@ import {
   bisectMark,
   bisectReset,
   listWorktrees,
+  listSubmodules,
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el, $ } from "./dom";
@@ -57,6 +58,8 @@ interface RefActions {
   onTagMenu: SidebarCallbacks["onTagMenu"];
   onCommitContextMenu: (row: CommitRow, x: number, y: number) => void;
   onWorktreeMenu: SidebarCallbacks["onWorktreeMenu"];
+  onSubmoduleOpen: SidebarCallbacks["onSubmoduleOpen"];
+  onSubmoduleMenu: SidebarCallbacks["onSubmoduleMenu"];
 }
 
 let refActions: RefActions;
@@ -180,6 +183,7 @@ export async function closeRepoTab(path: string): Promise<void> {
       state.selectedId = null;
       state.refs = EMPTY_REFS;
       state.worktrees = [];
+      state.submodules = [];
       state.localChanges = 0;
       // No repo: nothing is in progress and nothing can be undone. Left as
       // they were, the banners stay up with buttons that hit "no active repo".
@@ -540,8 +544,13 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
 export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise<void> {
   let marksChanged = false;
   try {
-    // Worktrees are a separate, cheap read; failing it only hides the section.
-    const [snap, worktrees] = await Promise.all([workspaceSnapshot(), listWorktrees().catch(() => [])]);
+    // Worktrees and submodules are separate, cheap reads; failing one only
+    // hides its section.
+    const [snap, worktrees, submodules] = await Promise.all([
+      workspaceSnapshot(),
+      listWorktrees().catch(() => []),
+      listSubmodules().catch(() => []),
+    ]);
     // A passive refresh must not land a snapshot taken before an operation the
     // user started while it was in flight: that would repaint the pre-op state
     // over an optimistic staging update, and only the operation's own reload
@@ -550,6 +559,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     if (opts.abortIfBusy && operationInFlight()) return;
     state.refs = snap.refs;
     state.worktrees = worktrees;
+    state.submodules = submodules;
     state.localChanges = snap.local_changes;
     state.rebase = snap.rebase;
     ui.undoLabels = snap.undo;
@@ -632,6 +642,7 @@ function sidebarSignature(repoName: string): string {
     state.branchSelectionAnchor ?? "",
     [...state.busyRefs].sort().join(","),
     state.worktrees.map((w) => `${w.path}:${w.head}:${w.branch}:${w.is_current}:${w.locked}:${w.lock_reason}:${w.prunable}`).join(","),
+    state.submodules.map((m) => `${m.path}:${m.url}:${m.recorded}:${m.checked_out}:${m.state}`).join(","),
   ].join("|");
 }
 
@@ -662,6 +673,7 @@ export function renderSidebarNow(): void {
       branchSelectionAnchor: state.branchSelectionAnchor,
       busyRefs: state.busyRefs,
       worktrees: state.worktrees,
+      submodules: state.submodules,
     },
     {
       onSelectView: (v: SidebarView) => (v === "reflog" ? showReflog() : showView(v)),
@@ -698,6 +710,8 @@ export function renderSidebarNow(): void {
       onTagMenu: (name, target, x, y) => refActions.onTagMenu(name, target, x, y),
       onWorktreeOpen: (w) => void loadRepo(w.path),
       onWorktreeMenu: (w, x, y) => refActions.onWorktreeMenu(w, x, y),
+      onSubmoduleOpen: (sm) => refActions.onSubmoduleOpen(sm),
+      onSubmoduleMenu: (sm, x, y) => refActions.onSubmoduleMenu(sm, x, y),
     },
   );
 }

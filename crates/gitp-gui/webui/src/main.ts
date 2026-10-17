@@ -93,6 +93,7 @@ import {
 } from "./ref-actions";
 import { onCommitContextMenu, onReflogMenu, runNextCherryPick } from "./commit-actions";
 import { onWorktreeMenu } from "./worktree-actions";
+import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { toggleTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
 import { openQuickLaunch } from "./quick-launch-commands";
@@ -201,6 +202,8 @@ async function init(): Promise<void> {
     onTagMenu,
     onCommitContextMenu,
     onWorktreeMenu,
+    onSubmoduleOpen: openSubmodule,
+    onSubmoduleMenu,
   });
   applyTheme(currentTheme());
   state.allBranches = loadAllBranches(); // before wireUi so the toggle reflects it

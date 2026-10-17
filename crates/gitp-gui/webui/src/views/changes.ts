@@ -19,6 +19,7 @@ import {
   type LineKey,
 } from "./line-selection";
 import { renderFileTree } from "./tree";
+import { describeSubmoduleChange, parseSubmoduleDiff } from "../submodule-diff";
 
 export type Panel = "unstaged" | "staged";
 
@@ -414,12 +415,32 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       pane.append(el("div", { class: "detail-empty", text: "Select a file to view its changes." }));
       return;
     }
-    const hasDiff = selectedDiff != null && selectedDiff.hunks.length > 0;
+    // A submodule's "diff" is the commit it records; there are no lines to
+    // stage piecemeal, only the whole entry (from the file list).
+    const submodule = selectedDiff ? parseSubmoduleDiff(selectedDiff) : null;
+    const hasDiff = selectedDiff != null && selectedDiff.hunks.length > 0 && !submodule;
     pane.append(diffToolbar(hasDiff));
     const body = el("div", { class: "staging-diff-body" });
     // The selected-lines action bar, under the diff (not scrolled with it).
     const bar = el("div", { class: "line-actions hidden" });
-    if (hasDiff) {
+    if (submodule) {
+      const notes: string[] = [];
+      if (submodule.from !== submodule.to) {
+        notes.push(
+          selected.panel === "staged"
+            ? "The next commit records the new commit."
+            : "Stage it to record the new commit in this repository.",
+        );
+      }
+      if (submodule.dirty) notes.push("Its own files have uncommitted changes — commit or discard them inside the submodule.");
+      body.append(
+        el("div", { class: "submodule-change" }, [
+          el("div", { class: "submodule-change-title", text: `Submodule ${selected.path}` }),
+          el("div", { class: "submodule-change-ids", text: describeSubmoduleChange(submodule) }),
+          ...notes.map((text) => el("div", { class: "submodule-change-note", text })),
+        ]),
+      );
+    } else if (hasDiff) {
       body.append(splitView ? renderSplitDiff(selectedDiff!) : renderFile(selectedDiff!));
       attachHunkMenus(body);
       // Amend-only files (shown while amending) aren't in the index — their

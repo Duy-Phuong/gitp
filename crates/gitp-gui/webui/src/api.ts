@@ -37,6 +37,7 @@ import type {
   WorkspaceSnapshot,
   Worktree,
   WorktreeTarget,
+  Submodule,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -1107,6 +1108,35 @@ export async function pruneWorktrees(): Promise<string> {
   return invoke<string>("prune_worktrees", {});
 }
 
+// --- Submodules -------------------------------------------------------------
+
+export async function listSubmodules(): Promise<Submodule[]> {
+  if (!isTauri()) return MOCK_SUBMODULES.map((m) => ({ ...m }));
+  return invoke<Submodule[]>("list_submodules", {});
+}
+
+// `git submodule update --init --recursive` for the submodule at `path`, or all
+// of them with null. A network operation: it may clone or fetch, so it reports
+// progress and can be cancelled.
+export async function updateSubmodules(path: string | null): Promise<string> {
+  if (!isTauri()) {
+    for (const m of MOCK_SUBMODULES) {
+      if (path !== null && m.path !== path) continue;
+      Object.assign(m, { checked_out: m.recorded, state: "up_to_date" });
+      const i = MOCK_STATUS.unstaged.findIndex((f) => f.path === m.path);
+      if (i !== -1) MOCK_STATUS.unstaged.splice(i, 1);
+    }
+    return `Submodule path '${path ?? MOCK_SUBMODULES[0].path}': checked out '${MOCK_SUBMODULES[0].recorded}' (preview mock)`;
+  }
+  return invokeNetwork<string>("update_submodules", { path });
+}
+
+// `git submodule sync --recursive`: copy URLs from .gitmodules into the config.
+export async function syncSubmodules(path: string | null): Promise<string> {
+  if (!isTauri()) return `Synchronizing submodule url for '${path ?? MOCK_SUBMODULES[0].path}' (preview mock)`;
+  return invoke<string>("sync_submodules", { path });
+}
+
 // ---------------------------------------------------------------------------
 // Mock data (browser-only)
 // ---------------------------------------------------------------------------
@@ -1346,6 +1376,21 @@ const MOCK_STATUS: StatusLists = {
           lines: [
             { origin: "+", old_lineno: null, new_lineno: 1, content: "# Notes" },
             { origin: "+", old_lineno: null, new_lineno: 2, content: "brand new file" },
+          ],
+        },
+      ],
+    },
+    // The out-of-date mock submodule (MOCK_SUBMODULES), as git diffs one.
+    {
+      path: "libs/shared",
+      old_path: null,
+      status: "Modified",
+      hunks: [
+        {
+          header: "@@ -1 +1 @@",
+          lines: [
+            { origin: "-", old_lineno: 1, new_lineno: null, content: `Subproject commit ${mockOid("c")}` },
+            { origin: "+", old_lineno: null, new_lineno: 1, content: `Subproject commit ${mockOid("b")}` },
           ],
         },
       ],
@@ -1668,4 +1713,16 @@ const MOCK_LINKED_WORKTREE: Worktree = {
 const MOCK_WORKTREES: Worktree[] = [
   { ...MOCK_LINKED_WORKTREE, path: "/Users/you/Documents/mideal", head: mockOid("g"), branch: "develop/3.33.0", is_main: true },
   { ...MOCK_LINKED_WORKTREE },
+];
+
+// One submodule, with an older commit checked out than the repo records.
+const MOCK_SUBMODULES: Submodule[] = [
+  {
+    name: "libs/shared",
+    path: "libs/shared",
+    url: "https://github.com/example/shared.git",
+    recorded: mockOid("c"),
+    checked_out: mockOid("b"),
+    state: "modified",
+  },
 ];
