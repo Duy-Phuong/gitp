@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
-use gitp_core::{CommitRow, LogOptions, Refs, Repo, StatusLists, Undoable};
+use gitp_core::{CommitRow, LogCache, Refs, Repo, StatusLists, Undoable};
 use serde::Serialize;
 
 use crate::undo::clear_undo;
@@ -26,11 +26,10 @@ pub(crate) struct Session {
     pub(crate) path: String,
     pub(crate) name: String,
     pub(crate) repo: Repo,
-    pub(crate) log: Option<Vec<CommitRow>>,
-    /// Which mode the cached `log` was built in (all branches vs HEAD only), so
-    /// a toggle change recomputes it.
-    pub(crate) log_all: bool,
-    /// Fingerprint the cached `log` was built at.
+    /// The full log with the tips it was walked from, so a change that only
+    /// adds history walks just the new commits (`Repo::refresh_log`).
+    pub(crate) log: Option<LogCache>,
+    /// Fingerprint the cached `log` was last brought up to date at.
     pub(crate) log_sig: u64,
     /// The sidebar's ref tree, with the fingerprint it was built at.
     pub(crate) refs_cache: Option<(u64, Refs)>,
@@ -200,27 +199,30 @@ pub(crate) fn with_repo_networked_prepared<P, T>(
     Ok(out)
 }
 
-/// The active session's full log, computing and caching it on first use (or when
-/// the all-branches toggle flipped since it was built) so lanes stay globally
-/// consistent across pages and searches.
+/// The active session's full log, computing and caching it on first use so
+/// lanes stay globally consistent across pages and searches. When the refs
+/// move (or the all-branches toggle flips) the cache is refreshed — extended
+/// with just the new commits where possible, re-walked otherwise.
 pub(crate) fn ensure_log(
     session: &mut Session,
     all_branches: bool,
 ) -> Result<&[CommitRow], String> {
     let sig = session.repo.state_fingerprint().map_err(to_message)?;
-    if session.log.is_none() || session.log_all != all_branches || session.log_sig != sig {
-        let rows = session
-            .repo
-            .log(LogOptions {
-                all_branches,
-                ..Default::default()
-            })
-            .map_err(to_message)?;
-        session.log = Some(rows);
-        session.log_all = all_branches;
-        session.log_sig = sig;
+    match &mut session.log {
+        Some(cache) if session.log_sig == sig && cache.all_branches() == all_branches => {}
+        Some(cache) => {
+            session
+                .repo
+                .refresh_log(cache, all_branches)
+                .map_err(to_message)?;
+        }
+        None => {
+            let cache = session.repo.log_cache(all_branches).map_err(to_message)?;
+            session.log = Some(cache);
+        }
     }
-    Ok(session.log.as_deref().unwrap())
+    session.log_sig = sig;
+    Ok(&session.log.as_ref().unwrap().rows)
 }
 
 /// The active session's ref tree, cached against the state fingerprint.

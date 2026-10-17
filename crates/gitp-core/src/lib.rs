@@ -32,7 +32,7 @@ pub use conflict_ops::{ConflictSides, ConflictStatus};
 pub use diff::{ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff, DEFAULT_CONTEXT_LINES};
 pub use error::{Error, Result};
 pub use filelog::FileCommit;
-pub use log::{CommitRow, LogOptions};
+pub use log::{CommitRow, LogCache, LogOptions, LogRefresh};
 pub use rebase::{RebaseAction, RebaseCommit, RebaseStatus, RebaseStep};
 pub use refs::{BranchRef, Refs, RemoteBranch, StashRef, TagRef};
 pub use remote::PullMode;
