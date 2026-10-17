@@ -1614,6 +1614,15 @@ body {
   overflow: auto;
   padding: 12px;
 }
+/* The panes that show file content take their width from the layout, never
+   from that content. Otherwise WebKit measures every line's intrinsic width,
+   and for one long unbroken line (a 3.6 MB single-line file) that pass is
+   quadratic: the page froze for hours in layout. */
+.staging-diff-body,
+.file-view,
+.tab-scroll {
+  contain: inline-size;
+}
 .staging-diff > .detail-empty {
   padding: 12px;
 }
