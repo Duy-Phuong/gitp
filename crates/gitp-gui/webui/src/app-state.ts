@@ -10,7 +10,7 @@ import type { ChangesHandle } from "./views/changes";
 import type { ConflictHandle } from "./views/conflict";
 import type { TerminalHandle } from "./views/terminal";
 import type { ReflogHandle } from "./views/reflog";
-import type { CommitRow, ConflictStatus, RebaseStatus, Refs, RepoTab, UndoState } from "./types";
+import type { BisectStatus, CommitRow, ConflictStatus, RebaseStatus, Refs, RepoTab, UndoState } from "./types";
 
 export type View = "history" | "changes" | "config" | "conflict" | "reflog";
 
@@ -33,6 +33,7 @@ interface State {
   sbCollapsed: Set<string>;
   rebase: RebaseStatus | null;
   conflict: ConflictStatus | null;
+  bisect: BisectStatus | null;
   // History graph shows all branches (true) or just the current branch (false).
   allBranches: boolean;
   // Cmd/Shift-click multi-selection, for bulk actions — see log.ts / sidebar.ts.
@@ -68,6 +69,7 @@ export const state: State = {
   busyRefs: new Set(),
   rebase: null,
   conflict: null,
+  bisect: null,
 };
 
 export const ui = {

@@ -3,6 +3,8 @@
 // UI is fully explorable without the desktop shell.
 
 import type {
+  BisectMark,
+  BisectStatus,
   BlameLine,
   CommitDetail,
   CommitRow,
@@ -271,15 +273,16 @@ export async function fetchFileHistory(rev: string, path: string): Promise<FileC
 // sidebar badge and the staging lists.
 export async function workspaceSnapshot(): Promise<WorkspaceSnapshot> {
   if (!isTauri()) {
-    const [refs, status, rebase, conflict, undo] = await Promise.all([
+    const [refs, status, rebase, conflict, undo, bisect] = await Promise.all([
       fetchRefs(),
       fetchStatusSummary(),
       fetchRebaseStatus(),
       conflictStatus(),
       undoState(),
+      bisectStatus(),
     ]);
     const paths = new Set([...status.staged, ...status.unstaged].map((f) => f.path));
-    return { refs, local_changes: paths.size, status, rebase, conflict, undo };
+    return { refs, local_changes: paths.size, status, rebase, conflict, undo, bisect };
   }
   return invoke<WorkspaceSnapshot>("workspace_snapshot", {});
 }
@@ -1481,3 +1484,82 @@ function mockCompare(base: string, head: string, threeDot: boolean): Comparison 
     files: threeDot ? files.slice(0, 1) : files,
   };
 }
+
+// --- Bisect ------------------------------------------------------------------
+
+export async function bisectStatus(): Promise<BisectStatus | null> {
+  if (!isTauri()) return MOCK_BISECT && { ...MOCK_BISECT };
+  return invoke<BisectStatus | null>("bisect_status", {});
+}
+
+// Start a bisect. With `bad` set git checks out the first commit to test right
+// away; `good` may be empty, leaving the session waiting for a good commit.
+export async function bisectStart(bad: string | null, good: string[]): Promise<string> {
+  if (!isTauri()) {
+    const head = mockOid("g");
+    MOCK_BISECT = {
+      bad: bad === "HEAD" ? head : bad,
+      good,
+      skipped: [],
+      current: good.length ? mockOid("d") : head,
+      current_summary: good.length ? "fix: config loader precedence" : "Merge branch 'feature/widget'",
+      remaining_estimate: good.length ? [2, 1] : null,
+      first_bad: null,
+      first_bad_summary: null,
+      original_ref: MOCK_REFS.head ?? head,
+    };
+    return "Bisecting: 2 revisions left to test after this (roughly 1 step) (preview mock)";
+  }
+  return invoke<string>("bisect_start", { bad, good });
+}
+
+// Mark `rev` — the commit under test when null — and let git pick the next.
+export async function bisectMark(mark: BisectMark, rev: string | null): Promise<string> {
+  if (!isTauri()) {
+    const b = MOCK_BISECT;
+    if (!b) throw new Error("We are not bisecting.");
+    const id = rev ?? b.current;
+    if (mark === "skip") {
+      b.skipped.push(id);
+      b.current = mockOid("e");
+      b.current_summary = "feat: add dashboard widget";
+      return `Bisecting: 1 revision left to test after this (roughly 1 step) (preview mock)`;
+    }
+    if (mark === "good") b.good.push(id);
+    else b.bad = id;
+    // Pretend one step was enough: whatever is still marked bad is the culprit.
+    if (b.bad && b.good.length) {
+      const row = MOCK_LOG.find((r) => r.id === b.bad);
+      b.first_bad = b.bad;
+      b.first_bad_summary = row?.summary ?? "";
+      b.remaining_estimate = null;
+      return `${b.bad} is the first bad commit (preview mock)`;
+    }
+    return `Marked ${id.slice(0, 7)} ${mark} (preview mock)`;
+  }
+  return invoke<string>("bisect_mark", { mark, rev });
+}
+
+export async function bisectReset(): Promise<string> {
+  if (!isTauri()) {
+    const back = MOCK_BISECT?.original_ref ?? "";
+    MOCK_BISECT = null;
+    return `Switched to branch '${back}' (preview mock)`;
+  }
+  return invoke<string>("bisect_reset", {});
+}
+
+// A bisect already under way in preview mode, so the banner and the log
+// markers can be looked at without a real repo: f is bad, b good, d skipped,
+// and c is the commit being tested.
+let MOCK_BISECT: BisectStatus | null = {
+  bad: mockOid("f"),
+  good: [mockOid("b")],
+  skipped: [mockOid("d")],
+  current: mockOid("c"),
+  current_summary: "feat: add config loader",
+  remaining_estimate: [1, 1],
+  first_bad: null,
+  first_bad_summary: null,
+  original_ref: "develop/3.33.0",
+};

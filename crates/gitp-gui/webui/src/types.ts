@@ -191,6 +191,8 @@ export interface WorkspaceSnapshot {
   rebase: RebaseStatus;
   conflict: ConflictStatus;
   undo: UndoState;
+  // The in-progress bisect, or null.
+  bisect: BisectStatus | null;
 }
 
 // What a tag is and what it points at, for the tag details dialog. A
@@ -282,4 +284,25 @@ export interface Comparison {
   ahead: number;
   behind: number;
   files: FileDiff[];
+}
+
+// How the commit under test behaved (mirrors gitp-core's BisectMark).
+export type BisectMark = "good" | "bad" | "skip";
+
+// An in-progress `git bisect`, read back from .git (so one started in the
+// terminal shows up too).
+export interface BisectStatus {
+  bad: string | null;
+  good: string[];
+  skipped: string[];
+  // The commit checked out for testing (HEAD).
+  current: string;
+  current_summary: string;
+  // [revisions left after this one, roughly how many steps]; null until both
+  // ends are marked, and once the first bad commit is found.
+  remaining_estimate: [number, number] | null;
+  first_bad: string | null;
+  first_bad_summary: string | null;
+  // The branch (or commit) the bisect started from; Reset returns there.
+  original_ref: string;
 }

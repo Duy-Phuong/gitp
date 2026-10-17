@@ -249,6 +249,13 @@ pub(crate) fn with_recorded_checkout<T>(
     let session = &mut guard.sessions[idx];
     let before = session.repo.head_ref_name().ok();
     let out = f(&session.repo).map_err(to_message)?;
+    // Checking out a commit mid-bisect (to test it by hand) is part of the
+    // session, not a switch to undo; `git bisect reset` is the way back. Same
+    // rule as for a paused rebase in `with_recorded_head_move`.
+    if session.repo.operation_in_progress() {
+        clear_undo(session);
+        return Ok(out);
+    }
     let after = session.repo.head_ref_name().map_err(to_message)?;
     if let Some(before) = before {
         if before != after {

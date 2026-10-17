@@ -8,6 +8,7 @@
 //! below (`state` holds the shared session state and caches); each module ends
 //! with its Tauri command wrappers, which `run` registers.
 
+mod bisect;
 mod branches;
 mod commits;
 mod compare;
@@ -179,6 +180,10 @@ pub fn run() {
             terminal::terminal_spawn,
             terminal::terminal_write,
             terminal::terminal_resize,
+            bisect::bisect_status,
+            bisect::bisect_start,
+            bisect::bisect_mark,
+            bisect::bisect_reset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running gitp");

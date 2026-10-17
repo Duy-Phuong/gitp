@@ -25,14 +25,17 @@ import {
   conflictStatus,
   abortConflict,
   workspaceSnapshot,
+  bisectMark,
+  bisectReset,
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el, $ } from "./dom";
 import { GRAPH_METRICS } from "./graph";
-import { renderLog } from "./views/log";
+import { renderLog, setBisectMarks } from "./views/log";
+import { bisectBannerText } from "./bisect-text";
 import { closeCommitMenu } from "./views/commit-menu";
 import { renderSidebar, type SidebarView, type SidebarCallbacks } from "./views/sidebar";
-import type { CommitRow, ConflictStatus, LogPage, ReflogEntry, StashRef, Workspace } from "./types";
+import type { BisectMark, CommitRow, ConflictStatus, LogPage, ReflogEntry, StashRef, Workspace } from "./types";
 import { EMPTY_REFS, PAGE_SIZE, state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { markRemoteFetched, remoteFetchedAt, renderFetchAge } from "./fetch-age";
@@ -179,9 +182,12 @@ export async function closeRepoTab(path: string): Promise<void> {
       // they were, the banners stay up with buttons that hit "no active repo".
       state.rebase = null;
       state.conflict = null;
+      state.bisect = null;
+      setBisectMarks(null);
       ui.undoLabels = { undo: null, redo: null };
       renderRebaseBanner();
       renderConflictBanner();
+      renderBisectBanner();
       refreshActionButtons();
       ui.terminal?.setCwd(".");
       renderTerminalCwd();
@@ -528,6 +534,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
 // `git status`: once for the sidebar badge and once for the staging lists.
 // Now status runs once and is shared with the Local Changes view.
 export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise<void> {
+  let marksChanged = false;
   try {
     const snap = await workspaceSnapshot();
     // A passive refresh must not land a snapshot taken before an operation the
@@ -545,6 +552,9 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     ui.changesView?.applyStatus(snap.status);
     renderRebaseBanner();
     applyConflictStatus(snap.conflict);
+    state.bisect = snap.bisect;
+    marksChanged = setBisectMarks(state.bisect);
+    renderBisectBanner();
     // Whatever moved a ref (an action, undo, a terminal command) added a reflog
     // entry the open Reflog should list.
     if (state.view === "reflog") void ui.reflogView?.reload();
@@ -557,7 +567,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
   // log so the branch chips appear on every commit.
   ui.detailView?.refresh();
   const chipsChanged = rebuildCommitRefs();
-  const needsRepaint = chipsChanged || lastPaintedRows !== state.rows || lastPaintedSelection !== state.selectedId;
+  const needsRepaint = chipsChanged || marksChanged || lastPaintedRows !== state.rows || lastPaintedSelection !== state.selectedId;
   if (state.view === "history" && state.rows.length && needsRepaint) {
     const pane = $("#log-pane");
     const keep = pane.scrollTop;
@@ -1022,4 +1032,79 @@ export async function opFailedMaybeConflict(title: string, err: unknown): Promis
     (state.conflict !== null && state.conflict.conflicted.length > 0) ||
     (state.rebase?.in_progress === true && state.rebase.paused_for === "conflict");
   opFailed(title, err, inConflict ? { label: "Resolve Conflicts", run: () => showView("conflict") } : undefined);
+}
+
+// --- Bisect in progress (good / bad / skip / reset) --------------------------
+
+// A bar shown while a bisect is in progress: how far along it is and which
+// commit is under test, with Good / Bad / Skip / Reset — or, once git has
+// narrowed it down, the first bad commit with Show / Reset.
+function renderBisectBanner(): void {
+  let banner = document.getElementById("bisect-banner");
+  const st = state.bisect;
+  if (!st) {
+    banner?.remove();
+    return;
+  }
+  if (!banner) {
+    banner = el("div", { id: "bisect-banner", class: "rebase-banner bisect-banner" });
+    document.body.append(banner);
+  }
+  clear(banner);
+
+  const { title, sub } = bisectBannerText(st);
+  const info = el("div", { class: "rebase-banner-info" }, [
+    el("span", { class: "rebase-banner-title", text: title }),
+    el("span", { class: "rebase-banner-sub", text: sub }),
+  ]);
+  const actions = el("div", { class: "rebase-banner-actions" });
+  const reset = el("button", { class: "btn small danger", text: "Reset Bisect" });
+  reset.addEventListener("click", () => void bisectStep("reset"));
+
+  const firstBad = st.first_bad;
+  if (firstBad) {
+    const show = el("button", { class: "btn small", text: "Show" });
+    show.addEventListener("click", () => void jumpToCommit(firstBad, firstBad.slice(0, 7)));
+    actions.append(show, reset);
+    banner.append(info, actions);
+    return;
+  }
+
+  for (const [mark, label] of [
+    ["good", "Good"],
+    ["bad", "Bad"],
+    ["skip", "Skip"],
+  ] as [BisectMark, string][]) {
+    const btn = el("button", { class: `btn small${mark === "skip" ? " ghost" : ""}`, text: label });
+    btn.title = `Mark ${st.current.slice(0, 7)} as ${mark}`;
+    btn.addEventListener("click", () => void bisectStep(mark));
+    actions.append(btn);
+  }
+  actions.append(reset);
+  banner.append(info, actions);
+}
+
+// Mark `rev` (the commit under test when omitted), or reset the bisect.
+export function bisectStep(mark: BisectMark | "reset", rev?: string): Promise<void> {
+  if (mark === "reset") return runBisectOp("Resetting bisect", bisectReset);
+  const short = (rev ?? state.bisect?.current ?? "HEAD").slice(0, 7);
+  return runBisectOp(`Marking ${short} as ${mark}`, () => bisectMark(mark, rev ?? null));
+}
+
+// Run a bisect step and reload — each one checks out another commit — then
+// follow the commit now under test (or the culprit, once found) in the log.
+// A failure is git's own text, e.g. local changes the checkout would overwrite.
+export async function runBisectOp(label: string, op: () => Promise<string>): Promise<void> {
+  setStatus(`${label}…`);
+  try {
+    const out = (await op()).trim();
+    showView("history");
+    await Promise.all([refreshHistory(), loadSidebar()]);
+    const focus = state.bisect ? (state.bisect.first_bad ?? state.bisect.current) : null;
+    if (focus) await jumpToCommit(focus, focus.slice(0, 7));
+    reportDone(out || `${label} done.`);
+  } catch (err) {
+    await loadSidebar();
+    opFailed(`${label} failed`, err);
+  }
 }

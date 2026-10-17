@@ -2,6 +2,7 @@
 //!
 //! Frontend-agnostic. No UI, no CLI concerns. Returns plain data structures.
 
+mod bisect;
 mod blame;
 mod branch_ops;
 mod checkout;
@@ -30,6 +31,7 @@ mod tag_ops;
 mod tree;
 mod undo;
 
+pub use bisect::{BisectMark, BisectStatus};
 pub use blame::BlameLine;
 pub use commit_ops::ResetMode;
 pub use compare::{CompareEnd, Comparison};

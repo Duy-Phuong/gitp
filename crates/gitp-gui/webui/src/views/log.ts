@@ -8,7 +8,7 @@ import { avatarUrl } from "../avatar";
 import { clear, el, githubIcon, svg, tagIcon } from "../dom";
 import { edgePath, fitLaneWidth, GRAPH_METRICS, layoutGraph } from "../graph";
 import { relativeTime } from "../timeago";
-import type { CommitRow } from "../types";
+import type { BisectStatus, CommitRow } from "../types";
 
 const AVATAR_R = 9;
 
@@ -44,6 +44,41 @@ const MAX_REF_CHIPS = 3;
 
 function laneColor(color: number): string {
   return LANE_COLORS[color % LANE_COLORS.length];
+}
+
+// Bisect marks per commit id, drawn as a small chip before the summary; the
+// commit under test also gets its row highlighted. Set from the workspace
+// snapshot (see setBisectMarks) rather than passed to renderLog, which has
+// many callers that have nothing to do with bisecting.
+type BisectMarkKind = "good" | "bad" | "skip" | "first-bad";
+let bisectMarks = new Map<string, BisectMarkKind>();
+let bisectCurrent: string | null = null;
+let bisectSig = "";
+
+const BISECT_MARK_LABEL: Record<BisectMarkKind, string> = {
+  good: "good",
+  bad: "bad",
+  skip: "skip",
+  "first-bad": "first bad",
+};
+
+// Adopt the in-progress bisect (or null). Returns whether the marks changed,
+// so the caller knows the log needs repainting.
+export function setBisectMarks(st: BisectStatus | null): boolean {
+  const sig = st
+    ? [st.bad, st.first_bad, st.current, st.good.join(","), st.skipped.join(",")].join("|")
+    : "";
+  if (sig === bisectSig) return false;
+  bisectSig = sig;
+  bisectMarks = new Map();
+  bisectCurrent = null;
+  if (!st) return true;
+  for (const id of st.good) bisectMarks.set(id, "good");
+  for (const id of st.skipped) bisectMarks.set(id, "skip");
+  if (st.bad) bisectMarks.set(st.bad, st.first_bad === st.bad ? "first-bad" : "bad");
+  // Once the culprit is found HEAD is just wherever testing stopped.
+  if (!st.first_bad) bisectCurrent = st.current;
+  return true;
 }
 
 // One ResizeObserver at a time; disconnected when the log is re-rendered.
@@ -189,7 +224,7 @@ export function renderLog(
     for (let i = start; i < end; i++) {
       const row = rows[i];
       const rowEl = el("div", {
-        class: `commit-row${row.id === currentSelected ? " selected" : ""}${currentMultiSelected.has(row.id) ? " multi-selected" : ""}`,
+        class: `commit-row${row.id === currentSelected ? " selected" : ""}${currentMultiSelected.has(row.id) ? " multi-selected" : ""}${row.id === bisectCurrent ? " bisect-current" : ""}`,
       });
       rowEl.style.position = "absolute";
       rowEl.style.top = `${i * rowH}px`;
@@ -202,6 +237,9 @@ export function renderLog(
       // rather than one flat selection colour for every branch.
       rowEl.style.setProperty("--lane", laneColor(row.color));
       rowEl.style.borderLeft = `3px solid ${laneColor(row.color)}`;
+      const mark = bisectMarks.get(row.id);
+      if (mark) rowEl.append(el("span", { class: `bisect-mark ${mark}`, text: BISECT_MARK_LABEL[mark] }));
+      else if (row.id === bisectCurrent) rowEl.append(el("span", { class: "bisect-mark testing", text: "testing" }));
       rowEl.append(el("span", { class: "commit-summary", text: row.summary }));
 
       // Ref chips (branch/tag/remote pointing at this commit) — placed after the

@@ -293,16 +293,24 @@ impl Repo {
         }
     }
 
-    /// Whether a merge, rebase, cherry-pick, or revert is in progress — any of
-    /// the sessions whose state lives in `.git` and that undo must not touch.
+    /// Whether a merge, rebase, cherry-pick, revert or bisect is in progress —
+    /// any of the sessions whose state lives in `.git` and that undo must not
+    /// touch. A bisect detaches HEAD and checks out commit after commit; none
+    /// of those moves is the user's to undo, and `git bisect reset` is the way
+    /// back.
     pub fn operation_in_progress(&self) -> bool {
         let git_dir = self.inner.path();
         ["rebase-merge", "rebase-apply"]
             .iter()
             .any(|d| git_dir.join(d).is_dir())
-            || ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]
-                .iter()
-                .any(|f| git_dir.join(f).exists())
+            || [
+                "MERGE_HEAD",
+                "CHERRY_PICK_HEAD",
+                "REVERT_HEAD",
+                "BISECT_LOG",
+            ]
+            .iter()
+            .any(|f| git_dir.join(f).exists())
     }
 
     // --- preconditions -------------------------------------------------------
@@ -326,7 +334,7 @@ impl Repo {
     fn check_precondition(&self, action: &Undoable, side: Side, verb: &str) -> Result<()> {
         if self.operation_in_progress() {
             return Err(Error::Message(format!(
-                "A merge, rebase, cherry-pick or revert is in progress; nothing was {verb}."
+                "A merge, rebase, cherry-pick, revert or bisect is in progress; nothing was {verb}."
             )));
         }
         if !self.is_at(action, side) {

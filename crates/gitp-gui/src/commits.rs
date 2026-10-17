@@ -8,7 +8,7 @@ use crate::state::RepoState;
 use crate::undo::{with_recorded_checkout, with_recorded_head_move};
 
 /// Detach HEAD onto `rev`. Invalidates the cached log because HEAD moves.
-fn checkout_commit_impl(state: &RepoState, rev: String) -> Result<String, String> {
+pub(crate) fn checkout_commit_impl(state: &RepoState, rev: String) -> Result<String, String> {
     with_recorded_checkout(
         state,
         || format!("Checkout {}", short_rev(&rev)),

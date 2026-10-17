@@ -26,6 +26,11 @@ export interface CommitMenuHandlers {
   squashIntoParent: () => void;
   fixupIntoParent: () => void;
   dropCommit: () => void;
+  // Whether a bisect is running. If so the bisect items mark this commit;
+  // if not they start one, asking for the opposite end first.
+  bisecting: boolean;
+  bisectMark: (mark: "good" | "bad") => void;
+  bisectStart: (mark: "good" | "bad", otherEnd: string) => void;
 }
 
 // The one open menu, if any, plus the listeners that dismiss it.
@@ -122,6 +127,9 @@ function buildRoot(menu: HTMLElement, row: CommitRow, h: CommitMenuHandlers): vo
     item("Revert Commit", h.revert),
     submenuItem("Interactive Rebase ▸", () => buildRebaseSubmenu(menu, row, h)),
     sep(),
+    bisectItem(menu, row, h, "bad"),
+    bisectItem(menu, row, h, "good"),
+    sep(),
     // Reset is destructive, so the three modes stay spelled out inline rather
     // than hidden behind a submenu, and hard-reset is flagged.
     el("div", { class: "menu-label", text: "Reset current branch to here" }),
@@ -130,6 +138,25 @@ function buildRoot(menu: HTMLElement, row: CommitRow, h: CommitMenuHandlers): vo
     item("Hard (discard changes)", () => h.reset("Hard"), true),
     sep(),
     item("Copy Commit SHA", h.copySha),
+  );
+}
+
+// "Bisect: Mark as Bad/Good". With no bisect running, the first mark starts
+// one, so the menu turns into a prompt for the other end: the bad end defaults
+// to HEAD, the good end has to be named.
+function bisectItem(menu: HTMLElement, row: CommitRow, h: CommitMenuHandlers, mark: "good" | "bad"): HTMLElement {
+  const label = `Bisect: Mark as ${mark === "bad" ? "Bad" : "Good"}`;
+  if (h.bisecting) return item(label, () => h.bisectMark(mark));
+  return submenuItem(`${label}…`, () =>
+    promptName(
+      menu,
+      row,
+      h,
+      mark === "bad" ? "Known good commit (SHA, tag or branch)" : "Known bad commit",
+      (other) => h.bisectStart(mark, other),
+      mark === "bad" ? "" : "HEAD",
+      mark === "bad" ? `Bisect from bad ${row.short_id} — good commit:` : `Bisect from good ${row.short_id} — bad commit:`,
+    ),
   );
 }
 
@@ -153,7 +180,8 @@ function buildRebaseSubmenu(menu: HTMLElement, row: CommitRow, h: CommitMenuHand
 }
 
 // Swap the whole menu for a single name input with a Create button; Enter
-// submits, Escape returns to the root menu.
+// submits, Escape returns to the root menu. `label`, when given, heads the
+// input — for a prefilled value, which hides the placeholder.
 function promptName(
   menu: HTMLElement,
   row: CommitRow,
@@ -161,8 +189,10 @@ function promptName(
   placeholder: string,
   onSubmit: (name: string) => void,
   value = "",
+  label?: string,
 ): void {
   clear(menu);
+  if (label) menu.append(el("div", { class: "menu-label", text: label }));
   const input = el("input", { placeholder, value, spellcheck: "false" }) as HTMLInputElement;
   const create = el("button", { class: "btn small", text: "OK" });
   const submit = () => {

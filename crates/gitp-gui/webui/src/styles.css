@@ -3516,3 +3516,43 @@ textarea:focus-visible,
 .compare-spacer {
   flex: 1 1 auto;
 }
+
+/* Bisect ------------------------------------------------------------------- */
+/* Shares the rebase banner's look and spot; lifted above it on the rare
+   occasion both are up (a conflict while bisecting). */
+body:has(#rebase-banner, #conflict-banner) .bisect-banner {
+  bottom: 76px;
+}
+/* Marks on log rows: what each commit was judged, and the one under test. */
+.bisect-mark {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.bisect-mark.good {
+  background: var(--add-bg);
+  color: var(--add-fg);
+}
+.bisect-mark.bad,
+.bisect-mark.first-bad {
+  background: var(--del-bg);
+  color: var(--del-fg);
+}
+.bisect-mark.first-bad {
+  box-shadow: inset 0 0 0 1px var(--del-fg);
+}
+.bisect-mark.skip {
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+}
+.bisect-mark.testing {
+  background: var(--mod-bg);
+  color: var(--mod-fg);
+}
+.commit-row.bisect-current {
+  box-shadow: inset 0 0 0 1px var(--mod-fg);
+}

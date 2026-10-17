@@ -2,6 +2,7 @@
 // multi-select), the history-rewriting rebase shortcuts, and batch cherry-pick.
 
 import {
+  bisectStart,
   checkoutCommit,
   cherryPick,
   confirmDialog,
@@ -25,12 +26,14 @@ import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
 import { refLabelsAt } from "./commit-refs";
 import {
+  bisectStep,
   loadMoreCommits,
   loadSidebar,
   onCommitMultiSelect,
   refreshConflictStatus,
   refreshHistory,
   refreshRebaseStatus,
+  runBisectOp,
   selectCommit,
   showView,
 } from "./shell";
@@ -285,7 +288,17 @@ export function onCommitContextMenu(row: CommitRow, x: number, y: number): void 
           return "";
         },
       ),
+    bisecting: state.bisect !== null,
+    bisectMark: (mark) => void bisectStep(mark, rev),
+    bisectStart: (mark, other) =>
+      void startBisect(mark === "bad" ? rev : other, mark === "good" ? [rev] : [other]),
   });
+}
+
+// Start a bisect between a known bad and known good commits; git checks out
+// the first commit to test.
+export async function startBisect(bad: string, good: string[]): Promise<void> {
+  await runBisectOp("Starting bisect", () => bisectStart(bad, good));
 }
 
 // Run a HEAD-moving commit op, then reload history + sidebar from the new HEAD.

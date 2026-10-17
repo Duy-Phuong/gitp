@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use gitp_core::{ConflictStatus, RebaseStatus, Refs, Repo, StatusLists};
+use gitp_core::{BisectStatus, ConflictStatus, RebaseStatus, Refs, Repo, StatusLists};
 use serde::Serialize;
 use tauri::State;
 
@@ -121,6 +121,9 @@ pub(crate) struct WorkspaceSnapshot {
     rebase: RebaseStatus,
     conflict: ConflictStatus,
     undo: UndoView,
+    /// The in-progress bisect, if any — it detaches HEAD, so the log and
+    /// banner need to know.
+    pub(crate) bisect: Option<BisectStatus>,
 }
 
 /// Build the post-action snapshot in one lock acquisition, running `git status`
@@ -148,6 +151,7 @@ pub(crate) fn workspace_snapshot_impl(state: &RepoState) -> Result<WorkspaceSnap
         rebase: session.repo.rebase_status().map_err(to_message)?,
         conflict: session.repo.conflict_status().map_err(to_message)?,
         undo: undo_view(session),
+        bisect: session.repo.bisect_status().map_err(to_message)?,
     })
 }
 

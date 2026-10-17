@@ -35,7 +35,7 @@ import type { BranchRef, ResetMode, StashRef } from "./types";
 import { state, ui } from "./app-state";
 import { cancelNetworkAction, canCancelNetwork, readFailed, setStatus } from "./report";
 import { forgetRecentRepo, loadRecentRepos, PULL_DEFAULT_LABEL, PULL_DEFAULTS } from "./prefs";
-import { closeRepoTab, loadRepo, selectCommit, showReflog, showView, switchRepo } from "./shell";
+import { bisectStep, closeRepoTab, loadRepo, selectCommit, showReflog, showView, switchRepo } from "./shell";
 import {
   cleanUpAction,
   createBranchAction,
@@ -71,6 +71,7 @@ import {
   rebaseToHere,
   resetAction,
   runCommitOp,
+  startBisect,
   tagAction,
 } from "./commit-actions";
 import { toggleTerminal } from "./terminal-panel";
@@ -319,6 +320,7 @@ function repoCommands(): QuickItem[] {
       label: "Rebase Interactively…",
       next: () => branchStage("Interactive Rebase onto", (b) => void openInteractiveRebase(b.name, b.name), true),
     },
+    ...bisectCommands(),
     { kind: "command", label: "Clean up (prune remotes, delete gone branches)", run: () => void cleanUpAction() },
     { kind: "command", label: "Refresh (fetch all remotes)", run: () => void refreshAllAction() },
     {
@@ -600,6 +602,34 @@ function commitCommands(): QuickItem[] {
   return items;
 }
 
+// While bisecting: the banner's Good / Bad / Skip / Reset. Otherwise: start a
+// bisect, asking for the bad end (HEAD by default) and then the good one (the
+// selected commit by default, when that isn't HEAD itself).
+function bisectCommands(): QuickItem[] {
+  if (state.bisect) {
+    return [
+      { kind: "command", label: "Bisect: Mark Good", run: () => void bisectStep("good") },
+      { kind: "command", label: "Bisect: Mark Bad", run: () => void bisectStep("bad") },
+      { kind: "command", label: "Bisect: Skip", run: () => void bisectStep("skip") },
+      { kind: "command", label: "Bisect: Reset", run: () => void bisectStep("reset") },
+    ];
+  }
+  const selected = state.selectedId && state.selectedId !== headTarget() ? state.selectedId : "";
+  return [
+    {
+      kind: "command",
+      label: "Start Bisect…",
+      run: () =>
+        promptFor(
+          "Bad commit (where the bug shows)",
+          (bad) =>
+            promptFor("Good commit (from before the bug)", (good) => void startBisect(bad, [good]), selected.slice(0, 10)),
+          "HEAD",
+        ),
+    },
+  ];
+}
+
 function resetStage(rev: string, short: string): QuickStage {
   const modes: [ResetMode, string][] = [
     ["Soft", "Soft — keep the working tree and the index"],
@@ -654,8 +684,8 @@ function openFetchOptions(): void {
 
 // A one-field prompt, reusing the context menu's inline input at the centre of
 // the window so a palette command that needs a name doesn't need its own modal.
-function promptFor(placeholder: string, onSubmit: (value: string) => void): void {
+function promptFor(placeholder: string, onSubmit: (value: string) => void, value?: string): void {
   showContextMenu(window.innerWidth / 2 - 120, window.innerHeight / 3, [
-    { label: placeholder, prompt: { placeholder, onSubmit } },
+    { label: placeholder, prompt: { placeholder, value, onSubmit } },
   ]);
 }
