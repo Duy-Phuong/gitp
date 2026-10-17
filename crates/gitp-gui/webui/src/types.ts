@@ -260,3 +260,26 @@ export interface ReflogEntry {
   // Summary of the `new_id` commit, or null once it has been pruned.
   summary: string | null;
 }
+
+// One side of a comparison: the revision as given (a ref name or an id) and
+// the commit it resolved to.
+export interface CompareEnd {
+  rev: string;
+  id: string;
+  short_id: string;
+  summary: string;
+}
+
+// What differs between two revisions — see Repo::compare in gitp-core.
+// Three-dot diffs from the merge base (what `head` added since the two
+// diverged); two-dot diffs `base` straight against `head`.
+export interface Comparison {
+  base: CompareEnd;
+  head: CompareEnd;
+  three_dot: boolean;
+  merge_base: string | null;
+  // Commits on `head` that `base` doesn't have, and the other way round.
+  ahead: number;
+  behind: number;
+  files: FileDiff[];
+}

@@ -9,6 +9,7 @@ import {
   fetchCommitDetail,
   fetchCommitFileDiff,
   fetchCommitTree,
+  fetchCompareFileDiff,
   fetchFileHistory,
   fetchFileDiff,
   fetchStatusSummary,
@@ -59,6 +60,7 @@ import { setupPaneResizer, setupSidebarResizer, setupTerminalResizer } from "./r
 import {
   applyWorkspace,
   jumpToCommit,
+  leaveComparison,
   loadRepo,
   loadSidebar,
   refreshHistory,
@@ -93,6 +95,7 @@ import { setupExternalChangeRefresh } from "./external-refresh";
 import { openQuickLaunch } from "./quick-launch-commands";
 import { setupLogKeyboardNav, setupShortcuts } from "./keyboard";
 import { setupBranchMenu, setupPullMenu, setupSettingsMenu } from "./topbar-menus";
+import { showComparison } from "./compare";
 
 function wireUi(): void {
   $("#open-btn").addEventListener("click", () => {
@@ -206,6 +209,9 @@ async function init(): Promise<void> {
     fetchFileHistory,
     fetchFileDiff: (id, file, contextLines) =>
       fetchCommitFileDiff(id, file.path, file.old_path, contextLines),
+    fetchCompareFileDiff,
+    onCompare: (base, head, threeDot) => void showComparison(base, head, threeDot),
+    onCloseCompare: () => void leaveComparison(),
     initialTab: loadDetailTab(),
     onTabChange: saveDetailTab,
   });

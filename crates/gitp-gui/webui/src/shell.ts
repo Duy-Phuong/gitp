@@ -40,6 +40,7 @@ import { loadWorkspace, rememberRecentRepo, saveWorkspace } from "./prefs";
 import { rebuildCommitRefs, refLabelsAt } from "./commit-refs";
 import { refreshConfig } from "./config-panel";
 import { refreshActionButtons } from "./toolbar";
+import { cancelComparison, compareSelectedCommits, showComparison } from "./compare";
 
 // What a ref or commit row does when it's right-clicked (or, for a branch,
 // double-clicked) — set once by main.ts at startup; see the module comment.
@@ -260,6 +261,10 @@ export async function refreshHistory(opts: { keepSelection?: boolean } = {}): Pr
   // The open Reflog owns the detail pane (an undo refreshes history under it);
   // showView puts the selection back there on the way out.
   if (state.view === "reflog") return;
+  // A comparison of refs stays up across a refresh, re-run in case they moved
+  // (two Cmd-clicked commits are re-compared by selectCommit itself).
+  const cmp = keep && state.commitSelection.size !== 2 ? ui.detailView?.comparison() : null;
+  if (cmp && (await showComparison(cmp.base.rev, cmp.head.rev, cmp.three_dot))) return;
   if (state.selectedId) await selectCommit(state.selectedId);
   else {
     shownDetailId = null;
@@ -395,6 +400,15 @@ export function onCommitMultiSelect(ids: Set<string>): void {
 export async function selectCommit(id: string): Promise<void> {
   // The log view updates its own highlight on click; here we only load detail.
   state.selectedId = id;
+  // Exactly two commits Cmd-clicked: the pane compares them instead.
+  if (state.commitSelection.size === 2) {
+    shownDetailId = null;
+    await compareSelectedCommits();
+    return;
+  }
+  // Any single selection ends a comparison, on screen or still in flight.
+  cancelComparison();
+  if (ui.detailView?.comparison()) shownDetailId = null;
   // Commits are immutable — re-showing one already on screen (e.g. switching
   // back to History with the same selection) needs no re-fetch/re-diff.
   if (id === shownDetailId) return;
@@ -407,6 +421,29 @@ export async function selectCommit(id: string): Promise<void> {
     ui.detailView?.show(detail);
   } catch (err) {
     readFailed("Failed to load commit", err);
+  }
+}
+
+// Drop a commit multi-selection and repaint the log without it, keeping the
+// scroll position.
+export async function clearCommitSelection(): Promise<void> {
+  if (!state.commitSelection.size) return;
+  state.commitSelection = new Set();
+  const pane = $("#log-pane");
+  const scroll = pane.scrollTop;
+  await updateLogView();
+  pane.scrollTop = scroll;
+}
+
+// Back from a comparison (Esc, or its Close button) to the selected commit,
+// dropping the two-commit selection if that's what it compared.
+export async function leaveComparison(): Promise<void> {
+  await clearCommitSelection();
+  if (state.selectedId) await selectCommit(state.selectedId);
+  else {
+    cancelComparison();
+    shownDetailId = null;
+    ui.detailView?.showEmpty();
   }
 }
 

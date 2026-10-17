@@ -2,7 +2,7 @@
 
 import { $ } from "./dom";
 import { state, ui } from "./app-state";
-import { selectCommit } from "./shell";
+import { leaveComparison, selectCommit } from "./shell";
 import { redoAction, undoAction } from "./repo-actions";
 import { openQuickLaunch } from "./quick-launch-commands";
 
@@ -65,6 +65,12 @@ export function setupLogKeyboardNav(): void {
         // we have, and landing there pulls in the next page like scrolling does.
         id = log.selectEdge("last");
         break;
+      case "Escape":
+        // Leave a comparison for the selected commit; otherwise not ours.
+        if (!ui.detailView?.comparison()) return;
+        e.preventDefault();
+        void leaveComparison();
+        return;
       case "Enter":
         // Hand focus to the diff so it can be scrolled from the keyboard too.
         focusDetailPane();

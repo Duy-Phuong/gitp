@@ -42,6 +42,7 @@ import { state } from "./app-state";
 import { opFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
 import {
+  clearCommitSelection,
   loadChanges,
   loadSidebar,
   opFailedMaybeConflict,
@@ -52,6 +53,7 @@ import {
   showView,
 } from "./shell";
 import { checkoutCommitAction, confirmThenRun, openInteractiveRebase } from "./commit-actions";
+import { showComparison } from "./compare";
 
 // Double-click a branch: check it out, then reload history + sidebar from the new
 // HEAD. Warns first if the working tree has uncommitted changes.
@@ -93,6 +95,7 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
     void runBranchOp(label, op, refreshLog, b.name);
 
   if (!b.is_head) items.push({ label: "Checkout", run: () => void checkoutBranchAction(b) });
+  if (!b.is_head) items.push(compareWithHeadItem(b.name));
   items.push({ separator: true });
   items.push({
     label: "New Branch here…",
@@ -253,6 +256,7 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
   const items: MenuItem[] = [
     { label: "Checkout Commit…", run: () => void checkoutCommitAction(target, `${name} (${short})`) },
     { label: "Show Tag Details…", run: () => openTagDetailsModal(name, fetchTagDetail(name)) },
+    compareWithHeadItem(name),
     { separator: true },
     { label: "Push to 'origin'…", run: () => void runTagOp(`Pushing ${name}`, () => pushTag(name)) },
   ];
@@ -357,6 +361,7 @@ async function runDeleteTag(name: string, deleteRemote: boolean): Promise<void> 
 export function onRemoteMenu(name: string, target: string, x: number, y: number): void {
   const items: MenuItem[] = [
     { label: "Checkout…", run: () => void checkoutRemoteAction(name) },
+    compareWithHeadItem(name),
     { separator: true },
     { label: "Copy Branch Name", run: () => void copyText(name, `Copied ${name}`) },
   ];
@@ -570,4 +575,30 @@ export async function createPullRequestAction(b: BranchRef): Promise<void> {
   } catch (err) {
     opFailed("Create pull request failed", err);
   }
+}
+
+// --- Compare ----------------------------------------------------------------
+
+// "Compare with Current Branch": what `ref` has that HEAD doesn't — three-dot,
+// from their merge base, the way a pull request of `ref` into the current
+// branch would read. The compare header can swap the two or switch to a
+// straight two-dot diff.
+function compareWithHeadItem(ref: string): MenuItem {
+  const current = state.refs.head;
+  return {
+    label: current ? "Compare with Current Branch" : "Compare with HEAD",
+    run: () => void compareRefsAction(current ?? "HEAD", ref),
+  };
+}
+
+// Show the three-dot comparison of `base` with `head` in the History view's
+// detail pane. Not the usual refresh-on-entry (as in jumpToCommit): a history
+// change would re-select a commit over the comparison as it lands. A
+// two-commit selection in the log would re-compare itself on the next refresh,
+// so it's dropped first.
+export async function compareRefsAction(base: string, head: string): Promise<void> {
+  if (state.view !== "history") showView("history", { refreshHistory: false });
+  await clearCommitSelection();
+  setStatus(`Comparing ${base}...${head}…`);
+  await showComparison(base, head, true);
 }

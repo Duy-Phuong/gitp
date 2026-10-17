@@ -6,6 +6,8 @@ import type {
   BlameLine,
   CommitDetail,
   CommitRow,
+  CompareEnd,
+  Comparison,
   ConfigEntry,
   ConfigScope,
   ConflictSides,
@@ -1423,5 +1425,59 @@ function mkReflog(to: string, from: string, message: string, time: number): Omit
     committer: "Ada Lovelace",
     time,
     summary: MOCK_LOG.find((r) => r.id === newId)?.summary ?? null,
+  };
+}
+
+// --- Comparing two revisions ------------------------------------------------
+
+// What differs between `base` and `head` (ref names or ids). `threeDot` diffs
+// from their merge base — only what `head` added since they diverged.
+export async function compareRevs(base: string, head: string, threeDot: boolean): Promise<Comparison> {
+  if (!isTauri()) return mockCompare(base, head, threeDot);
+  return invoke<Comparison>("compare_revs", { base, head, threeDot });
+}
+
+// One file of a comparison re-diffed with `contextLines` of context — the
+// compare counterpart of fetchCommitFileDiff.
+export async function fetchCompareFileDiff(
+  cmp: Comparison,
+  file: FileDiff,
+  contextLines: number,
+): Promise<FileDiff | null> {
+  if (!isTauri()) return cmp.files.find((f) => f.path === file.path) ?? null;
+  return invoke<FileDiff | null>("get_compare_file_diff", {
+    base: cmp.base.rev,
+    head: cmp.head.rev,
+    threeDot: cmp.three_dot,
+    path: file.path,
+    oldPath: file.old_path,
+    contextLines,
+  });
+}
+
+// Preview mode: resolve against the mock log and refs, count the rows between
+// the two as ahead/behind, and show the mock commit's files — fewer of them in
+// three-dot mode, so the toggle visibly does something.
+function mockCompare(base: string, head: string, threeDot: boolean): Comparison {
+  const resolve = (rev: string): CompareEnd => {
+    const target =
+      [...MOCK_REFS.branches, ...MOCK_REFS.remotes, ...MOCK_REFS.tags].find((r) => r.name === rev)?.target ??
+      (rev === "HEAD" ? MOCK_LOG[0].id : rev);
+    const row = MOCK_LOG.find((r) => r.id === target || r.short_id === target);
+    if (!row) throw new Error(`revspec '${rev}' not found`);
+    return { rev, id: row.id, short_id: row.short_id, summary: row.summary };
+  };
+  const b = resolve(base);
+  const h = resolve(head);
+  const distance = MOCK_LOG.findIndex((r) => r.id === b.id) - MOCK_LOG.findIndex((r) => r.id === h.id);
+  const files = b.id === h.id ? [] : mockDetail(h.id).files;
+  return {
+    base: b,
+    head: h,
+    three_dot: threeDot,
+    merge_base: MOCK_LOG[MOCK_LOG.length - 1].id,
+    ahead: Math.max(0, distance),
+    behind: Math.max(0, -distance),
+    files: threeDot ? files.slice(0, 1) : files,
   };
 }

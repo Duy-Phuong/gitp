@@ -53,6 +53,7 @@ import {
 import {
   checkoutBranchAction,
   checkoutRemoteAction,
+  compareRefsAction,
   createPullRequestAction,
   deleteBranchAction,
   deleteStashAction,
@@ -238,6 +239,14 @@ function repoCommands(): QuickItem[] {
       kind: "command",
       label: "Checkout Branch",
       next: () => branchStage("Checkout Branch", (b) => void checkoutBranchAction(b), true),
+    },
+    {
+      kind: "command",
+      label: "Compare…",
+      next: () =>
+        refStage("Compare", (base) => ({
+          next: () => refStage(`Compare ${base} with`, (head) => ({ run: () => void compareRefsAction(base, head) })),
+        })),
     },
     {
       kind: "command",
@@ -448,6 +457,25 @@ async function revealRepo(): Promise<void> {
 
 function headTarget(): string | null {
   return state.refs.branches.find((b) => b.is_head)?.target ?? null;
+}
+
+// Every branch, remote branch and tag, for picking a ref to compare. `pick`
+// says what choosing one does: run, or push the next stage.
+function refStage(chip: string, pick: (rev: string) => Pick<QuickItem, "run" | "next">): QuickStage {
+  const section = (title: string, names: string[]) => ({
+    title,
+    items: names.map((name) => ({ kind: "branch" as const, label: name, ...pick(name) })),
+  });
+  return {
+    chip,
+    placeholder: "branch or tag",
+    emptyNote: "This repository has no branches or tags.",
+    sections: [
+      section("Local Branches", state.refs.branches.map((b) => b.name)),
+      section("Remote Branches", state.refs.remotes.map((r) => r.name)),
+      section("Tags", state.refs.tags.map((t) => t.name)),
+    ],
+  };
 }
 
 function repoStage(): QuickStage {

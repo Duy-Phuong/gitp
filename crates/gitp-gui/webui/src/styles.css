@@ -3483,3 +3483,36 @@ textarea:focus-visible,
   background: var(--bg-elev-2);
   color: var(--text);
 }
+
+/* Compare view: the header that replaces the detail tabs while two revisions
+   are being compared — `base ← head`, how far apart, and the mode / swap /
+   close controls (see compareHeader in views/detail.ts). */
+.compare-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.compare-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-right: 2px;
+}
+.compare-end {
+  font-family: var(--mono);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compare-arrow,
+.compare-counts {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.compare-spacer {
+  flex: 1 1 auto;
+}

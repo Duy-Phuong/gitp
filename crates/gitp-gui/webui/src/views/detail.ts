@@ -7,10 +7,15 @@
 // lines around each change. A single stateful controller owns the pane: active
 // tab, selected file, view mode, split flag, context size, current hunk, and the
 // lazily-loaded tree / blame / history / re-contexted diff (each cached).
+//
+// The same pane also shows a comparison of two revisions (showCompare): a
+// compare header in place of the tabs, over the Changes view of the files that
+// differ — so the diff renderer, context controls and Blame / History (as of
+// the head side) all work unchanged.
 
 import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT } from "../api";
 import { clear, copyToClipboard, el, statusBadge, svg } from "../dom";
-import type { BlameLine, CommitDetail, FileCommit, FileDiff } from "../types";
+import type { BlameLine, CommitDetail, CompareEnd, Comparison, FileCommit, FileDiff } from "../types";
 import { hunkWordDiffs, type Seg } from "../worddiff";
 import { renderFileTree } from "./tree";
 
@@ -33,6 +38,12 @@ export interface DetailCallbacks {
   // Re-diff one of the commit's files with `contextLines` of context (the
   // commit detail's own diffs use the default).
   fetchFileDiff: (id: string, file: FileDiff, contextLines: number) => Promise<FileDiff | null>;
+  // The same for one of a comparison's files.
+  fetchCompareFileDiff: (cmp: Comparison, file: FileDiff, contextLines: number) => Promise<FileDiff | null>;
+  // The compare header: re-run the comparison with these ends and mode (Swap,
+  // the two-dot / three-dot toggle), or close it.
+  onCompare: (base: string, head: string, threeDot: boolean) => void;
+  onCloseCompare: () => void;
   // Which tab to open with. The pane keeps whichever tab you last used as you
   // move between commits; this is the starting point, restored across restarts
   // by the host. Defaults to Changes — clicking a commit to see what changed in
@@ -53,6 +64,10 @@ export interface DetailHandle {
   // outside the pane (Quick Launch's Blame/File History). Returns false when
   // the path isn't among them, so the caller can say so.
   openFile: (path: string, mode: "diff" | "blame" | "history") => boolean;
+  // Show what differs between two revisions, in place of a commit.
+  showCompare: (cmp: Comparison) => void;
+  // The comparison on screen, or null while showing a commit (or nothing).
+  comparison: () => Comparison | null;
 }
 
 // A single-entry cache keyed by `${commitId}:${path}`.
@@ -63,6 +78,10 @@ interface Cached<T> {
 
 export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandle {
   let detail: CommitDetail | null = null;
+  // Set while showing a comparison. `detail` then stands in for its head
+  // commit, carrying the comparison's files, so everything below that reads
+  // `detail.files` — or blames as of `detail.id` — needs no second code path.
+  let compare: Comparison | null = null;
   let tab: Tab = cb.initialTab ?? "changes";
   let selectedFile = 0;
   let fileMode: FileMode = "diff";
@@ -80,7 +99,8 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   const collapsed = new Set<string>(); // collapsed folders in the File Tree
 
   function show(next: CommitDetail): void {
-    const isNewCommit = detail?.id !== next.id;
+    const isNewCommit = compare !== null || detail?.id !== next.id;
+    compare = null;
     detail = next;
     if (isNewCommit) {
       selectedFile = 0;
@@ -91,8 +111,38 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     render();
   }
 
+  function showCompare(cmp: Comparison): void {
+    const before = compare ? viewKey() : null;
+    compare = cmp;
+    detail = {
+      id: cmp.head.id,
+      summary: cmp.head.summary,
+      message: cmp.head.summary,
+      author_name: "",
+      author_email: "",
+      author_time: 0,
+      parents: [],
+      files: cmp.files,
+    };
+    // A refresh of the same comparison keeps your place; anything else starts
+    // at the first file.
+    if (viewKey() !== before) {
+      selectedFile = 0;
+      currentHunk = 0;
+    }
+    render();
+  }
+
+  // What's on screen, for keying the caches: a commit, or both ends and the
+  // mode of a comparison.
+  function viewKey(): string {
+    if (compare) return `${compare.base.id}${compare.three_dot ? "..." : ".."}${compare.head.id}`;
+    return detail!.id;
+  }
+
   function showEmpty(): void {
     detail = null;
+    compare = null;
     clear(host);
     host.append(el("div", { class: "detail-empty", text: "Select a commit to view its changes." }));
   }
@@ -124,10 +174,12 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   function render(): void {
     if (!detail) return showEmpty();
     clear(host);
-    host.append(tabBar());
+    host.append(compare ? compareHeader(compare) : tabBar());
     const pane = el("div", { class: "detail-body-pane" });
     host.append(pane);
-    if (tab === "commit") {
+    if (compare) {
+      renderChanges(pane);
+    } else if (tab === "commit") {
       const scroll = el("div", { class: "tab-scroll" });
       pane.append(scroll);
       renderCommit(scroll);
@@ -205,7 +257,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const d = detail!;
     if (d.files.length === 0) {
       const scroll = el("div", { class: "tab-scroll" });
-      scroll.append(el("div", { class: "detail-empty", text: "No file changes." }));
+      scroll.append(el("div", { class: "detail-empty", text: compare ? "No differences." : "No file changes." }));
       pane.append(scroll);
       return;
     }
@@ -273,7 +325,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   }
 
   function contextKey(file: FileDiff): string {
-    return `${detail!.id}:${file.path}:${contextLines}`;
+    return `${viewKey()}:${file.path}:${contextLines}`;
   }
 
   function renderRecontexted(view: HTMLElement, file: FileDiff): void {
@@ -283,7 +335,10 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     recontextInFlight = key;
     // Only repaint if the user is still looking at this file and context.
     const stillViewing = () => detail !== null && contextKey(detail.files[selectedFile]) === key;
-    cb.fetchFileDiff(detail!.id, file, contextLines)
+    const fetched = compare
+      ? cb.fetchCompareFileDiff(compare, file, contextLines)
+      : cb.fetchFileDiff(detail!.id, file, contextLines);
+    fetched
       .then((data) => {
         recontexted = { key, data };
         if (stillViewing()) render();
@@ -430,10 +485,61 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   function stillViewing(id: string, path: string, mode: FileMode): boolean {
     return (
       detail?.id === id &&
-      tab === "changes" &&
+      (compare !== null || tab === "changes") &&
       fileMode === mode &&
       detail.files[selectedFile]?.path === path
     );
+  }
+
+  // --- Compare header -------------------------------------------------------
+
+  // `base ← head`, how far apart they are, and the controls: two-dot /
+  // three-dot, Swap, Close.
+  function compareHeader(cmp: Comparison): HTMLElement {
+    const { base, head, three_dot: threeDot } = cmp;
+    const bar = el("div", { class: "compare-header" });
+    bar.append(
+      el("span", { class: "compare-title", text: "Compare" }),
+      compareChip(base),
+      el("span", { class: "compare-arrow", text: "←", title: `${compareEndLabel(head)} into ${compareEndLabel(base)}` }),
+      compareChip(head),
+    );
+    const apart = `${cmp.ahead} ahead · ${cmp.behind} behind`;
+    const since = cmp.merge_base ? `merge base ${cmp.merge_base.slice(0, 7)}` : "no common ancestor";
+    bar.append(
+      el("span", {
+        class: "compare-counts",
+        text: `${apart} · ${since}`,
+        title:
+          `${compareEndLabel(head)} has ${cmp.ahead} commit${cmp.ahead === 1 ? "" : "s"} that ` +
+          `${compareEndLabel(base)} doesn't, and is missing ${cmp.behind}.`,
+      }),
+      el("span", { class: "compare-spacer" }),
+    );
+    const mode = (label: string, three: boolean, title: string) => {
+      const b = textBtn(label, threeDot === three, () => {
+        if (threeDot !== three) cb.onCompare(base.rev, head.rev, three);
+      });
+      b.title = title;
+      return b;
+    };
+    bar.append(
+      el("div", { class: "tb-group" }, [
+        mode("Two-dot", false, `Everything that differs between ${compareEndLabel(base)} and ${compareEndLabel(head)}`),
+        mode(
+          "Three-dot",
+          true,
+          `Only what ${compareEndLabel(head)} changed since it diverged from ${compareEndLabel(base)} (diff from the merge base)`,
+        ),
+      ]),
+      textBtn("Swap", false, () => cb.onCompare(head.rev, base.rev, threeDot)),
+      iconBtn(["M6 6l12 12", "M18 6L6 18"], "Close comparison (Esc)", false, cb.onCloseCompare),
+    );
+    return bar;
+  }
+
+  function compareChip(end: CompareEnd): HTMLElement {
+    return el("span", { class: "ref-chip compare-end", text: compareEndLabel(end), title: `${end.short_id} — ${end.summary}` });
   }
 
   // --- File Tree tab --------------------------------------------------------
@@ -498,7 +604,15 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
       if (detail) setTab("commit");
     },
     openFile,
+    showCompare,
+    comparison: () => compare,
   };
+}
+
+// How a comparison names one of its ends: the ref name it was given, or the
+// short id when it was given a commit id.
+export function compareEndLabel(end: CompareEnd): string {
+  return end.id.startsWith(end.rev.toLowerCase()) ? end.short_id : end.rev;
 }
 
 // --- toolbar controls -------------------------------------------------------
