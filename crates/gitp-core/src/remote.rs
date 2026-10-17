@@ -218,8 +218,17 @@ impl Repo {
     }
 
     /// Commit the staged changes. `body` is added as a second paragraph when
-    /// non-empty; `amend` rewrites HEAD instead of adding a new commit.
-    pub fn commit(&self, subject: &str, body: &str, amend: bool) -> Result<String> {
+    /// non-empty; `amend` rewrites HEAD instead of adding a new commit. `sign`
+    /// forces signing on (`-S`) or off (`--no-gpg-sign`); `None` leaves it to
+    /// `commit.gpgsign`. Signing runs git's configured gpg / ssh-keygen, so a
+    /// missing key or a cancelled pinentry fails the commit with git's error.
+    pub fn commit(
+        &self,
+        subject: &str,
+        body: &str,
+        amend: bool,
+        sign: Option<bool>,
+    ) -> Result<String> {
         let mut args: Vec<&str> = vec!["commit", "-m", subject];
         let body = body.trim();
         if !body.is_empty() {
@@ -228,6 +237,11 @@ impl Repo {
         }
         if amend {
             args.push("--amend");
+        }
+        match sign {
+            Some(true) => args.push("-S"),
+            Some(false) => args.push("--no-gpg-sign"),
+            None => {}
         }
         self.run_git(&args)
     }

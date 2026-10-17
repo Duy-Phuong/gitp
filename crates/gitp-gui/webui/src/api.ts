@@ -8,6 +8,7 @@ import type {
   BlameLine,
   CommitDetail,
   CommitRow,
+  CommitSignature,
   CompareEnd,
   Comparison,
   ConfigEntry,
@@ -28,6 +29,7 @@ import type {
   Refs,
   RepoChanged,
   ResetMode,
+  SigningConfig,
   StatusLists,
   TagDetail,
   UndoState,
@@ -228,6 +230,17 @@ export async function fetchCommitDetail(rev: string): Promise<CommitDetail> {
   return invoke<CommitDetail>("get_commit_detail", { rev });
 }
 
+// The commit's signature, verified (null when unsigned). Separate from
+// fetchCommitDetail because verifying runs gpg / ssh-keygen, which can be slow.
+// In preview mode the newest mock commit is signed and verifies.
+export async function fetchCommitSignature(rev: string): Promise<CommitSignature | null> {
+  if (!isTauri()) {
+    if (rev !== MOCK_LOG[0].id) return null;
+    return { status: "Good", signer: "ada@example.com", key: "SHA256:mockKeyFingerprint0123456789abcdef", detail: "" };
+  }
+  return invoke<CommitSignature | null>("get_commit_signature", { rev });
+}
+
 // Lines of unchanged context around each change: git's default, which is what
 // fetchCommitDetail's diffs use.
 export const DEFAULT_CONTEXT_LINES = 3;
@@ -412,18 +425,25 @@ export async function unstageAll(): Promise<void> {
   await invoke<void>("unstage_all", {});
 }
 
+// `sign` forces signing on or off; null leaves it to git's commit.gpgsign.
 export async function commitChanges(
   subject: string,
   body: string,
   amend: boolean,
+  sign: boolean | null,
 ): Promise<string> {
   if (!isTauri()) {
     const n = MOCK_STATUS.staged.length;
     MOCK_STATUS.staged.splice(0);
     mockRecord(amend ? "Amend commit" : "Commit");
-    return `[preview ${amend ? "amend" : "commit"}] ${subject} — ${n} file(s)`;
+    return `[preview ${amend ? "amend" : "commit"}${sign ? ", signed" : ""}] ${subject} — ${n} file(s)`;
   }
-  return invoke<string>("commit_changes", { subject, body, amend });
+  return invoke<string>("commit_changes", { subject, body, amend, sign });
+}
+
+export async function fetchSigningConfig(): Promise<SigningConfig> {
+  if (!isTauri()) return { can_sign: true, sign_by_default: false };
+  return invoke<SigningConfig>("get_signing_config", {});
 }
 
 export async function fetchWorkingChanges(): Promise<FileDiff[]> {

@@ -15,7 +15,7 @@
 
 import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT } from "../api";
 import { clear, copyToClipboard, el, statusBadge, svg } from "../dom";
-import type { BlameLine, CommitDetail, CompareEnd, Comparison, FileCommit, FileDiff } from "../types";
+import type { BlameLine, CommitDetail, CommitSignature, CompareEnd, Comparison, FileCommit, FileDiff, SignatureStatus } from "../types";
 import { hunkWordDiffs, type Seg } from "../worddiff";
 import { renderFileTree } from "./tree";
 
@@ -44,6 +44,9 @@ export interface DetailCallbacks {
   // the two-dot / three-dot toggle), or close it.
   onCompare: (base: string, head: string, threeDot: boolean) => void;
   onCloseCompare: () => void;
+  // Verify the commit's signature (null when unsigned). Can be slow — it runs
+  // gpg / ssh-keygen — so the Commit tab fills its badge in when this lands.
+  fetchSignature: (id: string) => Promise<CommitSignature | null>;
   // Which tab to open with. The pane keeps whichever tab you last used as you
   // move between commits; this is the starting point, restored across restarts
   // by the host. Defaults to Changes — clicking a commit to see what changed in
@@ -97,6 +100,9 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   // flight don't each start another request.
   let recontextInFlight: string | null = null;
   const collapsed = new Set<string>(); // collapsed folders in the File Tree
+  // The last commit whose signature was verified, and the one being verified.
+  let signature: { id: string; sig: CommitSignature | null } | null = null;
+  let signatureInFlight: string | null = null;
 
   function show(next: CommitDetail): void {
     const isNewCommit = compare !== null || detail?.id !== next.id;
@@ -233,6 +239,9 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
       });
       meta.append(p);
     }
+    const sigRow = el("div", { class: "detail-signature" });
+    meta.append(sigRow);
+    fillSignature(sigRow, d.id);
     scroll.append(meta);
 
     if (d.files.length === 0) {
@@ -581,6 +590,39 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
       });
   }
 
+  // The signature badge, verified lazily for the commit on screen: a request
+  // of its own, so the tab never waits on gpg / ssh-keygen. Filled into the
+  // current `.detail-signature` row when it lands — render() may have rebuilt
+  // the tab meanwhile. Unsigned commits (and failed checks) show nothing.
+  function fillSignature(row: HTMLElement, id: string): void {
+    if (signature?.id === id) {
+      if (signature.sig) row.append(signatureBadge(signature.sig));
+      return;
+    }
+    if (signatureInFlight === id) return;
+    signatureInFlight = id;
+    cb.fetchSignature(id)
+      .then((sig) => {
+        signature = { id, sig };
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (signatureInFlight === id) signatureInFlight = null;
+        const slot = host.querySelector<HTMLElement>(".detail-signature");
+        if (!slot || detail?.id !== id || signature?.id !== id || !signature.sig) return;
+        clear(slot);
+        slot.append(signatureBadge(signature.sig));
+      });
+  }
+
+  function signatureBadge(sig: CommitSignature): HTMLElement {
+    const { label, who, title } = signatureText(sig);
+    return el("span", { class: "sig-row", title }, [
+      el("span", { class: `sig-badge sig-${sig.status.toLowerCase()}`, text: label }),
+      who,
+    ]);
+  }
+
   // --- small builders -------------------------------------------------------
 
   function fileRow(file: FileDiff, active: boolean, onClick: () => void): HTMLElement {
@@ -870,4 +912,21 @@ function appendSegs(host: HTMLElement, segs: Seg[], changedClass: string): void 
     if (s.changed) host.append(el("span", { class: changedClass, text: s.text }));
     else host.append(document.createTextNode(s.text));
   }
+}
+
+const SIGNATURE_LABELS: Record<SignatureStatus, string> = {
+  Good: "Verified",
+  Bad: "Bad signature",
+  UnknownKey: "Unknown key",
+  Expired: "Expired signature",
+  Revoked: "Revoked key",
+  Unverifiable: "Signed (can't verify)",
+};
+
+// What the signature badge says: the verdict, who signed with which key, and
+// a tooltip — git's reason when it couldn't verify at all.
+export function signatureText(sig: CommitSignature): { label: string; who: string; title: string } {
+  const who = [sig.signer, sig.key].filter(Boolean).join(" · ");
+  const title = sig.status === "Unverifiable" && sig.detail ? sig.detail : who;
+  return { label: SIGNATURE_LABELS[sig.status], who, title };
 }

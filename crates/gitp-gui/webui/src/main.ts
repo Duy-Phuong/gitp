@@ -36,6 +36,8 @@ import {
   unstageAll,
   unstageHunk,
   unstageLines,
+  fetchCommitSignature,
+  fetchSigningConfig,
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
@@ -212,6 +214,7 @@ async function init(): Promise<void> {
     fetchCompareFileDiff,
     onCompare: (base, head, threeDot) => void showComparison(base, head, threeDot),
     onCloseCompare: () => void leaveComparison(),
+    fetchSignature: fetchCommitSignature,
     initialTab: loadDetailTab(),
     onTabChange: saveDetailTab,
   });
@@ -244,6 +247,7 @@ async function init(): Promise<void> {
       }
     },
     commit: commitChanges,
+    fetchSigningConfig,
     // Staging doesn't change refs or history, so just update the badge — no ref
     // walk or log rebuild (that's what made each stage/unstage feel slow).
     onChanged: (count) => {

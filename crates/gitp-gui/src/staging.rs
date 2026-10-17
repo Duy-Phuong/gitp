@@ -2,7 +2,7 @@
 //! single hunks or selected lines), committing, discarding, and per-file
 //! patch / ignore.
 
-use gitp_core::{FileDiff, Repo, StatusLists};
+use gitp_core::{FileDiff, Repo, SigningConfig, StatusLists};
 use tauri::State;
 
 use crate::state::{ensure_status, to_message, with_repo, with_repo_clearing_undo, RepoState};
@@ -123,18 +123,26 @@ fn unstage_all_impl(state: &RepoState) -> Result<(), String> {
 }
 
 /// Commit the staged changes. Invalidates the cached log because HEAD moves.
+/// `sign` is the commit box's Sign toggle; `None` leaves it to git's config.
 pub(crate) fn commit_changes_impl(
     state: &RepoState,
     subject: String,
     body: String,
     amend: bool,
+    sign: Option<bool>,
 ) -> Result<String, String> {
     // Recorded soft: undo moves the tip back but keeps the committed changes
     // staged, so a mistaken commit can be reworked rather than lost.
     let label = if amend { "Amend commit" } else { "Commit" };
     with_recorded_head_move(state, label, true, |repo| {
-        repo.commit(&subject, &body, amend)
+        repo.commit(&subject, &body, amend, sign)
     })
+}
+
+/// Whether commits can be signed here and whether they are by default — the
+/// starting state of the commit box's Sign toggle.
+fn get_signing_config_impl(state: &RepoState) -> Result<SigningConfig, String> {
+    with_repo(state, Repo::signing_config)
 }
 
 /// Discard all local changes to `paths` (revert to HEAD; delete new files).
@@ -271,9 +279,15 @@ pub(crate) fn commit_changes(
     subject: String,
     body: String,
     amend: bool,
+    sign: Option<bool>,
     state: State<RepoState>,
 ) -> Result<String, String> {
-    commit_changes_impl(&state, subject, body, amend)
+    commit_changes_impl(&state, subject, body, amend, sign)
+}
+
+#[tauri::command(async)]
+pub(crate) fn get_signing_config(state: State<RepoState>) -> Result<SigningConfig, String> {
+    get_signing_config_impl(&state)
 }
 
 #[tauri::command(async)]

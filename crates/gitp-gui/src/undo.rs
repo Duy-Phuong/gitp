@@ -654,7 +654,7 @@ mod tests {
 
         std::fs::write(dir.path().join("f.txt"), "two\n").unwrap();
         stage_impl(&state, "f.txt".into()).unwrap();
-        commit_changes_impl(&state, "c2".into(), String::new(), false).expect("commit");
+        commit_changes_impl(&state, "c2".into(), String::new(), false, None).expect("commit");
         assert_eq!(
             undo_state_impl(&state).unwrap().undo.as_deref(),
             Some("Commit")
@@ -845,7 +845,7 @@ mod tests {
         let state = open(dir.path());
         std::fs::write(dir.path().join("new.txt"), "n\n").unwrap();
         stage_impl(&state, "new.txt".into()).unwrap();
-        commit_changes_impl(&state, "c2".into(), String::new(), false).unwrap();
+        commit_changes_impl(&state, "c2".into(), String::new(), false, None).unwrap();
         let c2 = git_out(dir.path(), &["rev-parse", "HEAD"]);
 
         reset_impl(&state, "HEAD~1".into(), ResetMode::Soft).expect("soft reset");
@@ -864,7 +864,7 @@ mod tests {
         let state = open(dir.path());
         std::fs::write(dir.path().join("f.txt"), "two\n").unwrap();
         stage_impl(&state, "f.txt".into()).unwrap();
-        commit_changes_impl(&state, "c2".into(), String::new(), false).unwrap();
+        commit_changes_impl(&state, "c2".into(), String::new(), false, None).unwrap();
         assert!(undo_state_impl(&state).unwrap().undo.is_some());
 
         create_backup_branch_impl(&state, "backup".into()).expect("backup branch");

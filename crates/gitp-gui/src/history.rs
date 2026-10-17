@@ -1,11 +1,14 @@
 //! Reading history: the paged commit log and its search, commit details and
 //! diffs, the ref tree, and per-file tree / blame / history.
 
-use gitp_core::{BlameLine, CommitDetail, CommitRow, FileCommit, FileDiff, LogSearch, Refs, Repo};
+use gitp_core::{
+    BlameLine, CommitDetail, CommitRow, CommitSignature, FileCommit, FileDiff, LogSearch, Refs,
+    Repo,
+};
 use serde::Serialize;
 use tauri::State;
 
-use crate::state::{ensure_log, ensure_refs, to_message, with_repo, RepoState};
+use crate::state::{ensure_log, ensure_refs, to_message, with_repo, with_repo_unlocked, RepoState};
 
 /// A page of log rows plus the total count, so the frontend knows when to stop.
 #[derive(Serialize)]
@@ -111,6 +114,17 @@ pub(crate) fn get_commit_detail_impl(
     with_repo(state, |repo| repo.commit_detail(&rev))
 }
 
+/// The signature on `rev` and whether it verifies; `None` when unsigned. A
+/// request of its own, separate from the detail, because verifying runs gpg /
+/// ssh-keygen — so it runs without the workspace lock (see
+/// `with_repo_unlocked`), and a slow verifier never stalls other commands.
+fn get_commit_signature_impl(
+    state: &RepoState,
+    rev: String,
+) -> Result<Option<CommitSignature>, String> {
+    with_repo_unlocked(state, |repo| repo.commit_signature(&rev))
+}
+
 fn get_commit_file_diff_impl(
     state: &RepoState,
     rev: String,
@@ -184,6 +198,14 @@ pub(crate) fn get_commit_detail(
     state: State<RepoState>,
 ) -> Result<CommitDetail, String> {
     get_commit_detail_impl(&state, rev)
+}
+
+#[tauri::command(async)]
+pub(crate) fn get_commit_signature(
+    rev: String,
+    state: State<RepoState>,
+) -> Result<Option<CommitSignature>, String> {
+    get_commit_signature_impl(&state, rev)
 }
 
 #[tauri::command(async)]
@@ -294,7 +316,7 @@ mod tests {
         // A new commit must move it, or the frontend would keep showing stale history.
         std::fs::write(dir.path().join("f.txt"), "new\n").unwrap();
         git(dir.path(), &["add", "f.txt"]);
-        commit_changes_impl(&state, "c3".into(), String::new(), false).expect("commit");
+        commit_changes_impl(&state, "c3".into(), String::new(), false, None).expect("commit");
         let after_commit = history_fingerprint_impl(&state).unwrap();
         assert_ne!(
             base, after_commit,

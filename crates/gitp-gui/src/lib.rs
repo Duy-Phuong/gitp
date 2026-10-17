@@ -184,6 +184,8 @@ pub fn run() {
             bisect::bisect_start,
             bisect::bisect_mark,
             bisect::bisect_reset,
+            history::get_commit_signature,
+            staging::get_signing_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running gitp");

@@ -1575,6 +1575,10 @@ body {
 .commit-btn {
   margin-left: auto;
 }
+.commit-amend.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .commit-btn:disabled {
   opacity: 0.5;
   cursor: default;
@@ -3555,4 +3559,35 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 }
 .commit-row.bisect-current {
   box-shadow: inset 0 0 0 1px var(--mod-fg);
+}
+
+/* Commit signature badge in the detail pane's metadata. */
+.sig-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.sig-badge {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.sig-good {
+  color: var(--add-fg);
+  background: var(--add-bg);
+}
+.sig-bad,
+.sig-revoked {
+  color: var(--del-fg);
+  background: var(--del-bg);
+}
+.sig-unknownkey,
+.sig-expired {
+  color: var(--mod-fg);
+  background: var(--mod-bg);
+}
+.sig-unverifiable {
+  color: var(--text-dim);
 }

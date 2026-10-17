@@ -218,6 +218,22 @@ pub(crate) fn with_repo_clearing_undo<T>(
     Ok(out)
 }
 
+/// Run a slow, read-only `f` (a signature check, say) on a handle of its own,
+/// without the workspace lock — like `with_repo_networked`, but not registered
+/// as a network operation, so it neither reports progress nor offers Cancel.
+pub(crate) fn with_repo_unlocked<T>(
+    state: &RepoState,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
+) -> Result<T, String> {
+    let path = {
+        let guard = state.0.lock().map_err(to_message)?;
+        let idx = guard.active.ok_or("no repository is open")?;
+        guard.sessions[idx].path.clone()
+    };
+    let repo = Repo::open(&path).map_err(to_message)?;
+    f(&repo).map_err(to_message)
+}
+
 /// Run a **network** git operation (fetch / pull / push) against the active
 /// repo *without* holding the workspace lock, then apply `after` to the
 /// session under a fresh lock.
@@ -463,7 +479,7 @@ mod tests {
         // more, so this only works if the state fingerprint notices HEAD moved.
         std::fs::write(dir.path().join("f.txt"), "new\n").unwrap();
         git(dir.path(), &["add", "f.txt"]);
-        commit_changes_impl(&state, "c3".into(), String::new(), false).expect("commit");
+        commit_changes_impl(&state, "c3".into(), String::new(), false, None).expect("commit");
 
         let page = get_log_page_impl(&state, 0, 100, true).unwrap();
         assert_eq!(page.total, 3, "the new commit must appear");

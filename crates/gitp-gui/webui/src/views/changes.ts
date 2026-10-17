@@ -5,7 +5,7 @@
 
 import { DEFAULT_CONTEXT_LINES } from "../api";
 import { autoGrowTextarea, clear, copyToClipboard, el } from "../dom";
-import type { ChangeKind, CommitDetail, FileDiff, StatusLists } from "../types";
+import type { ChangeKind, CommitDetail, FileDiff, SigningConfig, StatusLists } from "../types";
 import { type MenuItem, showContextMenu } from "./context-menu";
 import { contextControls, renderFile, renderSplitDiff } from "./detail";
 import {
@@ -60,7 +60,11 @@ export interface ChangesCallbacks {
   // The current HEAD commit (message + files), for pre-filling an amend and
   // showing the commit being amended. Null when the branch has no commits.
   fetchHead: () => Promise<CommitDetail | null>;
-  commit: (subject: string, body: string, amend: boolean) => Promise<string>;
+  // `sign` is the Sign toggle: force signing on / off, or null to leave it to
+  // git's commit.gpgsign (no signing key configured).
+  commit: (subject: string, body: string, amend: boolean, sign: boolean | null) => Promise<string>;
+  // Whether commits can be signed here, and the default (commit.gpgsign).
+  fetchSigningConfig: () => Promise<SigningConfig>;
   // After every reload: the number of distinct changed paths, for the sidebar
   // badge — cheap enough to pass along instead of a separate backend scan.
   onChanged: (localChangeCount: number) => void;
@@ -140,6 +144,12 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   // The message we auto-filled from HEAD, so unchecking Amend can clear it only
   // when the user hasn't edited it.
   let amendPrefill: { subject: string; body: string } | null = null;
+  // The repo's signing setup (null until loaded / when it can't be read) and
+  // the Sign toggle, which starts at commit.gpgsign. Reloaded per repo by
+  // reset(); the token drops a load that a newer one (repo switch) superseded.
+  let signing: SigningConfig | null = null;
+  let sign = false;
+  let signingToken = 0;
   let busy = false;
   let splitView = false;
   // Unchanged lines shown around each change (toolbar: fewer / more / full).
@@ -938,6 +948,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     amendBox.checked = amend;
     amendBox.addEventListener("change", () => void toggleAmend(amendBox.checked));
     const amendLabel = el("label", { class: "commit-amend" }, [amendBox, "Amend"]);
+    const signLabel = signToggle();
 
     const commitBtn = el("button", { class: "btn commit-btn", text: "Commit" }) as HTMLButtonElement;
     commitBtn.disabled = !canCommit();
@@ -946,9 +957,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       const subj = subject.trim();
       const bdy = body;
       const am = amend;
+      const sg = signing?.can_sign ? sign : null;
       run(
         async () => {
-          const out = await cb.commit(subj, bdy, am);
+          const out = await cb.commit(subj, bdy, am, sg);
           cb.reportDone(out || "Committed.");
         },
         () => {
@@ -963,9 +975,39 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       );
     });
 
-    const controls = el("div", { class: "commit-controls" }, [amendLabel, commitBtn]);
+    const toggles = signLabel ? [amendLabel, signLabel] : [amendLabel];
+    const controls = el("div", { class: "commit-controls" }, [...toggles, commitBtn]);
     box.append(subjectInput, bodyInput, controls);
     return box;
+  }
+
+  // "Sign": passes -S / --no-gpg-sign explicitly. Disabled, saying why, when no
+  // signing key is configured; hidden until the repo's setup has loaded.
+  function signToggle(): HTMLElement | null {
+    if (!signing) return null;
+    const box = el("input", { type: "checkbox", disabled: !signing.can_sign }) as HTMLInputElement;
+    box.checked = signing.can_sign && sign;
+    box.addEventListener("change", () => {
+      sign = box.checked;
+    });
+    const title = signing.can_sign
+      ? "Sign the commit with your GPG / SSH key (git commit -S)"
+      : "No signing key configured — set user.signingkey to sign commits";
+    const cls = `commit-amend${signing.can_sign ? "" : " disabled"}`;
+    return el("label", { class: cls, title }, [box, "Sign"]);
+  }
+
+  function loadSigning(): void {
+    const token = ++signingToken;
+    signing = null;
+    cb.fetchSigningConfig()
+      .then((cfg) => {
+        if (token !== signingToken) return;
+        signing = cfg;
+        sign = cfg.sign_by_default;
+        render();
+      })
+      .catch(() => {}); // no repo open, or unreadable config: just no toggle
   }
 
   // Toggle "Amend last commit": pull in HEAD's message (if the box is empty) and
@@ -1052,6 +1094,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     amend = false;
     amendFiles = [];
     amendPrefill = null;
+    loadSigning();
     render();
   }
 

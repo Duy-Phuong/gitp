@@ -186,7 +186,7 @@ fn commit_records_staged_changes_and_clears_the_staging_area() {
 
     let repo = Repo::open(fx.path()).unwrap();
     repo.stage_all().unwrap();
-    repo.commit("change a", "the body", false).unwrap();
+    repo.commit("change a", "the body", false, None).unwrap();
 
     // Nothing left staged, and the new commit is HEAD.
     assert!(

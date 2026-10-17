@@ -22,7 +22,7 @@ fn git(fx: &FixtureRepo, args: &[&str]) {
 fn commit(fx: &FixtureRepo, repo: &Repo, name: &str, message: &str) -> String {
     std::fs::write(fx.path().join(name), message).unwrap();
     git(fx, &["add", name]);
-    repo.commit(message, "", false).unwrap();
+    repo.commit(message, "", false, None).unwrap();
     repo.resolve_commit("HEAD").unwrap()
 }
 
@@ -36,7 +36,7 @@ fn head_reflog_lists_commit_checkout_reset_and_amend_newest_first() {
     repo.checkout_commit(&c1).unwrap();
     git(&fx, &["checkout", "-q", &branch]);
     repo.reset(&c1, ResetMode::Hard).unwrap();
-    repo.commit("first, amended", "", true).unwrap();
+    repo.commit("first, amended", "", true, None).unwrap();
     let amended = repo.resolve_commit("HEAD").unwrap();
 
     let entries = repo.reflog("HEAD", 100).unwrap();

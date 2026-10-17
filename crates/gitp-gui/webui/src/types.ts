@@ -306,3 +306,25 @@ export interface BisectStatus {
   // The branch (or commit) the bisect started from; Reset returns there.
   original_ref: string;
 }
+
+// How a signed commit's signature verified (gitp-core's SignatureStatus).
+export type SignatureStatus = "Good" | "Bad" | "UnknownKey" | "Expired" | "Revoked" | "Unverifiable";
+
+// A commit's signature, from get_commit_signature (null when unsigned).
+export interface CommitSignature {
+  status: SignatureStatus;
+  // Who signed it (GPG user id / SSH principal) and the key's fingerprint;
+  // empty when git couldn't tell.
+  signer: string;
+  key: string;
+  // Git's message when it couldn't verify at all (Unverifiable).
+  detail: string;
+}
+
+// Starting state of the commit box's Sign toggle.
+export interface SigningConfig {
+  // A signing key is configured (or commit.gpgsign is already on).
+  can_sign: boolean;
+  // The effective commit.gpgsign.
+  sign_by_default: boolean;
+}
