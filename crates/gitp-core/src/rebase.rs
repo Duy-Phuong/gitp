@@ -6,18 +6,20 @@
 //! `GIT_SEQUENCE_EDITOR` (a `cp` of our todo file over git's) with
 //! `GIT_EDITOR=true`. Rewords are applied as `exec git commit --amend -F <file>`
 //! lines, so no interactive message editing is ever needed.
+//!
+//! The todo and message files live in `<git-dir>/gitp-rebase/`, next to git's
+//! own `rebase-merge/` state: an `edit` or conflict stop means the remaining
+//! `exec` lines only run on `--continue`, so the files must outlive the first
+//! `git rebase -i` call and are only removed once no rebase is in progress.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::repo::Repo;
-
-/// Distinguishes concurrent rebases' scratch dirs so their todo/message files
-/// never collide (the process id alone is shared across threads).
-static REBASE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// One commit in a rebase plan, as shown in the editor UI.
 #[derive(Debug, Clone, Serialize)]
@@ -97,7 +99,10 @@ impl Repo {
     /// Run an interactive rebase of the current branch onto `onto` following
     /// `steps` (already in the desired top-to-bottom order). When `update_refs`
     /// is set, branches pointing into the rebased range move along with it
-    /// (`git rebase --update-refs`).
+    /// (`git rebase --update-refs`). git implements that flag by inserting
+    /// `update-ref` lines into the todo it generates — which our sequence editor
+    /// replaces wholesale — so the equivalent lines are emitted here, after the
+    /// step (and its reword `exec`) that rewrites the commit each branch is on.
     ///
     /// A rebase that stops part-way — for an `edit` step or a merge conflict —
     /// is *not* an error: it leaves the rebase in progress and returns `Ok` with
@@ -127,9 +132,19 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        let seq = REBASE_SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("gitp-rebase-{}-{seq}", std::process::id()));
+        // git refuses to start a rebase while one is in progress, so a leftover
+        // scratch dir can only be stale: start clean.
+        let dir = self.rebase_scratch_dir();
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(io_err)?;
+
+        // Local branches (other than the one being rebased) by the commit they
+        // point at, for the `update-ref` lines.
+        let branches_at = if update_refs {
+            self.local_branches_by_commit()?
+        } else {
+            HashMap::new()
+        };
 
         let mut todo = String::new();
         for (i, step) in steps.iter().enumerate() {
@@ -148,6 +163,11 @@ impl Repo {
                         "exec git commit --amend -F {}\n",
                         shell_quote(&msg_file.to_string_lossy())
                     ));
+                }
+            }
+            if !matches!(step.action, RebaseAction::Drop) {
+                for branch in branches_at.get(&step.sha).into_iter().flatten() {
+                    todo.push_str(&format!("update-ref refs/heads/{branch}\n"));
                 }
             }
         }
@@ -173,7 +193,7 @@ impl Repo {
             .output()
             .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
 
-        let _ = std::fs::remove_dir_all(&dir);
+        self.cleanup_rebase_scratch();
 
         let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
         combined.push_str(&String::from_utf8_lossy(&output.stderr));
@@ -192,6 +212,43 @@ impl Repo {
     fn rebase_in_progress(&self) -> bool {
         let git_dir = self.inner.path();
         git_dir.join("rebase-merge").is_dir() || git_dir.join("rebase-apply").is_dir()
+    }
+
+    /// Where this repo's rebase todo and reword message files are kept.
+    fn rebase_scratch_dir(&self) -> PathBuf {
+        self.inner.path().join("gitp-rebase")
+    }
+
+    /// Remove the scratch dir — but only once the rebase is over, since a paused
+    /// rebase still has `exec … -F <file>` lines to run on continue.
+    pub(crate) fn cleanup_rebase_scratch(&self) {
+        if !self.rebase_in_progress() {
+            let _ = std::fs::remove_dir_all(self.rebase_scratch_dir());
+        }
+    }
+
+    /// Local branch names keyed by the full sha they point at, excluding the
+    /// checked-out branch (the one being rebased; git moves it itself).
+    fn local_branches_by_commit(&self) -> Result<HashMap<String, Vec<String>>> {
+        let current = self
+            .inner
+            .head()
+            .ok()
+            .and_then(|h| h.shorthand().map(str::to_string));
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        for branch in self.inner.branches(Some(git2::BranchType::Local))? {
+            let (branch, _) = branch?;
+            let Some(name) = branch.name()?.map(str::to_string) else {
+                continue;
+            };
+            if current.as_deref() == Some(name.as_str()) {
+                continue;
+            }
+            if let Some(oid) = branch.get().target() {
+                map.entry(oid.to_string()).or_default().push(name);
+            }
+        }
+        Ok(map)
     }
 
     /// Inspect an in-progress rebase so the UI can offer continue / skip / abort.
@@ -295,6 +352,7 @@ impl Repo {
             .args(args)
             .output()
             .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        self.cleanup_rebase_scratch();
         let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
         combined.push_str(&String::from_utf8_lossy(&output.stderr));
         let combined = combined.trim().to_string();

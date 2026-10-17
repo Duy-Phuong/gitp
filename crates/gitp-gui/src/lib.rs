@@ -8,8 +8,9 @@
 
 pub mod terminal;
 
+use std::collections::HashSet;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -207,6 +208,8 @@ fn open_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, Stri
         return Ok(guard.view());
     }
     let repo = Repo::open(&path).map_err(to_message)?;
+    // Index snapshots from a previous run that didn't get to clean up after itself.
+    repo.remove_index_snapshots();
     let name = display_name(&path);
     let (dirty, watcher) = watch_worktree(repo.workdir());
     guard.sessions.push(Session {
@@ -251,6 +254,7 @@ fn close_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, Str
         .iter()
         .position(|s| s.path == path)
         .ok_or("repository is not open")?;
+    clear_undo(&mut guard.sessions[i]); // removes its index snapshot files
     guard.sessions.remove(i);
     guard.active = match guard.active {
         _ if guard.sessions.is_empty() => None,
@@ -503,12 +507,46 @@ fn checkout_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
 
 /// Check out a remote-tracking branch (creating a local tracking branch if
 /// needed). Invalidates the cached log because HEAD moves.
+///
+/// Recorded as a branch creation when a local branch was created, so undo
+/// removes it again rather than leaving it behind; as a plain switch otherwise.
 fn checkout_remote_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_recorded_checkout(
-        state,
-        || format!("Checkout {name}"),
-        |repo| repo.checkout_remote(&name),
-    )
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let before = session.repo.head_ref_name().ok();
+    // Which local branches existed: the only way to tell afterwards whether
+    // the one we land on is new. The sidebar's cached ref tree is free here.
+    let existed: HashSet<String> = ensure_refs(session)?
+        .branches
+        .into_iter()
+        .map(|b| b.name)
+        .collect();
+    let out = session.repo.checkout_remote(&name).map_err(to_message)?;
+    let after = session.repo.head_ref_name().map_err(to_message)?;
+    let Some(before) = before else { return Ok(out) };
+    if !existed.contains(&after) {
+        let at = session.repo.head_commit_id().map_err(to_message)?;
+        set_undo(
+            session,
+            Undoable::BranchCreated {
+                label: format!("Create branch {after}"),
+                name: after,
+                at,
+                prev: before,
+            },
+        );
+    } else if before != after {
+        set_undo(
+            session,
+            Undoable::Switched {
+                label: format!("Checkout {name}"),
+                before,
+                after,
+            },
+        );
+    }
+    Ok(out)
 }
 
 /// Create branch `name` from the current HEAD and check it out. Invalidates the
@@ -524,15 +562,15 @@ fn create_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
 /// pulling can bring in new commits. Returns git's output for display. Runs
 /// unlocked (see `with_repo_networked`) so the UI stays responsive.
 fn pull_impl(state: &RepoState, mode: PullMode) -> Result<String, String> {
-    // Captured here rather than in the callback: with_repo_networked releases
-    // the lock for the round trip, and by the time it runs the pull has already
-    // moved HEAD.
-    let before = with_repo(state, Repo::head_commit_id).ok();
-    with_repo_networked(
+    // HEAD is captured under the same lock that picks the repo: by the time the
+    // pull runs it has already moved, and a separate lock could pair another
+    // tab's HEAD with this repo if the user switched in between.
+    with_repo_networked_prepared(
         state,
+        |session| session.repo.head_commit_id().ok(),
         |repo| repo.pull(mode),
         // A pull moves HEAD, and moving it back is a plain reset.
-        move |session| record_pull(session, before),
+        record_pull,
     )
 }
 
@@ -569,7 +607,7 @@ fn stash_pop_impl(state: &RepoState) -> Result<String, String> {
 
 /// Apply stash `index`. `drop` pops (apply + remove) instead of leaving it.
 fn stash_apply_impl(state: &RepoState, index: usize, drop: bool) -> Result<String, String> {
-    with_repo_writing(state, |repo| repo.stash_apply(index, drop))
+    with_repo_clearing_undo(state, |repo| repo.stash_apply(index, drop))
 }
 
 /// Drop stash `index` from the stack.
@@ -599,7 +637,7 @@ fn stash_drop_impl(state: &RepoState, index: usize) -> Result<String, String> {
 
 /// Re-message stash `index`.
 fn stash_rename_impl(state: &RepoState, index: usize, message: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.stash_rename(index, &message))
+    with_repo_clearing_undo(state, |repo| repo.stash_rename(index, &message))
 }
 
 /// Write stash `index`'s diff to `path` as a patch file.
@@ -614,7 +652,7 @@ fn discard_files_impl(state: &RepoState, paths: Vec<String>) -> Result<(), Strin
 
 /// Stash only `paths` away (`git stash push -u -- <paths>`).
 fn stash_files_impl(state: &RepoState, paths: Vec<String>) -> Result<String, String> {
-    with_repo_writing(state, |repo| repo.stash_files(&paths))
+    with_repo_clearing_undo(state, |repo| repo.stash_files(&paths))
 }
 
 /// Write a patch of `paths` (staged or working-tree direction) to `dest`.
@@ -631,7 +669,7 @@ fn save_files_patch_impl(
 
 /// Append `paths` to the repo's `.gitignore`; returns the number added.
 fn add_to_gitignore_impl(state: &RepoState, paths: Vec<String>) -> Result<usize, String> {
-    with_repo_writing(state, |repo| repo.add_to_gitignore(&paths))
+    with_repo_clearing_undo(state, |repo| repo.add_to_gitignore(&paths))
 }
 
 /// Reveal the repo-relative `path` in the OS file manager, selecting the file.
@@ -712,22 +750,34 @@ fn conflict_sides_impl(state: &RepoState, path: String) -> Result<ConflictSides,
 
 /// Write the resolved content for `path` and stage it (marks it resolved).
 fn resolve_conflict_impl(state: &RepoState, path: String, content: String) -> Result<(), String> {
-    with_repo_writing(state, |repo| repo.resolve_conflict(&path, &content))
+    with_repo_clearing_undo(state, |repo| repo.resolve_conflict(&path, &content))
 }
 
 /// Resolve `path` by taking one whole side (ours/theirs), for binary conflicts.
 fn resolve_conflict_side_impl(state: &RepoState, path: String, ours: bool) -> Result<(), String> {
-    with_repo_writing(state, |repo| repo.resolve_conflict_side(&path, ours))
+    with_repo_clearing_undo(state, |repo| repo.resolve_conflict_side(&path, ours))
 }
 
 /// Abort the in-progress merge/rebase. Invalidates the cached log (HEAD/tree).
 fn abort_conflict_impl(state: &RepoState) -> Result<String, String> {
-    with_active_repo_invalidating(state, Repo::abort_conflict)
+    with_repo_clearing_undo(state, Repo::abort_conflict)
 }
 
 /// Commit the merge / continue the rebase. Invalidates the cached log.
+///
+/// Finishing a merge, cherry-pick or revert is an ordinary HEAD move from the
+/// branch tip to the new commit, so it is recorded like one. A rebase is not:
+/// while paused its HEAD is detached on an intermediate commit, so "before"
+/// would be a commit the branch never pointed at — the slot is cleared instead.
 fn finish_conflict_impl(state: &RepoState, message: String) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.finish_conflict(&message))
+    let kind = with_repo(state, Repo::conflict_status)?.kind;
+    let label = match kind.as_str() {
+        "merge" => "Merge",
+        "cherry-pick" => "Cherry-pick",
+        "revert" => "Revert",
+        _ => return with_repo_clearing_undo(state, |repo| repo.finish_conflict(&message)),
+    };
+    with_recorded_head_move(state, label, false, |repo| repo.finish_conflict(&message))
 }
 
 /// Every file path in `rev`'s tree, for the File Tree view.
@@ -762,10 +812,12 @@ fn set_config_impl(
     with_repo(state, |repo| repo.set_config(scope, &name, &value))
 }
 
-/// Run `f` against the active repo and then invalidate its cached log, for
-/// operations that move HEAD or rewrite history (so the next `get_log_page`
-/// recomputes the walk). Errors if no repository is open.
-fn with_active_repo_invalidating<T>(
+/// Run a mutating `f` that undo does not track (abort/continue a session,
+/// apply a stash, resolve a conflict, ...) against the active repo, then forget
+/// the undo/redo slots: the operation may have moved HEAD, the index or the
+/// working tree out from under whatever was recorded, and an armed Undo that
+/// reverses something else is worse than none. Errors if no repository is open.
+fn with_repo_clearing_undo<T>(
     state: &RepoState,
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
 ) -> Result<T, String> {
@@ -773,6 +825,8 @@ fn with_active_repo_invalidating<T>(
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let out = f(&session.repo).map_err(to_message)?;
+    clear_undo(session);
+    invalidate_status(session);
     Ok(out)
 }
 
@@ -795,17 +849,31 @@ fn with_repo_networked<T>(
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
     after: impl FnOnce(&mut Session),
 ) -> Result<T, String> {
-    let path = {
+    with_repo_networked_prepared(state, |_| (), f, |session, ()| after(session))
+}
+
+/// [`with_repo_networked`] with a `prepare` step that reads from the session
+/// under the *same* lock that selects it, handing its result to `after`. For
+/// anything the op will change (pull moves HEAD), reading it in a separate lock
+/// would let a tab switch in between pair another repo's value with this one.
+fn with_repo_networked_prepared<P, T>(
+    state: &RepoState,
+    prepare: impl FnOnce(&Session) -> P,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
+    after: impl FnOnce(&mut Session, P),
+) -> Result<T, String> {
+    let (path, prepared) = {
         let guard = state.0.lock().map_err(to_message)?;
         let idx = guard.active.ok_or("no repository is open")?;
-        guard.sessions[idx].path.clone()
+        let session = &guard.sessions[idx];
+        (session.path.clone(), prepare(session))
     }; // lock released here — before the network round trip
     let repo = Repo::open(&path).map_err(to_message)?;
     let out = f(&repo).map_err(to_message)?;
     {
         let mut guard = state.0.lock().map_err(to_message)?;
         if let Some(session) = guard.sessions.iter_mut().find(|s| s.path == path) {
-            after(session);
+            after(session, prepared);
         }
     }
     Ok(out)
@@ -823,16 +891,58 @@ pub struct UndoView {
     redo: Option<String>,
 }
 
+/// A stored action is only offered while the repository is still where it
+/// left it (see `Repo::can_undo`), so a commit made in the terminal greys the
+/// button out instead of arming an Undo that would drop that commit. The check
+/// is ref lookups and file compares — cheap enough to run on every snapshot.
 fn undo_view(session: &Session) -> UndoView {
+    let repo = &session.repo;
     UndoView {
-        undo: session.undo.as_ref().map(|a| a.label().to_string()),
-        redo: session.redo.as_ref().map(|a| a.label().to_string()),
+        undo: session
+            .undo
+            .as_ref()
+            .filter(|a| repo.can_undo(a).is_ok())
+            .map(|a| a.label().to_string()),
+        redo: session
+            .redo
+            .as_ref()
+            .filter(|a| repo.can_redo(a).is_ok())
+            .map(|a| a.label().to_string()),
     }
 }
 
 fn set_undo(session: &mut Session, action: Undoable) {
+    remove_snapshots_of(session.undo.as_ref());
+    remove_snapshots_of(session.redo.as_ref());
     session.undo = Some(action);
     session.redo = None;
+}
+
+/// Delete the index snapshot files an action owns, once nothing can undo or
+/// redo it any more. Each recording gets its own files (see
+/// `index_snapshot_slots`), so a dropped action's pair would otherwise linger.
+fn remove_snapshots_of(action: Option<&Undoable>) {
+    match action {
+        Some(Undoable::IndexChanged { before, after, .. }) => {
+            remove_snapshot(Some(before));
+            remove_snapshot(Some(after));
+        }
+        Some(Undoable::Discarded {
+            index_before,
+            index_after,
+            ..
+        }) => {
+            remove_snapshot(index_before.as_ref());
+            remove_snapshot(index_after.as_ref());
+        }
+        _ => {}
+    }
+}
+
+fn remove_snapshot(path: Option<&String>) {
+    if let Some(path) = path {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Run a HEAD-moving op (commit / reset / merge / cherry-pick / revert /
@@ -850,6 +960,15 @@ fn with_recorded_head_move<T>(
     let session = &mut guard.sessions[idx];
     let before = session.repo.head_commit_id().ok(); // None on an unborn HEAD
     let out = f(&session.repo).map_err(to_message)?;
+    // A rebase paused on `edit` or a conflict (or a merge/cherry-pick/revert
+    // that stopped) returns Ok with HEAD detached mid-way. That is not a move
+    // to undo: a reset back would leave the todo and the branch ref behind,
+    // breaking `--continue`. Nothing is recorded, and an older action is
+    // dropped too — undo must not run inside the session at all.
+    if session.repo.operation_in_progress() {
+        clear_undo(session);
+        return Ok(out);
+    }
     let after = session.repo.head_commit_id().map_err(to_message)?;
     if let Some(before) = before {
         if before != after {
@@ -867,19 +986,33 @@ fn with_recorded_head_move<T>(
     Ok(out)
 }
 
-/// Where the staging snapshots for undo/redo live, inside `.git`. Fixed names:
-/// undo is single-level, so at most one pair exists at a time and each new
-/// recording overwrites the last.
-const UNDO_INDEX_BEFORE: &str = "gitp-undo-index-before";
-const UNDO_INDEX_AFTER: &str = "gitp-undo-index-after";
+/// Sequence number for index snapshot names.
+static UNDO_INDEX_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// A pair of fresh names (before, after) under `.git` for one recording's
+/// staging snapshots. Unique per recording rather than two fixed names: the
+/// `before` copy has to be taken before anyone knows whether the op will be
+/// recorded, and with fixed names a no-op "Stage all" (or a failed stage)
+/// overwrote the files the *armed* action pointed at — its Undo then silently
+/// restored the current index. Files of superseded actions are removed in
+/// `remove_snapshots_of`.
+fn index_snapshot_slots() -> (String, String) {
+    let seq = UNDO_INDEX_SEQ.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    (
+        format!("gitp-undo-index-{pid}-{seq}-before"),
+        format!("gitp-undo-index-{pid}-{seq}-after"),
+    )
+}
 
 /// Run an index-changing op (stage / unstage, whole file or one hunk),
 /// recording the staging area on each side so undo restores it exactly.
 ///
-/// The tree is captured rather than the list of paths touched: a file can be
+/// The index is captured rather than the list of paths touched: a file can be
 /// staged in part, and "unstage all" has to come back to the mixture that was
-/// there before rather than to all-or-nothing. Recording is skipped when the
-/// tree can't be written (a conflicted index) or when nothing actually moved.
+/// there before rather than to all-or-nothing. Recording is skipped when there
+/// is no index file to copy yet (nothing ever staged or committed) or when
+/// nothing actually moved; the snapshots are deleted again in that case.
 fn with_recorded_index<T>(
     state: &RepoState,
     label: &str,
@@ -888,31 +1021,36 @@ fn with_recorded_index<T>(
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
-    let before = session
-        .repo
-        .snapshot_index(UNDO_INDEX_BEFORE)
-        .ok()
-        .flatten();
-    let out = f(&session.repo).map_err(to_message)?;
+    let (before_slot, after_slot) = index_snapshot_slots();
+    let before = session.repo.snapshot_index(&before_slot).ok().flatten();
+    let out = f(&session.repo);
     invalidate_status(session);
-    let after = session.repo.snapshot_index(UNDO_INDEX_AFTER).ok().flatten();
-    if let (Some(before), Some(after)) = (before, after) {
-        // The two paths are fixed, so compare what they hold: an operation that
-        // staged nothing must not light up the Undo button.
-        let changed = match (std::fs::read(&before), std::fs::read(&after)) {
-            (Ok(a), Ok(b)) => a != b,
-            _ => false,
-        };
-        if changed {
-            set_undo(
-                session,
-                Undoable::IndexChanged {
-                    label: label.into(),
-                    before,
-                    after,
-                },
-            );
+    let out = match out {
+        Ok(out) => out,
+        Err(e) => {
+            remove_snapshot(before.as_ref());
+            return Err(to_message(e));
         }
+    };
+    let after = session.repo.snapshot_index(&after_slot).ok().flatten();
+    // An operation that staged nothing must not light up the Undo button.
+    // Compared by content, not bytes: git may rewrite stat data on a no-op.
+    let changed = match (&before, &after) {
+        (Some(b), Some(a)) => !Repo::index_snapshots_equal(b, a),
+        _ => false,
+    };
+    if changed {
+        set_undo(
+            session,
+            Undoable::IndexChanged {
+                label: label.into(),
+                before: before.expect("checked"),
+                after: after.expect("checked"),
+            },
+        );
+    } else {
+        remove_snapshot(before.as_ref());
+        remove_snapshot(after.as_ref());
     }
     Ok(out)
 }
@@ -1010,8 +1148,10 @@ fn with_recorded_branch_create(
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let prev = session.repo.head_ref_name().map_err(to_message)?;
+    // Resolved to an id now: `at_rev` may be a name (`origin/main`, a tag) that
+    // points somewhere else by the time redo recreates the branch.
     let at = match at_rev {
-        Some(r) => r.to_string(),
+        Some(r) => session.repo.resolve_commit(r).map_err(to_message)?,
         None => session.repo.head_commit_id().map_err(to_message)?,
     };
     let out = f(&session.repo).map_err(to_message)?;
@@ -1029,6 +1169,12 @@ fn with_recorded_branch_create(
 
 /// Discard `paths`, snapshotting each file's bytes before and after so undo can
 /// restore the discarded content exactly (and redo re-discards).
+///
+/// The index is snapshotted alongside: a discard also resets it for those paths
+/// (a staged hunk goes, a staged-new file is unstaged), and restoring the file
+/// bytes alone would bring the edit back unstaged. If a file can't be read on
+/// either side the discard still happens, but nothing is recorded — an undo
+/// that mistook a read error for "absent" would delete the file.
 fn with_recorded_discard(
     state: &RepoState,
     paths: &[String],
@@ -1037,37 +1183,56 @@ fn with_recorded_discard(
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
-    let befores: Vec<Option<Vec<u8>>> = paths
+    let (before_slot, after_slot) = index_snapshot_slots();
+    let befores: Vec<gitp_core::Result<Option<Vec<u8>>>> = paths
         .iter()
-        .map(|p| session.repo.read_workfile(p).ok().flatten())
+        .map(|p| session.repo.read_workfile(p))
         .collect();
-    f(&session.repo).map_err(to_message)?;
-    let files = paths
+    let index_before = session.repo.snapshot_index(&before_slot).ok().flatten();
+    if let Err(e) = f(&session.repo) {
+        remove_snapshot(index_before.as_ref());
+        return Err(to_message(e));
+    }
+    invalidate_status(session); // a discard rewrites the worktree, not the index
+    let index_after = session.repo.snapshot_index(&after_slot).ok().flatten();
+    let afters: Vec<gitp_core::Result<Option<Vec<u8>>>> = paths
         .iter()
-        .enumerate()
-        .map(|(i, p)| FileBlob {
-            path: p.clone(),
-            before: befores[i].clone(),
-            after: session.repo.read_workfile(p).ok().flatten(),
-        })
+        .map(|p| session.repo.read_workfile(p))
         .collect();
+    let mut files = Vec::with_capacity(paths.len());
+    for (path, (before, after)) in paths.iter().zip(befores.into_iter().zip(afters)) {
+        match (before, after) {
+            (Ok(before), Ok(after)) => files.push(FileBlob {
+                path: path.clone(),
+                before,
+                after,
+            }),
+            _ => {
+                remove_snapshot(index_before.as_ref());
+                remove_snapshot(index_after.as_ref());
+                clear_undo(session);
+                return Ok(());
+            }
+        }
+    }
     let n = paths.len();
     set_undo(
         session,
         Undoable::Discarded {
             label: format!("Discard {n} file{}", if n == 1 { "" } else { "s" }),
             files,
+            index_before,
+            index_after,
         },
     );
-    invalidate_status(session); // a discard rewrites the worktree, not the index
     Ok(())
 }
 
 /// Forget the undo/redo slots — used when a non-tracked op (pull, stash) moves
 /// HEAD or the working tree, which could make a stored action stale.
 fn clear_undo(session: &mut Session) {
-    session.undo = None;
-    session.redo = None;
+    remove_snapshots_of(session.undo.take().as_ref());
+    remove_snapshots_of(session.redo.take().as_ref());
 }
 
 /// The active session's staging lists, cached until the worktree changes.
@@ -1112,20 +1277,6 @@ fn invalidate_status(session: &mut Session) {
     session.status_cache = None;
 }
 
-/// `with_repo` for operations that write the working tree — see
-/// `invalidate_status` for why they can't rely on the watcher alone.
-fn with_repo_writing<T>(
-    state: &RepoState,
-    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
-) -> Result<T, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
-    let idx = guard.active.ok_or("no repository is open")?;
-    let session = &mut guard.sessions[idx];
-    let out = f(&session.repo).map_err(to_message)?;
-    invalidate_status(session);
-    Ok(out)
-}
-
 /// Build the post-action snapshot in one lock acquisition, running `git status`
 /// exactly once (see `WorkspaceSnapshot`) — and only when something changed.
 fn workspace_snapshot_impl(state: &RepoState) -> Result<WorkspaceSnapshot, String> {
@@ -1163,12 +1314,20 @@ fn undo_state_impl(state: &RepoState) -> Result<UndoView, String> {
 }
 
 /// Reverse the last recorded action. On failure the undo slot is kept so the
-/// button stays and the user can retry after fixing the cause.
+/// button stays and the user can retry after fixing the cause — except when
+/// the repository is no longer where the action left it (`Repo::can_undo`):
+/// then the action is stale for good, and the slot is cleared so the button
+/// greys out rather than offering the same refusal again.
 fn undo_impl(state: &RepoState) -> Result<UndoView, String> {
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let action = session.undo.take().ok_or("nothing to undo")?;
+    if let Err(e) = session.repo.can_undo(&action) {
+        remove_snapshots_of(Some(&action));
+        clear_undo(session);
+        return Err(to_message(e));
+    }
     match session.repo.undo(&action) {
         Ok(()) => {
             session.redo = Some(action);
@@ -1193,6 +1352,11 @@ fn redo_impl(state: &RepoState) -> Result<UndoView, String> {
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let action = session.redo.take().ok_or("nothing to redo")?;
+    if let Err(e) = session.repo.can_redo(&action) {
+        remove_snapshots_of(Some(&action));
+        clear_undo(session);
+        return Err(to_message(e));
+    }
     match session.repo.redo(&action) {
         Ok(()) => {
             session.undo = Some(action);
@@ -1309,7 +1473,10 @@ fn revert_impl(state: &RepoState, rev: String) -> Result<String, String> {
 
 /// Reset the current branch to `rev`. Invalidates the cached log.
 fn reset_impl(state: &RepoState, rev: String, mode: ResetMode) -> Result<String, String> {
-    with_recorded_head_move(state, "Reset", false, |repo| repo.reset(&rev, mode))
+    // A soft reset leaves the index as it was, so its undo must too: a `--keep`
+    // undo would refuse (or, for a staged-new file, drop it back to untracked).
+    let soft = matches!(mode, ResetMode::Soft);
+    with_recorded_head_move(state, "Reset", soft, |repo| repo.reset(&rev, mode))
 }
 
 /// Rebase the current branch onto `rev`. Invalidates the cached log.
@@ -1342,7 +1509,7 @@ fn rename_remote_branch_impl(state: &RepoState, new: String) -> Result<String, S
 
 /// Create branch `name` at HEAD without checking it out (e.g. a rebase backup).
 fn create_backup_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.create_branch_here(&name))
+    with_repo_clearing_undo(state, |repo| repo.create_branch_here(&name))
 }
 
 /// Delete branch `name` (force = `-D`). Doesn't move HEAD, so the log stays.
@@ -1493,14 +1660,20 @@ fn fetch_and_update_branch_impl(state: &RepoState, name: String) -> Result<Strin
     with_repo_networked(
         state,
         |repo| repo.fetch_and_update_branch(&name),
-        |_| (), // the fast-forward advanced a local branch — ensure_log notices
+        // The fast-forward advanced a local branch (ensure_log notices); an
+        // older recorded action may now be stale, so it is dropped.
+        clear_undo,
     )
 }
 
 /// Fast-forward `name` to its upstream. Invalidates the cached log (it may be
 /// the current branch).
 fn fast_forward_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_active_repo_invalidating(state, |repo| repo.fast_forward_branch(&name))
+    // Recorded as a HEAD move when it is the current branch that advances;
+    // undoing is then a plain reset back to the old tip.
+    with_recorded_head_move(state, "Fast-forward", false, |repo| {
+        repo.fast_forward_branch(&name)
+    })
 }
 
 /// Set `branch`'s upstream. No commit change, so the log stays.
@@ -1554,15 +1727,15 @@ fn rebase_status_impl(state: &RepoState) -> Result<RebaseStatus, String> {
 
 /// Resume / skip / abort a paused rebase. All can move HEAD, so invalidate.
 fn rebase_continue_impl(state: &RepoState) -> Result<String, String> {
-    with_active_repo_invalidating(state, Repo::rebase_continue)
+    with_repo_clearing_undo(state, Repo::rebase_continue)
 }
 
 fn rebase_skip_impl(state: &RepoState) -> Result<String, String> {
-    with_active_repo_invalidating(state, Repo::rebase_skip)
+    with_repo_clearing_undo(state, Repo::rebase_skip)
 }
 
 fn rebase_abort_impl(state: &RepoState) -> Result<String, String> {
-    with_active_repo_invalidating(state, Repo::rebase_abort)
+    with_repo_clearing_undo(state, Repo::rebase_abort)
 }
 
 /// Open `url` in the OS default browser.
@@ -2281,12 +2454,14 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        activate_repo_impl, close_repo_impl, commit_changes_impl, create_tag_at_impl,
-        delete_branches_impl, delete_tag_impl, get_commit_detail_impl, get_log_page_impl,
-        history_fingerprint_impl, list_repos_impl, log_index_of_impl, open_repo_impl, redo_impl,
-        stage_all_impl, stage_impl, undo_impl, undo_state_impl, unstage_impl,
-        workspace_snapshot_impl, RepoState,
+        activate_repo_impl, checkout_remote_impl, close_repo_impl, commit_changes_impl,
+        create_backup_branch_impl, create_branch_at_impl, create_tag_at_impl, delete_branches_impl,
+        delete_tag_impl, discard_files_impl, get_commit_detail_impl, get_log_page_impl,
+        history_fingerprint_impl, interactive_rebase_impl, list_repos_impl, log_index_of_impl,
+        open_repo_impl, redo_impl, reset_impl, stage_all_impl, stage_impl, undo_impl,
+        undo_state_impl, unstage_impl, workspace_snapshot_impl, RepoState,
     };
+    use gitp_core::{RebaseAction, RebaseStep, ResetMode};
     use std::path::Path;
     use std::process::Command;
 
@@ -2827,6 +3002,270 @@ mod tests {
         );
         // A rev that doesn't resolve at all is a genuine error.
         assert!(log_index_of_impl(&state, "no-such-ref".into(), true).is_err());
+    }
+
+    // --- preconditions and slot hygiene --------------------------------------
+    //
+    // Undo must only reverse the recorded action when the repository is still
+    // where that action left it, and anything that changes the repository
+    // behind undo's back must disarm it rather than leave a stale slot armed.
+
+    fn git_out(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("run git");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn porcelain(dir: &Path) -> String {
+        let mut lines: Vec<String> = git_out(dir, &["status", "--porcelain"])
+            .lines()
+            .map(str::to_string)
+            .collect();
+        lines.sort();
+        lines.join("\n")
+    }
+
+    fn open(dir: &Path) -> RepoState {
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.to_str().unwrap().to_string()).expect("open");
+        state
+    }
+
+    #[test]
+    fn undo_is_refused_and_disarmed_after_a_commit_made_outside() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+
+        std::fs::write(dir.path().join("f.txt"), "two\n").unwrap();
+        stage_impl(&state, "f.txt".into()).unwrap();
+        commit_changes_impl(&state, "c2".into(), String::new(), false).expect("commit");
+        assert_eq!(
+            undo_state_impl(&state).unwrap().undo.as_deref(),
+            Some("Commit")
+        );
+
+        // c3 from the terminal. Undo "Commit" would now drop it.
+        std::fs::write(dir.path().join("f.txt"), "three\n").unwrap();
+        git(dir.path(), &["commit", "-q", "-am", "c3"]);
+        let c3 = git_out(dir.path(), &["rev-parse", "HEAD"]);
+
+        // The toolbar sees a stale action as nothing to undo...
+        assert_eq!(undo_state_impl(&state).unwrap().undo, None);
+        // ...and an attempt anyway is refused, leaves c3 alone, and disarms.
+        let err = undo_impl(&state).err().expect("refused");
+        assert!(err.contains("changed since"), "got {err}");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), c3);
+        assert!(
+            state.0.lock().unwrap().sessions[0].undo.is_none(),
+            "slot cleared"
+        );
+    }
+
+    #[test]
+    fn a_paused_interactive_rebase_records_nothing_and_clears_the_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1", "c2", "c3"]);
+        let state = open(dir.path());
+        let rows = get_log_page_impl(&state, 0, 10, true).unwrap().rows; // c3, c2, c1
+        let (c3, c2, c1) = (rows[0].id.clone(), rows[1].id.clone(), rows[2].id.clone());
+
+        // Arm the slot with something, so we can see the rebase clear it.
+        create_tag_at_impl(&state, "t".into(), c1.clone()).unwrap();
+        assert!(undo_state_impl(&state).unwrap().undo.is_some());
+
+        let steps = vec![
+            RebaseStep {
+                sha: c2,
+                action: RebaseAction::Edit,
+                message: None,
+            },
+            RebaseStep {
+                sha: c3,
+                action: RebaseAction::Pick,
+                message: None,
+            },
+        ];
+        interactive_rebase_impl(&state, c1, steps, false).expect("rebase stops on edit");
+        assert!(
+            dir.path().join(".git/rebase-merge").is_dir(),
+            "paused mid-rebase"
+        );
+        assert_eq!(
+            undo_state_impl(&state).unwrap().undo,
+            None,
+            "a paused rebase is not an undoable HEAD move"
+        );
+        assert!(undo_impl(&state).is_err(), "nothing to undo mid-rebase");
+        git(dir.path(), &["rebase", "--abort"]);
+    }
+
+    #[test]
+    fn undo_after_a_no_op_stage_all_still_restores_the_original_index() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+
+        std::fs::write(dir.path().join("f.txt"), "two\n").unwrap();
+        stage_impl(&state, "f.txt".into()).unwrap();
+        // Nothing left to stage: must neither record nor disturb the armed
+        // "Stage" (which used to point at snapshot files this overwrote).
+        stage_all_impl(&state).unwrap();
+        assert_eq!(
+            undo_state_impl(&state).unwrap().undo.as_deref(),
+            Some("Stage")
+        );
+
+        undo_impl(&state).expect("undo");
+        assert!(
+            staged_paths(&state).is_empty(),
+            "the stage was really undone"
+        );
+        assert_eq!(
+            undo_state_impl(&state).unwrap().redo.as_deref(),
+            Some("Stage")
+        );
+        redo_impl(&state).expect("redo");
+        assert_eq!(staged_paths(&state), vec!["f.txt".to_string()]);
+    }
+
+    #[test]
+    fn index_snapshots_do_not_pile_up_in_dot_git() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+        for i in 0..4 {
+            std::fs::write(dir.path().join("f.txt"), format!("{i}\n")).unwrap();
+            stage_impl(&state, "f.txt".into()).unwrap();
+            stage_all_impl(&state).unwrap(); // a no-op in between
+        }
+        let snapshots = std::fs::read_dir(dir.path().join(".git"))
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("gitp-undo-index")
+            })
+            .count();
+        assert_eq!(snapshots, 2, "only the live before/after pair remains");
+    }
+
+    #[test]
+    fn discard_of_a_partially_staged_file_round_trips_the_index() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+
+        std::fs::write(dir.path().join("f.txt"), "staged\n").unwrap();
+        stage_impl(&state, "f.txt".into()).unwrap();
+        std::fs::write(dir.path().join("f.txt"), "staged\nunstaged\n").unwrap();
+        assert_eq!(porcelain(dir.path()), "MM f.txt");
+
+        discard_files_impl(&state, vec!["f.txt".into()]).expect("discard");
+        assert_eq!(porcelain(dir.path()), "");
+        undo_impl(&state).expect("undo");
+        assert_eq!(
+            porcelain(dir.path()),
+            "MM f.txt",
+            "both the staged hunk and the edit are back"
+        );
+        redo_impl(&state).expect("redo");
+        assert_eq!(porcelain(dir.path()), "");
+    }
+
+    #[test]
+    fn create_branch_at_records_where_the_rev_pointed_not_its_name() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1", "c2"]);
+        git(dir.path(), &["branch", "base", "HEAD~1"]);
+        let c1 = git_out(dir.path(), &["rev-parse", "base"]);
+        let state = open(dir.path());
+
+        create_branch_at_impl(&state, "topic".into(), "base".into()).expect("create");
+        undo_impl(&state).expect("undo");
+        assert!(!branch_names(dir.path()).contains(&"topic".to_string()));
+
+        // `base` moves meanwhile; redo must recreate `topic` at c1, not at
+        // wherever `base` points now.
+        git(dir.path(), &["branch", "-f", "base", "HEAD"]);
+        redo_impl(&state).expect("redo");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "topic"]), c1);
+    }
+
+    #[test]
+    fn a_soft_reset_is_undone_without_losing_the_staged_files() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+        std::fs::write(dir.path().join("new.txt"), "n\n").unwrap();
+        stage_impl(&state, "new.txt".into()).unwrap();
+        commit_changes_impl(&state, "c2".into(), String::new(), false).unwrap();
+        let c2 = git_out(dir.path(), &["rev-parse", "HEAD"]);
+
+        reset_impl(&state, "HEAD~1".into(), ResetMode::Soft).expect("soft reset");
+        assert_eq!(porcelain(dir.path()), "A  new.txt", "soft: still staged");
+        // A `--keep` undo would refuse here (the index differs from HEAD in
+        // new.txt); a soft one just puts the tip back.
+        undo_impl(&state).expect("undo soft reset");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), c2);
+        assert_eq!(porcelain(dir.path()), "", "clean again");
+    }
+
+    #[test]
+    fn an_untracked_mutation_disarms_undo() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+        std::fs::write(dir.path().join("f.txt"), "two\n").unwrap();
+        stage_impl(&state, "f.txt".into()).unwrap();
+        commit_changes_impl(&state, "c2".into(), String::new(), false).unwrap();
+        assert!(undo_state_impl(&state).unwrap().undo.is_some());
+
+        create_backup_branch_impl(&state, "backup".into()).expect("backup branch");
+        assert_eq!(
+            undo_state_impl(&state).unwrap().undo,
+            None,
+            "an operation undo doesn't track must not leave the old action armed"
+        );
+    }
+
+    #[test]
+    fn checking_out_a_remote_branch_is_undone_by_removing_the_new_local_branch() {
+        let origin = tempfile::tempdir().unwrap();
+        make_repo(origin.path(), &["c1"]);
+        git(origin.path(), &["branch", "feature"]);
+        let clone = tempfile::tempdir().unwrap();
+        git(
+            clone.path(),
+            &["clone", "-q", origin.path().to_str().unwrap(), "."],
+        );
+        let main = head_branch(clone.path());
+        let state = open(clone.path());
+
+        checkout_remote_impl(&state, "origin/feature".into()).expect("checkout remote");
+        assert_eq!(head_branch(clone.path()), "feature");
+        assert_eq!(
+            undo_state_impl(&state).unwrap().undo.as_deref(),
+            Some("Create branch feature")
+        );
+        undo_impl(&state).expect("undo");
+        assert_eq!(head_branch(clone.path()), main);
+        assert!(
+            !branch_names(clone.path()).contains(&"feature".to_string()),
+            "the local branch the checkout created is gone again"
+        );
+
+        // Switching to a local branch that already exists is a plain switch.
+        git(clone.path(), &["branch", "feature", "origin/feature"]);
+        checkout_remote_impl(&state, "origin/feature".into()).unwrap();
+        assert_eq!(
+            undo_state_impl(&state).unwrap().undo.as_deref(),
+            Some("Checkout origin/feature")
+        );
     }
 
     // --- undoing a bulk delete ---------------------------------------------

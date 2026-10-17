@@ -48,12 +48,19 @@ impl Repo {
         Ok(format!("Renamed stash to \"{message}\""))
     }
 
-    /// Write stash `index`'s full diff (`git stash show -p`) to `path`.
+    /// Write stash `index`'s full diff (`git stash show -p --include-untracked`)
+    /// to `path`. `--include-untracked` because `stash()` saves untracked files
+    /// and a plain `show -p` would silently leave them out of the patch. The raw
+    /// stdout is written as-is: `run_git` would trim it and append stderr.
     pub fn save_stash_patch(&self, index: usize, path: &Path) -> Result<String> {
-        let patch = self.run_git(&["stash", "show", "-p", &stash_ref(index)])?;
-        // `run_git` trims the trailing newline; restore it so the patch ends
-        // cleanly the way `git format-patch` output would.
-        fs::write(path, format!("{patch}\n"))
+        let patch = self.run_git_raw(&[
+            "stash",
+            "show",
+            "-p",
+            "--include-untracked",
+            &stash_ref(index),
+        ])?;
+        fs::write(path, patch)
             .map_err(|e| crate::error::Error::Message(format!("can't write patch: {e}")))?;
         Ok(format!("Saved patch to {}", path.display()))
     }

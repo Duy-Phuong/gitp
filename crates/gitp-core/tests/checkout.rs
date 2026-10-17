@@ -128,3 +128,49 @@ fn staged_but_uncommitted_work_on_a_conflicting_file_is_also_kept() {
     assert_eq!(status.staged.len(), 1, "the staged change is still staged");
     assert_eq!(status.staged[0].path, "a.txt");
 }
+
+// W2: a tag and a branch may share a name. `revparse_ext` resolves the tag
+// first, and attaching HEAD to whatever came back would leave HEAD pointing at
+// `refs/tags/<name>` — every later commit would then move the *tag*.
+#[test]
+fn checkout_prefers_the_branch_when_a_tag_has_the_same_name() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    {
+        let c1 = fx.repo.head().unwrap().peel_to_commit().unwrap();
+        fx.repo.branch("feature", &c1, false).unwrap();
+        fx.repo
+            .tag_lightweight("feature", c1.as_object(), false)
+            .unwrap();
+    }
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.checkout_branch("feature").unwrap();
+
+    let head = fx.repo.find_reference("HEAD").unwrap();
+    assert_eq!(
+        head.symbolic_target(),
+        Some("refs/heads/feature"),
+        "HEAD must attach to the branch, never to the tag"
+    );
+    assert_eq!(head_branch(&repo), "feature");
+}
+
+#[test]
+fn checkout_of_a_tag_with_no_branch_detaches_head() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    {
+        let c1 = fx.repo.head().unwrap().peel_to_commit().unwrap();
+        fx.repo
+            .tag_lightweight("v1", c1.as_object(), false)
+            .unwrap();
+    }
+    fx.commit_file("a.txt", "two\n", "c2");
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.checkout_branch("v1").unwrap();
+
+    assert!(fx.repo.head_detached().unwrap(), "a tag checkout detaches");
+    assert_eq!(read(&fx, "a.txt"), "one\n");
+}

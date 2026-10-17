@@ -2304,6 +2304,28 @@ body {
   background: var(--bg-elev);
   color: var(--text-dim);
 }
+/* An unmerged file: a "!" instead of a kind glyph, in the deletion colours so
+   it stands out from ordinary modifications. Resolved in the conflict view. */
+.status-Conflicted {
+  background: var(--del-bg);
+  color: var(--del-fg);
+  font-weight: 700;
+}
+.status-Conflicted .status-glyph {
+  display: none;
+}
+.status-Conflicted::before {
+  content: "!";
+  display: block;
+  width: 13px;
+  text-align: center;
+  line-height: 13px;
+}
+.tree-file.conflicted .tree-resolve {
+  margin-left: auto;
+  padding: 0 6px;
+  font-size: 11px;
+}
 .hunk-header {
   display: flex;
   align-items: center;

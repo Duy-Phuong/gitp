@@ -186,6 +186,32 @@ export function splitLines(s: string | null): string[] {
   return lines;
 }
 
+// Assemble the result: stable lines verbatim, each changed chunk replaced by
+// its chosen resolution (empty when reset — Save is gated on allResolved()).
+// `splitLines` drops the blob's trailing newline, so it is re-added here when
+// the sides had one; otherwise every saved file would end without "\n".
+export function assembleLines(chunks: Diff3Chunk[], res: (string[] | null)[], trailingNewline: boolean): string {
+  const out: string[] = [];
+  let ci = 0;
+  for (const c of chunks) {
+    if (c.kind === "stable") out.push(...c.lines);
+    else out.push(...(res[ci++] ?? []));
+  }
+  if (!out.length) return "";
+  return out.join("\n") + (trailingNewline ? "\n" : "");
+}
+
+export type Side = "ours" | "theirs";
+
+// Append `lines` of `side` to a chunk's resolution, unless that side was
+// already accepted into it (a repeated ≫ must not duplicate the lines;
+// "ours then theirs" still appends). Records the side in `accepted`.
+export function acceptLines(current: string[] | null, accepted: Set<Side>, side: Side, lines: string[]): string[] {
+  if (accepted.has(side)) return current ?? [];
+  accepted.add(side);
+  return [...(current ?? []), ...lines];
+}
+
 
 export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): ConflictHandle {
   let status: ConflictStatus | null = null;
@@ -205,7 +231,11 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   // by the user; res is parallel to changedChunks (null = undecided).
   let changedChunks: Diff3Changed[] = [];
   let res: (string[] | null)[] = [];
-  const resStore = new Map<string, (string[] | null)[]>();
+  // Which sides have been accepted into each resolution — parallel to `res`.
+  let accepted: Set<Side>[] = [];
+  const resStore = new Map<string, { res: (string[] | null)[]; accepted: Set<Side>[] }>();
+  // Whether the sides ended with "\n" (splitLines drops it; see assembleLines).
+  let trailingNewline = true;
   // Which changed chunk the ↑/↓ nav is focused on.
   let curChange = 0;
   let busy = false;
@@ -242,6 +272,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     chunks = [];
     changedChunks = [];
     res = [];
+    accepted = [];
     curChange = 0;
     status = null;
   }
@@ -259,8 +290,11 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     // too — not only the conflict-marker regions.
     chunks = diff3(splitLines(s.base), splitLines(s.ours), splitLines(s.theirs));
     changedChunks = chunks.filter((c): c is Diff3Changed => c.kind === "changed");
-    res = resStore.get(path) ?? changedChunks.map(() => null);
-    resStore.set(path, res);
+    const stored = resStore.get(path);
+    res = stored?.res ?? changedChunks.map(() => null);
+    accepted = stored?.accepted ?? changedChunks.map(() => new Set<Side>());
+    resStore.set(path, { res, accepted });
+    trailingNewline = (s.ours?.endsWith("\n") ?? false) || (s.theirs?.endsWith("\n") ?? false);
     curChange = 0;
     render();
   }
@@ -269,16 +303,8 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     return res.every((r) => r !== null);
   }
 
-  // Assemble the result: stable lines verbatim, each changed chunk replaced by
-  // its chosen resolution (empty when reset — Save is gated on allResolved()).
   function assembleResult(): string {
-    const out: string[] = [];
-    let ci = 0;
-    for (const c of chunks) {
-      if (c.kind === "stable") out.push(...c.lines);
-      else out.push(...(res[ci++] ?? []));
-    }
-    return out.join("\n");
+    return assembleLines(chunks, res, trailingNewline);
   }
 
   async function run(action: () => Promise<void>): Promise<void> {
@@ -394,7 +420,47 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
       box.append(binaryEditor(sides));
       return box;
     }
+    if (sides.ours === null || sides.theirs === null) {
+      box.append(deletedEditor(sides));
+      return box;
+    }
     box.append(textEditor(sides));
+    return box;
+  }
+
+  // Delete/modify conflict: one side deleted the file, the other changed it.
+  // The 3-way editor would show the deleted side as empty and "accepting" it
+  // would write an empty file, so offer the real choice instead: keep the
+  // surviving side's file, or delete it (resolveSide removes the file when the
+  // chosen side is absent).
+  function deletedEditor(s: ConflictSides): HTMLElement {
+    const oursDeleted = s.ours === null;
+    const box = el("div", { class: "conflict-editor" });
+    box.append(
+      el("div", { class: "conflict-editor-head" }, [
+        el("span", { class: "conflict-editor-file", text: `${selected} — delete/modify conflict` }),
+      ]),
+    );
+    const btn = (label: string, ours: boolean) => {
+      const b = el("button", { class: "btn ghost small", text: label });
+      b.addEventListener("click", () => void resolveWholeSide(ours));
+      return b;
+    };
+    box.append(
+      el("div", { class: "conflict-binary" }, [
+        el("span", {
+          text: oursDeleted
+            ? "Deleted on ours (current) / Modified on theirs (incoming)"
+            : "Modified on ours (current) / Deleted on theirs (incoming)",
+        }),
+        btn(oursDeleted ? "Keep file (take theirs)" : "Keep file (take ours)", !oursDeleted),
+        btn(oursDeleted ? "Delete file (take ours)" : "Delete file (take theirs)", oursDeleted),
+      ]),
+    );
+    const surviving = (oursDeleted ? s.theirs : s.ours) ?? "";
+    const pre = el("pre", { class: "conflict-deleted-text" });
+    pre.textContent = surviving;
+    box.append(pre);
     return box;
   }
 
@@ -453,17 +519,23 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
 
     // Bulk actions.
     const acceptAll = (ours: boolean) => {
-      res = res.map((r, i) => (r === null ? changedChunks[i][ours ? "ours" : "theirs"].slice() : r));
-      resStore.set(selected!, res);
+      const side: Side = ours ? "ours" : "theirs";
+      res = res.map((r, i) => {
+        if (r !== null) return r;
+        accepted[i] = new Set([side]);
+        return changedChunks[i][side].slice();
+      });
+      resStore.set(selected!, { res, accepted });
       render();
     };
     const applyNonConflicting = (mode: "ours" | "theirs" | "both") => {
       res = res.map((r, i) => {
         if (r !== null || changedChunks[i].conflict) return r;
         const c = changedChunks[i];
+        accepted[i] = new Set(mode === "both" ? ["ours", "theirs"] : [mode]);
         return (mode === "ours" ? c.ours : mode === "theirs" ? c.theirs : (c.auto ?? [])).slice();
       });
-      resStore.set(selected!, res);
+      resStore.set(selected!, { res, accepted });
       render();
     };
     const gotoChange = (delta: number) => {
@@ -521,6 +593,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
           txtBtn("Accept All Theirs", () => acceptAll(false)),
           txtBtn("Cancel", () => cancelFile(), !touched),
           txtBtn("Edit File", () => void cb.openInEditor(selected!)),
+          txtBtn("Mark Resolved", () => void markFileResolved()),
           save,
         ]),
       ]),
@@ -695,37 +768,40 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   function leftGutter(idx: number, resolved: boolean): HTMLElement {
     const cls = `merge-gutter merge-gutter-left${resolved ? " merge-gutter-done" : ""}`;
     return el("div", { class: cls }, [
-      iconBtn("≫", "Accept Ours into Result", () => acceptSide(idx, true)),
+      iconBtn("≫", "Accept Ours into Result", () => acceptSide(idx, true), accepted[idx].has("ours")),
       iconBtn("×", resolved ? "Reset this change" : "Reset this conflict", () => resetConflict(idx)),
     ]);
   }
   function rightGutter(idx: number, resolved: boolean): HTMLElement {
     const cls = `merge-gutter merge-gutter-right${resolved ? " merge-gutter-done" : ""}`;
     return el("div", { class: cls }, [
-      iconBtn("≪", "Accept Theirs into Result", () => acceptSide(idx, false)),
+      iconBtn("≪", "Accept Theirs into Result", () => acceptSide(idx, false), accepted[idx].has("theirs")),
       iconBtn("×", resolved ? "Reset this change" : "Reset this conflict", () => resetConflict(idx)),
     ]);
   }
-  function iconBtn(glyph: string, title: string, onClick: () => void): HTMLElement {
-    const b = el("button", { class: "merge-arrow", text: glyph, title });
+  function iconBtn(glyph: string, title: string, onClick: () => void, disabled = false): HTMLElement {
+    const b = el("button", { class: "merge-arrow", text: glyph, title }) as HTMLButtonElement;
+    b.disabled = disabled;
     b.addEventListener("click", onClick);
     return b;
   }
 
   function acceptSide(idx: number, ours: boolean): void {
-    const add = ours ? changedChunks[idx].ours : changedChunks[idx].theirs;
-    res[idx] = [...(res[idx] ?? []), ...add];
-    resStore.set(selected!, res);
+    const side: Side = ours ? "ours" : "theirs";
+    res[idx] = acceptLines(res[idx], accepted[idx], side, changedChunks[idx][side]);
+    resStore.set(selected!, { res, accepted });
     render();
   }
   function resetConflict(idx: number): void {
     res[idx] = null;
-    resStore.set(selected!, res);
+    accepted[idx] = new Set();
+    resStore.set(selected!, { res, accepted });
     render();
   }
   function cancelFile(): void {
     res = changedChunks.map(() => null);
-    resStore.set(selected!, res);
+    accepted = changedChunks.map(() => new Set<Side>());
+    resStore.set(selected!, { res, accepted });
     cb.setStatus(`Reverted resolutions for ${selected}.`);
     render();
   }
@@ -739,6 +815,28 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
       await cb.resolve(path, assembleResult());
       resStore.delete(path);
       cb.setStatus(`Resolved ${path}.`);
+      selected = null;
+      await reload();
+    });
+  }
+
+  // Stage the file as it is on disk (e.g. after resolving it via "Edit File"),
+  // provided no conflict markers remain.
+  async function markFileResolved(): Promise<void> {
+    const path = selected;
+    if (!path) return;
+    await run(async () => {
+      const s = await cb.fetchSides(path);
+      if (parseConflictRegions(s.working).length > 0) {
+        cb.reportError(
+          "File still has conflict markers",
+          `${path} still contains conflict markers; resolve them first.`,
+        );
+        return;
+      }
+      await cb.resolve(path, s.working);
+      resStore.delete(path);
+      cb.setStatus(`Resolved ${path} (as on disk).`);
       selected = null;
       await reload();
     });

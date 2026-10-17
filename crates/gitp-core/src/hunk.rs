@@ -59,7 +59,16 @@ impl Repo {
         context_lines: u32,
     ) -> Result<String> {
         let diff = self.staging_diff(path, staged, context_lines)?;
-        let mut patch = git2::Patch::from_diff(&diff, 0)?
+        // Pick the delta for `path` by name rather than assuming it's the only
+        // (or first) one, so a lookalike path can never be patched by mistake.
+        let idx = diff
+            .deltas()
+            .position(|d| {
+                let is = |f: git2::DiffFile| f.path().is_some_and(|p| p.to_string_lossy() == path);
+                is(d.new_file()) || is(d.old_file())
+            })
+            .ok_or_else(|| Error::Message(format!("{path} has no changes to apply")))?;
+        let mut patch = git2::Patch::from_diff(&diff, idx)?
             .ok_or_else(|| Error::Message("file has no textual diff to apply".into()))?;
         let buf = patch.to_buf()?;
         let text = std::str::from_utf8(&buf)

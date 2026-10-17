@@ -24,6 +24,9 @@ export type ChangeKind =
   | "Renamed"
   | "Copied"
   | "Untracked"
+  // An unmerged path during a merge/rebase/cherry-pick/revert. Sent as a single
+  // unstaged entry; resolved in the conflict view, not staged from here.
+  | "Conflicted"
   | "Other";
 
 export interface DiffLine {

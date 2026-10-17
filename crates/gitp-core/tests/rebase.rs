@@ -220,3 +220,84 @@ fn interactive_rebase_rejects_a_leading_squash() {
         .to_string();
     assert!(err.contains("first commit"), "clear guard message: {err}");
 }
+
+// O1: a reword is an `exec git commit --amend -F <file>` line. The message
+// file must outlive the first `git rebase -i` call, because an earlier `edit`
+// (or conflict) stop means the exec only runs on `--continue`.
+#[test]
+fn reword_after_an_edit_stop_still_applies_on_continue() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("base.txt", "b\n", "base");
+    let base = fx.repo.head().unwrap().peel_to_commit().unwrap();
+    fx.repo.branch("target", &base, false).unwrap();
+    fx.commit_file("f1.txt", "1\n", "c1");
+    fx.commit_file("f2.txt", "2\n", "c2");
+
+    let repo = Repo::open(fx.path()).unwrap();
+    let todo = repo.rebase_todo("target").unwrap();
+    let steps = vec![
+        step(&todo[0].sha, RebaseAction::Edit, None),
+        step(
+            &todo[1].sha,
+            RebaseAction::Reword,
+            Some("c2 reworded\n\nwith a body line"),
+        ),
+    ];
+    repo.interactive_rebase("target", &steps, false).unwrap();
+    assert!(repo.rebase_status().unwrap().in_progress);
+
+    repo.rebase_continue().unwrap();
+
+    assert!(
+        !repo.rebase_status().unwrap().in_progress,
+        "rebase finished after continue"
+    );
+    let msg = repo.commit_detail("HEAD").unwrap().message;
+    assert!(
+        msg.starts_with("c2 reworded\n\nwith a body line"),
+        "reword applied after the edit stop: {msg:?}"
+    );
+    assert!(
+        !fx.repo.path().join("gitp-rebase").exists(),
+        "scratch dir is cleaned up once the rebase is over"
+    );
+}
+
+// O3: `--update-refs` relies on `update-ref` lines in git's generated todo,
+// which our sequence editor throws away. We must emit them ourselves.
+#[test]
+fn update_refs_moves_a_dependent_branch_along_with_the_rebase() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("base.txt", "b\n", "base");
+    let base = fx.repo.head().unwrap().peel_to_commit().unwrap();
+    fx.repo.branch("target", &base, false).unwrap();
+    let c1 = fx.commit_file("f1.txt", "1\n", "c1");
+    {
+        let c1 = fx.repo.find_commit(c1).unwrap();
+        fx.repo.branch("dep", &c1, false).unwrap();
+    }
+    fx.commit_file("f2.txt", "2\n", "c2");
+
+    let repo = Repo::open(fx.path()).unwrap();
+    let todo = repo.rebase_todo("target").unwrap();
+    let steps = vec![
+        step(&todo[0].sha, RebaseAction::Reword, Some("c1 reworded")),
+        step(&todo[1].sha, RebaseAction::Pick, None),
+    ];
+    repo.interactive_rebase("target", &steps, true).unwrap();
+    assert!(!repo.rebase_status().unwrap().in_progress);
+
+    let dep = fx
+        .repo
+        .find_branch("dep", git2::BranchType::Local)
+        .unwrap()
+        .get()
+        .peel_to_commit()
+        .unwrap();
+    assert_ne!(dep.id(), c1, "dep must leave the old c1");
+    assert_eq!(
+        dep.summary(),
+        Some("c1 reworded"),
+        "dep follows the rewritten c1"
+    );
+}

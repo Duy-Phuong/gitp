@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { diff3, parseConflictRegions, splitLines } from "./conflict";
+import { acceptLines, assembleLines, diff3, parseConflictRegions, splitLines } from "./conflict";
+import type { Diff3Chunk } from "./conflict";
 
 describe("parseConflictRegions", () => {
   it("returns nothing for text without markers", () => {
@@ -83,5 +84,52 @@ describe("diff3", () => {
       expect(changed.conflict).toBe(false);
       expect(changed.auto).toEqual(["Y"]);
     }
+  });
+});
+
+describe("assembleLines", () => {
+  const chunks: Diff3Chunk[] = [
+    { kind: "stable", lines: ["a"] },
+    { kind: "changed", base: ["x"], ours: ["OURS"], theirs: ["THEIRS"], conflict: true, auto: null },
+    { kind: "stable", lines: ["b"] },
+  ];
+
+  it("splices resolutions between stable lines and keeps the trailing newline", () => {
+    expect(assembleLines(chunks, [["OURS"]], true)).toBe("a\nOURS\nb\n");
+  });
+
+  it("omits the trailing newline when neither side had one", () => {
+    expect(assembleLines(chunks, [["THEIRS"]], false)).toBe("a\nTHEIRS\nb");
+  });
+
+  it("returns an empty string for an empty result", () => {
+    expect(assembleLines([], [], true)).toBe("");
+  });
+
+  it("round-trips splitLines of a blob ending in a newline", () => {
+    const blob = "a\nb\n";
+    const c = diff3(splitLines(blob), splitLines(blob), splitLines(blob));
+    expect(assembleLines(c, [], blob.endsWith("\n"))).toBe(blob);
+  });
+});
+
+describe("acceptLines", () => {
+  it("appends a side once and records it", () => {
+    const accepted = new Set<"ours" | "theirs">();
+    expect(acceptLines(null, accepted, "ours", ["O"])).toEqual(["O"]);
+    expect(accepted.has("ours")).toBe(true);
+  });
+
+  it("ignores a repeat of the same side", () => {
+    const accepted = new Set<"ours" | "theirs">();
+    const once = acceptLines(null, accepted, "ours", ["O"]);
+    expect(acceptLines(once, accepted, "ours", ["O"])).toEqual(["O"]);
+  });
+
+  it("appends the other side after the first (ours then theirs)", () => {
+    const accepted = new Set<"ours" | "theirs">();
+    const o = acceptLines(null, accepted, "ours", ["O"]);
+    expect(acceptLines(o, accepted, "theirs", ["T"])).toEqual(["O", "T"]);
+    expect([...accepted].sort()).toEqual(["ours", "theirs"]);
   });
 });

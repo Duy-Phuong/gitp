@@ -12,6 +12,7 @@
 //! clobbering unrelated uncommitted work.
 
 use std::fs;
+use std::path::Path;
 
 use crate::error::{Error, Result};
 use crate::repo::Repo;
@@ -83,7 +84,17 @@ pub enum Undoable {
         new: String,
     },
     /// Files were discarded; each file's bytes are captured for an exact restore.
-    Discarded { label: String, files: Vec<FileBlob> },
+    ///
+    /// A discard also resets the index for those paths (a staged hunk is
+    /// dropped, a staged-new file is unstaged), so the staging area is
+    /// snapshotted on each side too — the same `.git` copies as
+    /// [`Undoable::IndexChanged`]. `None` when there was no index to copy.
+    Discarded {
+        label: String,
+        files: Vec<FileBlob>,
+        index_before: Option<String>,
+        index_after: Option<String>,
+    },
     /// The index changed — stage, unstage, or a single hunk of either.
     ///
     /// Held as a copy of `.git/index` on each side rather than a list of paths,
@@ -208,8 +219,17 @@ impl Repo {
     ///
     /// Written to a temporary file and renamed, the way git updates the index
     /// itself, so a failure part-way can't leave a half-written index behind.
+    ///
+    /// Refuses while `.git/index.lock` exists: another git process is writing
+    /// the index right now, and swapping the file under it would corrupt
+    /// whatever it is about to commit to disk.
     fn restore_index(&self, snapshot: &str) -> Result<()> {
         let index_path = self.inner.path().join("index");
+        if self.inner.path().join("index.lock").exists() {
+            return Err(Error::Message(
+                "the index is locked by another git process; try again in a moment".into(),
+            ));
+        }
         let staging = self.inner.path().join("gitp-undo-index.tmp");
         fs::copy(snapshot, &staging).map_err(|e| {
             Error::Message(format!("that staging snapshot is no longer available: {e}"))
@@ -254,6 +274,208 @@ impl Repo {
         }
     }
 
+    /// Delete every index snapshot left in `.git` by an earlier run. Snapshots
+    /// are named uniquely per recording (see the GUI's `with_recorded_index`),
+    /// so a crash or a force-quit leaves the live pair behind; this is called
+    /// when a repository is opened to sweep them up.
+    pub fn remove_index_snapshots(&self) {
+        let Ok(entries) = fs::read_dir(self.inner.path()) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("gitp-undo-index")
+            {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+
+    /// Whether a merge, rebase, cherry-pick, or revert is in progress — any of
+    /// the sessions whose state lives in `.git` and that undo must not touch.
+    pub fn operation_in_progress(&self) -> bool {
+        let git_dir = self.inner.path();
+        ["rebase-merge", "rebase-apply"]
+            .iter()
+            .any(|d| git_dir.join(d).is_dir())
+            || ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]
+                .iter()
+                .any(|f| git_dir.join(f).exists())
+    }
+
+    // --- preconditions -------------------------------------------------------
+
+    /// Check that `action` can still be undone: no merge/rebase session is in
+    /// progress, and the repository is exactly where the action left it. An
+    /// action recorded as `before → after` is only reversible while the
+    /// repository is still at `after`; otherwise something else (a commit from
+    /// the terminal, an edit, a tag re-created by hand) happened in between and
+    /// undoing would destroy *that* instead.
+    pub fn can_undo(&self, action: &Undoable) -> Result<()> {
+        self.check_precondition(action, Side::After, "undone")
+    }
+
+    /// Check that `action` can still be re-applied — the mirror of
+    /// [`Repo::can_undo`]: the repository must be back at the action's `before`.
+    pub fn can_redo(&self, action: &Undoable) -> Result<()> {
+        self.check_precondition(action, Side::Before, "redone")
+    }
+
+    fn check_precondition(&self, action: &Undoable, side: Side, verb: &str) -> Result<()> {
+        if self.operation_in_progress() {
+            return Err(Error::Message(format!(
+                "A merge, rebase, cherry-pick or revert is in progress; nothing was {verb}."
+            )));
+        }
+        if !self.is_at(action, side) {
+            return Err(Error::Message(format!(
+                "The repository changed since that action; nothing was {verb}."
+            )));
+        }
+        Ok(())
+    }
+
+    /// Whether the repository currently matches `side` of `action`. Every check
+    /// is a ref lookup or a file compare — this also runs when the toolbar is
+    /// drawn, so it must stay cheap and must not shell out.
+    fn is_at(&self, action: &Undoable, side: Side) -> bool {
+        let pick = |before: &str, after: &str| -> String {
+            match side {
+                Side::Before => before.to_string(),
+                Side::After => after.to_string(),
+            }
+        };
+        match action {
+            Undoable::HeadMoved { before, after, .. } => {
+                self.head_commit_id().ok().as_deref() == Some(pick(before, after).as_str())
+            }
+            Undoable::Switched { before, after, .. } => {
+                self.head_ref_name().ok().as_deref() == Some(pick(before, after).as_str())
+            }
+            Undoable::BranchCreated { name, at, prev, .. } => match side {
+                // Undo deletes the branch, so it must still be the checked-out
+                // one and still point where it was created.
+                Side::After => {
+                    self.head_ref_name().ok().as_deref() == Some(name.as_str())
+                        && self.branch_commit_id(name).ok().as_deref() == Some(at.as_str())
+                }
+                Side::Before => {
+                    self.branch_commit_id(name).is_err()
+                        && self.head_ref_name().ok().as_deref() == Some(prev.as_str())
+                }
+            },
+            Undoable::BranchesDeleted { branches, .. } => branches.iter().all(|b| {
+                let current = self.branch_commit_id(&b.name).ok();
+                match side {
+                    // Undo tolerates a branch that is already back at its tip
+                    // (a retried undo), but not one re-created elsewhere.
+                    Side::After => current.is_none() || current.as_deref() == Some(b.oid.as_str()),
+                    Side::Before => current.as_deref() == Some(b.oid.as_str()),
+                }
+            }),
+            Undoable::BranchRenamed { old, new, .. } => {
+                let (present, absent) = match side {
+                    Side::After => (new, old),
+                    Side::Before => (old, new),
+                };
+                self.branch_commit_id(present).is_ok() && self.branch_commit_id(absent).is_err()
+            }
+            Undoable::IndexChanged { before, after, .. } => {
+                self.index_matches(Some(&pick(before, after)))
+            }
+            Undoable::TagCreated { name, target, .. } => match side {
+                Side::After => self.tag_ref_target(name).ok().as_deref() == Some(target.as_str()),
+                Side::Before => self.tag_ref_target(name).is_err(),
+            },
+            Undoable::TagDeleted { name, target, .. } => match side {
+                Side::After => self.tag_ref_target(name).is_err(),
+                Side::Before => self.tag_ref_target(name).ok().as_deref() == Some(target.as_str()),
+            },
+            Undoable::StashDropped { oid, .. } => match side {
+                Side::After => !self.stash_on_stack(oid),
+                Side::Before => self.stash_on_stack(oid),
+            },
+            Undoable::UpstreamChanged {
+                branch,
+                before,
+                after,
+                ..
+            } => {
+                let expected = match side {
+                    Side::Before => before,
+                    Side::After => after,
+                };
+                self.branch_upstream(branch).ok().as_ref() == Some(expected)
+            }
+            Undoable::Discarded {
+                files,
+                index_before,
+                index_after,
+                ..
+            } => {
+                let index = match side {
+                    Side::Before => index_before,
+                    Side::After => index_after,
+                };
+                self.index_matches(index.as_deref())
+                    && files.iter().all(|f| {
+                        let expected = match side {
+                            Side::Before => &f.before,
+                            Side::After => &f.after,
+                        };
+                        self.read_workfile(&f.path).ok().as_ref() == Some(expected)
+                    })
+            }
+        }
+    }
+
+    /// Whether the live index holds the same staging state as `snapshot`.
+    /// `None` (no snapshot was taken because there was no index) imposes no
+    /// condition.
+    ///
+    /// Compared by content, not by bytes: `git status` rewrites `.git/index`
+    /// whenever a file's stat data changes (touching an unchanged file is
+    /// enough), so a byte compare would call an untouched "Stage" stale the
+    /// moment the user saves anything in an editor.
+    fn index_matches(&self, snapshot: Option<&str>) -> bool {
+        let Some(snapshot) = snapshot else {
+            return true;
+        };
+        let live = self
+            .inner
+            .index()
+            .and_then(|mut i| i.read(true).map(|()| i));
+        match (live, git2::Index::open(Path::new(snapshot))) {
+            (Ok(a), Ok(b)) => index_entries(&a) == index_entries(&b),
+            _ => false,
+        }
+    }
+
+    /// Whether two index snapshots taken by [`Repo::snapshot_index`] hold the
+    /// same staging state — see [`Repo::index_matches`] for why this is not a
+    /// byte compare. Either file being unreadable counts as "different".
+    pub fn index_snapshots_equal(a: &str, b: &str) -> bool {
+        match (
+            git2::Index::open(Path::new(a)),
+            git2::Index::open(Path::new(b)),
+        ) {
+            (Ok(a), Ok(b)) => index_entries(&a) == index_entries(&b),
+            _ => false,
+        }
+    }
+
+    /// Whether the stash commit `oid` is on the stack — read from the
+    /// `refs/stash` reflog, which is what the stack *is*, rather than shelling
+    /// out to `git stash list`.
+    fn stash_on_stack(&self, oid: &str) -> bool {
+        let Ok(reflog) = self.inner.reflog("refs/stash") else {
+            return false;
+        };
+        reflog.iter().any(|e| e.id_new().to_string() == oid)
+    }
+
     // --- reversal ------------------------------------------------------------
 
     /// Reverse `action` (Undo).
@@ -266,8 +488,20 @@ impl Repo {
                 self.run_git(&["branch", "-D", name]).map(|_| ())
             }
             Undoable::BranchesDeleted { branches, .. } => {
+                // Idempotent on purpose: if one branch fails to come back, the
+                // ones before it already have, and a retry must not then fail on
+                // "already exists" for them — so a branch already at its tip is
+                // treated as done and the rest are still attempted. Failures are
+                // collected and reported together once every branch has been tried.
+                let mut failures = Vec::new();
                 for b in branches {
-                    self.run_git(&["branch", &b.name, &b.oid])?;
+                    if self.branch_commit_id(&b.name).ok().as_deref() == Some(b.oid.as_str()) {
+                        continue;
+                    }
+                    if let Err(e) = self.run_git(&["branch", &b.name, &b.oid]) {
+                        failures.push(format!("{}: {e}", b.name));
+                        continue;
+                    }
                     // Re-point it at its upstream if that still exists. It often
                     // won't — a branch deleted *because* its upstream was gone
                     // has nothing to track — so a failure here is expected and
@@ -280,12 +514,28 @@ impl Repo {
                         ]);
                     }
                 }
-                Ok(())
+                if failures.is_empty() {
+                    Ok(())
+                } else {
+                    Err(Error::Message(format!(
+                        "couldn't restore {}",
+                        failures.join("; ")
+                    )))
+                }
             }
             Undoable::BranchRenamed { old, new, .. } => {
                 self.run_git(&["branch", "-m", new, old]).map(|_| ())
             }
-            Undoable::Discarded { files, .. } => self.restore_blobs(files, Side::Before),
+            Undoable::Discarded {
+                files,
+                index_before,
+                ..
+            } => {
+                if let Some(snapshot) = index_before {
+                    self.restore_index(snapshot)?;
+                }
+                self.restore_blobs(files, Side::Before)
+            }
             Undoable::IndexChanged { before, .. } => self.restore_index(before),
             Undoable::TagCreated { name, .. } => self.delete_tag(name).map(|_| ()),
             Undoable::TagDeleted { name, target, .. } => self.restore_tag(name, target),
@@ -313,7 +563,14 @@ impl Repo {
             Undoable::BranchRenamed { old, new, .. } => {
                 self.run_git(&["branch", "-m", old, new]).map(|_| ())
             }
-            Undoable::Discarded { files, .. } => self.restore_blobs(files, Side::After),
+            Undoable::Discarded {
+                files, index_after, ..
+            } => {
+                if let Some(snapshot) = index_after {
+                    self.restore_index(snapshot)?;
+                }
+                self.restore_blobs(files, Side::After)
+            }
             Undoable::IndexChanged { after, .. } => self.restore_index(after),
             Undoable::TagCreated { name, target, .. } => self.restore_tag(name, target),
             Undoable::TagDeleted { name, .. } => self.delete_tag(name).map(|_| ()),
@@ -325,10 +582,12 @@ impl Repo {
     }
 
     /// Recreate `refs/tags/<name>` pointing at exactly the id it held before.
+    /// Never forced: if a tag of that name exists again, it is the user's and
+    /// must not be retargeted.
     fn restore_tag(&self, name: &str, target: &str) -> Result<()> {
         let oid = git2::Oid::from_str(target)?;
         self.inner
-            .reference(&format!("refs/tags/{name}"), oid, true, "gitp undo")?;
+            .reference(&format!("refs/tags/{name}"), oid, false, "gitp undo")?;
         Ok(())
     }
 
@@ -401,7 +660,22 @@ impl Repo {
     }
 }
 
-/// Which captured side of a [`FileBlob`] to restore.
+/// What an index *means* for undo: each entry's path, mode, blob id and
+/// conflict stage, sorted. Stat data, assume-valid/skip-worktree flags and
+/// extensions (untracked cache, fsmonitor) are left out — they change without
+/// the staging area changing.
+fn index_entries(index: &git2::Index) -> Vec<(Vec<u8>, u32, git2::Oid, u16)> {
+    let mut entries: Vec<_> = index
+        .iter()
+        .map(|e| (e.path, e.mode, e.id, (e.flags & 0x3000) >> 12))
+        .collect();
+    entries.sort();
+    entries
+}
+
+/// Which side of a recorded action: `Before` it ran, or `After`. Selects the
+/// side of a [`FileBlob`] to restore, and the state a precondition expects
+/// (undo needs the repository at `After`, redo at `Before`).
 #[derive(Clone, Copy)]
 enum Side {
     Before,

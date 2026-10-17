@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { movedBetweenPanels } from "./changes";
+import { isActionable, movedBetweenPanels } from "./changes";
 import type { ChangeKind, FileDiff, StatusLists } from "../types";
 
 // A status-list entry; the optimistic move only ever looks at path and status.
@@ -87,5 +87,21 @@ describe("movedBetweenPanels", () => {
     movedBetweenPanels(lists(staged, unstaged), ["a.ts"], "staged");
     expect(staged).toEqual([]);
     expect(paths(unstaged)).toEqual(["a.ts"]);
+  });
+});
+
+describe("isActionable", () => {
+  it("lets every ordinary change be staged, unstaged or discarded", () => {
+    for (const kind of ["Added", "Modified", "Deleted", "Renamed", "Copied", "Untracked", "Other"] as ChangeKind[]) {
+      expect(isActionable(kind)).toBe(true);
+    }
+  });
+
+  it("keeps an unmerged file out of staging — it belongs to the conflict view", () => {
+    expect(isActionable("Conflicted")).toBe(false);
+  });
+
+  it("treats a path with no status (not a changed file) as not actionable", () => {
+    expect(isActionable(undefined)).toBe(false);
   });
 });

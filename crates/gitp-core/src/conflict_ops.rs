@@ -8,6 +8,7 @@
 use serde::Serialize;
 
 use crate::error::{Error, Result};
+use crate::remote::literal_pathspec;
 use crate::repo::Repo;
 
 /// A snapshot of the current conflict session, for the resolver UI.
@@ -62,7 +63,7 @@ impl Repo {
         let conflicted = self.unmerged_paths()?;
 
         if rebasing {
-            let into = self.current_branch_label();
+            let into = self.rebasing_branch_label();
             return Ok(ConflictStatus {
                 kind: "rebase".into(),
                 summary: format!("Rebasing {into}"),
@@ -133,16 +134,35 @@ impl Repo {
     pub fn resolve_conflict(&self, path: &str, content: &str) -> Result<()> {
         std::fs::write(self.workdir_path()?.join(path), content)
             .map_err(|e| crate::error::Error::Message(format!("can't write {path}: {e}")))?;
-        self.run_git(&["add", "--", path]).map(|_| ())
+        self.run_git(&["add", "--", &literal_pathspec(path)])
+            .map(|_| ())
     }
 
     /// Resolve `path` by taking one whole side — `git checkout --ours/--theirs`
     /// then `git add`. Used for binary conflicts (no text merge is possible) and
     /// whole-file "take" actions.
+    ///
+    /// In a delete/modify conflict the chosen side may have no version at all
+    /// (its index stage is absent, so `checkout --ours` fails with "does not
+    /// have our version"). Taking that side means taking the deletion: drop the
+    /// path from the index and the working tree instead.
     pub fn resolve_conflict_side(&self, path: &str, ours: bool) -> Result<()> {
-        let side = if ours { "--ours" } else { "--theirs" };
-        self.run_git(&["checkout", side, "--", path])?;
-        self.run_git(&["add", "--", path]).map(|_| ())
+        let (side, stage) = if ours { ("--ours", 2) } else { ("--theirs", 3) };
+        let spec = literal_pathspec(path);
+        if self
+            .run_git_raw(&["show", &format!(":{stage}:{path}")])
+            .is_err()
+        {
+            self.run_git(&["rm", "-q", "--cached", "--", &spec])?;
+            let full = self.workdir_path()?.join(path);
+            if full.exists() {
+                std::fs::remove_file(&full)
+                    .map_err(|e| Error::Message(format!("can't delete {path}: {e}")))?;
+            }
+            return Ok(());
+        }
+        self.run_git(&["checkout", side, "--", &spec])?;
+        self.run_git(&["add", "--", &spec]).map(|_| ())
     }
 
     /// Abort the in-progress merge, rebase, cherry-pick, or revert, restoring
@@ -156,7 +176,9 @@ impl Repo {
         } else if git_dir.join("REVERT_HEAD").exists() {
             self.run_git(&["revert", "--abort"])
         } else {
-            self.run_git(&["rebase", "--abort"])
+            let out = self.run_git(&["rebase", "--abort"]);
+            self.cleanup_rebase_scratch();
+            out
         }
     }
 
@@ -172,7 +194,9 @@ impl Repo {
         } else if git_dir.join("REVERT_HEAD").exists() {
             self.continue_without_editor(&["revert", "--continue"])
         } else {
-            self.run_git(&["rebase", "--continue"])
+            let out = self.run_git(&["rebase", "--continue"]);
+            self.cleanup_rebase_scratch();
+            out
         }
     }
 
@@ -207,6 +231,22 @@ impl Repo {
             .filter(|l| !l.trim().is_empty())
             .map(str::to_string)
             .collect())
+    }
+
+    /// The branch being rebased. HEAD is detached for the whole rebase, so the
+    /// name comes from git's rebase state (`head-name`, e.g. `refs/heads/dev`);
+    /// falls back to the HEAD label when it can't be read.
+    fn rebasing_branch_label(&self) -> String {
+        let git_dir = self.inner.path();
+        ["rebase-merge", "rebase-apply"]
+            .iter()
+            .find_map(|d| std::fs::read_to_string(git_dir.join(d).join("head-name")).ok())
+            .map(|n| {
+                let n = n.trim();
+                n.strip_prefix("refs/heads/").unwrap_or(n).to_string()
+            })
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| self.current_branch_label())
     }
 
     /// Short name of the checked-out branch, or `HEAD` when detached.

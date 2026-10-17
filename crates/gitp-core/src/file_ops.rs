@@ -10,6 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
+use crate::remote::literal_pathspec;
 use crate::repo::Repo;
 
 impl Repo {
@@ -26,15 +27,17 @@ impl Repo {
         // Tracked (in HEAD): reset both index and working tree to the committed
         // version in one shot.
         if !in_head.is_empty() {
+            let specs: Vec<String> = in_head.iter().map(|p| literal_pathspec(p)).collect();
             let mut args = vec!["checkout", "-q", "HEAD", "--"];
-            args.extend(in_head.iter().map(|p| p.as_str()));
+            args.extend(specs.iter().map(String::as_str));
             self.run_git(&args)?;
         }
 
         // New (not in HEAD): drop any staged intent, then remove from disk.
         if !new.is_empty() {
+            let specs: Vec<String> = new.iter().map(|p| literal_pathspec(p)).collect();
             let mut reset = vec!["reset", "-q", "--"];
-            reset.extend(new.iter().map(|p| p.as_str()));
+            reset.extend(specs.iter().map(String::as_str));
             self.run_git(&reset)?;
             let workdir = self.workdir_path()?;
             for p in new {
@@ -51,8 +54,9 @@ impl Repo {
     /// Stash only `paths` away (`git stash push -u -- <paths>`), reverting them
     /// in the working tree. `-u` so any untracked selected files are included.
     pub fn stash_files(&self, paths: &[String]) -> Result<String> {
+        let specs: Vec<String> = paths.iter().map(|p| literal_pathspec(p)).collect();
         let mut args = vec!["stash", "push", "-u", "--"];
-        args.extend(paths.iter().map(|p| p.as_str()));
+        args.extend(specs.iter().map(String::as_str));
         self.run_git(&args)
     }
 
@@ -64,17 +68,19 @@ impl Repo {
     /// temporarily marked intent-to-add (`git add -N`) — which makes their
     /// content show up as additions — and the mark is removed afterwards.
     pub fn save_files_patch(&self, paths: &[String], staged: bool, dest: &Path) -> Result<String> {
-        let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let specs: Vec<String> = paths.iter().map(|p| literal_pathspec(p)).collect();
+        let refs: Vec<&str> = specs.iter().map(String::as_str).collect();
 
         let patch = if staged {
             let mut args = vec!["diff", "--cached", "--"];
             args.extend_from_slice(&refs);
             self.run_git_raw(&args)?
         } else {
-            let untracked: Vec<&str> = refs
+            let untracked: Vec<&str> = paths
                 .iter()
-                .copied()
-                .filter(|p| self.is_untracked(p))
+                .zip(&refs)
+                .filter(|(p, _)| self.is_untracked(p))
+                .map(|(_, spec)| *spec)
                 .collect();
             if !untracked.is_empty() {
                 let mut add = vec!["add", "-N", "--"];

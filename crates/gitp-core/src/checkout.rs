@@ -10,7 +10,17 @@ impl Repo {
     /// nothing is touched — HEAD stays put and the working tree is preserved —
     /// and a clear, actionable error is returned instead of git2's cryptic one.
     pub fn checkout_branch(&self, name: &str) -> Result<()> {
-        let (object, reference) = self.inner.revparse_ext(name)?;
+        // A local branch wins over anything else called `name`. `revparse_ext`
+        // follows git's DWIM order, which tries `refs/tags/<name>` *before*
+        // `refs/heads/<name>` — so with a same-named tag it would hand back the
+        // tag, and attaching HEAD to that makes every later commit move the tag.
+        let (object, reference) = match self.inner.find_branch(name, git2::BranchType::Local) {
+            Ok(branch) => {
+                let reference = branch.into_reference();
+                (reference.peel(git2::ObjectType::Any)?, Some(reference))
+            }
+            Err(_) => self.inner.revparse_ext(name)?,
+        };
 
         let mut checkout = git2::build::CheckoutBuilder::new();
         checkout.safe();
@@ -26,11 +36,16 @@ impl Repo {
             return Err(e.into());
         }
 
-        // Point HEAD at the branch ref when there is one; otherwise detach.
+        // Point HEAD at the branch ref when there is one; otherwise detach —
+        // only a branch may be HEAD's symbolic target, never a tag or other ref.
         // Write the same "checkout: moving from A to B" HEAD-reflog message the
         // `git` CLI uses, so switches made here show up in the Recent list
         // (which is read from that reflog). git2's plain set_head wouldn't.
-        match reference.as_ref().and_then(git2::Reference::name) {
+        match reference
+            .as_ref()
+            .filter(|r| r.is_branch())
+            .and_then(git2::Reference::name)
+        {
             Some(refname) => {
                 let from = self
                     .inner

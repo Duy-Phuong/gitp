@@ -199,3 +199,31 @@ fn full_file_context_is_one_block_with_every_line() {
     // 10 unchanged lines + 2 removed + 2 added.
     assert_eq!(diff.hunks[0].lines.len(), 14);
 }
+
+// O2: paths are passed to git as pathspecs, where `[1]` is a glob character
+// class. `a[1].txt` must address that file only, never `a1.txt`.
+#[test]
+fn stage_hunk_on_a_glob_like_path_leaves_the_lookalike_file_alone() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a1.txt", "plain\n", "c1");
+    fx.commit_file("a[1].txt", "bracket\n", "c2");
+    std::fs::write(fx.path().join("a1.txt"), "plain edited\n").unwrap();
+    std::fs::write(fx.path().join("a[1].txt"), "bracket edited\n").unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    let diff = repo
+        .file_diff("a[1].txt", false, DEFAULT_CONTEXT_LINES)
+        .unwrap()
+        .expect("a[1].txt has a diff");
+    assert_eq!(diff.path, "a[1].txt");
+    assert_eq!(diff.hunks.len(), 1);
+
+    repo.stage_hunk("a[1].txt", 0, DEFAULT_CONTEXT_LINES)
+        .unwrap();
+
+    let s = repo.status_summary().unwrap();
+    let staged: Vec<&str> = s.staged.iter().map(|f| f.path.as_str()).collect();
+    let unstaged: Vec<&str> = s.unstaged.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(staged, vec!["a[1].txt"], "only the bracket file is staged");
+    assert_eq!(unstaged, vec!["a1.txt"], "a1.txt is untouched");
+}

@@ -154,3 +154,26 @@ fn save_stash_patch_writes_the_diff_to_disk() {
     assert!(text.contains("+two"), "patch includes the added line");
     assert!(text.ends_with('\n'), "patch ends with a trailing newline");
 }
+
+// O4: `stash()` saves untracked files too; the patch must not silently lose
+// them.
+#[test]
+fn save_stash_patch_includes_untracked_files() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    std::fs::write(fx.path().join("a.txt"), "two\n").unwrap();
+    std::fs::write(fx.path().join("new.txt"), "brand new\n").unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.stash().unwrap();
+    let patch = fx.path().join("out.patch");
+
+    repo.save_stash_patch(0, &patch).unwrap();
+
+    let text = std::fs::read_to_string(&patch).unwrap();
+    assert!(text.contains("+two"), "tracked change present");
+    assert!(
+        text.contains("new.txt") && text.contains("+brand new"),
+        "untracked file present in the patch: {text}"
+    );
+    assert!(text.ends_with('\n'));
+}

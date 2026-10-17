@@ -15,6 +15,8 @@ pub enum ChangeKind {
     Copied,
     /// A new file not yet tracked by git (working-tree only).
     Untracked,
+    /// An unmerged file in a merge/rebase/cherry-pick/revert conflict.
+    Conflicted,
     Other,
 }
 
@@ -27,6 +29,7 @@ impl From<git2::Delta> for ChangeKind {
             git2::Delta::Renamed => ChangeKind::Renamed,
             git2::Delta::Copied => ChangeKind::Copied,
             git2::Delta::Untracked => ChangeKind::Untracked,
+            git2::Delta::Conflicted => ChangeKind::Conflicted,
             _ => ChangeKind::Other,
         }
     }
@@ -122,6 +125,8 @@ impl Repo {
         let mut opts = git2::DiffOptions::new();
         opts.patience(true)
             .context_lines(context_lines)
+            // Exact paths, not patterns: `a[1].txt` must not also pull in `a1.txt`.
+            .disable_pathspec_match(true)
             .pathspec(path);
         if let Some(old) = old_path {
             opts.pathspec(old);

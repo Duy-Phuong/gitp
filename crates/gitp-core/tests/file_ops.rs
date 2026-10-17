@@ -203,3 +203,27 @@ fn add_to_gitignore_creates_the_file_when_absent() {
         "*.log\n"
     );
 }
+
+// O2: `a[1].txt` as a pathspec also matches `a1.txt`; discard must be literal.
+#[test]
+fn discard_files_with_a_glob_like_name_does_not_touch_the_lookalike() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a1.txt", "plain\n", "c1");
+    fx.commit_file("a[1].txt", "bracket\n", "c2");
+    std::fs::write(fx.path().join("a1.txt"), "plain edited\n").unwrap();
+    std::fs::write(fx.path().join("a[1].txt"), "bracket edited\n").unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.discard_files(&["a[1].txt".into()]).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a[1].txt")).unwrap(),
+        "bracket\n",
+        "the chosen file is reverted"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a1.txt")).unwrap(),
+        "plain edited\n",
+        "the lookalike keeps its edit"
+    );
+}

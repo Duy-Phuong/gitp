@@ -217,3 +217,106 @@ fn abort_conflict_restores_the_pre_cherry_pick_state() {
         "back to dev's version"
     );
 }
+
+/// `dev` deleted `f.txt`, `theirs` modified it; merging `theirs` into `dev`
+/// leaves a delete/modify (`DU`) conflict.
+fn delete_modify_conflicted_repo() -> FixtureRepo {
+    let fx = FixtureRepo::init();
+    fx.commit_file("f.txt", "a\nbase\nc\n", "c1");
+    fx.commit_file("keep.txt", "k\n", "c1b");
+    let dir = fx.path();
+    git(dir, &["branch", "-M", "dev"]);
+    git(dir, &["checkout", "-b", "theirs"]);
+    std::fs::write(dir.join("f.txt"), "a\ntheirs\nc\n").unwrap();
+    git(dir, &["commit", "-am", "theirs change"]);
+    git(dir, &["checkout", "dev"]);
+    git(dir, &["rm", "-q", "f.txt"]);
+    git(dir, &["commit", "-m", "ours delete"]);
+    let repo = Repo::open(dir).unwrap();
+    assert!(
+        repo.merge_branch("theirs").is_err(),
+        "merge should conflict"
+    );
+    fx
+}
+
+// C2: taking the side that deleted the file has no stage to `checkout`; it
+// must resolve as a deletion rather than fail (or write an empty file).
+#[test]
+fn resolve_conflict_side_with_the_deleting_side_removes_the_file() {
+    let fx = delete_modify_conflicted_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+    assert_eq!(repo.conflict_status().unwrap().conflicted, vec!["f.txt"]);
+    assert!(repo.conflict_sides("f.txt").unwrap().ours.is_none());
+
+    repo.resolve_conflict_side("f.txt", true)
+        .expect("take ours (the deletion)");
+
+    assert!(!fx.path().join("f.txt").exists(), "file is gone");
+    assert!(
+        repo.conflict_status().unwrap().conflicted.is_empty(),
+        "no unmerged paths left"
+    );
+    repo.finish_conflict("merge").unwrap();
+    assert_eq!(repo.conflict_status().unwrap().kind, "none");
+}
+
+#[test]
+fn resolve_conflict_side_with_the_modifying_side_keeps_their_version() {
+    let fx = delete_modify_conflicted_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.resolve_conflict_side("f.txt", false)
+        .expect("take theirs");
+
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("f.txt")).unwrap(),
+        "a\ntheirs\nc\n"
+    );
+    assert!(repo.conflict_status().unwrap().conflicted.is_empty());
+}
+
+// C8: HEAD is detached during a rebase, so the branch being rebased has to be
+// read from git's rebase state, not from HEAD.
+#[test]
+fn conflict_status_names_the_rebased_branch_during_a_rebase() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("f.txt", "base\n", "c1");
+    let dir = fx.path();
+    git(dir, &["branch", "-M", "side"]);
+    git(dir, &["checkout", "-b", "target"]);
+    std::fs::write(dir.join("f.txt"), "target\n").unwrap();
+    git(dir, &["commit", "-am", "target change"]);
+    git(dir, &["checkout", "side"]);
+    std::fs::write(dir.join("f.txt"), "side\n").unwrap();
+    git(dir, &["commit", "-am", "side change"]);
+
+    let repo = Repo::open(dir).unwrap();
+    assert!(
+        repo.rebase_onto("target").is_err(),
+        "rebase should conflict"
+    );
+
+    let status = repo.conflict_status().unwrap();
+    assert_eq!(status.kind, "rebase");
+    assert_eq!(status.summary, "Rebasing side");
+    assert_eq!(status.conflicted, vec!["f.txt"]);
+}
+
+// C10: an unmerged file is one conflict, not a "Modified" entry in both lists.
+#[test]
+fn status_summary_lists_an_unmerged_file_once_as_conflicted() {
+    let fx = conflicted_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    let s = repo.status_summary().unwrap();
+    assert!(
+        s.staged.is_empty(),
+        "no staged entry for the conflict: {:?}",
+        s.staged
+    );
+    assert_eq!(s.unstaged.len(), 1);
+    assert_eq!(s.unstaged[0].path, "f.txt");
+    assert_eq!(s.unstaged[0].status, gitp_core::ChangeKind::Conflicted);
+    assert_eq!(repo.local_change_count().unwrap(), 1);
+}

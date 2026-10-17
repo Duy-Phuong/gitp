@@ -322,3 +322,23 @@ fn gone_branches_lists_only_branches_whose_upstream_disappeared() {
         "the checked-out branch is excluded"
     );
 }
+
+// O7: on a detached HEAD `shorthand()` is "HEAD", which used to surface as
+// "cannot locate local branch 'HEAD'" instead of the intended message.
+#[test]
+fn push_on_a_detached_head_says_head_is_not_on_a_branch() {
+    let work = TempDir::new().unwrap();
+    init_repo(work.path());
+    std::fs::write(work.path().join("a.txt"), "hi\n").unwrap();
+    git(work.path(), &["add", "."]);
+    git(work.path(), &["commit", "-q", "-m", "c1"]);
+    git(work.path(), &["checkout", "-q", "--detach"]);
+
+    let err = Repo::open(work.path())
+        .unwrap()
+        .push()
+        .expect_err("no branch to push")
+        .to_string();
+
+    assert!(err.contains("not on a branch"), "message: {err}");
+}

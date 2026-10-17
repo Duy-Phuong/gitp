@@ -94,7 +94,10 @@ impl Repo {
     /// unreachable) propagates so the caller can treat it as "can't confirm".
     pub fn remote_branch_exists(&self, name: &str) -> Result<Option<String>> {
         let (remote, remote_branch) = self.remote_target(name);
-        let out = self.run_git(&["ls-remote", "--heads", &remote, &remote_branch])?;
+        // Ask for the full ref: a bare pattern matches by ref tail, so `foo`
+        // would also be "found" when only `bar/foo` exists on the remote.
+        let full_ref = format!("refs/heads/{remote_branch}");
+        let out = self.run_git(&["ls-remote", "--heads", &remote, &full_ref])?;
         Ok(if out.trim().is_empty() {
             None
         } else {

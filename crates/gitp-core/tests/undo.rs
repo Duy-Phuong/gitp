@@ -174,6 +174,8 @@ fn undo_discard_restores_the_file_content() {
             before,
             after,
         }],
+        index_before: None,
+        index_after: None,
     };
 
     repo.undo(&action).unwrap();
@@ -205,6 +207,8 @@ fn undo_discard_of_a_new_file_recreates_and_removes_it() {
             before,
             after,
         }],
+        index_before: None,
+        index_after: None,
     };
 
     repo.undo(&action).unwrap();
@@ -555,4 +559,334 @@ fn undoing_a_stash_drop_does_not_disturb_other_entries() {
         "the survivor is the one we never touched, got {:?}",
         after[0].message
     );
+}
+
+// --- preconditions -------------------------------------------------------------
+//
+// Undo applies a recorded target; it must first check the repository is still
+// where the action left it, or it reverses whatever happened since instead.
+
+#[test]
+fn undo_is_refused_after_an_out_of_band_commit() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let repo = Repo::open(fx.path()).unwrap();
+    let before = repo.head_commit_id().unwrap();
+    fx.commit_file("a.txt", "two\n", "c2");
+    let after = repo.head_commit_id().unwrap();
+    let action = Undoable::HeadMoved {
+        label: "Commit".into(),
+        before: before.clone(),
+        after,
+        soft: true,
+    };
+    repo.can_undo(&action).expect("still at c2");
+
+    // c3 made elsewhere (the terminal): undoing "Commit" would now drop it.
+    let c3 = fx.commit_file("a.txt", "three\n", "c3");
+    let err = repo.can_undo(&action).unwrap_err().to_string();
+    assert!(err.contains("changed since"), "got {err}");
+    assert_eq!(repo.head_commit_id().unwrap(), c3.to_string(), "untouched");
+
+    // And redo is the mirror: only valid while back at `before`.
+    assert!(repo.can_redo(&action).is_err());
+    repo.reset(&before, gitp_core::ResetMode::Soft).unwrap();
+    repo.can_redo(&action)
+        .expect("back at before, redo allowed");
+}
+
+#[test]
+fn undo_and_redo_are_refused_while_a_merge_is_in_progress() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let repo = Repo::open(fx.path()).unwrap();
+    let head = repo.head_commit_id().unwrap();
+    let action = Undoable::Switched {
+        label: "Checkout".into(),
+        before: head.clone(),
+        after: repo.head_ref_name().unwrap(),
+    };
+    repo.can_undo(&action).expect("ok before the merge starts");
+
+    // A merge session is nothing more than this file as far as git is concerned.
+    std::fs::write(fx.path().join(".git/MERGE_HEAD"), format!("{head}\n")).unwrap();
+    assert!(repo.operation_in_progress());
+    let err = repo.can_undo(&action).unwrap_err().to_string();
+    assert!(err.contains("in progress"), "got {err}");
+    assert!(repo.can_redo(&action).is_err());
+}
+
+#[test]
+fn stale_index_and_discard_snapshots_are_detected() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let repo = Repo::open(fx.path()).unwrap();
+
+    std::fs::write(fx.path().join("a.txt"), "edited\n").unwrap();
+    let before = repo.snapshot_index("t-before").unwrap().unwrap();
+    repo.stage("a.txt").unwrap();
+    let after = repo.snapshot_index("t-after").unwrap().unwrap();
+    let staged = Undoable::IndexChanged {
+        label: "Stage".into(),
+        before,
+        after,
+    };
+    repo.can_undo(&staged).expect("index is as recorded");
+    repo.unstage("a.txt").unwrap(); // the terminal unstaged it meanwhile
+    assert!(repo.can_undo(&staged).is_err(), "index no longer matches");
+
+    let discard = Undoable::Discarded {
+        label: "Discard".into(),
+        files: vec![FileBlob {
+            path: "a.txt".into(),
+            before: Some(b"edited\n".to_vec()),
+            after: Some(b"one\n".to_vec()),
+        }],
+        index_before: None,
+        index_after: None,
+    };
+    assert!(
+        repo.can_undo(&discard).is_err(),
+        "the file still holds the edit, not the discarded result"
+    );
+    repo.can_redo(&discard)
+        .expect("the file is at its `before` bytes");
+}
+
+#[test]
+fn undo_of_create_branch_is_refused_once_the_branch_has_moved() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let repo = Repo::open(fx.path()).unwrap();
+    let prev = repo.head_ref_name().unwrap();
+    let at = repo.head_commit_id().unwrap();
+    repo.create_branch("feature").unwrap();
+    let action = Undoable::BranchCreated {
+        label: "Create branch feature".into(),
+        name: "feature".into(),
+        at,
+        prev,
+    };
+    repo.can_undo(&action).expect("fresh branch, nothing on it");
+
+    // A commit on the new branch: `branch -D` would lose it.
+    fx.commit_file("b.txt", "two\n", "on feature");
+    assert!(repo.can_undo(&action).is_err());
+}
+
+// --- idempotent branch restore -------------------------------------------------
+
+#[test]
+fn undo_of_a_bulk_delete_skips_branches_already_back_and_reports_the_rest() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let head = fx.repo.head().unwrap().peel_to_commit().unwrap();
+    for name in ["one", "two"] {
+        fx.repo.branch(name, &head, false).unwrap();
+    }
+    let repo = Repo::open(fx.path()).unwrap();
+    let oid = repo.branch_commit_id("one").unwrap();
+    repo.delete_branch("one", true).unwrap();
+    repo.delete_branch("two", true).unwrap();
+
+    // `one` was already recreated (say, by a first undo that then failed on
+    // `two`). A retry must not fail on "already exists" for it.
+    fx.repo.branch("one", &head, false).unwrap();
+    let action = Undoable::BranchesDeleted {
+        label: "Delete 2 branches".into(),
+        branches: vec![
+            DeletedBranch {
+                name: "one".into(),
+                oid: oid.clone(),
+                upstream: None,
+            },
+            DeletedBranch {
+                name: "two".into(),
+                oid: oid.clone(),
+                upstream: None,
+            },
+        ],
+    };
+    repo.can_undo(&action)
+        .expect("a branch already at its tip is fine");
+    repo.undo(&action).unwrap();
+    assert_eq!(repo.branch_commit_id("two").unwrap(), oid);
+
+    // A branch that cannot be recreated is reported, after the others are tried.
+    repo.delete_branch("two", true).unwrap();
+    let bad = Undoable::BranchesDeleted {
+        label: "Delete 2 branches".into(),
+        branches: vec![
+            DeletedBranch {
+                name: "bad name".into(),
+                oid: oid.clone(),
+                upstream: None,
+            },
+            DeletedBranch {
+                name: "two".into(),
+                oid: oid.clone(),
+                upstream: None,
+            },
+        ],
+    };
+    let err = repo.undo(&bad).unwrap_err().to_string();
+    assert!(err.contains("bad name"), "names the failure: {err}");
+    assert_eq!(
+        repo.branch_commit_id("two").unwrap(),
+        oid,
+        "the branch after the failure was still restored"
+    );
+}
+
+// --- tags are never force-restored ---------------------------------------------
+
+#[test]
+fn undo_of_a_tag_delete_does_not_retarget_a_tag_the_user_recreated() {
+    let fx = FixtureRepo::init();
+    let c1 = fx.commit_file("a.txt", "one\n", "c1");
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.create_tag_at("v1", &c1.to_string()).unwrap();
+    let target = repo.tag_ref_target("v1").unwrap();
+    repo.delete_tag("v1").unwrap();
+    let action = Undoable::TagDeleted {
+        label: "Delete tag v1".into(),
+        name: "v1".into(),
+        target,
+    };
+    repo.can_undo(&action).expect("tag absent, as recorded");
+
+    // The user re-creates v1 somewhere else.
+    let c2 = fx.commit_file("a.txt", "two\n", "c2");
+    repo.create_tag_at("v1", &c2.to_string()).unwrap();
+    assert!(repo.can_undo(&action).is_err(), "the guard refuses");
+    assert!(
+        repo.undo(&action).is_err(),
+        "and the restore itself never forces"
+    );
+    assert_eq!(repo.tag_ref_target("v1").unwrap(), c2.to_string());
+}
+
+// --- index restore safety ------------------------------------------------------
+
+#[test]
+fn restoring_the_index_is_refused_while_another_git_holds_the_lock() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let repo = Repo::open(fx.path()).unwrap();
+    std::fs::write(fx.path().join("a.txt"), "edited\n").unwrap();
+    let before = repo.snapshot_index("t-before").unwrap().unwrap();
+    repo.stage("a.txt").unwrap();
+    let after = repo.snapshot_index("t-after").unwrap().unwrap();
+
+    std::fs::write(fx.path().join(".git/index.lock"), b"").unwrap();
+    let err = repo
+        .undo(&Undoable::IndexChanged {
+            label: "Stage".into(),
+            before,
+            after,
+        })
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("locked"), "got {err}");
+    assert_eq!(
+        repo.status_summary().unwrap().staged.len(),
+        1,
+        "index untouched"
+    );
+}
+
+#[test]
+fn undo_of_a_discard_restores_the_staged_part_too() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let repo = Repo::open(fx.path()).unwrap();
+
+    // `MM a.txt`: a staged edit plus a further unstaged edit.
+    std::fs::write(fx.path().join("a.txt"), "staged\n").unwrap();
+    repo.stage("a.txt").unwrap();
+    std::fs::write(fx.path().join("a.txt"), "staged\nunstaged\n").unwrap();
+    let mixed = porcelain(&fx);
+    assert_eq!(mixed, "MM a.txt");
+
+    let index_before = repo.snapshot_index("t-before").unwrap();
+    let before = repo.read_workfile("a.txt").unwrap();
+    repo.discard_files(&["a.txt".into()]).unwrap();
+    let index_after = repo.snapshot_index("t-after").unwrap();
+    let after = repo.read_workfile("a.txt").unwrap();
+    assert_eq!(porcelain(&fx), "", "discard reset both index and file");
+
+    let action = Undoable::Discarded {
+        label: "Discard 1 file".into(),
+        files: vec![FileBlob {
+            path: "a.txt".into(),
+            before,
+            after,
+        }],
+        index_before,
+        index_after,
+    };
+    repo.undo(&action).unwrap();
+    assert_eq!(
+        porcelain(&fx),
+        mixed,
+        "the staged hunk is back in the index, not just the file"
+    );
+    repo.redo(&action).unwrap();
+    assert_eq!(porcelain(&fx), "");
+}
+
+#[test]
+fn a_dropped_stash_is_only_restorable_while_it_is_off_the_stack() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let repo = Repo::open(fx.path()).unwrap();
+    std::fs::write(fx.path().join("a.txt"), "wip\n").unwrap();
+    stash_with_message(&fx, "wip");
+    let action = Undoable::StashDropped {
+        label: "Drop stash".into(),
+        oid: repo.stash_commit_id(0).unwrap(),
+        message: "wip".into(),
+    };
+    assert!(repo.can_undo(&action).is_err(), "still on the stack");
+    repo.can_redo(&action)
+        .expect("on the stack, so it can be dropped");
+    repo.stash_drop(0).unwrap();
+    repo.can_undo(&action).expect("gone, so it can come back");
+    assert!(repo.can_redo(&action).is_err());
+}
+
+/// `git status` rewrites `.git/index` whenever stat data changes — touching an
+/// unchanged file is enough — so the precondition must compare what is staged,
+/// not the file's bytes.
+#[test]
+fn undo_of_a_stage_survives_a_stat_only_index_rewrite() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    fx.commit_file("b.txt", "one\n", "c2");
+    let repo = Repo::open(fx.path()).unwrap();
+
+    std::fs::write(fx.path().join("a.txt"), "edited\n").unwrap();
+    let before = repo.snapshot_index("t-before").unwrap().unwrap();
+    repo.stage("a.txt").unwrap();
+    let after = repo.snapshot_index("t-after").unwrap().unwrap();
+    let action = Undoable::IndexChanged {
+        label: "Stage".into(),
+        before,
+        after: after.clone(),
+    };
+
+    // Touch b.txt (same bytes, new mtime) and let `git status` refresh the index.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(fx.path().join("b.txt"), "one\n").unwrap();
+    let _ = porcelain(&fx);
+    assert_ne!(
+        std::fs::read(fx.path().join(".git/index")).unwrap(),
+        std::fs::read(&after).unwrap(),
+        "the index bytes did change (stat data)"
+    );
+
+    repo.can_undo(&action)
+        .expect("the staging area itself is unchanged");
+    repo.undo(&action).unwrap();
+    assert!(repo.status_summary().unwrap().staged.is_empty(), "unstaged");
 }

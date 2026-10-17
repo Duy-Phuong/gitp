@@ -135,6 +135,19 @@ impl Repo {
                 continue;
             }
 
+            // An unmerged path (any `U`, or both sides added/deleted) is one
+            // conflict, not a staged plus an unstaged change: list it once, on
+            // the unstaged side, so the UI can route it to the resolver.
+            if x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
+                unstaged.push(FileDiff {
+                    path,
+                    old_path: None,
+                    status: ChangeKind::Conflicted,
+                    hunks: Vec::new(),
+                });
+                continue;
+            }
+
             if let Some(status) = kind_from_code(x) {
                 staged.push(FileDiff {
                     path: path.clone(),
@@ -197,6 +210,8 @@ impl Repo {
         let mut opts = git2::DiffOptions::new();
         opts.patience(true)
             .context_lines(context_lines)
+            // Exact path, not a pattern: `a[1].txt` must not also pull in `a1.txt`.
+            .disable_pathspec_match(true)
             .pathspec(path);
         let diff = if staged {
             self.inner
@@ -217,10 +232,10 @@ impl Repo {
 
 /// Map a `git status --porcelain` status column (X = staged, Y = unstaged) to a
 /// `ChangeKind`. Returns `None` for a blank column (no change on that side);
-/// untracked (`?`) and ignored (`!`) are handled by the caller.
+/// untracked (`?`), ignored (`!`), and unmerged (`U`) are handled by the caller.
 fn kind_from_code(code: char) -> Option<ChangeKind> {
     match code {
-        'M' | 'T' | 'U' => Some(ChangeKind::Modified),
+        'M' | 'T' => Some(ChangeKind::Modified),
         'A' => Some(ChangeKind::Added),
         'D' => Some(ChangeKind::Deleted),
         'R' => Some(ChangeKind::Renamed),

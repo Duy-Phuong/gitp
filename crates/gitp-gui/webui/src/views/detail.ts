@@ -74,6 +74,9 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   let history: Cached<FileCommit[]> | null = null;
   // The selected file re-diffed at a non-default context; key adds the context.
   let recontexted: Cached<FileDiff | null> | null = null;
+  // The re-diff currently being fetched, so repeated render()s while it's in
+  // flight don't each start another request.
+  let recontextInFlight: string | null = null;
   const collapsed = new Set<string>(); // collapsed folders in the File Tree
 
   function show(next: CommitDetail): void {
@@ -276,15 +279,22 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   function renderRecontexted(view: HTMLElement, file: FileDiff): void {
     view.append(el("div", { class: "detail-empty", text: "Loading…" }));
     const key = contextKey(file);
+    if (recontextInFlight === key) return;
+    recontextInFlight = key;
+    // Only repaint if the user is still looking at this file and context.
+    const stillViewing = () => detail !== null && contextKey(detail.files[selectedFile]) === key;
     cb.fetchFileDiff(detail!.id, file, contextLines)
       .then((data) => {
         recontexted = { key, data };
-        // Only repaint if the user is still looking at this file and context.
-        if (detail && contextKey(detail.files[selectedFile]) === key) render();
+        if (stillViewing()) render();
       })
       .catch((err) => {
+        if (!stillViewing()) return;
         clear(view);
         view.append(el("div", { class: "detail-empty", text: `Diff failed: ${String(err)}` }));
+      })
+      .finally(() => {
+        if (recontextInFlight === key) recontextInFlight = null;
       });
   }
 

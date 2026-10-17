@@ -661,13 +661,27 @@ async function restoreWorkspace(): Promise<boolean> {
 function applyWorkspace(ws: Workspace): void {
   state.repos = ws.repos;
   const active = ws.active != null ? ws.repos[ws.active] : undefined;
+  const changed = (active?.path ?? "") !== state.repoPath;
   state.repoPath = active?.path ?? "";
+  if (changed) resetRepoViews();
   rememberRecentRepo(state.repoPath);
   renderRepoTabs();
   $("#action-bar").classList.toggle("hidden", state.repos.length === 0);
   $<HTMLInputElement>("#repo-input").value = state.repoPath;
   if (state.repoPath) terminal?.setCwd(state.repoPath);
   saveWorkspace();
+}
+
+// Forget every piece of per-repo view state when the active repo changes: the
+// staging view's selection/commit message/Amend, the resolver's partial
+// choices, a paused cherry-pick batch, and the conflict-message prefill. The
+// views are singletons, so without this repo A's state leaks into repo B —
+// up to amending B's HEAD with A's message.
+function resetRepoViews(): void {
+  changesView?.reset();
+  conflictView?.reset();
+  pendingCherryPicks = [];
+  conflictPrefill = null;
 }
 
 function renderRepoTabs(): void {
@@ -713,6 +727,16 @@ async function closeRepoTab(path: string): Promise<void> {
       state.selectedId = null;
       state.refs = EMPTY_REFS;
       state.localChanges = 0;
+      // No repo: nothing is in progress and nothing can be undone. Left as
+      // they were, the banners stay up with buttons that hit "no active repo".
+      state.rebase = null;
+      state.conflict = null;
+      undoLabels = { undo: null, redo: null };
+      renderRebaseBanner();
+      renderConflictBanner();
+      refreshActionButtons();
+      terminal?.setCwd(".");
+      renderTerminalCwd();
       logView = renderLog($("#log-pane"), [], null, selectCommit, loadMoreCommits, undefined, undefined, state.commitSelection, onCommitMultiSelect);
       shownDetailId = null;
       detailView?.showEmpty();
@@ -826,8 +850,10 @@ async function updateLogView(): Promise<void> {
 async function loadMoreCommits(): Promise<void> {
   if (loadingMore || state.rows.length >= state.total) return;
   loadingMore = true;
+  const repoPath = state.repoPath;
   try {
     const page = await fetchLogPage(state.rows.length, PAGE_SIZE, state.allBranches);
+    if (repoPath !== state.repoPath) return; // a page of the previous repo
     state.rows = state.rows.concat(page.rows);
     rowsRepoPath = state.repoPath;
     state.total = page.total;
@@ -1067,6 +1093,8 @@ function refreshFromDisk(force: boolean): void {
     // it compares the first page and returns without touching anything when
     // history is unchanged, which is the common case.
     if (state.view === "history") await refreshHistory({ keepSelection: true });
+    // A file resolved in a terminal/editor must leave the resolver's list too.
+    else if (state.view === "conflict") await conflictView?.reload();
   })();
 }
 
@@ -1097,7 +1125,7 @@ function setupExternalChangeRefresh(): void {
 
 // Switch the main panel between history, local changes, and config; keeps the
 // topbar tabs and sidebar nav highlight in sync, and loads the view's data.
-function showView(view: View): void {
+function showView(view: View, opts: { refreshHistory?: boolean } = {}): void {
   closeCommitMenu();
   state.view = view;
   $("#history-view").classList.toggle("hidden", view !== "history");
@@ -1117,7 +1145,7 @@ function showView(view: View): void {
   // the graph (keeping whatever's selected) and, throttled, fetches remotes,
   // so switching over always shows current local + remote state without a
   // manual Reload click.
-  if (view === "history") void refreshHistory({ keepSelection: true });
+  if (view === "history" && opts.refreshHistory !== false) void refreshHistory({ keepSelection: true });
   // A cheap local check (no network) — re-run on every visit so the Resolve
   // Conflicts banner (and its pre-filled commit message) stays accurate even
   // after navigating away from the resolver without finishing or aborting.
@@ -1163,7 +1191,10 @@ async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise<void> 
   if (state.view === "history" && state.rows.length && needsRepaint) {
     const pane = $("#log-pane");
     const keep = pane.scrollTop;
-    logView = renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
+    // With a search active the pane shows results, not the paged log — repaint
+    // those, or a sidebar refresh would replace them with the full graph.
+    if (logSearchQuery()) void updateLogView();
+    else logView = renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
     pane.scrollTop = keep;
     lastPaintedRows = state.rows;
     lastPaintedSelection = state.selectedId;
@@ -1291,7 +1322,10 @@ async function loadChanges(): Promise<void> {
 // Single-click a branch/remote/tag: show its tip commit, scrolling the log to it
 // if that commit is loaded.
 async function jumpToCommit(target: string, label: string): Promise<void> {
-  showView("history");
+  // Not the usual refresh-on-entry: if history changed, it would replace the
+  // rows with page 1 and move the selection to the newest commit — undoing
+  // the jump that's about to happen.
+  showView("history", { refreshHistory: false });
   state.selectedId = target;
   let idx = state.rows.findIndex((r) => r.id === target);
   // Not on screen yet. The log is paged — only the newest PAGE_SIZE commits are
@@ -1318,14 +1352,16 @@ async function jumpToCommit(target: string, label: string): Promise<void> {
 /// so reaching row N genuinely means holding rows 0..N — hence one fetch sized
 /// to the gap rather than page-by-page paging down to it.
 async function loadDownTo(target: string, label: string): Promise<number> {
+  const repoPath = state.repoPath;
   try {
     const idx = await logIndexOf(target, state.allBranches);
-    if (idx == null) return -1;
+    if (idx == null || repoPath !== state.repoPath) return -1;
     if (idx < state.rows.length) return idx;
 
     const missing = idx + 1 - state.rows.length;
     setStatus(`Loading ${missing.toLocaleString()} more commits to reach ${label}…`);
     const page = await fetchLogPage(state.rows.length, Math.max(missing, PAGE_SIZE), state.allBranches);
+    if (repoPath !== state.repoPath) return -1;
     state.rows = state.rows.concat(page.rows);
     rowsRepoPath = state.repoPath;
     state.total = page.total;
@@ -1455,7 +1491,10 @@ async function refreshUndoLabels(): Promise<void> {
 }
 
 async function undoAction(): Promise<void> {
-  if (!state.repoPath || !undoLabels.undo) return;
+  // The buttons disable on actionsBusy; the shortcut and Quick Launch reach
+  // here directly, so guard again — an undo mid-pull or mid-stage is exactly
+  // the kind of thing the busy flag exists to prevent.
+  if (!state.repoPath || !undoLabels.undo || operationInFlight()) return;
   const label = undoLabels.undo;
   setActionsBusy(true, "#undo-btn");
   setStatus(`Undoing ${label}…`);
@@ -1472,7 +1511,7 @@ async function undoAction(): Promise<void> {
 }
 
 async function redoAction(): Promise<void> {
-  if (!state.repoPath || !undoLabels.redo) return;
+  if (!state.repoPath || !undoLabels.redo || operationInFlight()) return;
   const label = undoLabels.redo;
   setActionsBusy(true, "#redo-btn");
   setStatus(`Redoing ${label}…`);
@@ -1497,10 +1536,22 @@ async function pullAction(mode: PullMode): Promise<void> {
     await Promise.all([refreshHistory(), loadSidebar()]);
     reportDone(out || "Pull complete.");
   } catch (err) {
-    opFailed("Pull failed", err);
+    await opFailedMaybeConflict("Pull failed", err);
   } finally {
     setActionsBusy(false);
   }
+}
+
+// Report a failed op that may have left a merge/rebase conflict in progress
+// (pull, stash pop/apply): refresh the banners' state first and offer Resolve
+// Conflicts, as runCommitOp does. A pull with rebase conflicts shows up as a
+// paused rebase, not a conflict session, so check both.
+async function opFailedMaybeConflict(title: string, err: unknown): Promise<void> {
+  await Promise.all([refreshConflictStatus(), refreshRebaseStatus(), loadSidebar()]);
+  const inConflict =
+    (state.conflict !== null && state.conflict.conflicted.length > 0) ||
+    (state.rebase?.in_progress === true && state.rebase.paused_for === "conflict");
+  opFailed(title, err, inConflict ? { label: "Resolve Conflicts", run: () => showView("conflict") } : undefined);
 }
 
 // Run one of the four pull-menu methods, whichever it is.
@@ -1586,7 +1637,7 @@ async function popAction(): Promise<void> {
     await loadSidebar();
     reportDone(out || "Popped stash.");
   } catch (err) {
-    opFailed("Pop failed", err);
+    await opFailedMaybeConflict("Pop failed", err);
   } finally {
     setActionsBusy(false);
   }
@@ -1963,7 +2014,7 @@ async function runStashOp(label: string, op: () => Promise<string>): Promise<voi
     if (state.view === "changes") await loadChanges();
     reportDone(out || `${label} done.`);
   } catch (err) {
-    opFailed(`${label} failed`, err);
+    await opFailedMaybeConflict(`${label} failed`, err);
   }
 }
 
@@ -2292,6 +2343,9 @@ async function squashSelectedCommits(commits: CommitRow[]): Promise<void> {
 // is left in `pendingCherryPicks`, aborting cancels the rest (see the
 // conflictView onDone hook in init()).
 let pendingCherryPicks: CommitRow[] = [];
+// The repo a conflicted batch paused in — the resolver's onDone resumes only
+// a batch that belongs to the repo and session that just finished.
+let pendingCherryPicksRepo = "";
 
 async function cherryPickSelectedCommits(commits: CommitRow[]): Promise<void> {
   pendingCherryPicks = commits;
@@ -2319,6 +2373,7 @@ async function runNextCherryPick(): Promise<void> {
     // resolver, which resumes (or cancels) the rest of the queue on its own.
     await Promise.all([refreshConflictStatus(), refreshRebaseStatus()]);
     if (state.conflict?.conflicted.length) {
+      pendingCherryPicksRepo = state.repoPath;
       showView("conflict");
       setStatus(`${next.short_id} conflicted — resolve it to continue the batch.`);
     } else {
@@ -2354,22 +2409,43 @@ async function refreshConflictStatus(): Promise<void> {
 // message over to Local Changes, and never strand the user on a resolver view
 // for a session that has ended.
 function applyConflictStatus(st: ConflictStatus | null): void {
+  const hadConflict = state.conflict !== null;
   state.conflict = st && st.kind !== "none" ? st : null;
   renderConflictBanner();
   // Once conflicts are resolved (files staged) a plain commit correctly
   // finishes a merge/cherry-pick/revert, same as the command line — so the
   // pending message should already be sitting in Local Changes, ready to go,
-  // whether the user finishes there or comes back to the resolver.
-  if (state.conflict?.message) {
+  // whether the user finishes there or comes back to the resolver. Once per
+  // session: re-filling on every snapshot would undo the user clearing it.
+  if (state.conflict?.message && conflictPrefill?.summary !== state.conflict.summary) {
     const summary = state.conflict.summary;
     const rest = state.conflict.message.startsWith(summary)
       ? state.conflict.message.slice(summary.length)
       : state.conflict.message;
-    changesView?.prefillMessage(summary, rest.replace(/^\s+/, "").trimEnd());
+    const body = rest.replace(/^\s+/, "").trimEnd();
+    conflictPrefill = { summary, body };
+    changesView?.prefillMessage(summary, body);
+  }
+  // A queued cherry-pick batch belongs to its own cherry-pick session: a
+  // different kind of conflict means it was abandoned (e.g. a terminal abort
+  // followed by a merge), so the leftovers must not run after that one.
+  if (state.conflict && state.conflict.kind !== "cherry-pick") pendingCherryPicks = [];
+  if (hadConflict && !state.conflict) {
+    // The session ended outside the resolver (terminal abort, commit from
+    // Local Changes): drop its prefilled message if untouched, the resolver's
+    // partial choices, and any batch that was waiting on it.
+    if (conflictPrefill) changesView?.clearPrefill(conflictPrefill.summary, conflictPrefill.body);
+    conflictPrefill = null;
+    conflictView?.reset();
+    pendingCherryPicks = [];
   }
   // A resolved/aborted merge should not strand the user on the conflict view.
   if (state.view === "conflict" && !state.conflict) showView("history");
 }
+
+// The merge/cherry-pick/revert message last pre-filled into the commit box,
+// so it's done once per session and cleared when that session ends.
+let conflictPrefill: { summary: string; body: string } | null = null;
 
 // Title for each non-rebase conflict kind, used by both the banner and error
 // dialogs. Rebase conflicts are surfaced by the rebase banner instead.
@@ -2415,6 +2491,7 @@ async function abortConflictAction(): Promise<void> {
   try {
     const out = await abortConflict();
     conflictView?.reset(); // forget partial choices so a re-merge starts fresh
+    pendingCherryPicks = []; // the rest of a paused batch goes with it
     showView("history");
     await Promise.all([refreshHistory(), loadSidebar()]);
     reportDone(out.trim() || "Aborted.");
@@ -3427,6 +3504,7 @@ function onTerminalCommand(): void {
   void loadSidebar();
   if (state.view === "history") void refreshHistory();
   else if (state.view === "changes") void loadChanges();
+  else if (state.view === "conflict") void conflictView?.reload();
 }
 
 function toggleTerminal(): void {
@@ -3649,6 +3727,8 @@ function wireUi(): void {
     if (key !== "z" && key !== "y") return;
     const t = e.target as HTMLElement | null;
     if (t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+    // A dialog or the palette owns the keyboard while it's open.
+    if (document.querySelector(".modal-overlay, .ql-overlay")) return;
     e.preventDefault();
     if (key === "y" || e.shiftKey) void redoAction();
     else void undoAction();
@@ -3796,6 +3876,7 @@ async function init(): Promise<void> {
     reportDone,
     onActed: () => void refreshUndoLabels(),
     reportError: opFailed,
+    openConflicts: () => showView("conflict"),
   });
   conflictView = setupConflict($("#conflict-pane"), {
     fetchStatus: conflictStatus,
@@ -3814,6 +3895,16 @@ async function init(): Promise<void> {
       // conflict clearly wasn't wanted, so continuing to apply the remaining
       // queued commits without asking would be surprising.
       if (aborted) pendingCherryPicks = [];
+      // Resume only the batch this session paused: same repo, and the session
+      // that just finished was its cherry-pick (not some later merge the
+      // leftovers would otherwise be applied on top of). Decided now, because
+      // the refresh below sees the session end and clears the queue.
+      const queued = pendingCherryPicks;
+      const resume =
+        !aborted &&
+        queued.length > 0 &&
+        pendingCherryPicksRepo === state.repoPath &&
+        state.conflict?.kind === "cherry-pick";
       showView("history");
       try {
         await Promise.all([refreshHistory(), loadSidebar()]);
@@ -3823,7 +3914,10 @@ async function init(): Promise<void> {
         opFailed("Finished, but refreshing the view failed", err);
         return;
       }
-      if (!aborted && pendingCherryPicks.length) await runNextCherryPick();
+      if (resume && pendingCherryPicksRepo === state.repoPath) {
+        pendingCherryPicks = queued;
+        await runNextCherryPick();
+      }
     },
   });
   if (isTauri()) {

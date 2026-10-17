@@ -200,3 +200,48 @@ fn commit_records_staged_changes_and_clears_the_staging_area() {
         "body recorded in the message"
     );
 }
+
+// O6: `git reset HEAD` has no HEAD to resolve on an unborn branch; unstaging
+// must still work before the first commit.
+#[test]
+fn unstage_and_unstage_all_work_on_an_unborn_branch() {
+    let fx = FixtureRepo::init();
+    std::fs::write(fx.path().join("a.txt"), "a\n").unwrap();
+    std::fs::write(fx.path().join("b.txt"), "b\n").unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.stage_all().unwrap();
+    assert_eq!(repo.status_summary().unwrap().staged.len(), 2);
+
+    repo.unstage("a.txt").expect("unstage one on unborn branch");
+    let s = repo.status_summary().unwrap();
+    let staged: Vec<&str> = s.staged.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(staged, vec!["b.txt"]);
+
+    repo.unstage_all().expect("unstage all on unborn branch");
+    let s = repo.status_summary().unwrap();
+    assert!(s.staged.is_empty(), "nothing staged");
+    assert_eq!(s.unstaged.len(), 2, "both files are untracked again");
+}
+
+// O2: `stage` and `file_diff` take a path, not a pattern.
+#[test]
+fn stage_of_a_glob_like_path_is_literal() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a1.txt", "plain\n", "c1");
+    fx.commit_file("a[1].txt", "bracket\n", "c2");
+    std::fs::write(fx.path().join("a1.txt"), "plain edited\n").unwrap();
+    std::fs::write(fx.path().join("a[1].txt"), "bracket edited\n").unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.stage("a[1].txt").unwrap();
+
+    let s = repo.status_summary().unwrap();
+    let staged: Vec<&str> = s.staged.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(staged, vec!["a[1].txt"]);
+    // And the per-file diff of the lookalike is its own, not the bracket file's.
+    let d = repo
+        .file_diff("a1.txt", false, DEFAULT_CONTEXT_LINES)
+        .unwrap()
+        .unwrap();
+    assert_eq!(d.path, "a1.txt");
+}

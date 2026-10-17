@@ -71,12 +71,15 @@ impl Repo {
 
     /// Stage `path` (`git add`), handling new, modified, and deleted files.
     pub fn stage(&self, path: &str) -> Result<()> {
-        self.run_git(&["add", "--", path]).map(|_| ())
+        self.run_git(&["add", "--", &literal_pathspec(path)])
+            .map(|_| ())
     }
 
-    /// Unstage `path` (`git reset HEAD -- <path>`).
+    /// Unstage `path` (`git reset -- <path>`). No explicit `HEAD`: git defaults
+    /// to it, and naming it fails on an unborn branch where there is no HEAD
+    /// commit to resolve yet.
     pub fn unstage(&self, path: &str) -> Result<()> {
-        self.run_git(&["reset", "-q", "HEAD", "--", path])
+        self.run_git(&["reset", "-q", "--", &literal_pathspec(path)])
             .map(|_| ())
     }
 
@@ -85,9 +88,9 @@ impl Repo {
         self.run_git(&["add", "-A"]).map(|_| ())
     }
 
-    /// Unstage everything (`git reset HEAD`).
+    /// Unstage everything (`git reset`; see [`Repo::unstage`] for why no `HEAD`).
     pub fn unstage_all(&self) -> Result<()> {
-        self.run_git(&["reset", "-q", "HEAD"]).map(|_| ())
+        self.run_git(&["reset", "-q"]).map(|_| ())
     }
 
     /// Commit the staged changes. `body` is added as a second paragraph when
@@ -122,6 +125,11 @@ impl Repo {
 
     /// Short name of the checked-out branch, or an error if HEAD is detached.
     fn current_branch_name(&self) -> Result<String> {
+        // `shorthand()` of a detached HEAD is the literal "HEAD", which would
+        // otherwise be looked up as a branch and fail with a confusing message.
+        if self.inner.head_detached()? {
+            return Err(Error::Message("HEAD is not on a branch".into()));
+        }
         let head = self.inner.head()?;
         head.shorthand()
             .map(str::to_string)
@@ -225,4 +233,14 @@ impl Repo {
             Err(Error::Message(combined))
         }
     }
+}
+
+/// Turn an exact file path into a pathspec git won't glob-expand. A bare path
+/// is a pattern — `a[1].txt` also matches `a1.txt` — so every user-chosen path
+/// handed to git as a pathspec goes through here. It is deliberately per-path
+/// rather than `GIT_LITERAL_PATHSPECS=1` on the whole command: that env var
+/// also disables the `:/` magic `git stash -u` uses internally to sweep
+/// untracked files, silently breaking stash.
+pub(crate) fn literal_pathspec(path: &str) -> String {
+    format!(":(literal){path}")
 }

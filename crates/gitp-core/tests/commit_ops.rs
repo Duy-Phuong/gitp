@@ -120,3 +120,16 @@ fn cherry_pick_applies_a_commit_from_another_branch() {
         "cherry-picked file present on master"
     );
 }
+
+// O7: `git checkout <branch>` attaches HEAD; checkout_commit promises a detach
+// whatever the rev string is.
+#[test]
+fn checkout_commit_detaches_even_when_given_a_branch_name() {
+    let (fx, _) = linear_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+    let branch = repo.refs().unwrap().head.expect("on a branch");
+
+    repo.checkout_commit(&branch).unwrap();
+
+    assert!(repo.refs().unwrap().head.is_none(), "HEAD is detached");
+}

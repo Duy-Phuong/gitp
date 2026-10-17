@@ -32,10 +32,12 @@ impl ResetMode {
 }
 
 impl Repo {
-    /// Detach HEAD onto `rev` (`git checkout <rev>`). A dirty tree that would be
-    /// overwritten makes git error, which surfaces to the caller.
+    /// Detach HEAD onto `rev` (`git checkout --detach <rev>`). `--detach` so a
+    /// `rev` that happens to be a branch name still detaches instead of
+    /// switching to that branch. A dirty tree that would be overwritten makes
+    /// git error, which surfaces to the caller.
     pub fn checkout_commit(&self, rev: &str) -> Result<String> {
-        self.run_git(&["checkout", rev])
+        self.run_git(&["checkout", "--detach", rev])
     }
 
     /// Create branch `name` starting at `rev` and check it out

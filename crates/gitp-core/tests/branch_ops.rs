@@ -196,3 +196,48 @@ fn branch_names(repo: &Repo) -> Vec<String> {
         .map(|b| b.name)
         .collect()
 }
+
+// O5: `ls-remote --heads origin foo` matches by ref tail, so `bar/foo` on the
+// remote would make `foo` look pushed.
+#[test]
+fn remote_branch_exists_does_not_match_a_longer_name_with_the_same_tail() {
+    use std::process::Command;
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let remote_dir = tempfile::tempdir().unwrap();
+    let run = |dir: &std::path::Path, args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    run(remote_dir.path(), &["init", "--bare", "-q"]);
+    run(
+        fx.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            remote_dir.path().to_str().unwrap(),
+        ],
+    );
+    run(fx.path(), &["branch", "bar/foo"]);
+    run(fx.path(), &["push", "-q", "origin", "bar/foo"]);
+    run(fx.path(), &["branch", "foo"]);
+
+    let repo = Repo::open(fx.path()).unwrap();
+    assert!(
+        repo.remote_branch_exists("foo").unwrap().is_none(),
+        "`foo` was never pushed; `bar/foo` must not count"
+    );
+    assert_eq!(
+        repo.remote_branch_exists("bar/foo").unwrap().as_deref(),
+        Some("origin/bar/foo")
+    );
+}

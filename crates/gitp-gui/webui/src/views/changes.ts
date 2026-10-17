@@ -63,6 +63,8 @@ export interface ChangesCallbacks {
   // Show git's full (often multi-line) output for a failed operation — e.g. a
   // pre-commit hook's messages — in a dialog rather than the status line.
   reportError: (title: string, detail: string) => void;
+  // Open the conflict resolver — from a Conflicted row's "Resolve" link.
+  openConflicts?: () => void;
 }
 
 export interface ChangesHandle {
@@ -80,6 +82,13 @@ export interface ChangesHandle {
   // pending message, so it's ready to commit here without retyping it. A
   // no-op once the user has typed anything, so it never clobbers real input.
   prefillMessage: (subject: string, body: string) => void;
+  // Clear the commit box if it still holds exactly this pre-filled message —
+  // the conflict session it came from ended without a commit from here.
+  clearPrefill: (subject: string, body: string) => void;
+  // Forget everything tied to the repo: selection, diff cache, checkboxes,
+  // collapsed folders, the commit message and Amend. Called when the active
+  // repo changes, so nothing from the previous one leaks into the next.
+  reset: () => void;
 }
 
 export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHandle {
@@ -221,6 +230,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     } finally {
       // Always re-read the working tree: hooks (or a partial op) may have
       // changed files whether or not the command itself succeeded.
+      // The op may have changed the selected file's content without changing
+      // its status (a staged hunk, a discarded block), so the hunks we hold are
+      // suspect — drop the skip so loadSelectedDiff re-fetches them.
+      selectedDiffSummary = null;
       try {
         await reload();
       } catch (err) {
@@ -448,6 +461,17 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     if (which === "staged" && amendOnly(path)) return;
 
     const files = which === "unstaged" ? unstaged : staged;
+    // An unmerged file is resolved in the conflict view, not staged/discarded.
+    if (files.find((f) => f.path === path)?.status === "Conflicted") {
+      const items: MenuItem[] = [
+        { label: "Resolve Conflicts…", run: () => cb.openConflicts?.() },
+        { separator: true },
+        { label: "Edit File", run: () => void cb.openInEditor(path) },
+        { label: "Show in Finder", run: () => void cb.revealPath(path) },
+      ];
+      showContextMenu(e.clientX, e.clientY, items);
+      return;
+    }
     const inPanel = new Set(files.map((f) => f.path));
     let paths = checked[which].has(path)
       ? [...checked[which]].filter((p) => inPanel.has(p))
@@ -457,6 +481,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     const many = n > 1;
     const label = (verb: string) => (many ? `${verb} ${n} Files` : verb);
     const statusOf = new Map(files.map((f) => [f.path, f.status]));
+    // Checked conflicted rows don't ride along on a bulk stage/discard.
+    paths = paths.filter((p) => isActionable(statusOf.get(p)));
+    if (paths.length === 0) return;
     const allUntracked = paths.every((p) => statusOf.get(p) === "Untracked");
 
     const copy = (abs: boolean) => {
@@ -598,10 +625,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     box.append(head);
 
     const tree = el("div", { class: "stage-tree" });
+    const status = new Map(files.map((f) => [f.path, f.status]));
     if (files.length === 0) {
       tree.append(el("div", { class: "stage-empty", text: `No ${which} changes` }));
     } else {
-      const status = new Map(files.map((f) => [f.path, f.status]));
       renderFileTree(tree, files.map((f) => f.path), {
         collapsed: collapsed[which],
         onToggle: (p) => {
@@ -615,6 +642,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         onFileDblClick: (p) => {
           // Amend-only rows aren't really staged, so there's nothing to unstage.
           if (which === "staged" && amendOnly(p)) return;
+          if (!isActionable(status.get(p))) return; // conflicted: resolve, don't stage
           if (which === "unstaged") runStaging([p], "staged", () => cb.stage(p));
           else runStaging([p], "unstaged", () => cb.unstage(p));
         },
@@ -629,6 +657,21 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
           render();
         },
       });
+    }
+    // Conflicted rows get a "Resolve" link to the conflict view in place of
+    // staging (see isActionable); the badge class marks them in CSS.
+    if (which === "unstaged" && cb.openConflicts) {
+      for (const row of tree.querySelectorAll<HTMLElement>(".tree-file")) {
+        const p = row.getAttribute("title") ?? "";
+        if (status.get(p) !== "Conflicted") continue;
+        row.classList.add("conflicted");
+        const link = el("button", { class: "btn ghost small tree-resolve", text: "Resolve" });
+        link.addEventListener("click", (e) => {
+          e.stopPropagation();
+          cb.openConflicts?.();
+        });
+        row.append(link);
+      }
     }
     box.append(tree);
     return box;
@@ -708,6 +751,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     amend = on;
     if (on) {
       const head = await cb.fetchHead().catch(() => null);
+      // Unticked again (or reset) while HEAD was loading: don't pre-fill a
+      // message and files for an amend that's no longer wanted.
+      if (!amend) return;
       if (head) {
         amendFiles = head.files;
         // Only pre-fill an empty box, so we never clobber a typed message.
@@ -759,8 +805,41 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     render();
   }
 
+  function clearPrefill(oldSubject: string, oldBody: string): void {
+    if (subject !== oldSubject || body !== oldBody) return; // the user changed it; keep it
+    subject = "";
+    body = "";
+    render();
+  }
+
+  function reset(): void {
+    staged = [];
+    unstaged = [];
+    selected = null;
+    selectedDiff = null;
+    selectedDiffSummary = null;
+    diffLoaded = false;
+    diffToken++; // drop any diff fetch still in flight for the old repo
+    collapsed.unstaged.clear();
+    collapsed.staged.clear();
+    checked.unstaged.clear();
+    checked.staged.clear();
+    subject = "";
+    body = "";
+    amend = false;
+    amendFiles = [];
+    amendPrefill = null;
+    render();
+  }
+
   render();
-  return { reload, isBusy: () => busy, applyStatus, prefillMessage };
+  return { reload, isBusy: () => busy, applyStatus, prefillMessage, clearPrefill, reset };
+}
+
+// Whether a file row can be staged/unstaged/discarded from Local Changes. An
+// unmerged (Conflicted) file can't: it's resolved in the conflict view.
+export function isActionable(status: ChangeKind | undefined): boolean {
+  return status !== undefined && status !== "Conflicted";
 }
 
 // The status a file takes on the other side of a stage/unstage. `git add` on an
