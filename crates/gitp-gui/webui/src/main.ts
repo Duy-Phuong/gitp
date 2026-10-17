@@ -12,6 +12,7 @@ import {
   fetchFileHistory,
   fetchFileDiff,
   fetchStatusSummary,
+  fetchReflog,
   isTauri,
   listRepos,
   stage,
@@ -39,8 +40,9 @@ import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
 import { setupChanges } from "./views/changes";
 import { setupConflict } from "./views/conflict";
+import { setupReflog } from "./views/reflog";
 import { state, ui, type View } from "./app-state";
-import { opFailed, reportDone, setStatus, watchNetwork, watchPending } from "./report";
+import { opFailed, readFailed, reportDone, setStatus, watchNetwork, watchPending } from "./report";
 import { setupFetchAgeIndicator } from "./fetch-age";
 import {
   applyTheme,
@@ -64,6 +66,7 @@ import {
   renderSidebarNow,
   restoreWorkspace,
   setRefActions,
+  showReflogDetail,
   showView,
   updateLogView,
 } from "./shell";
@@ -84,7 +87,7 @@ import {
   onStashMenu,
   onTagMenu,
 } from "./ref-actions";
-import { onCommitContextMenu, runNextCherryPick } from "./commit-actions";
+import { onCommitContextMenu, onReflogMenu, runNextCherryPick } from "./commit-actions";
 import { toggleTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
 import { openQuickLaunch } from "./quick-launch-commands";
@@ -295,6 +298,12 @@ async function init(): Promise<void> {
         await runNextCherryPick();
       }
     },
+  });
+  ui.reflogView = setupReflog($("#reflog-col"), {
+    fetch: fetchReflog,
+    onSelect: (entry) => void showReflogDetail(entry),
+    onMenu: onReflogMenu,
+    reportError: readFailed,
   });
   if (isTauri()) {
     if (!(await restoreWorkspace())) {

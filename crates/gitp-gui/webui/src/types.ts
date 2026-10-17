@@ -243,3 +243,20 @@ export interface GitProgress {
   detail: string;
   cancellable: boolean;
 }
+
+// One reflog entry: the ref moved from `old_id` to `new_id` because of
+// `message` (git's own, e.g. "commit: …", "checkout: moving from a to b").
+export interface ReflogEntry {
+  // 0 is the most recent move.
+  index: number;
+  // The revision naming this entry, e.g. `HEAD@{3}` or `main@{0}`.
+  selector: string;
+  new_id: string;
+  short_id: string;
+  old_id: string;
+  message: string;
+  committer: string;
+  time: number;
+  // Summary of the `new_id` commit, or null once it has been pruned.
+  summary: string | null;
+}

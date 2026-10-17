@@ -48,6 +48,7 @@ import {
   refreshConflictStatus,
   refreshHistory,
   renderSidebarNow,
+  showReflog,
   showView,
 } from "./shell";
 import { checkoutCommitAction, confirmThenRun, openInteractiveRebase } from "./commit-actions";
@@ -159,6 +160,7 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
   if (!b.is_head) items.push({ label: "Delete…", danger: true, run: () => void deleteBranchAction(b) });
 
   items.push({ separator: true });
+  items.push({ label: "Show Reflog", run: () => showReflog(`refs/heads/${b.name}`) });
   items.push({ label: "Copy Branch Name", run: () => void copyText(b.name, `Copied ${b.name}`) });
 
   showContextMenu(x, y, items);

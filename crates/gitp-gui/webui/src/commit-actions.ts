@@ -19,7 +19,7 @@ import { renderLog } from "./views/log";
 import { showCommitMenu } from "./views/commit-menu";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { openRebaseModal, type RebaseOptions } from "./views/rebase";
-import type { CommitRow, RebaseAction, RebaseStep, ResetMode } from "./types";
+import type { CommitRow, RebaseAction, RebaseStep, ReflogEntry, ResetMode } from "./types";
 import { state, ui } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
@@ -393,4 +393,35 @@ export async function tagAction(name: string, rev: string, short: string): Promi
 
 export async function copySha(rev: string): Promise<void> {
   await copyText(rev, `Copied ${rev.slice(0, 10)} to clipboard`);
+}
+
+// --- Reflog entry menu ------------------------------------------------------
+
+// Right-click (or ⋯) on a Reflog entry: the ways back to that commit. Each is
+// the log menu's own action, so the confirmations and the undo recording are
+// the same. A pruned commit can only have its id copied.
+export function onReflogMenu(entry: ReflogEntry, x: number, y: number): void {
+  const rev = entry.new_id;
+  const short = entry.short_id;
+  const copy: MenuItem = { label: "Copy SHA", run: () => void copySha(rev) };
+  if (entry.summary === null) {
+    showContextMenu(x, y, [copy]);
+    return;
+  }
+  showContextMenu(x, y, [
+    { label: "Checkout (detached)", run: () => void checkoutCommitAction(rev, short) },
+    {
+      label: "Create Branch Here…",
+      prompt: {
+        placeholder: "New branch name",
+        onSubmit: (name) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
+      },
+    },
+    { separator: true },
+    { label: "Reset to Here: Soft (keep changes staged)", run: () => void resetAction(rev, short, "Soft") },
+    { label: "Reset to Here: Mixed (keep changes unstaged)", run: () => void resetAction(rev, short, "Mixed") },
+    { label: "Reset to Here: Hard (discard changes)", danger: true, run: () => void resetAction(rev, short, "Hard") },
+    { separator: true },
+    copy,
+  ]);
 }

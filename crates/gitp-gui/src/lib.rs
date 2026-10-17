@@ -15,6 +15,7 @@ mod conflict;
 mod history;
 mod os;
 mod rebase;
+mod reflog;
 mod remote;
 mod staging;
 mod stash;
@@ -171,6 +172,7 @@ pub fn run() {
             history::get_file_history,
             config::get_config,
             config::set_config,
+            reflog::get_reflog,
             terminal::terminal_spawn,
             terminal::terminal_write,
             terminal::terminal_resize,

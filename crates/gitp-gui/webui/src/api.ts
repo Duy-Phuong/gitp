@@ -20,6 +20,7 @@ import type {
   RebaseCommit,
   RebaseStatus,
   RebaseStep,
+  ReflogEntry,
   Refs,
   RepoChanged,
   ResetMode,
@@ -1382,3 +1383,45 @@ export const MOCK_CONFIG: ConfigEntry[] = [
   { name: "branch.main.remote", value: "origin", scope: "Local" },
   { name: "core.autocrlf", value: "input", scope: "System" },
 ];
+
+// --- Reflog -----------------------------------------------------------------
+
+// Up to 500 entries of `refname`'s reflog (`HEAD` or `refs/heads/<name>`),
+// newest first.
+export async function fetchReflog(refname: string): Promise<ReflogEntry[]> {
+  if (!isTauri()) {
+    const short = refname.replace(/^refs\/heads\//, "");
+    // A branch's own reflog has only the moves of that branch, not checkouts.
+    const entries = refname === "HEAD" ? MOCK_REFLOG : MOCK_REFLOG.filter((e) => !e.message.startsWith("checkout:"));
+    return entries.map((e, index) => ({ ...e, index, selector: `${short}@{${index}}` }));
+  }
+  return invoke<ReflogEntry[]>("get_reflog", { refname });
+}
+
+// HEAD's reflog in preview mode: commits, a checkout, an amend, and a hard
+// reset whose commit (`9…`) is in no mock row — as if it had been pruned — so
+// its summary is null.
+const MOCK_REFLOG: Omit<ReflogEntry, "index" | "selector">[] = [
+  mkReflog("g", "f", "merge feature/widget: Merge made by the 'ort' strategy.", BASE + 6 * DAY),
+  mkReflog("f", "9", "reset: moving to HEAD~1", BASE + 5 * DAY + 600),
+  mkReflog("9", "f", "commit: wip: try a different loader", BASE + 5 * DAY + 300),
+  mkReflog("f", "d", "commit (amend): docs: expand config guide", BASE + 5 * DAY),
+  mkReflog("d", "e", "checkout: moving from feature/widget to develop/3.33.0", BASE + 4 * DAY + 60),
+  mkReflog("e", "c", "commit: feat: add dashboard widget", BASE + 4 * DAY),
+  mkReflog("c", "b", "commit: feat: add config loader", BASE + 2 * DAY),
+  mkReflog("b", "a", "commit: chore: initial layout", BASE + DAY),
+  mkReflog("a", "0", "commit (initial): chore: initial commit", BASE),
+];
+
+function mkReflog(to: string, from: string, message: string, time: number): Omit<ReflogEntry, "index" | "selector"> {
+  const newId = mockOid(to);
+  return {
+    new_id: newId,
+    short_id: newId.slice(0, 7),
+    old_id: mockOid(from),
+    message,
+    committer: "Ada Lovelace",
+    time,
+    summary: MOCK_LOG.find((r) => r.id === newId)?.summary ?? null,
+  };
+}

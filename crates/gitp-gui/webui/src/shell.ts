@@ -32,7 +32,7 @@ import { GRAPH_METRICS } from "./graph";
 import { renderLog } from "./views/log";
 import { closeCommitMenu } from "./views/commit-menu";
 import { renderSidebar, type SidebarView, type SidebarCallbacks } from "./views/sidebar";
-import type { CommitRow, ConflictStatus, LogPage, StashRef, Workspace } from "./types";
+import type { CommitRow, ConflictStatus, LogPage, ReflogEntry, StashRef, Workspace } from "./types";
 import { EMPTY_REFS, PAGE_SIZE, state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { markRemoteFetched, remoteFetchedAt, renderFetchAge } from "./fetch-age";
@@ -126,6 +126,7 @@ export function applyWorkspace(ws: Workspace): void {
 function resetRepoViews(): void {
   ui.changesView?.reset();
   ui.conflictView?.reset();
+  ui.reflogView?.reset();
   ui.pendingCherryPicks = [];
   conflictPrefill = null;
 }
@@ -256,6 +257,9 @@ export async function refreshHistory(opts: { keepSelection?: boolean } = {}): Pr
   await ensureAvatars(state.rows.map((r) => r.author_email));
   rebuildCommitRefs();
   await updateLogView();
+  // The open Reflog owns the detail pane (an undo refreshes history under it);
+  // showView puts the selection back there on the way out.
+  if (state.view === "reflog") return;
   if (state.selectedId) await selectCommit(state.selectedId);
   else {
     shownDetailId = null;
@@ -441,15 +445,19 @@ export function operationInFlight(): boolean {
   return ui.actionsBusy || (ui.changesView?.isBusy() ?? false);
 }
 
-// Switch the main panel between history, local changes, and config; keeps the
-// topbar tabs and sidebar nav highlight in sync, and loads the view's data.
+// Switch the main panel between history, the reflog, local changes, and
+// config; keeps the topbar tabs and sidebar nav highlight in sync, and loads
+// the view's data.
 export function showView(view: View, opts: { refreshHistory?: boolean } = {}): void {
   closeCommitMenu();
   state.view = view;
-  $("#history-view").classList.toggle("hidden", view !== "history");
+  $("#history-view").classList.toggle("hidden", view !== "history" && view !== "reflog");
   $("#changes-view").classList.toggle("hidden", view !== "changes");
   $("#config-view").classList.toggle("hidden", view !== "config");
   $("#conflict-view").classList.toggle("hidden", view !== "conflict");
+  // The Reflog lists in the log's place and shares History's detail pane.
+  $("#log-col").classList.toggle("hidden", view === "reflog");
+  $("#reflog-col").classList.toggle("hidden", view !== "reflog");
   for (const el of document.querySelectorAll<HTMLElement>(".tab")) {
     el.classList.toggle("active", el.dataset.tab === view);
   }
@@ -458,6 +466,10 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   if (view === "config") void refreshConfig();
   else if (view === "changes") void loadChanges();
   else if (view === "conflict") void ui.conflictView?.reload();
+  else if (view === "reflog") void ui.reflogView?.reload();
+  // Back from the Reflog, which borrowed the detail pane: show the selected
+  // commit there again.
+  if (view === "history" && state.selectedId && shownDetailId !== state.selectedId) void selectCommit(state.selectedId);
   // Entering History or Local Changes — including via a branch click, which
   // routes through here too (see jumpToCommit/checkoutBranchAction) — reloads
   // the graph (keeping whatever's selected) and, throttled, fetches remotes,
@@ -496,6 +508,9 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     ui.changesView?.applyStatus(snap.status);
     renderRebaseBanner();
     applyConflictStatus(snap.conflict);
+    // Whatever moved a ref (an action, undo, a terminal command) added a reflog
+    // entry the open Reflog should list.
+    if (state.view === "reflog") void ui.reflogView?.reload();
   } catch (err) {
     state.refs = EMPTY_REFS;
     readFailed("Failed to load refs", err);
@@ -594,7 +609,7 @@ export function renderSidebarNow(): void {
       busyRefs: state.busyRefs,
     },
     {
-      onSelectView: (v: SidebarView) => showView(v),
+      onSelectView: (v: SidebarView) => (v === "reflog" ? showReflog() : showView(v)),
       // Debounced: renderSidebarNow rebuilds the whole branch/tag/remote tree
       // (including recreating this very input), so filtering on every single
       // keystroke costs a full tree teardown+rebuild per character on a repo
@@ -733,6 +748,35 @@ async function showStashDetail(s: StashRef): Promise<void> {
     setStatus(`Showing stash@{${s.index}} — ${s.message}`);
   } catch (err) {
     readFailed("Failed to load stash", err);
+  }
+}
+
+// Open the Reflog view on `refname`: HEAD's, or a branch's (`refs/heads/<name>`).
+export function showReflog(refname = "HEAD"): void {
+  ui.reflogView?.setRef(refname);
+  showView("reflog");
+}
+
+// The Reflog entry whose commit the detail pane was last asked for, so a slow
+// fetch for an earlier one can't overwrite it.
+let reflogDetailId: string | null = null;
+
+// Show a Reflog entry's commit in the detail pane. Like a stash, it needn't be
+// a row of the log, so selectCommit's cache must not claim the pane.
+export async function showReflogDetail(entry: ReflogEntry): Promise<void> {
+  shownDetailId = null;
+  reflogDetailId = entry.new_id;
+  if (entry.summary === null) {
+    ui.detailView?.showEmpty();
+    setStatus(`${entry.selector}: commit ${entry.short_id} no longer exists — it has been pruned.`);
+    return;
+  }
+  try {
+    const detail = await fetchCommitDetail(entry.new_id);
+    if (reflogDetailId !== entry.new_id || state.view !== "reflog") return;
+    ui.detailView?.show(detail);
+  } catch (err) {
+    readFailed("Failed to load commit", err);
   }
 }
 

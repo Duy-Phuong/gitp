@@ -3425,3 +3425,61 @@ textarea:focus-visible,
   background: var(--accent);
   transition: width 0.2s ease;
 }
+
+/* Reflog view: lists in the log's place, above History's detail pane. */
+.log-col.hidden {
+  display: none;
+}
+.reflog-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: auto;
+}
+.reflog-pane:focus {
+  outline: none;
+}
+.reflog-row.selected {
+  background: var(--row-sel);
+}
+.reflog-selector {
+  flex: 0 0 auto;
+  min-width: 72px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+.reflog-action {
+  flex: 0 1 auto;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+}
+/* The commit was pruned: still listed, but there is nothing to show or check out. */
+.reflog-row.gone .commit-summary,
+.reflog-row.gone .commit-sha {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+.reflog-more {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  visibility: hidden;
+}
+.reflog-row:hover .reflog-more,
+.reflog-row.selected .reflog-more {
+  visibility: visible;
+}
+.reflog-more:hover {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}

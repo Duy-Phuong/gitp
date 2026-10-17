@@ -35,7 +35,7 @@ import type { BranchRef, ResetMode, StashRef } from "./types";
 import { state, ui } from "./app-state";
 import { cancelNetworkAction, canCancelNetwork, readFailed, setStatus } from "./report";
 import { forgetRecentRepo, loadRecentRepos, PULL_DEFAULT_LABEL, PULL_DEFAULTS } from "./prefs";
-import { closeRepoTab, loadRepo, selectCommit, showView, switchRepo } from "./shell";
+import { closeRepoTab, loadRepo, selectCommit, showReflog, showView, switchRepo } from "./shell";
 import {
   cleanUpAction,
   createBranchAction,
@@ -324,6 +324,7 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Repository Settings…", run: () => showView("config") },
     { kind: "command", label: "Reveal in Finder", run: () => void revealRepo() },
     { kind: "command", label: "Save Stash", run: () => void stashAction() },
+    { kind: "command", label: "Show Reflog", run: () => showReflog() },
     { kind: "command", label: "Switch Repository", next: () => repoStage() },
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
     { kind: "command", label: "Close Repository", run: () => void closeRepoTab(state.repoPath) },

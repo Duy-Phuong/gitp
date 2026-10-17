@@ -9,9 +9,10 @@ import type { DetailHandle } from "./views/detail";
 import type { ChangesHandle } from "./views/changes";
 import type { ConflictHandle } from "./views/conflict";
 import type { TerminalHandle } from "./views/terminal";
+import type { ReflogHandle } from "./views/reflog";
 import type { CommitRow, ConflictStatus, RebaseStatus, Refs, RepoTab, UndoState } from "./types";
 
-export type View = "history" | "changes" | "config" | "conflict";
+export type View = "history" | "changes" | "config" | "conflict" | "reflog";
 
 export const EMPTY_REFS: Refs = { head: null, branches: [], remotes: [], tags: [], stashes: [], recent: [] };
 
@@ -74,6 +75,7 @@ export const ui = {
   detailView: null as DetailHandle | null,
   changesView: null as ChangesHandle | null,
   conflictView: null as ConflictHandle | null,
+  reflogView: null as ReflogHandle | null,
   // The live log's handle, from the most recent renderLog — the log view owns
   // keyboard movement through the rows it has on screen (see LogHandle).
   logView: null as LogHandle | null,
