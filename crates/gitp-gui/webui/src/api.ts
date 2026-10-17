@@ -1035,6 +1035,15 @@ function mockDetail(rev: string): CommitDetail {
               { origin: "+", old_lineno: null, new_lineno: 4, content: "}" },
             ],
           },
+          {
+            header: "@@ -8,3 +10,3 @@",
+            lines: [
+              { origin: " ", old_lineno: 8, new_lineno: 10, content: "fn load(path: &Path) -> Result<String> {" },
+              { origin: "-", old_lineno: 9, new_lineno: null, content: "    let text = fs::read_to_string(path)?;" },
+              { origin: "+", old_lineno: null, new_lineno: 11, content: "    let text = fs::read_to_string(&path).context(\"read config\")?;" },
+              { origin: " ", old_lineno: 10, new_lineno: 12, content: "    Ok(text)" },
+            ],
+          },
         ],
       },
       {

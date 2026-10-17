@@ -11,7 +11,7 @@
 import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT } from "../api";
 import { clear, copyToClipboard, el, statusBadge, svg } from "../dom";
 import type { BlameLine, CommitDetail, FileCommit, FileDiff } from "../types";
-import { wordDiff, type Seg } from "../worddiff";
+import { hunkWordDiffs, type Seg } from "../worddiff";
 import { renderFileTree } from "./tree";
 
 // Which pane of the commit detail is showing. Exported so the host can persist
@@ -598,14 +598,13 @@ export function renderFile(file: FileDiff): HTMLElement {
     const h = el("div", { class: "hunk", "data-hunk": i });
     h.append(hunkHeader(hunk));
     const at = lineIndexes(hunk);
+    const words = hunkWordDiffs(hunk.lines);
 
     let dels: Line[] = [];
     let adds: Line[] = [];
     const flush = () => {
-      const pairs = Math.min(dels.length, adds.length);
-      const wds = Array.from({ length: pairs }, (_, k) => wordDiff(dels[k].content, adds[k].content));
-      dels.forEach((d, k) => h.append(unifiedLine(d, at.get(d)!, "del", k < pairs ? wds[k].left : null)));
-      adds.forEach((a, k) => h.append(unifiedLine(a, at.get(a)!, "add", k < pairs ? wds[k].right : null)));
+      dels.forEach((d) => h.append(unifiedLine(d, at.get(d)!, "del", words.get(at.get(d)!) ?? null)));
+      adds.forEach((a) => h.append(unifiedLine(a, at.get(a)!, "add", words.get(at.get(a)!) ?? null)));
       dels = [];
       adds = [];
     };
@@ -663,12 +662,13 @@ export function renderSplitDiff(file: FileDiff): HTMLElement {
     h.append(hunkHeader(hunk));
     const table = el("div", { class: "split-table" });
     const at = lineIndexes(hunk);
+    const words = hunkWordDiffs(hunk.lines);
 
     let dels: FileDiff["hunks"][number]["lines"] = [];
     let adds: FileDiff["hunks"][number]["lines"] = [];
     const flush = () => {
       const n = Math.max(dels.length, adds.length);
-      for (let k = 0; k < n; k++) table.append(splitRow(dels[k] ?? null, adds[k] ?? null, at));
+      for (let k = 0; k < n; k++) table.append(splitRow(dels[k] ?? null, adds[k] ?? null, at, words));
       dels = [];
       adds = [];
     };
@@ -677,7 +677,7 @@ export function renderSplitDiff(file: FileDiff): HTMLElement {
       else if (line.origin === "+") adds.push(line);
       else {
         flush();
-        table.append(splitRow(line, line, at));
+        table.append(splitRow(line, line, at, words));
       }
     }
     flush();
@@ -716,13 +716,17 @@ function isolateSplitColumnDrag(table: HTMLElement): void {
 
 type Line = FileDiff["hunks"][number]["lines"][number];
 
-function splitRow(left: Line | null, right: Line | null, at: Map<Line, number>): HTMLElement {
-  // Word-highlight only a genuine deletion/addition pair (not context rows).
-  const pair = left && right && left.origin === "-" && right.origin === "+";
-  const wd = pair ? wordDiff(left.content, right.content) : null;
+function splitRow(
+  left: Line | null,
+  right: Line | null,
+  at: Map<Line, number>,
+  words: Map<number, Seg[]>,
+): HTMLElement {
+  // Only paired deletion/addition lines have word highlights in `words`.
+  const segs = (line: Line | null) => (line ? (words.get(at.get(line)!) ?? null) : null);
   return el("div", { class: "split-row" }, [
-    sideCell(left, "left", wd ? wd.left : null, at),
-    sideCell(right, "right", wd ? wd.right : null, at),
+    sideCell(left, "left", segs(left), at),
+    sideCell(right, "right", segs(right), at),
   ]);
 }
 
