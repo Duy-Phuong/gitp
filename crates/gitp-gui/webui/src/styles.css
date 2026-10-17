@@ -1740,6 +1740,13 @@ body {
 .log-search-input:focus {
   border-color: var(--accent);
 }
+/* "12 commits" beside the search box while a search is showing. */
+.log-search-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
 .log-pane {
   flex: 1 1 auto;
   overflow: auto;

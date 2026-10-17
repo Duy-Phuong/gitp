@@ -50,6 +50,9 @@ pub struct LogCache {
     all_branches: bool,
     /// The commits the walk was seeded from, sorted and deduplicated.
     tips: Vec<git2::Oid>,
+    /// Lowercased message bodies by commit id, read in by the first search
+    /// that needs them (see `Repo::search_log`).
+    pub(crate) bodies: HashMap<String, Box<str>>,
 }
 
 impl LogCache {
@@ -97,6 +100,7 @@ impl Repo {
             rows,
             all_branches,
             tips,
+            bodies: HashMap::new(),
         })
     }
 
@@ -127,7 +131,10 @@ impl Repo {
                 return Ok(LogRefresh::Extended { added });
             }
         }
+        // A commit's message never changes, so the bodies read so far stay good.
+        let bodies = std::mem::take(&mut cache.bodies);
         *cache = self.log_cache(all_branches)?;
+        cache.bodies = bodies;
         Ok(LogRefresh::Full)
     }
 

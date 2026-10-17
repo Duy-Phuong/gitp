@@ -1,7 +1,7 @@
 //! Reading history: the paged commit log and its search, commit details and
 //! diffs, the ref tree, and per-file tree / blame / history.
 
-use gitp_core::{BlameLine, CommitDetail, CommitRow, FileCommit, FileDiff, Refs};
+use gitp_core::{BlameLine, CommitDetail, CommitRow, FileCommit, FileDiff, LogSearch, Refs, Repo};
 use serde::Serialize;
 use tauri::State;
 
@@ -64,33 +64,44 @@ fn log_index_of_impl(
     Ok(log.iter().position(|row| row.id == id))
 }
 
-/// Commits whose summary, author, or id contain `query` (case-insensitive) —
-/// GitKraken-style commit search over the full loaded graph. An empty query
-/// returns nothing (the frontend shows the normal paged log instead).
+/// Commits matching a search query — GitKraken-style commit search over the
+/// full loaded graph, in log order. Bare words match the message, author or
+/// id; `author:`, `path:`, `content:`, `after:` and `before:` narrow it (see
+/// `gitp_core::LogSearch`). A blank query returns nothing (the frontend shows
+/// the normal paged log instead).
 fn search_log_impl(
     state: &RepoState,
     query: String,
     all_branches: bool,
 ) -> Result<Vec<CommitRow>, String> {
-    let q = query.trim().to_lowercase();
-    if q.is_empty() {
+    let mut search = LogSearch::parse(&query);
+    if search.is_empty() {
         return Ok(Vec::new());
     }
+    let path = {
+        let guard = state.0.lock().map_err(to_message)?;
+        let idx = guard.active.ok_or("no repository is open")?;
+        guard.sessions[idx].path.clone()
+    };
+    // `path:` and `content:` run `git log` over the whole history — seconds on
+    // a big repo — so, like a fetch, they run without the workspace lock on a
+    // handle of their own (see `with_repo_networked`).
+    if search.needs_git() {
+        let repo = Repo::open(&path).map_err(to_message)?;
+        repo.run_log_search_filters(&mut search, all_branches)
+            .map_err(to_message)?;
+    }
+    // Re-found by path: the user may have switched or closed tabs meanwhile.
     let mut guard = state.0.lock().map_err(to_message)?;
-    let idx = guard.active.ok_or("no repository is open")?;
-    let session = &mut guard.sessions[idx];
-    let log = ensure_log(session, all_branches)?;
-    Ok(log.iter().filter(|r| row_matches(r, &q)).cloned().collect())
-}
-
-/// Whether a commit matches a lowercased search query, across message subject,
-/// author name/email, and full or short id.
-fn row_matches(r: &CommitRow, q: &str) -> bool {
-    r.summary.to_lowercase().contains(q)
-        || r.author_name.to_lowercase().contains(q)
-        || r.author_email.to_lowercase().contains(q)
-        || r.id.contains(q)
-        || r.short_id.contains(q)
+    let Some(session) = guard.sessions.iter_mut().find(|s| s.path == path) else {
+        return Ok(Vec::new());
+    };
+    ensure_log(session, all_branches)?;
+    let cache = session.log.as_mut().expect("ensure_log fills the cache");
+    session
+        .repo
+        .search_log(cache, &mut search)
+        .map_err(to_message)
 }
 
 pub(crate) fn get_commit_detail_impl(
@@ -221,7 +232,7 @@ pub(crate) fn get_file_history(
 
 #[cfg(test)]
 mod tests {
-    use super::{get_log_page_impl, history_fingerprint_impl, log_index_of_impl};
+    use super::{get_log_page_impl, history_fingerprint_impl, log_index_of_impl, search_log_impl};
     use crate::staging::commit_changes_impl;
     use crate::state::RepoState;
     use crate::test_support::{git, make_repo};
@@ -390,5 +401,32 @@ mod tests {
         );
         // A rev that doesn't resolve at all is a genuine error.
         assert!(log_index_of_impl(&state, "no-such-ref".into(), true).is_err());
+    }
+
+    // The git-backed terms run outside the workspace lock and are then applied
+    // to the session's cached log: both halves have to meet up.
+    #[test]
+    fn search_combines_git_backed_terms_with_the_cached_log() {
+        let dir = tempfile::tempdir().unwrap();
+        // Not "c1": hex-looking words also match commit ids.
+        make_repo(dir.path(), &["zero", "one", "two"]); // f.txt reads "line <i>"
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
+
+        let summaries = |query: &str| -> Vec<String> {
+            search_log_impl(&state, query.into(), true)
+                .expect("search")
+                .into_iter()
+                .map(|r| r.summary)
+                .collect()
+        };
+        // "one" adds "line 1" and "two" removes it.
+        assert_eq!(summaries(r#"content:"line 1""#), ["two", "one"]);
+        assert_eq!(summaries(r#"content:"line 1" one"#), ["one"]);
+        assert_eq!(summaries("path:f.txt author:tester").len(), 3);
+        assert!(
+            summaries("author:").is_empty(),
+            "a bare key searches nothing"
+        );
     }
 }

@@ -122,8 +122,6 @@ export async function fetchLogPage(
   return invoke<LogPage>("get_log_page", { offset, limit, allBranches });
 }
 
-// Commits whose message, author, or id contain `query` (case-insensitive) —
-// GitKraken-style commit search over the full loaded graph.
 // Where `rev` sits in the full log, or null when it isn't in it. The frontend
 // only holds the pages it has scrolled through, so this is how a sidebar click
 // finds out how far down a tag or an older branch actually is.
@@ -132,20 +130,40 @@ export async function logIndexOf(rev: string, allBranches: boolean): Promise<num
   return invoke<number | null>("log_index_of", { rev, allBranches });
 }
 
+// Commits matching a search query, in log order — GitKraken-style commit search
+// over the full loaded graph. Words match the message, author or id; author:,
+// path:, content: (-S:), after: and before: narrow it (see LogSearch in gitp-core).
 export async function searchLog(query: string, allBranches: boolean): Promise<CommitRow[]> {
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
-  if (!isTauri()) {
-    return MOCK_LOG.filter(
-      (r) =>
-        r.summary.toLowerCase().includes(q) ||
-        r.author_name.toLowerCase().includes(q) ||
-        r.author_email.toLowerCase().includes(q) ||
-        r.id.includes(q) ||
-        r.short_id.includes(q),
-    );
-  }
+  if (!query.trim()) return [];
+  if (!isTauri()) return mockSearch(query);
   return invoke<CommitRow[]>("search_log", { query, allBranches });
+}
+
+// Preview-mode stand-in for LogSearch: bare words (ANDed), author:, after: and
+// before:. The mock log has no files, so path: and content: match everything.
+function mockSearch(query: string): CommitRow[] {
+  const terms = (query.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []).map((t) => t.replace(/"/g, ""));
+  const day = (v: string) => Date.parse(`${v}T00:00:00Z`) / 1000;
+  return MOCK_LOG.filter((r) =>
+    terms.every((term) => {
+      const [, key = "", value = term] = /^(author|path|content|-S|after|before):(.*)$/i.exec(term) ?? [];
+      const v = value.toLowerCase();
+      switch (key.toLowerCase()) {
+        case "author":
+          return r.author_name.toLowerCase().includes(v) || r.author_email.toLowerCase().includes(v);
+        case "after":
+          return r.time >= day(value);
+        case "before":
+          return r.time < day(value);
+        case "path":
+        case "content":
+        case "-s":
+          return true;
+        default:
+          return r.summary.toLowerCase().includes(v) || r.author_name.toLowerCase().includes(v) || r.author_email.toLowerCase().includes(v) || r.id.startsWith(v);
+      }
+    }),
+  );
 }
 
 export async function fetchCommitDetail(rev: string): Promise<CommitDetail> {

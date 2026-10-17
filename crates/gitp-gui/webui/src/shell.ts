@@ -291,34 +291,68 @@ function logSearchQuery(): string {
   return input ? input.value.trim() : "";
 }
 
+// Bumped by every updateLogView, so a search that resolves late — `path:` and
+// `content:` run git over the whole history, which can take seconds — can tell
+// a newer search (or a return to the plain log) has replaced it, and drop out.
+let logViewSeq = 0;
+// Whether the status line is showing a "Searching commits…" spinner that the
+// search it belongs to hasn't replaced yet.
+let searchStatusShown = false;
+
+// The "N commits" next to the search box; blank when no search is showing.
+function showSearchCount(count: number | null): void {
+  const slot = document.querySelector("#log-search-count");
+  if (slot) slot.textContent = count === null ? "" : `${count} commit${count === 1 ? "" : "s"}`;
+}
+
 // Render the log pane: the paged history normally, or live search results when
 // the search box has text — GitKraken-style commit search over the full graph
-// (matches message, author, or SHA).
+// (message, author or SHA, narrowed by author: / path: / content: / after: /
+// before: terms; see LogSearch in gitp-core).
 export async function updateLogView(): Promise<void> {
+  const seq = ++logViewSeq;
   const pane = $("#log-pane");
   const query = logSearchQuery();
   if (!query) {
+    showSearchCount(null);
+    if (searchStatusShown) setStatus("Search cleared.");
+    searchStatusShown = false;
     ui.logView = renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
     // An empty log (e.g. right after an abort that left an odd state) should read
     // as such rather than as a blank pane.
     if (!state.rows.length) pane.append(el("div", { class: "detail-empty", text: "No commits to show." }));
     return;
   }
+  // Only a search that's still going after a moment says so — a status flash
+  // on every keystroke of a quick message search would be noise.
+  const slow = window.setTimeout(() => {
+    if (seq !== logViewSeq) return;
+    setStatus("Searching commits…");
+    searchStatusShown = true;
+  }, 300);
   let results: CommitRow[];
   try {
     results = await searchLog(query, state.allBranches);
   } catch (err) {
-    readFailed("Search failed", err);
+    if (seq === logViewSeq) {
+      searchStatusShown = false;
+      readFailed("Search failed", err);
+    }
     return;
+  } finally {
+    window.clearTimeout(slow);
   }
-  // Drop a stale result if the query changed while the search was in flight.
-  if (logSearchQuery() !== query) return;
+  // Superseded by a newer search, or the box changed and one is on its way.
+  if (seq !== logViewSeq || logSearchQuery() !== query) return;
   await ensureAvatars(results.map((r) => r.author_email));
+  if (seq !== logViewSeq) return;
   // No onNeedMore: search returns the complete match set, not a page.
   ui.logView = renderLog(pane, results, state.selectedId, selectCommit, undefined, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
   if (!results.length) {
     pane.append(el("div", { class: "detail-empty", text: `No commits match “${query}”.` }));
   }
+  showSearchCount(results.length);
+  searchStatusShown = false;
   setStatus(`${results.length} commit${results.length === 1 ? "" : "s"} match “${query}”.`);
 }
 
