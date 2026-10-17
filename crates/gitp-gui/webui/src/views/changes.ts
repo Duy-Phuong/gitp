@@ -93,6 +93,9 @@ export interface ChangesHandle {
   // `git status` again ourselves — the single most expensive read on a large
   // repo, so it should happen once per refresh, not once per view.
   applyStatus: (status: StatusLists) => void;
+  // Re-read the selected file's diff even though its status hasn't changed —
+  // it may have been edited outside gitp — and repaint only if it differs.
+  recheckDiff: () => Promise<void>;
   // Pre-fill the commit subject/body — e.g. a merge/cherry-pick/revert's
   // pending message, so it's ready to commit here without retyping it. A
   // no-op once the user has typed anything, so it never clobbers real input.
@@ -232,6 +235,27 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     if (diffHost) renderDiffInto(diffHost);
   }
 
+  async function recheckDiff(): Promise<void> {
+    const sel = selected;
+    // Nothing shown, a load already in flight (it's fresh), or an operation
+    // that reloads on its own when it's done.
+    if (!sel || !diffLoaded || !selectedDiff || busy) return;
+    if (sel.panel === "staged" && amendOnly(sel.path)) return;
+    const token = ++diffToken;
+    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", selectedDiffContext);
+    if (token !== diffToken) return; // selection moved on; drop this result
+    // Unchanged: keep the very same object, so the line selection survives and
+    // nothing is repainted.
+    if (sameDiff(file, selectedDiff)) return;
+    // A new diff object: renderDiffInto starts the line selection over, as for
+    // any other newly loaded diff.
+    selectedDiff = file;
+    if (!diffHost) return;
+    const scroll = captureScroll();
+    renderDiffInto(diffHost);
+    restoreScroll(scroll);
+  }
+
   function sameSummary(a: FileDiff, b: FileDiff | null): boolean {
     return b !== null && a.path === b.path && a.old_path === b.old_path && a.status === b.status;
   }
@@ -308,13 +332,29 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     if (snap.start !== null && snap.end !== null) next.setSelectionRange(snap.start, snap.end);
   }
 
+  // The scrollable parts of the view: both file trees and the diff.
+  const SCROLLERS = ".stage-tree, .staging-diff-body";
+
+  function captureScroll(): [number, number][] {
+    return [...host.querySelectorAll<HTMLElement>(SCROLLERS)].map((e) => [e.scrollTop, e.scrollLeft]);
+  }
+
+  function restoreScroll(saved: [number, number][]): void {
+    host.querySelectorAll<HTMLElement>(SCROLLERS).forEach((e, i) => {
+      if (saved[i]) [e.scrollTop, e.scrollLeft] = saved[i];
+    });
+  }
+
   function render(): void {
     // render() rebuilds everything, including the commit box, and it runs on any
     // refresh — a background fetch, an external change picked up on window
     // focus, a file being staged. Without this, a refresh landing while someone
     // is writing a commit message drops them out of the field mid-word and
-    // sends the caret back to the start.
+    // sends the caret back to the start. The same goes for where the trees and
+    // the diff were scrolled to: with the filesystem watcher, a refresh lands
+    // on every save in an editor.
     const focus = captureFocus();
+    const scroll = captureScroll();
     clear(host);
     const wrap = el("div", { class: "staging" });
     const left = el("div", { class: "staging-left" });
@@ -328,6 +368,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     wrap.append(left, diffHost);
     host.append(wrap);
     restoreFocus(focus);
+    restoreScroll(scroll);
   }
 
   // Selecting a file updates only the highlight + diff — it must NOT rebuild the
@@ -1015,7 +1056,32 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   }
 
   render();
-  return { reload, isBusy: () => busy, applyStatus, prefillMessage, clearPrefill, reset };
+  return { reload, isBusy: () => busy, applyStatus, recheckDiff, prefillMessage, clearPrefill, reset };
+}
+
+// Whether two fetched diffs show exactly the same thing: same file, same
+// hunks, same lines with the same numbers.
+export function sameDiff(a: FileDiff | null, b: FileDiff | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.path !== b.path || a.old_path !== b.old_path || a.status !== b.status) return false;
+  if (a.hunks.length !== b.hunks.length) return false;
+  return a.hunks.every((h, i) => {
+    const o = b.hunks[i];
+    return (
+      h.header === o.header &&
+      h.lines.length === o.lines.length &&
+      h.lines.every((l, j) => {
+        const m = o.lines[j];
+        return (
+          l.origin === m.origin &&
+          l.old_lineno === m.old_lineno &&
+          l.new_lineno === m.new_lineno &&
+          l.content === m.content
+        );
+      })
+    );
+  });
 }
 
 // Whether a file row can be staged/unstaged/discarded from Local Changes. An

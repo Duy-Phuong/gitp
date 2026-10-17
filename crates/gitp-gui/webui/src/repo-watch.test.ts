@@ -8,13 +8,13 @@ describe("watchRefresh", () => {
     expect(watchRefresh({ path: "/a", kinds: ["refs"] }, "")).toBeNull();
   });
 
-  it("skips the history probe for working-tree and index changes", () => {
-    expect(watchRefresh({ path: "/a", kinds: ["worktree"] }, "/a")).toEqual({ history: false });
-    expect(watchRefresh({ path: "/a", kinds: ["worktree", "index"] }, "/a")).toEqual({ history: false });
+  it("rechecks the open diff, but not history, for working-tree and index changes", () => {
+    expect(watchRefresh({ path: "/a", kinds: ["worktree"] }, "/a")).toEqual({ history: false, diff: true });
+    expect(watchRefresh({ path: "/a", kinds: ["index"] }, "/a")).toEqual({ history: false, diff: true });
   });
 
   it("refreshes history when refs or HEAD moved", () => {
-    expect(watchRefresh({ path: "/a", kinds: ["index", "refs"] }, "/a")).toEqual({ history: true });
-    expect(watchRefresh({ path: "/a", kinds: ["head"] }, "/a")).toEqual({ history: true });
+    expect(watchRefresh({ path: "/a", kinds: ["index", "refs"] }, "/a")).toEqual({ history: true, diff: true });
+    expect(watchRefresh({ path: "/a", kinds: ["head"] }, "/a")).toEqual({ history: true, diff: false });
   });
 });

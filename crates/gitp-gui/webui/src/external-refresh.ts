@@ -38,8 +38,10 @@ let lastDiskRefreshAt = 0;
 // Re-read refs, staging lists and history from disk. `force` skips the
 // interaction throttle — window focus and watcher events are deliberate and
 // infrequent, so they shouldn't be swallowed by a click a moment earlier.
-// `history: false` skips the history probe when only files changed.
-function refreshFromDisk(force: boolean, history = true): void {
+// `history: false` skips the history probe when only files changed; `diff`
+// re-reads the file open in Local Changes, whose status entry (and so the
+// staging lists) can stay the same while its content changes.
+function refreshFromDisk(force: boolean, history = true, diff = true): void {
   if (!state.repoPath) return;
   // An operation in flight refreshes on its own when it finishes.
   if (operationInFlight()) return;
@@ -48,6 +50,7 @@ function refreshFromDisk(force: boolean, history = true): void {
   lastDiskRefreshAt = now;
   void (async () => {
     await loadSidebar({ abortIfBusy: true });
+    if (diff) void ui.changesView?.recheckDiff();
     // Commits made outside gitp change history too. This is the passive mode:
     // it compares the first page and returns without touching anything when
     // history is unchanged, which is the common case.
@@ -85,6 +88,6 @@ export function setupExternalChangeRefresh(): void {
 
   void onRepoChanged((ev) => {
     const plan = watchRefresh(ev, state.repoPath);
-    if (plan) refreshFromDisk(true, plan.history);
+    if (plan) refreshFromDisk(true, plan.history, plan.diff);
   });
 }

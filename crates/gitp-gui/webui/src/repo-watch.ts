@@ -7,11 +7,17 @@ export interface WatchRefresh {
   // Whether the log can have changed. An edit or a `git add` touches only the
   // working tree and the index; only refs or HEAD moving changes history.
   history: boolean;
+  // Whether the open diff in Local Changes can have changed: a file was edited
+  // or (un)staged. Its status entry can stay the same while its content moves.
+  diff: boolean;
 }
 
 // null when there's nothing to do: no repo is open, or the event is for a tab
 // that isn't active — that one refreshes when it's activated, as before.
 export function watchRefresh(ev: RepoChanged, activePath: string): WatchRefresh | null {
   if (!activePath || ev.path !== activePath) return null;
-  return { history: ev.kinds.includes("refs") || ev.kinds.includes("head") };
+  return {
+    history: ev.kinds.includes("refs") || ev.kinds.includes("head"),
+    diff: ev.kinds.includes("worktree") || ev.kinds.includes("index"),
+  };
 }

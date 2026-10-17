@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isActionable, movedBetweenPanels } from "./changes";
+import { isActionable, movedBetweenPanels, sameDiff } from "./changes";
 import type { ChangeKind, FileDiff, StatusLists } from "../types";
 
 // A status-list entry; the optimistic move only ever looks at path and status.
@@ -103,5 +103,39 @@ describe("isActionable", () => {
 
   it("treats a path with no status (not a changed file) as not actionable", () => {
     expect(isActionable(undefined)).toBe(false);
+  });
+});
+
+describe("sameDiff", () => {
+  const diff = (content: string, newLine = 1): FileDiff => ({
+    path: "a.txt",
+    old_path: null,
+    status: "Modified",
+    hunks: [
+      {
+        header: "@@ -1 +1 @@",
+        lines: [
+          { origin: "-", old_lineno: 1, new_lineno: null, content: "old" },
+          { origin: "+", old_lineno: null, new_lineno: newLine, content },
+        ],
+      },
+    ],
+  });
+
+  it("treats a re-fetched identical diff as the same", () => {
+    expect(sameDiff(diff("new"), diff("new"))).toBe(true);
+    expect(sameDiff(null, null)).toBe(true);
+  });
+
+  it("notices a changed line, a moved line and a missing diff", () => {
+    expect(sameDiff(diff("new"), diff("newer"))).toBe(false);
+    expect(sameDiff(diff("new"), diff("new", 2))).toBe(false);
+    expect(sameDiff(diff("new"), null)).toBe(false);
+  });
+
+  it("notices an added hunk", () => {
+    const more = diff("new");
+    more.hunks.push({ header: "@@ -9 +9 @@", lines: [] });
+    expect(sameDiff(diff("new"), more)).toBe(false);
   });
 });
