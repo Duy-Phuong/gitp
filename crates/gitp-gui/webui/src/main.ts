@@ -95,6 +95,7 @@ import {
   unstage,
   unstageAll,
   unstageHunk,
+  onPendingChange,
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el } from "./dom";
@@ -400,7 +401,59 @@ function setStatus(message: string): void {
   if (busy) slot.append(el("span", { class: "status-spinner", "aria-hidden": "true" }));
   slot.append(el("span", { class: "status-text", text: message }));
   $("#statusbar").classList.toggle("busy", busy);
+  trackStatusElapsed(busy ? slot : null);
 }
+
+// Once a busy status has been up for a couple of seconds, append how long
+// ("Pushing… 7s"). A pull over a slow link can sit for half a minute; without
+// a moving number there's no way to tell "still working" from "hung".
+let statusElapsedTimer: number | null = null;
+function trackStatusElapsed(slot: HTMLElement | null): void {
+  if (statusElapsedTimer !== null) {
+    window.clearInterval(statusElapsedTimer);
+    statusElapsedTimer = null;
+  }
+  if (!slot) return;
+  const started = Date.now();
+  const suffix = el("span", { class: "status-elapsed" });
+  statusElapsedTimer = window.setInterval(() => {
+    const secs = Math.round((Date.now() - started) / 1000);
+    if (secs < 2) return;
+    if (!suffix.isConnected) slot.append(suffix);
+    suffix.textContent = ` ${secs}s`;
+  }, 1000);
+}
+
+// --- Global progress bar ---------------------------------------------------
+// Driven by the API layer's in-flight count (see onPendingChange in api.ts):
+// the bar appears once any backend call has run for 300 ms and hides when the
+// last one returns. Button spinners and status messages cover the actions that
+// set them; this covers everything — view loads, diffs, snapshots, dialogs'
+// data — without each call site opting in.
+const PROGRESS_DELAY_MS = 300;
+function watchPending(): void {
+  const bar = $("#global-progress");
+  let showTimer: number | null = null;
+  onPendingChange((count) => {
+    if (count > 0) {
+      if (showTimer === null && !bar.classList.contains("active")) {
+        showTimer = window.setTimeout(() => {
+          showTimer = null;
+          bar.classList.add("active");
+          bar.setAttribute("aria-hidden", "false");
+        }, PROGRESS_DELAY_MS);
+      }
+    } else {
+      if (showTimer !== null) {
+        window.clearTimeout(showTimer);
+        showTimer = null;
+      }
+      bar.classList.remove("active");
+      bar.setAttribute("aria-hidden", "true");
+    }
+  });
+}
+watchPending();
 
 // --- Fetch freshness -------------------------------------------------------
 //
@@ -768,11 +821,18 @@ async function refreshHistory(opts: { keepSelection?: boolean } = {}): Promise<v
   // over IPC and parsed — and then discarding it in historyUnchanged below.
   // Ask the backend for the same fingerprint it uses on its own log cache
   // instead: a few bytes, and it settles the question.
-  const fingerprint = `${state.repoPath}:${await historyFingerprint()}`;
+  const repoPath = state.repoPath;
+  const fingerprint = `${repoPath}:${await historyFingerprint()}`;
+  if (repoPath !== state.repoPath) return; // the tab changed under us; its own refresh takes over
   if (opts.keepSelection && fingerprint === lastHistoryFingerprint && state.rows.length) return;
   lastHistoryFingerprint = fingerprint;
 
+  // Nothing loaded for this repo yet (first open, or a tab whose log was never
+  // fetched): show row-shaped placeholders rather than a blank pane while the
+  // first page comes in.
+  if (!state.rows.length || rowsRepoPath !== repoPath) renderLogSkeleton($("#log-pane"));
   const page = await fetchLogPage(0, PAGE_SIZE, state.allBranches);
+  if (repoPath !== state.repoPath) return;
   // A passive refresh that found history unchanged: keep the rows we already
   // have — including every page loaded by scrolling — and skip the re-render.
   // `state.rows` keeps its identity, so the log's graph-layout cache stays
@@ -797,6 +857,18 @@ async function refreshHistory(opts: { keepSelection?: boolean } = {}): Promise<v
     shownDetailId = null;
     detailView?.showEmpty();
   }
+}
+
+function renderLogSkeleton(pane: HTMLElement): void {
+  clear(pane);
+  const box = el("div", { class: "log-skeleton", "aria-hidden": "true" });
+  const widths = [62, 48, 71, 55, 66, 44, 58, 69, 51, 63, 47, 60];
+  for (const w of widths) {
+    const bar = el("div", { class: "log-skeleton-bar" });
+    bar.style.width = `${w}%`;
+    box.append(el("div", { class: "log-skeleton-row" }, [el("div", { class: "log-skeleton-dot" }), bar]));
+  }
+  pane.append(box);
 }
 
 // Whether the freshly fetched first page matches what we already have loaded —
@@ -1023,6 +1095,9 @@ async function refreshDotfiles(): Promise<void> {
       await writeDotfile(kind, content);
       setStatus(`Saved ${DOTFILE_DISPLAY_PATH[kind]}.`);
     },
+    reportDone,
+    reportError: opFailed,
+    reload: refreshDotfiles,
   });
 }
 

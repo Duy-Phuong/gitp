@@ -25,6 +25,8 @@ use tauri::State;
 
 use terminal::TerminalState;
 
+mod template;
+
 /// An open repository plus its lazily-computed, cached reads. The log is
 /// computed once (the expensive walk) so pages can be served cheaply and with
 /// globally-consistent graph lanes; `refs` is cached alongside it.
@@ -2243,6 +2245,30 @@ fn conflict_status(state: State<RepoState>) -> Result<ConflictStatus, String> {
     conflict_status_impl(&state)
 }
 
+// --- Config templates (export / apply ~/.gitconfig + ~/.tigrc) --------------
+// The frontend picks the file with the native save/open dialog (same
+// plugin-dialog route as "Browse…"), and only that path crosses IPC; the home
+// side is always resolved here from $HOME, so the webview can't point apply
+// at an arbitrary directory. Logic lives in `template.rs` on an explicit home
+// path so it's testable against a tempdir.
+
+fn home_dir() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+    Ok(std::path::PathBuf::from(home))
+}
+
+/// Write a version-1 template of the current dotfiles to `dest`.
+#[tauri::command(async)]
+fn export_config_template(dest: String) -> Result<(), String> {
+    template::export_to_file(&home_dir()?, Path::new(&dest), std::time::SystemTime::now())
+}
+
+/// Apply the template at `src` to $HOME, backing up whatever it overwrites.
+#[tauri::command(async)]
+fn apply_config_template(src: String) -> Result<template::ApplyTemplateResult, String> {
+    template::apply_from_file(&home_dir()?, Path::new(&src), std::time::SystemTime::now())
+}
+
 #[tauri::command(async)]
 fn conflict_sides(path: String, state: State<RepoState>) -> Result<ConflictSides, String> {
     conflict_sides_impl(&state, path)
@@ -2432,6 +2458,8 @@ pub fn run() {
             open_in_editor,
             read_dotfile,
             write_dotfile,
+            export_config_template,
+            apply_config_template,
             conflict_status,
             conflict_sides,
             resolve_conflict,

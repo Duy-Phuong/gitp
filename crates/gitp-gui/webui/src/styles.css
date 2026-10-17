@@ -3240,3 +3240,114 @@ textarea:focus-visible,
 .status-fetched.hidden {
   display: none;
 }
+
+/* Conflict resolver: a gutter arrow for a side already accepted into Result,
+   and the read-only surviving text of a delete/modify conflict. */
+.merge-arrow:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.merge-arrow:disabled:hover {
+  background: transparent;
+  color: var(--text-dim);
+}
+.conflict-deleted-text {
+  margin: 0;
+  padding: 8px 16px;
+  overflow: auto;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+/* Global progress bar -------------------------------------------------------
+   A thin indeterminate bar along the top edge, shown whenever a backend call
+   has been running for more than ~300 ms (see watchPending in main.ts). Short
+   calls never show it — flashing a bar for a 40 ms status read would be noise;
+   anything slow enough to make the user wonder gets visible feedback. */
+.global-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  transition: opacity 0.2s ease;
+}
+.global-progress.active {
+  opacity: 1;
+}
+.global-progress::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -40%;
+  width: 40%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: global-progress-slide 1.2s ease-in-out infinite;
+}
+@keyframes global-progress-slide {
+  0% {
+    left: -40%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .global-progress::before {
+    animation-duration: 2.4s;
+  }
+}
+
+/* Status-bar elapsed time: "Pushing… 4s" once an action runs past 2 s, so a
+   stalled network op is visibly still being waited on rather than hung. */
+.status-elapsed {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Loading skeleton for the history pane: grey bars shaped like commit rows,
+   shown on the first load of a repository (and after switching to a tab whose
+   log isn't loaded yet) instead of a blank pane. */
+.log-skeleton {
+  padding: 6px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.log-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 22px;
+}
+.log-skeleton-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--border);
+}
+.log-skeleton-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(90deg, var(--border) 25%, var(--bg-elev) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

@@ -1,0 +1,11 @@
+/* Dotfiles panel: the Export / Apply template bar above the two editors. */
+.dotfile-template-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.dotfile-template-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+}

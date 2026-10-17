@@ -32,9 +32,35 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+// --- In-flight tracking -----------------------------------------------------
+// Every backend call passes through `invoke`, so counting them here gives the
+// UI one place to learn "something is still running" — the global progress bar
+// and the elapsed-time suffix in the status bar hang off this, instead of each
+// of the ~100 call sites remembering to show its own feedback.
+let inFlight = 0;
+const pendingListeners = new Set<(count: number) => void>();
+
+/// Subscribe to changes in the number of backend calls in flight. The callback
+/// runs immediately with the current count, then on every change.
+export function onPendingChange(cb: (count: number) => void): () => void {
+  pendingListeners.add(cb);
+  cb(inFlight);
+  return () => pendingListeners.delete(cb);
+}
+
+function setInFlight(delta: number): void {
+  inFlight = Math.max(0, inFlight + delta);
+  for (const cb of pendingListeners) cb(inFlight);
+}
+
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<T>(cmd, args);
+  setInFlight(1);
+  try {
+    return await invoke<T>(cmd, args);
+  } finally {
+    setInFlight(-1);
+  }
 }
 
 // Repo tabs: open/list/activate/close all return the full workspace so the
