@@ -3351,3 +3351,35 @@ textarea:focus-visible,
     background-position: -200% 0;
   }
 }
+
+/* Line selection in the Local Changes diff (see attachLineSelection in
+   changes.ts). A changed line's gutter is its handle (click, shift-click, drag);
+   a selected line gets the accent edge and tint over its add/del colour. */
+.line-selectable .diff-ln,
+.line-selectable .diff-origin,
+.line-selectable .split-ln {
+  cursor: pointer;
+}
+.diff-line.line-selected,
+.split-cell.line-selected {
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 100px var(--accent-soft);
+}
+/* The action bar under the diff while lines are selected. */
+.line-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev);
+  user-select: none;
+}
+.line-actions.hidden {
+  display: none;
+}
+.line-actions-count {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+}

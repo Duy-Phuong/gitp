@@ -460,7 +460,10 @@ mod tests {
     use crate::commits::reset_impl;
     use crate::history::get_log_page_impl;
     use crate::rebase::interactive_rebase_impl;
-    use crate::staging::{commit_changes_impl, discard_files_impl, stage_all_impl, stage_impl};
+    use crate::staging::{
+        commit_changes_impl, discard_files_impl, discard_lines_impl, stage_all_impl, stage_impl,
+        stage_lines_impl,
+    };
     use crate::state::RepoState;
     use crate::tags::{create_tag_at_impl, delete_tag_impl};
     use crate::test_support::{branch_names, git, head_branch, make_repo};
@@ -777,6 +780,36 @@ mod tests {
         );
         redo_impl(&state).expect("redo");
         assert_eq!(porcelain(dir.path()), "");
+    }
+
+    #[test]
+    fn staging_and_discarding_selected_lines_are_undoable() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+        std::fs::write(dir.path().join("f.txt"), "line 0\nA\nB\n").unwrap();
+
+        // Block 0 is " line 0", "+A", "+B": stage just "+A".
+        stage_lines_impl(&state, "f.txt".into(), vec![(0, 1)], 3).expect("stage lines");
+        assert_eq!(porcelain(dir.path()), "MM f.txt");
+        assert_eq!(
+            undo_state_impl(&state).unwrap().undo.as_deref(),
+            Some("Stage lines")
+        );
+        undo_impl(&state).expect("undo");
+        assert_eq!(porcelain(dir.path()), "M f.txt", "back to only unstaged");
+
+        discard_lines_impl(&state, "f.txt".into(), vec![(0, 2)], 3).expect("discard lines");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+            "line 0\nA\n"
+        );
+        undo_impl(&state).expect("undo");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+            "line 0\nA\nB\n",
+            "the discarded line is back"
+        );
     }
 
     #[test]

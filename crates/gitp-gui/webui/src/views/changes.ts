@@ -8,6 +8,16 @@ import { autoGrowTextarea, clear, copyToClipboard, el } from "../dom";
 import type { ChangeKind, CommitDetail, FileDiff, StatusLists } from "../types";
 import { type MenuItem, showContextMenu } from "./context-menu";
 import { contextControls, renderFile, renderSplitDiff } from "./detail";
+import {
+  changedLines,
+  dragOver,
+  emptySelection,
+  lineKey,
+  press,
+  release,
+  selectedPairs,
+  type LineKey,
+} from "./line-selection";
 import { renderFileTree } from "./tree";
 
 export type Panel = "unstaged" | "staged";
@@ -28,6 +38,11 @@ export interface ChangesCallbacks {
   stageHunk: (path: string, hunkIndex: number, contextLines: number) => Promise<void>;
   unstageHunk: (path: string, hunkIndex: number, contextLines: number) => Promise<void>;
   discardHunk: (path: string, hunkIndex: number, contextLines: number) => Promise<void>;
+  // Per-line operations on the lines selected in the diff, each named as
+  // [hunkIndex, lineIndex within that hunk] at the same `contextLines`.
+  stageLines: (path: string, lines: [number, number][], contextLines: number) => Promise<void>;
+  unstageLines: (path: string, lines: [number, number][], contextLines: number) => Promise<void>;
+  discardLines: (path: string, lines: [number, number][], contextLines: number) => Promise<void>;
   // File-level operations driven by the file-row right-click menu, each acting
   // on the current checkbox multi-selection (or the right-clicked file).
   discardFiles: (paths: string[]) => Promise<void>;
@@ -127,6 +142,29 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   // Unchanged lines shown around each change (toolbar: fewer / more / full).
   let contextLines = DEFAULT_CONTEXT_LINES;
   let diffHost: HTMLElement | null = null;
+  // Changed lines picked in the diff for Stage / Unstage / Discard lines (see
+  // line-selection.ts), the diff they were picked in, and its selectable lines
+  // in order. A different diff object — another file, another context size, or
+  // the same file re-read after an operation — starts the selection over.
+  let lineSel = emptySelection();
+  let lineSelDiff: FileDiff | null = null;
+  let lineOrder: LineKey[] = [];
+  // Repaints the selection highlight and action bar of the diff on screen.
+  let paintLines: (() => void) | null = null;
+
+  // Esc drops the line selection — unless something layered on top (a dialog,
+  // Quick Launch, a menu) is what the Escape is for.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || lineSel.selected.size === 0) return;
+    if (host.offsetParent === null) return; // Local Changes isn't showing
+    if (document.querySelector(".modal-overlay, .ql-overlay, .commit-menu, .menu:not(.hidden)")) return;
+    clearLineSelection();
+  });
+
+  function clearLineSelection(): void {
+    lineSel = emptySelection();
+    paintLines?.();
+  }
 
   async function reload(): Promise<void> {
     applyStatus(await cb.fetchStatus());
@@ -315,6 +353,12 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
 
   function renderDiffInto(pane: HTMLElement): void {
     clear(pane);
+    paintLines = null;
+    if (selectedDiff !== lineSelDiff) {
+      lineSel = emptySelection();
+      lineSelDiff = selectedDiff;
+      lineOrder = selectedDiff ? changedLines(selectedDiff) : [];
+    }
     if (!selected) {
       pane.append(el("div", { class: "detail-empty", text: "Select a file to view its changes." }));
       return;
@@ -322,12 +366,17 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     const hasDiff = selectedDiff != null && selectedDiff.hunks.length > 0;
     pane.append(diffToolbar(hasDiff));
     const body = el("div", { class: "staging-diff-body" });
+    // The selected-lines action bar, under the diff (not scrolled with it).
+    const bar = el("div", { class: "line-actions hidden" });
     if (hasDiff) {
       body.append(splitView ? renderSplitDiff(selectedDiff!) : renderFile(selectedDiff!));
       attachHunkMenus(body);
       // Amend-only files (shown while amending) aren't in the index — their
       // blocks can't be staged/unstaged, so skip the per-hunk controls.
-      if (!amendOnly(selected.path)) attachHunkControls(body);
+      if (!amendOnly(selected.path)) {
+        attachHunkControls(body);
+        attachLineSelection(body, bar);
+      }
     } else if (!diffLoaded) {
       body.append(el("div", { class: "detail-empty", text: "Loading changes…" }));
     } else {
@@ -337,7 +386,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         el("div", { class: "detail-empty", text: "No text preview — binary or Git LFS file." }),
       );
     }
-    pane.append(body);
+    pane.append(body, bar);
   }
 
   // Unified / Split toggle (when there's a diff to show) plus an always-present
@@ -430,6 +479,139 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         showContextMenu(e.clientX, e.clientY, items);
       });
     }
+  }
+
+  // Line selection in the diff: click a changed line to toggle it, shift-click
+  // for a range, drag down the line-number gutter to sweep several. A click in
+  // the code text only toggles when it didn't select text, so copying part of
+  // a line still works. The action bar under the diff acts on the selection.
+  function attachLineSelection(body: HTMLElement, bar: HTMLElement): void {
+    const sel = selected;
+    if (!sel) return;
+    // Every selectable line's elements (a context row in the split view has two
+    // cells, but changed lines have one), keyed like the selection.
+    const lineEls = new Map<LineKey, HTMLElement[]>();
+    for (const hunkEl of body.querySelectorAll<HTMLElement>(".hunk[data-hunk]")) {
+      for (const lineEl of hunkEl.querySelectorAll<HTMLElement>("[data-line]")) {
+        const key = lineKey(Number(hunkEl.dataset.hunk), Number(lineEl.dataset.line));
+        if (!lineOrder.includes(key)) continue;
+        lineEl.classList.add("line-selectable");
+        lineEls.set(key, [...(lineEls.get(key) ?? []), lineEl]);
+      }
+    }
+    const keyAt = (target: EventTarget | null): LineKey | null => {
+      if (!(target instanceof Element)) return null;
+      const lineEl = target.closest<HTMLElement>(".line-selectable");
+      const hunkEl = lineEl?.closest<HTMLElement>(".hunk[data-hunk]");
+      if (!lineEl || !hunkEl) return null;
+      return lineKey(Number(hunkEl.dataset.hunk), Number(lineEl.dataset.line));
+    };
+
+    paintLines = () => {
+      for (const [key, els] of lineEls) {
+        for (const e of els) e.classList.toggle("line-selected", lineSel.selected.has(key));
+      }
+      renderLineActions(bar, sel);
+    };
+    paintLines();
+
+    let pendingClick: LineKey | null = null;
+    body.addEventListener("mousedown", (e) => {
+      pendingClick = null;
+      if (e.button !== 0) return;
+      const key = keyAt(e.target);
+      if (!key) return;
+      const inGutter = (e.target as Element).closest(".diff-ln, .diff-origin, .split-ln") !== null;
+      if (!inGutter && !e.shiftKey) {
+        pendingClick = key; // decided on click, once we know it wasn't a text drag
+        return;
+      }
+      e.preventDefault(); // no text selection while picking lines
+      lineSel = press(lineSel, lineOrder, key, e.shiftKey);
+      paintLines?.();
+      if (lineSel.drag) {
+        window.addEventListener(
+          "mouseup",
+          () => {
+            lineSel = release(lineSel);
+            paintLines?.();
+          },
+          { once: true },
+        );
+      }
+    });
+    body.addEventListener("mouseover", (e) => {
+      if (!lineSel.drag) return;
+      const key = keyAt(e.target);
+      if (!key) return;
+      lineSel = dragOver(lineSel, lineOrder, key);
+      paintLines?.();
+    });
+    body.addEventListener("click", (e) => {
+      const key = keyAt(e.target);
+      if (!pendingClick || key !== pendingClick) return;
+      pendingClick = null;
+      if (window.getSelection()?.isCollapsed === false) return; // text was selected
+      lineSel = release(press(lineSel, lineOrder, key, false));
+      paintLines?.();
+    });
+  }
+
+  // The bar under the diff while lines are selected: what's picked and what can
+  // be done with it — the same operations as a block's buttons.
+  function renderLineActions(bar: HTMLElement, sel: { panel: Panel; path: string }): void {
+    clear(bar);
+    const n = lineSel.selected.size;
+    bar.classList.toggle("hidden", n === 0);
+    if (n === 0) return;
+    const ctx = selectedDiffContext;
+    const btn = (label: string, danger: boolean, title: string, onClick: () => void) => {
+      const b = el("button", { class: `hunk-btn${danger ? " danger" : ""}`, text: label, title });
+      b.addEventListener("click", onClick);
+      return b;
+    };
+    // Taken now: the selection is cleared as the operation starts (the diff is
+    // re-read after it anyway).
+    const take = () => {
+      const pairs = selectedPairs(lineSel);
+      clearLineSelection();
+      return pairs;
+    };
+    const actions =
+      sel.panel === "unstaged"
+        ? [
+            btn("Stage lines", false, "Stage the selected lines", () => {
+              const pairs = take();
+              void run(() => cb.stageLines(sel.path, pairs, ctx));
+            }),
+            btn("Discard lines…", true, "Discard the selected lines", () => {
+              void discardLinesAction(sel.path, selectedPairs(lineSel), ctx);
+            }),
+          ]
+        : [
+            btn("Unstage lines", false, "Unstage the selected lines", () => {
+              const pairs = take();
+              void run(() => cb.unstageLines(sel.path, pairs, ctx));
+            }),
+          ];
+    bar.append(
+      el("span", { class: "line-actions-count", text: `${n} line${n === 1 ? "" : "s"} selected` }),
+      ...actions,
+      btn("Clear", false, "Clear the selection (Esc)", clearLineSelection),
+    );
+  }
+
+  async function discardLinesAction(path: string, lines: [number, number][], ctx: number): Promise<void> {
+    const n = lines.length;
+    const ok = await cb.confirm(
+      `Discard ${n} selected line${n === 1 ? "" : "s"} of ${path}? This change will be lost.`,
+    );
+    if (!ok) {
+      cb.setStatus("Discard cancelled.");
+      return;
+    }
+    clearLineSelection();
+    await run(() => cb.discardLines(path, lines, ctx));
   }
 
   async function discardHunkAction(path: string, index: number, ctx: number): Promise<void> {

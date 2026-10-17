@@ -597,14 +597,15 @@ export function renderFile(file: FileDiff): HTMLElement {
   file.hunks.forEach((hunk, i) => {
     const h = el("div", { class: "hunk", "data-hunk": i });
     h.append(hunkHeader(hunk));
+    const at = lineIndexes(hunk);
 
     let dels: Line[] = [];
     let adds: Line[] = [];
     const flush = () => {
       const pairs = Math.min(dels.length, adds.length);
       const wds = Array.from({ length: pairs }, (_, k) => wordDiff(dels[k].content, adds[k].content));
-      dels.forEach((d, k) => h.append(unifiedLine(d, "del", k < pairs ? wds[k].left : null)));
-      adds.forEach((a, k) => h.append(unifiedLine(a, "add", k < pairs ? wds[k].right : null)));
+      dels.forEach((d, k) => h.append(unifiedLine(d, at.get(d)!, "del", k < pairs ? wds[k].left : null)));
+      adds.forEach((a, k) => h.append(unifiedLine(a, at.get(a)!, "add", k < pairs ? wds[k].right : null)));
       dels = [];
       adds = [];
     };
@@ -613,7 +614,7 @@ export function renderFile(file: FileDiff): HTMLElement {
       else if (line.origin === "+") adds.push(line);
       else {
         flush();
-        h.append(unifiedLine(line, "ctx", null));
+        h.append(unifiedLine(line, at.get(line)!, "ctx", null));
       }
     }
     flush();
@@ -623,13 +624,20 @@ export function renderFile(file: FileDiff): HTMLElement {
   return container;
 }
 
-function unifiedLine(line: Line, kind: "del" | "add" | "ctx", segs: Seg[] | null): HTMLElement {
+// Each line's index within its hunk, tagged on the rendered line as
+// `data-line` — with the `.hunk`'s `data-hunk`, it names the line the way the
+// backend does (Local Changes' line selection).
+function lineIndexes(hunk: FileDiff["hunks"][number]): Map<Line, number> {
+  return new Map(hunk.lines.map((l, k) => [l, k]));
+}
+
+function unifiedLine(line: Line, index: number, kind: "del" | "add" | "ctx", segs: Seg[] | null): HTMLElement {
   const cls = kind === "add" ? "diff-line add" : kind === "del" ? "diff-line del" : "diff-line";
   // The old/new line numbers and the +/-/space marker are drawn by CSS
   // (`::before { content: attr(...) }`) rather than being text nodes:
   // `user-select: none` still lets them ride along into the selection
   // highlight and the clipboard, generated content cannot.
-  const div = el("div", { class: cls }, [
+  const div = el("div", { class: cls, "data-line": index }, [
     el("span", { class: "diff-ln", "data-ln": lineno(line.old_lineno) }),
     el("span", { class: "diff-ln", "data-ln": lineno(line.new_lineno) }),
     el("span", { class: "diff-origin", "data-origin": line.origin }),
@@ -654,12 +662,13 @@ export function renderSplitDiff(file: FileDiff): HTMLElement {
     const h = el("div", { class: "hunk", "data-hunk": i });
     h.append(hunkHeader(hunk));
     const table = el("div", { class: "split-table" });
+    const at = lineIndexes(hunk);
 
     let dels: FileDiff["hunks"][number]["lines"] = [];
     let adds: FileDiff["hunks"][number]["lines"] = [];
     const flush = () => {
       const n = Math.max(dels.length, adds.length);
-      for (let k = 0; k < n; k++) table.append(splitRow(dels[k] ?? null, adds[k] ?? null));
+      for (let k = 0; k < n; k++) table.append(splitRow(dels[k] ?? null, adds[k] ?? null, at));
       dels = [];
       adds = [];
     };
@@ -668,7 +677,7 @@ export function renderSplitDiff(file: FileDiff): HTMLElement {
       else if (line.origin === "+") adds.push(line);
       else {
         flush();
-        table.append(splitRow(line, line));
+        table.append(splitRow(line, line, at));
       }
     }
     flush();
@@ -707,24 +716,30 @@ function isolateSplitColumnDrag(table: HTMLElement): void {
 
 type Line = FileDiff["hunks"][number]["lines"][number];
 
-function splitRow(left: Line | null, right: Line | null): HTMLElement {
+function splitRow(left: Line | null, right: Line | null, at: Map<Line, number>): HTMLElement {
   // Word-highlight only a genuine deletion/addition pair (not context rows).
   const pair = left && right && left.origin === "-" && right.origin === "+";
   const wd = pair ? wordDiff(left.content, right.content) : null;
   return el("div", { class: "split-row" }, [
-    sideCell(left, "left", wd ? wd.left : null),
-    sideCell(right, "right", wd ? wd.right : null),
+    sideCell(left, "left", wd ? wd.left : null, at),
+    sideCell(right, "right", wd ? wd.right : null, at),
   ]);
 }
 
-function sideCell(line: Line | null, side: "left" | "right", segs: Seg[] | null): HTMLElement {
+function sideCell(
+  line: Line | null,
+  side: "left" | "right",
+  segs: Seg[] | null,
+  at: Map<Line, number>,
+): HTMLElement {
   if (!line) return el("div", { class: "split-cell empty" });
   const changed = side === "left" ? line.origin === "-" : line.origin === "+";
   const no = side === "left" ? line.old_lineno : line.new_lineno;
   const code = el("span", { class: "split-code" });
   if (segs) appendSegs(code, segs, side === "left" ? "word-del" : "word-add");
   else code.append(document.createTextNode(line.content));
-  return el("div", { class: `split-cell${changed ? (side === "left" ? " del" : " add") : ""}` }, [
+  const cls = `split-cell${changed ? (side === "left" ? " del" : " add") : ""}`;
+  return el("div", { class: cls, "data-line": at.get(line)! }, [
     // Line number as CSS generated content — see the note in `unifiedLine`.
     el("span", { class: "split-ln", "data-ln": no != null ? String(no) : "" }),
     code,

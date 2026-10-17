@@ -4,6 +4,7 @@ import {
   commitChanges,
   confirmDialog,
   discardHunk,
+  discardLines,
   fetchBlame,
   fetchCommitDetail,
   fetchCommitFileDiff,
@@ -16,6 +17,7 @@ import {
   stage,
   stageAll,
   stageHunk,
+  stageLines,
   conflictStatus,
   conflictSides,
   resolveConflict,
@@ -31,6 +33,7 @@ import {
   unstage,
   unstageAll,
   unstageHunk,
+  unstageLines,
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
@@ -213,6 +216,9 @@ async function init(): Promise<void> {
     stageHunk,
     unstageHunk,
     discardHunk,
+    stageLines,
+    unstageLines,
+    discardLines,
     discardFiles,
     stashFiles,
     saveFilesPatch,

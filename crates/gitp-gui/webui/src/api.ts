@@ -285,6 +285,31 @@ export async function discardHunk(path: string, hunkIndex: number, contextLines:
   await invoke<void>("discard_hunk", { path, hunkIndex, contextLines });
 }
 
+// Per-line staging: act on just the selected changed lines, each named as
+// [hunkIndex, lineIndex within that hunk] at the diff's `contextLines`. In
+// preview mode, approximate by moving the selected lines out of the mock file
+// (dropping the file when no change is left in it).
+export async function stageLines(path: string, lines: [number, number][], contextLines: number): Promise<void> {
+  if (!isTauri()) {
+    mockRecord("Stage lines");
+    return mockTakeLines(MOCK_STATUS.unstaged, MOCK_STATUS.staged, path, lines);
+  }
+  await invoke<void>("stage_lines", { path, lines, contextLines });
+}
+
+export async function unstageLines(path: string, lines: [number, number][], contextLines: number): Promise<void> {
+  if (!isTauri()) {
+    mockRecord("Unstage lines");
+    return mockTakeLines(MOCK_STATUS.staged, MOCK_STATUS.unstaged, path, lines);
+  }
+  await invoke<void>("unstage_lines", { path, lines, contextLines });
+}
+
+export async function discardLines(path: string, lines: [number, number][], contextLines: number): Promise<void> {
+  if (!isTauri()) return mockTakeLines(MOCK_STATUS.unstaged, null, path, lines);
+  await invoke<void>("discard_lines", { path, lines, contextLines });
+}
+
 export async function stageAll(): Promise<void> {
   if (!isTauri()) {
     MOCK_STATUS.staged.push(...MOCK_STATUS.unstaged.splice(0));
@@ -1165,6 +1190,32 @@ function mockMoveHunk(from: FileDiff[], to: FileDiff[], path: string, hunkIndex:
     to.push(dst);
   }
   dst.hunks.push(hunk);
+  if (src.hunks.length === 0) mockMove(from, [], path);
+}
+
+// Preview-only: take the selected [hunk, line] lines of `path` out of `from`,
+// appending them as a block to the matching file in `to` (none for a discard).
+// A block left with no changed line goes, and the file goes when none are left.
+function mockTakeLines(from: FileDiff[], to: FileDiff[] | null, path: string, lines: [number, number][]): void {
+  const src = from.find((f) => f.path === path);
+  if (!src) return;
+  const picked = new Set(lines.map(([h, l]) => `${h}:${l}`));
+  const taken: FileDiff["hunks"] = [];
+  src.hunks = src.hunks
+    .map((hunk, h) => {
+      const take = hunk.lines.filter((_, l) => picked.has(`${h}:${l}`));
+      if (take.length > 0) taken.push({ header: hunk.header, lines: take });
+      return { ...hunk, lines: hunk.lines.filter((_, l) => !picked.has(`${h}:${l}`)) };
+    })
+    .filter((hunk) => hunk.lines.some((l) => l.origin === "+" || l.origin === "-"));
+  if (to && taken.length > 0) {
+    let dst = to.find((f) => f.path === path);
+    if (!dst) {
+      dst = { path: src.path, old_path: src.old_path, status: src.status, hunks: [] };
+      to.push(dst);
+    }
+    dst.hunks.push(...taken);
+  }
   if (src.hunks.length === 0) mockMove(from, [], path);
 }
 

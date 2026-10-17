@@ -14,6 +14,7 @@ mod file_ops;
 mod filelog;
 mod graph;
 mod hunk;
+mod line_staging;
 mod log;
 mod rebase;
 mod refs;

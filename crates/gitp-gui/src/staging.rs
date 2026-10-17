@@ -1,5 +1,6 @@
-//! Local changes: status and diffs of the working tree, staging (whole files
-//! or single hunks), committing, discarding, and per-file patch / ignore.
+//! Local changes: status and diffs of the working tree, staging (whole files,
+//! single hunks or selected lines), committing, discarding, and per-file
+//! patch / ignore.
 
 use gitp_core::{FileDiff, Repo, StatusLists};
 use tauri::State;
@@ -72,6 +73,44 @@ fn discard_hunk_impl(
     let paths = [path.clone()];
     with_recorded_discard(state, &paths, |repo| {
         repo.discard_hunk(&path, hunk_index, context_lines)
+    })
+}
+
+// The line ops name each selected line as (block index, line index within the
+// block), at the context the diff was shown with — see gitp-core's
+// line_staging.rs.
+pub(crate) fn stage_lines_impl(
+    state: &RepoState,
+    path: String,
+    lines: Vec<(usize, usize)>,
+    context_lines: u32,
+) -> Result<(), String> {
+    with_recorded_index(state, "Stage lines", |repo| {
+        repo.stage_lines(&path, &lines, context_lines)
+    })
+}
+
+pub(crate) fn unstage_lines_impl(
+    state: &RepoState,
+    path: String,
+    lines: Vec<(usize, usize)>,
+    context_lines: u32,
+) -> Result<(), String> {
+    with_recorded_index(state, "Unstage lines", |repo| {
+        repo.unstage_lines(&path, &lines, context_lines)
+    })
+}
+
+pub(crate) fn discard_lines_impl(
+    state: &RepoState,
+    path: String,
+    lines: Vec<(usize, usize)>,
+    context_lines: u32,
+) -> Result<(), String> {
+    // Snapshot the whole file so undo restores the discarded lines exactly.
+    let paths = [path.clone()];
+    with_recorded_discard(state, &paths, |repo| {
+        repo.discard_lines(&path, &lines, context_lines)
     })
 }
 
@@ -185,6 +224,36 @@ pub(crate) fn discard_hunk(
     state: State<RepoState>,
 ) -> Result<(), String> {
     discard_hunk_impl(&state, path, hunk_index, context_lines)
+}
+
+#[tauri::command(async)]
+pub(crate) fn stage_lines(
+    path: String,
+    lines: Vec<(usize, usize)>,
+    context_lines: u32,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    stage_lines_impl(&state, path, lines, context_lines)
+}
+
+#[tauri::command(async)]
+pub(crate) fn unstage_lines(
+    path: String,
+    lines: Vec<(usize, usize)>,
+    context_lines: u32,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    unstage_lines_impl(&state, path, lines, context_lines)
+}
+
+#[tauri::command(async)]
+pub(crate) fn discard_lines(
+    path: String,
+    lines: Vec<(usize, usize)>,
+    context_lines: u32,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    discard_lines_impl(&state, path, lines, context_lines)
 }
 
 #[tauri::command(async)]

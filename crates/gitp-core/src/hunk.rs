@@ -39,7 +39,7 @@ impl Repo {
     /// `git apply <mode> <patch>`. A patch with no context lines needs
     /// `--unidiff-zero`: without context git refuses it, since it can't confirm
     /// the hunk lands where the header says.
-    fn apply_hunk(&self, mode: &[&str], context_lines: u32, patch: &str) -> Result<()> {
+    pub(crate) fn apply_hunk(&self, mode: &[&str], context_lines: u32, patch: &str) -> Result<()> {
         let mut args = vec!["apply", "--whitespace=nowarn"];
         args.extend_from_slice(mode);
         if context_lines == 0 {
@@ -59,22 +59,29 @@ impl Repo {
         context_lines: u32,
     ) -> Result<String> {
         let diff = self.staging_diff(path, staged, context_lines)?;
-        // Pick the delta for `path` by name rather than assuming it's the only
-        // (or first) one, so a lookalike path can never be patched by mistake.
-        let idx = diff
-            .deltas()
-            .position(|d| {
-                let is = |f: git2::DiffFile| f.path().is_some_and(|p| p.to_string_lossy() == path);
-                is(d.new_file()) || is(d.old_file())
-            })
-            .ok_or_else(|| Error::Message(format!("{path} has no changes to apply")))?;
-        let mut patch = git2::Patch::from_diff(&diff, idx)?
-            .ok_or_else(|| Error::Message("file has no textual diff to apply".into()))?;
+        let mut patch = path_patch(&diff, path)?;
         let buf = patch.to_buf()?;
-        let text = std::str::from_utf8(&buf)
-            .map_err(|e| Error::Message(format!("patch is not valid UTF-8: {e}")))?;
-        single_hunk_patch(text, hunk_index)
+        single_hunk_patch(patch_text(&buf)?, hunk_index)
     }
+}
+
+/// The textual patch for `path` within `diff`. The delta is picked by name
+/// rather than assuming it's the only (or first) one, so a lookalike path can
+/// never be patched by mistake.
+pub(crate) fn path_patch<'d>(diff: &'d git2::Diff, path: &str) -> Result<git2::Patch<'d>> {
+    let idx = diff
+        .deltas()
+        .position(|d| {
+            let is = |f: git2::DiffFile| f.path().is_some_and(|p| p.to_string_lossy() == path);
+            is(d.new_file()) || is(d.old_file())
+        })
+        .ok_or_else(|| Error::Message(format!("{path} has no changes to apply")))?;
+    git2::Patch::from_diff(diff, idx)?
+        .ok_or_else(|| Error::Message("file has no textual diff to apply".into()))
+}
+
+pub(crate) fn patch_text(buf: &[u8]) -> Result<&str> {
+    std::str::from_utf8(buf).map_err(|e| Error::Message(format!("patch is not valid UTF-8: {e}")))
 }
 
 /// Split a full-file unified patch into its header and hunks, and return the
