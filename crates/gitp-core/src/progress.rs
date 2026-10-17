@@ -24,11 +24,16 @@ use crate::repo::Repo;
 /// One progress update: the phase git is in ("Receiving objects"), how far
 /// through it is when git knows, and the rest of the line ("(450/1000), 1.2 MiB
 /// | 2.0 MiB/s").
+///
+/// `cancellable` is false for the update that marks the start of a local write
+/// (a pull's merge or rebase, a fast-forward): from then on Cancel is ignored,
+/// and a frontend should stop offering it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Progress {
     pub phase: String,
     pub percent: Option<u8>,
     pub detail: String,
+    pub cancellable: bool,
 }
 
 /// A progress callback (see [`NetworkHooks`]).
@@ -40,8 +45,9 @@ pub type ProgressFn = Box<dyn Fn(&Progress) + Send>;
 #[derive(Default)]
 pub struct NetworkHooks {
     pub on_progress: Option<ProgressFn>,
-    /// Raised by the frontend to cancel: the running `git` is killed and the
-    /// operation returns [`Error::Cancelled`].
+    /// Raised by the frontend to cancel: the running network `git` is stopped
+    /// and the operation returns [`Error::Cancelled`]. Local writes are never
+    /// interrupted — see [`Repo::begin_local_step`].
     pub cancel: Option<Arc<AtomicBool>>,
 }
 
@@ -134,6 +140,27 @@ impl Repo {
         }
     }
 
+    /// Mark the end of an operation's network part and the start of a local
+    /// write (merge, rebase, fast-forward) that must not be interrupted. A
+    /// Cancel that already landed stops the operation here, before anything
+    /// local changes; one that lands later is ignored, since the write runs
+    /// through plain `run_git`, which never looks at the flag. The hooks hear
+    /// about it as a non-cancellable `phase`.
+    pub(crate) fn begin_local_step(&self, phase: &str) -> Result<()> {
+        if self.cancelled() {
+            return Err(Error::Cancelled);
+        }
+        if let Some(cb) = &self.net.on_progress {
+            cb(&Progress {
+                phase: phase.to_string(),
+                percent: None,
+                detail: String::new(),
+                cancellable: false,
+            });
+        }
+        Ok(())
+    }
+
     fn cancelled(&self) -> bool {
         self.net
             .cancel
@@ -142,11 +169,29 @@ impl Repo {
     }
 }
 
-/// Kill a cancelled git and reap it. The reader threads are left to finish on
-/// their own: a helper git spawned (ssh, a remote helper) can hold the pipes
-/// open a little longer, and waiting on them would be the hang Cancel exists to
-/// get out of.
+/// Stop a cancelled git and reap it.
+///
+/// SIGTERM first, not SIGKILL: git removes its lock files (`index.lock`, a
+/// ref's `.lock`) in its handler for catchable signals, so a fetch or push
+/// stopped while updating refs doesn't leave one behind to block the next git
+/// command. SIGKILL is the fallback for a git that doesn't exit promptly.
+///
+/// The reader threads are left to finish on their own: a helper git spawned
+/// (ssh, a remote helper) can hold the pipes open a little longer, and waiting
+/// on them would be the hang Cancel exists to get out of.
 fn kill(mut child: Child) -> Error {
+    #[cfg(unix)]
+    {
+        // SAFETY: plain kill(2) on the pid of a child we haven't reaped yet,
+        // so it can't have been recycled for another process.
+        unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
+        for _ in 0..40 {
+            if let Ok(Some(_)) = child.try_wait() {
+                return Error::Cancelled;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
     let _ = child.kill();
     let _ = child.wait();
     Error::Cancelled
@@ -212,6 +257,7 @@ pub fn parse_progress(line: &str) -> Option<Progress> {
                     phase,
                     percent: Some(percent),
                     detail: after.trim().to_string(),
+                    cancellable: true,
                 });
             }
         }
@@ -230,6 +276,7 @@ pub fn parse_progress(line: &str) -> Option<Progress> {
         phase,
         percent: None,
         detail: rest.to_string(),
+        cancellable: true,
     })
 }
 
@@ -250,6 +297,7 @@ mod tests {
             phase: phase.into(),
             percent,
             detail: detail.into(),
+            cancellable: true,
         })
     }
 

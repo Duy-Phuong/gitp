@@ -79,8 +79,10 @@ export function watchPending(): void {
 // busy status gains the phase and percentage ("Pushing… Writing objects 45%"),
 // the global bar turns determinate, and a Cancel button stops it. Cancel only
 // shows alongside a busy status — a silent background fetch has nothing on
-// screen to cancel.
+// screen to cancel. Nor once the operation reaches a local write (a pull's merge
+// or rebase), which the backend won't interrupt.
 let networkBusy = false;
+let localStep = false;
 
 export function watchNetwork(): void {
   const bar = $("#global-progress");
@@ -88,6 +90,7 @@ export function watchNetwork(): void {
   onNetworkChange((count) => {
     networkBusy = count > 0;
     if (!networkBusy) {
+      localStep = false;
       bar.classList.remove("determinate");
       bar.style.removeProperty("--progress");
     }
@@ -111,8 +114,13 @@ export function cancelNetworkAction(): void {
 
 function showGitProgress(bar: HTMLElement, p: GitProgress): void {
   if (!networkBusy || !$("#statusbar").classList.contains("busy")) return;
-  // Once Cancel is pressed, "Cancelling…" stays until git is gone.
-  if ($<HTMLButtonElement>("#status-cancel").disabled) return;
+  if (!p.cancellable) {
+    localStep = true;
+    syncCancel();
+  } else if ($<HTMLButtonElement>("#status-cancel").disabled) {
+    // Once Cancel is pressed, "Cancelling…" stays until git is gone.
+    return;
+  }
   setStatusProgress(formatGitProgress(p), p.detail);
   bar.classList.toggle("determinate", p.percent !== null);
   if (p.percent !== null) bar.style.setProperty("--progress", `${p.percent}%`);
@@ -134,7 +142,7 @@ function setStatusProgress(text: string, title = ""): void {
 
 function syncCancel(): void {
   const cancel = $<HTMLButtonElement>("#status-cancel");
-  const show = networkBusy && $("#statusbar").classList.contains("busy");
+  const show = networkBusy && !localStep && $("#statusbar").classList.contains("busy");
   if (show && cancel.classList.contains("hidden")) cancel.disabled = false;
   cancel.classList.toggle("hidden", !show);
 }

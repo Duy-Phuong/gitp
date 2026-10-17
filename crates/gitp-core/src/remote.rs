@@ -23,6 +23,14 @@ pub enum PullMode {
     Rebase,
 }
 
+/// How [`Repo::pull`] integrates what it fetched, decided as `git pull` does.
+enum Integrate {
+    FastForwardOnly,
+    Rebase { merges: bool },
+    Merge(Option<&'static str>),
+    Diverged,
+}
+
 impl PullMode {
     fn args(self) -> &'static [&'static str] {
         match self {
@@ -36,8 +44,124 @@ impl PullMode {
 impl Repo {
     /// `git pull` in the working directory, using `mode` to decide how to
     /// reconcile local and remote history. Returns git's combined output.
+    ///
+    /// Run as its two halves rather than one `git pull`, so Cancel can stop
+    /// the network half and never the local one: a pull killed mid-merge or
+    /// mid-rebase leaves a half-updated working tree and a stale `index.lock`.
+    /// The fetch is exactly the one `git pull` runs (`git fetch`, the branch's
+    /// remote, recording the merge candidate in FETCH_HEAD); the integration
+    /// then follows `git pull`'s own rules for the mode and the repo's
+    /// `pull.rebase` / `branch.<name>.rebase` / `pull.ff` config, through the
+    /// same `git merge FETCH_HEAD` / `git rebase` it would run — so the
+    /// merge message, conflicts and their wording all come out as before.
     pub fn pull(&self, mode: PullMode) -> Result<String> {
-        self.run_git_network(mode.args())
+        let Some((branch, upstream)) = self.pull_upstream() else {
+            // Detached HEAD, an unborn branch, no upstream, or one never
+            // fetched: `git pull` has no single merge candidate and fails (or,
+            // unborn, checks it out) with its own explanation, so let it.
+            return self.run_git_network(mode.args());
+        };
+        let fetched = self.run_git_network(&["fetch"])?;
+        let with_fetch = |out: String| format!("{fetched}\n{out}").trim().to_string();
+        let Some(merge_head) = self.single_merge_head() else {
+            // No candidate (the upstream branch is gone on the remote) or an
+            // octopus of them: rare enough to hand to `git pull` as a whole.
+            return self.run_git_network(mode.args());
+        };
+
+        let head = self.inner.head()?.peel_to_commit()?.id();
+        let can_ff = head == merge_head || self.inner.graph_descendant_of(merge_head, head)?;
+        let up_to_date = head == merge_head || self.inner.graph_descendant_of(head, merge_head)?;
+        let config = |key: &str| {
+            self.run_git(&["config", "--get", key])
+                .ok()
+                .map(|v| v.to_ascii_lowercase())
+        };
+        let rebase_config =
+            config(&format!("branch.{branch}.rebase")).or_else(|| config("pull.rebase"));
+        let ff_config = config("pull.ff");
+
+        // git pull's precedence: --ff-only (or pull.ff=only, unless --rebase
+        // was asked for explicitly) beats rebasing; --rebase beats config.
+        let plan = match mode {
+            PullMode::FastForwardOnly => Integrate::FastForwardOnly,
+            PullMode::Rebase => Integrate::Rebase { merges: false },
+            PullMode::FastForward => match (rebase_config.as_deref(), ff_config.as_deref()) {
+                (_, Some("only")) => Integrate::FastForwardOnly,
+                (Some("merges" | "m"), _) => Integrate::Rebase { merges: true },
+                (Some(v), _) if !matches!(v, "false" | "no" | "off" | "0") => {
+                    Integrate::Rebase { merges: false }
+                }
+                (None, None) if !can_ff && !up_to_date => Integrate::Diverged,
+                (_, Some("false" | "no" | "off" | "0")) => Integrate::Merge(Some("--no-ff")),
+                (_, Some(_)) => Integrate::Merge(Some("--ff")),
+                (_, None) => Integrate::Merge(None),
+            },
+        };
+        let phase = match plan {
+            Integrate::Rebase { .. } if !can_ff => "Rebasing",
+            Integrate::Merge(_) if !can_ff => "Merging",
+            _ => "Fast-forwarding",
+        };
+        self.begin_local_step(phase)?;
+
+        let out = match plan {
+            Integrate::FastForwardOnly => self.run_git(&["merge", "--ff-only", "FETCH_HEAD"]),
+            // Like git pull --rebase, a pull that can simply fast-forward does.
+            Integrate::Rebase { .. } if can_ff => {
+                self.run_git(&["merge", "--ff-only", "FETCH_HEAD"])
+            }
+            Integrate::Rebase { merges } => {
+                let mut args = vec!["rebase"];
+                if merges {
+                    args.push("--rebase-merges");
+                }
+                // --fork-point against the upstream's remote-tracking ref is
+                // how git pull --rebase avoids replaying commits that upstream
+                // itself has since rewritten away.
+                args.extend(["--onto", "FETCH_HEAD", "--fork-point", &upstream]);
+                self.run_git(&args)
+            }
+            Integrate::Merge(flag) => {
+                let mut args = vec!["merge"];
+                args.extend(flag);
+                args.push("FETCH_HEAD");
+                self.run_git(&args)
+            }
+            // Diverged with no strategy configured: git refuses, with advice on
+            // choosing one. A pull from this repo itself (no network) refuses
+            // in exactly those words, whatever this git version's are.
+            Integrate::Diverged => self.run_git(&["pull", "-q", ".", &upstream]),
+        };
+        match out {
+            Ok(out) => Ok(with_fetch(out)),
+            Err(Error::Message(m)) => Err(Error::Message(with_fetch(m))),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The current branch and the full name of its upstream's ref, when HEAD is
+    /// on a born branch whose upstream resolves.
+    fn pull_upstream(&self) -> Option<(String, String)> {
+        self.inner.head().ok()?;
+        let branch = self.current_branch_name().ok()?;
+        let upstream = self
+            .run_git(&["rev-parse", "--symbolic-full-name", "@{upstream}"])
+            .ok()?;
+        Some((branch, upstream))
+    }
+
+    /// The one commit the last fetch marked for merging (FETCH_HEAD's entries
+    /// not tagged `not-for-merge`), if there is exactly one.
+    fn single_merge_head(&self) -> Option<git2::Oid> {
+        let fetch_head = std::fs::read_to_string(self.inner.path().join("FETCH_HEAD")).ok()?;
+        let mut heads = fetch_head
+            .lines()
+            .filter(|l| !l.contains("\tnot-for-merge\t"))
+            .filter_map(|l| l.split('\t').next())
+            .filter(|oid| !oid.is_empty());
+        let head = git2::Oid::from_str(heads.next()?).ok()?;
+        heads.next().is_none().then_some(head)
     }
 
     /// Push the current branch. If it has no upstream yet, push with

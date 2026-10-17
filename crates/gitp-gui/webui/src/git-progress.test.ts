@@ -4,7 +4,7 @@ import { formatGitProgress } from "./git-progress";
 import type { GitProgress } from "./types";
 
 function p(phase: string, percent: number | null, detail: string): GitProgress {
-  return { op: "fetch", phase, percent, detail };
+  return { op: "fetch", phase, percent, detail, cancellable: true };
 }
 
 describe("formatGitProgress", () => {

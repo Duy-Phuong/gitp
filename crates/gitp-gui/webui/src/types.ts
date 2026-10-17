@@ -233,10 +233,13 @@ export interface RepoChanged {
 
 // One `git-progress` event from a running fetch / pull / push: which operation,
 // git's phase ("Receiving objects"), its percentage when git knows one, and the
-// rest of git's line ("(450/1000), 1.2 MiB | 2.0 MiB/s").
+// rest of git's line ("(450/1000), 1.2 MiB | 2.0 MiB/s"). `cancellable` turns
+// false once the network part is over and a local write (a pull's merge or
+// rebase) has begun — the backend ignores Cancel from then on.
 export interface GitProgress {
   op: string;
   phase: string;
   percent: number | null;
   detail: string;
+  cancellable: boolean;
 }

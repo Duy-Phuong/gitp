@@ -387,6 +387,7 @@ mod tests {
             phase: phase.into(),
             percent: Some(percent),
             detail: String::new(),
+            cancellable: true,
         }
     }
 

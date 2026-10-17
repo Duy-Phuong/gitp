@@ -220,6 +220,7 @@ impl Repo {
     /// a diverged branch surfaces git's fast-forward error to resolve manually.
     pub fn fetch_and_update_branch(&self, name: &str) -> Result<String> {
         let fetched = self.fetch_branch(name)?;
+        self.begin_local_step("Fast-forwarding")?;
         let updated = self.fast_forward_branch(name)?;
         Ok(format!("{fetched}\n{updated}").trim().to_string())
     }
