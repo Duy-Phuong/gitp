@@ -119,11 +119,9 @@ impl Repo {
 
             // Renames/copies carry the original path as the next NUL record.
             let mut old_path = None;
-            if matches!(x, 'R' | 'C') || matches!(y, 'R' | 'C') {
-                if i < toks.len() {
-                    old_path = Some(toks[i].to_string());
-                    i += 1;
-                }
+            if (matches!(x, 'R' | 'C') || matches!(y, 'R' | 'C')) && i < toks.len() {
+                old_path = Some(toks[i].to_string());
+                i += 1;
             }
 
             // Untracked ("??") is a single unstaged entry.

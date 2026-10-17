@@ -1509,7 +1509,7 @@ fn set_upstream_impl(
     branch: String,
     upstream: String,
 ) -> Result<String, String> {
-    with_recorded_upstream(state, branch, format!("Set upstream"), |repo, b| {
+    with_recorded_upstream(state, branch, "Set upstream".to_string(), |repo, b| {
         repo.set_upstream(b, &upstream)
     })
 }
