@@ -14,11 +14,11 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::git_bin::git_command;
 use crate::repo::Repo;
 
 /// One commit in a rebase plan, as shown in the editor UI.
@@ -184,7 +184,7 @@ impl Repo {
             args.push("--update-refs");
         }
         args.push(onto);
-        let output = Command::new("git")
+        let output = git_command()
             .current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_SEQUENCE_EDITOR", seq_editor)
@@ -345,7 +345,7 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        let output = Command::new("git")
+        let output = git_command()
             .current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_EDITOR", "true")

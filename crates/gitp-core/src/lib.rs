@@ -14,6 +14,7 @@ mod diff;
 mod error;
 mod file_ops;
 mod filelog;
+mod git_bin;
 mod graph;
 mod hunk;
 mod line_staging;

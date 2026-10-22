@@ -8,11 +8,10 @@
 //! in a terminal would say. Signing happens in `Repo::commit`, which already
 //! goes through `git commit`.
 
-use std::process::Command;
-
 use serde::Serialize;
 
 use crate::error::{Error, Result};
+use crate::git_bin::git_command;
 use crate::repo::Repo;
 
 /// How a signed commit's signature checks out — git's `%G?`, folded into the
@@ -81,7 +80,7 @@ impl Repo {
         // `--no-show-signature`: a `log.showSignature = true` would otherwise
         // print the verifier's own report into stdout ahead of the format.
         // LC_ALL=C keeps git's error text matchable below.
-        let output = Command::new("git")
+        let output = git_command()
             .current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C")
