@@ -15,6 +15,21 @@ function onTerminalCommand(): void {
   else if (state.view === "conflict") void ui.conflictView?.reload();
 }
 
+function ensureTerminal(): NonNullable<typeof ui.terminal> {
+  if (!ui.terminal) {
+    ui.terminal = setupTerminal($("#terminal-host"), onTerminalCommand);
+    ui.terminal.setCwd(state.repoPath || ".");
+  }
+  return ui.terminal;
+}
+
+// Start the shell in the still-hidden panel as soon as a repo is open. A shell
+// with a heavy rc file can take seconds to load, and keys typed meanwhile are
+// echoed raw (Delete shows as ^?) — by the time the panel is opened it's ready.
+export function warmTerminal(): void {
+  if (state.repoPath) ensureTerminal();
+}
+
 export function toggleTerminal(): void {
   const panel = $("#terminal-panel");
   const hidden = panel.classList.toggle("hidden");
@@ -22,8 +37,7 @@ export function toggleTerminal(): void {
   $("#terminal-divider").classList.toggle("hidden", hidden);
   if (hidden) return;
 
-  if (!ui.terminal) ui.terminal = setupTerminal($("#terminal-host"), onTerminalCommand);
-  ui.terminal.setCwd(state.repoPath || ".");
+  ensureTerminal().setCwd(state.repoPath || ".");
   renderTerminalCwd();
   requestAnimationFrame(() => {
     ui.terminal?.fit();

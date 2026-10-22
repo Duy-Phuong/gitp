@@ -45,10 +45,18 @@ pub fn terminal_spawn(
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
     let mut cmd = CommandBuilder::new(shell);
+    // A login shell, as Terminal.app and iTerm start: an app launched from
+    // Finder gets launchd's bare PATH, and only the login profile
+    // (path_helper, `brew shellenv`, …) adds Homebrew and friends to it.
+    cmd.arg("-l");
     if !cwd.is_empty() && cwd != "." {
         cmd.cwd(cwd);
     }
     cmd.env("TERM", "xterm-256color");
+    // Finder-launched apps get no locale either, leaving the shell in US-ASCII.
+    if std::env::var_os("LANG").is_none() {
+        cmd.env("LANG", "en_US.UTF-8");
+    }
     let child = pair.slave.spawn_command(cmd).map_err(s)?;
     drop(pair.slave); // not needed in this process once the child holds it
 

@@ -94,7 +94,7 @@ import {
 import { onCommitContextMenu, onReflogMenu, runNextCherryPick } from "./commit-actions";
 import { onWorktreeMenu } from "./worktree-actions";
 import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
-import { toggleTerminal } from "./terminal-panel";
+import { toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
 import { openQuickLaunch } from "./quick-launch-commands";
 import { setupLogKeyboardNav, setupShortcuts } from "./keyboard";
@@ -104,11 +104,11 @@ import { showComparison } from "./compare";
 function wireUi(): void {
   $("#open-btn").addEventListener("click", () => {
     const path = $<HTMLInputElement>("#repo-input").value.trim();
-    if (path) void loadRepo(path);
+    if (path) void loadRepo(path).then(warmTerminal);
   });
   $("#browse-btn").addEventListener("click", async () => {
     const path = await browseForRepo();
-    if (path) void loadRepo(path);
+    if (path) void loadRepo(path).then(warmTerminal);
     else if (!isTauri()) setStatus("The folder picker is only available in the desktop app.");
   });
   $<HTMLInputElement>("#repo-input").addEventListener("keydown", (e) => {
@@ -321,7 +321,9 @@ async function init(): Promise<void> {
     reportError: readFailed,
   });
   if (isTauri()) {
-    if (!(await restoreWorkspace())) {
+    if (await restoreWorkspace()) {
+      warmTerminal();
+    } else {
       setStatus("Enter a repository path and press Open.");
       ui.detailView?.showEmpty();
       renderSidebarNow();
