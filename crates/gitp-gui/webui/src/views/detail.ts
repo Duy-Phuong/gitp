@@ -103,6 +103,9 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   // The last commit whose signature was verified, and the one being verified.
   let signature: { id: string; sig: CommitSignature | null } | null = null;
   let signatureInFlight: string | null = null;
+  // The ref chips the Commit tab was last drawn with — the only thing on any
+  // tab that a refs refresh can change.
+  let shownRefs: string | null = null;
 
   function show(next: CommitDetail): void {
     const isNewCommit = compare !== null || detail?.id !== next.id;
@@ -214,6 +217,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     scroll.append(el("h2", { class: "detail-summary", text: d.summary }));
 
     const refs = cb.refsAt(d.id);
+    shownRefs = refs.join("\n");
     if (refs.length) {
       const row = el("div", { class: "detail-refs" });
       for (const r of refs) row.append(el("span", { class: "ref-chip", text: r }));
@@ -639,8 +643,17 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   return {
     show,
     showEmpty,
+    // Runs on every refs reload, which any click can trigger (see
+    // external-refresh.ts). A rebuild resets the pane's scroll and drops a text
+    // selection, so only repaint when the Commit tab's ref chips changed.
     refresh: () => {
-      if (detail) render();
+      if (!detail || compare || tab !== "commit") return;
+      if (cb.refsAt(detail.id).join("\n") === shownRefs) return;
+      const scroller = host.querySelector<HTMLElement>(".tab-scroll");
+      const keep = scroller?.scrollTop ?? 0;
+      render();
+      const next = host.querySelector<HTMLElement>(".tab-scroll");
+      if (next) next.scrollTop = keep;
     },
     focusCommit: () => {
       if (detail) setTab("commit");
