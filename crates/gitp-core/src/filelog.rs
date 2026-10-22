@@ -2,11 +2,10 @@
 //! Shells out to `git log --follow` so renames are tracked and large histories
 //! stay fast (git's path-limited walk is far quicker than a git2 diff-per-commit).
 
-use std::process::Command;
-
 use serde::Serialize;
 
 use crate::error::{Error, Result};
+use crate::git_bin::git_command;
 use crate::repo::Repo;
 
 /// One commit in a file's history.
@@ -33,7 +32,7 @@ impl Repo {
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
 
         let format = format!("--format=%H{SEP}%h{SEP}%an{SEP}%at{SEP}%s");
-        let output = Command::new("git")
+        let output = git_command()
             .current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .args(["log", rev, "--follow", "-n", "200", &format, "--", path])

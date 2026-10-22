@@ -206,7 +206,7 @@ impl Repo {
     /// auto-accepts it — same fix as the interactive-rebase reword handling.
     fn continue_without_editor(&self, args: &[&str]) -> Result<String> {
         let workdir = self.workdir_path()?;
-        let output = std::process::Command::new("git")
+        let output = crate::git_bin::git_command()
             .current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_EDITOR", "true")

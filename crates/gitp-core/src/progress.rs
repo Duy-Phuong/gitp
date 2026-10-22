@@ -20,6 +20,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::error::{Error, Result};
+use crate::git_bin::git_command;
 use crate::repo::Repo;
 
 /// One progress update: the phase git is in ("Receiving objects"), how far
@@ -99,7 +100,7 @@ impl Repo {
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
 
-        let mut cmd = Command::new("git");
+        let mut cmd = git_command();
         cmd.current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .args(args)

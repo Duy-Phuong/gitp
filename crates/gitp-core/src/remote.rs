@@ -5,11 +5,12 @@
 //! remotes); stash/pop go through the same helper for consistency.
 
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde::Deserialize;
 
 use crate::error::{Error, Result};
+use crate::git_bin::git_command;
 use crate::repo::Repo;
 
 /// Which strategy `pull` uses to reconcile local and remote history: plain
@@ -290,7 +291,7 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        let output = Command::new("git")
+        let output = git_command()
             .current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .args(args)
@@ -317,7 +318,7 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        let output = Command::new("git")
+        let output = git_command()
             .current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .args(args)
@@ -340,7 +341,7 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        let mut child = Command::new("git")
+        let mut child = git_command()
             .current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .args(args)
