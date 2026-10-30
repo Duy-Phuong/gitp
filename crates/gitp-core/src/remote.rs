@@ -375,9 +375,11 @@ impl Repo {
     }
 
     /// Like `run_git`, but pipes `input` to the command's stdin — for
-    /// `git apply`, which reads a patch from stdin. Returns the trimmed combined
-    /// output on success, or it as an error on a non-zero exit.
-    pub(crate) fn run_git_stdin(&self, args: &[&str], input: &str) -> Result<String> {
+    /// `git apply`, which reads a patch from stdin. The input is bytes, as a
+    /// patch of a file that isn't UTF-8 must reach git exactly as it was.
+    /// Returns the trimmed combined output on success, or it as an error on a
+    /// non-zero exit.
+    pub(crate) fn run_git_stdin(&self, args: &[&str], input: impl AsRef<[u8]>) -> Result<String> {
         let workdir = self
             .inner
             .workdir()
@@ -398,7 +400,7 @@ impl Repo {
                 .stdin
                 .take()
                 .ok_or_else(|| Error::Message("failed to open git stdin".into()))?
-                .write_all(input.as_bytes())
+                .write_all(input.as_ref())
                 .map_err(|e| Error::Message(format!("failed to write patch to git: {e}")))?;
             child
                 .wait_with_output()
