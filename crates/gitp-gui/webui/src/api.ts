@@ -18,9 +18,12 @@ import type {
   ConflictStatus,
   DotfileKind,
   FileCommit,
+  FileContent,
   FileDiff,
+  FileSide,
   GitProgress,
   DeleteBranchesResult,
+  DiffToolTarget,
   LogPage,
   PullMode,
   RebaseCommit,
@@ -276,15 +279,29 @@ export const DEFAULT_CONTEXT_LINES = 3;
 export const FULL_FILE_CONTEXT = 1_000_000_000;
 
 // One file of a commit re-diffed with `contextLines` of context — the diff
-// pane's show more / show less / full file. `oldPath` keeps a rename paired.
+// pane's show more / show less / full file — and optionally ignoring
+// whitespace (`git diff -w`). `oldPath` keeps a rename paired.
 export async function fetchCommitFileDiff(
   rev: string,
   path: string,
   oldPath: string | null,
   contextLines: number,
+  ignoreWhitespace: boolean,
 ): Promise<FileDiff | null> {
   if (!isTauri()) return mockDetail(rev).files.find((f) => f.path === path) ?? null;
-  return invoke<FileDiff | null>("get_commit_file_diff", { rev, path, oldPath, contextLines });
+  return invoke<FileDiff | null>("get_commit_file_diff", { rev, path, oldPath, contextLines, ignoreWhitespace });
+}
+
+// `path` as it is on `side`, for the image diff. Null when the file doesn't
+// exist there; `base64` is null when it's too big to preview. In preview mode,
+// a coloured square: blue for a revision, green for the index / working tree.
+export async function fetchFileContent(side: FileSide, path: string): Promise<FileContent | null> {
+  if (!isTauri()) {
+    const fill = typeof side === "object" ? "#5b8cff" : "#3fb950";
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64"><rect width="96" height="64" rx="8" fill="${fill}"/></svg>`;
+    return { size: svg.length, base64: btoa(svg) };
+  }
+  return invoke<FileContent | null>("get_file_content", { side, path });
 }
 
 export async function fetchRefs(): Promise<Refs> {
@@ -351,16 +368,19 @@ export async function fetchStatusSummary(): Promise<StatusLists> {
 
 // The full diff (with hunks) for one file, in the staged (HEAD→index) or
 // unstaged (index→worktree) direction. Null when the path has no such change.
+// A whitespace-ignoring diff is for reading only — its blocks aren't the
+// file's real changes, so never stage or discard by them.
 export async function fetchFileDiff(
   path: string,
   staged: boolean,
   contextLines: number,
+  ignoreWhitespace: boolean,
 ): Promise<FileDiff | null> {
   if (!isTauri()) {
     const list = staged ? MOCK_STATUS.staged : MOCK_STATUS.unstaged;
     return list.find((f) => f.path === path) ?? null;
   }
-  return invoke<FileDiff | null>("get_file_diff", { path, staged, contextLines });
+  return invoke<FileDiff | null>("get_file_diff", { path, staged, contextLines, ignoreWhitespace });
 }
 
 export async function stage(path: string): Promise<void> {
@@ -992,6 +1012,21 @@ export async function openInEditor(path: string): Promise<void> {
   await invoke<void>("open_in_editor", { path });
 }
 
+// Open `paths` of `target` in the user's `git difftool` (diff.tool), without
+// waiting for it to close. False when no diff tool is configured — always, in
+// preview mode, where there's nothing to launch.
+export async function openDiffTool(target: DiffToolTarget, paths: string[]): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("open_difftool", { target, paths });
+}
+
+// Open the conflicted `path` in the user's `git mergetool` (merge.tool). False
+// when no merge tool is configured (always, in preview mode).
+export async function openMergeTool(path: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("open_mergetool", { path });
+}
+
 // --- Conflict resolution (merge/rebase conflict resolver view) -------------
 
 export async function conflictStatus(): Promise<ConflictStatus> {
@@ -1297,6 +1332,8 @@ function mockDetail(rev: string): CommitDetail {
           },
         ],
       },
+      // No hunks, like any binary file — shown by the image diff.
+      { path: "assets/logo.svg", old_path: null, status: "Modified", hunks: [] },
       {
         path: "README.md",
         old_path: null,
@@ -1628,6 +1665,7 @@ export async function fetchCompareFileDiff(
   cmp: Comparison,
   file: FileDiff,
   contextLines: number,
+  ignoreWhitespace: boolean,
 ): Promise<FileDiff | null> {
   if (!isTauri()) return cmp.files.find((f) => f.path === file.path) ?? null;
   return invoke<FileDiff | null>("get_compare_file_diff", {
@@ -1637,6 +1675,7 @@ export async function fetchCompareFileDiff(
     path: file.path,
     oldPath: file.old_path,
     contextLines,
+    ignoreWhitespace,
   });
 }
 

@@ -189,7 +189,20 @@ impl Repo {
         staged: bool,
         context_lines: u32,
     ) -> Result<Option<FileDiff>> {
-        let diff = self.staging_diff(path, staged, context_lines)?;
+        self.file_diff_with(path, staged, context_lines, false)
+    }
+
+    /// [`Repo::file_diff`], optionally ignoring whitespace (`git diff -w`). For
+    /// viewing only: the blocks of a whitespace-ignoring diff aren't the file's
+    /// real changes, so the hunk / line operations never use one.
+    pub fn file_diff_with(
+        &self,
+        path: &str,
+        staged: bool,
+        context_lines: u32,
+        ignore_whitespace: bool,
+    ) -> Result<Option<FileDiff>> {
+        let diff = self.staging_diff(path, staged, context_lines, ignore_whitespace)?;
         let mut files = collect_files(&diff)?;
         let idx = files.iter().position(|f| f.path == path);
         Ok(match idx {
@@ -208,6 +221,7 @@ impl Repo {
         path: &str,
         staged: bool,
         context_lines: u32,
+        ignore_whitespace: bool,
     ) -> Result<git2::Diff<'_>> {
         let head_tree = match self.inner.head() {
             Ok(head) => Some(head.peel_to_tree()?),
@@ -219,6 +233,7 @@ impl Repo {
         let mut opts = git2::DiffOptions::new();
         opts.patience(true)
             .context_lines(context_lines)
+            .ignore_whitespace(ignore_whitespace)
             // Exact path, not a pattern: `a[1].txt` must not also pull in `a1.txt`.
             .disable_pathspec_match(true)
             .pathspec(path);

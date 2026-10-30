@@ -1,10 +1,12 @@
-//! Handing files and URLs to the OS: the file manager, an editor, the browser.
+//! Handing files and URLs to the OS: the file manager, an editor, the browser,
+//! and the user's external diff / merge tools.
 
 use std::path::{Component, Path, PathBuf};
 
+use gitp_core::DiffToolTarget;
 use tauri::State;
 
-use crate::state::{to_message, with_repo, RepoState};
+use crate::state::{to_message, with_repo, with_repo_unlocked, RepoState};
 
 /// The absolute path of the repo-relative `path`, refusing one that would
 /// land outside the working tree. `Path::join` replaces the base with an
@@ -106,6 +108,23 @@ fn open_in_default_app(full: &Path) -> Result<(), String> {
     }
 }
 
+/// Open `paths` of `target` in the user's `git difftool`. `false` when no diff
+/// tool is configured. Unlocked: it watches the tool start for a moment (see
+/// gitp-core's `launch_git`), which must not stall other commands.
+fn open_difftool_impl(
+    state: &RepoState,
+    target: DiffToolTarget,
+    paths: Vec<String>,
+) -> Result<bool, String> {
+    with_repo_unlocked(state, |repo| repo.open_difftool(&target, &paths))
+}
+
+/// Open the conflicted `path` in the user's `git mergetool`. `false` when no
+/// merge tool is configured.
+fn open_mergetool_impl(state: &RepoState, path: String) -> Result<bool, String> {
+    with_repo_unlocked(state, |repo| repo.open_mergetool(&path))
+}
+
 // --- Tauri commands --------------------------------------------------------
 
 #[tauri::command(async)]
@@ -116,6 +135,20 @@ pub(crate) fn reveal_path(path: String, state: State<RepoState>) -> Result<(), S
 #[tauri::command(async)]
 pub(crate) fn open_in_editor(path: String, state: State<RepoState>) -> Result<(), String> {
     open_in_editor_impl(&state, path)
+}
+
+#[tauri::command(async)]
+pub(crate) fn open_difftool(
+    target: DiffToolTarget,
+    paths: Vec<String>,
+    state: State<RepoState>,
+) -> Result<bool, String> {
+    open_difftool_impl(&state, target, paths)
+}
+
+#[tauri::command(async)]
+pub(crate) fn open_mergetool(path: String, state: State<RepoState>) -> Result<bool, String> {
+    open_mergetool_impl(&state, path)
 }
 
 #[cfg(test)]

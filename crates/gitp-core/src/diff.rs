@@ -121,10 +121,24 @@ impl Repo {
         old_path: Option<&str>,
         context_lines: u32,
     ) -> Result<Option<FileDiff>> {
+        self.commit_file_diff_with(rev, path, old_path, context_lines, false)
+    }
+
+    /// [`Repo::commit_file_diff`], optionally ignoring whitespace (`git diff
+    /// -w`): lines that differ only in whitespace count as unchanged.
+    pub fn commit_file_diff_with(
+        &self,
+        rev: &str,
+        path: &str,
+        old_path: Option<&str>,
+        context_lines: u32,
+        ignore_whitespace: bool,
+    ) -> Result<Option<FileDiff>> {
         let commit = self.inner.revparse_single(rev)?.peel_to_commit()?;
         let mut opts = git2::DiffOptions::new();
         opts.patience(true)
             .context_lines(context_lines)
+            .ignore_whitespace(ignore_whitespace)
             // Exact paths, not patterns: `a[1].txt` must not also pull in `a1.txt`.
             .disable_pathspec_match(true)
             .pathspec(path);

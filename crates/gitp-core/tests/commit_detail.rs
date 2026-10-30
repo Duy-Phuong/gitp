@@ -121,3 +121,25 @@ fn commit_file_diff_keeps_a_rename_paired() {
     assert_eq!(file.old_path.as_deref(), Some("old.txt"));
     assert_eq!(added_lines(&file), vec!["LINE 5"]);
 }
+
+#[test]
+fn commit_file_diff_can_ignore_whitespace() {
+    let fixture = FixtureRepo::init();
+    fixture.commit_file("f.txt", "fn a() {\n    x();\n}\nkeep\n", "base");
+    // Re-indent one line (whitespace only) and really change another.
+    let c = fixture.commit_file("f.txt", "fn a() {\n\tx();\n}\nKEEP\n", "edit");
+    let repo = Repo::open(fixture.path()).unwrap();
+    let rev = c.to_string();
+
+    let all = repo
+        .commit_file_diff_with(&rev, "f.txt", None, 3, false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(added_lines(&all), vec!["\tx();", "KEEP"]);
+
+    let no_ws = repo
+        .commit_file_diff_with(&rev, "f.txt", None, 3, true)
+        .unwrap()
+        .unwrap();
+    assert_eq!(added_lines(&no_ws), vec!["KEEP"], "the re-indent is hidden");
+}

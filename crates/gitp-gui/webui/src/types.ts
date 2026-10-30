@@ -53,6 +53,24 @@ export interface StatusLists {
   unstaged: FileDiff[];
 }
 
+// Where to read one side of a file from (mirrors gitp-core's FileSide): a
+// revision's tree, the index, or the working tree.
+export type FileSide = { Rev: string } | "Index" | "WorkTree";
+
+// A file's bytes as base64, or only its size when it's too big to preview.
+export interface FileContent {
+  size: number;
+  base64: string | null;
+}
+
+// What `git difftool` compares (mirrors gitp-core's DiffToolTarget): a commit
+// against its parent, two revisions, or the staged / unstaged changes.
+export type DiffToolTarget =
+  | { Commit: string }
+  | { Compare: { base: string; head: string; three_dot: boolean } }
+  | "Staged"
+  | "Unstaged";
+
 export interface CommitDetail {
   id: string;
   summary: string;

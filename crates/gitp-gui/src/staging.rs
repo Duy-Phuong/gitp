@@ -27,8 +27,11 @@ fn get_file_diff_impl(
     path: String,
     staged: bool,
     context_lines: u32,
+    ignore_whitespace: bool,
 ) -> Result<Option<FileDiff>, String> {
-    with_repo(state, |repo| repo.file_diff(&path, staged, context_lines))
+    with_repo(state, |repo| {
+        repo.file_diff_with(&path, staged, context_lines, ignore_whitespace)
+    })
 }
 
 pub(crate) fn stage_impl(state: &RepoState, path: String) -> Result<(), String> {
@@ -197,9 +200,10 @@ pub(crate) fn get_file_diff(
     path: String,
     staged: bool,
     context_lines: u32,
+    ignore_whitespace: bool,
     state: State<RepoState>,
 ) -> Result<Option<FileDiff>, String> {
-    get_file_diff_impl(&state, path, staged, context_lines)
+    get_file_diff_impl(&state, path, staged, context_lines, ignore_whitespace)
 }
 
 #[tauri::command(async)]

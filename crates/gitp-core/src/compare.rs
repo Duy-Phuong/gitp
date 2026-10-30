@@ -69,10 +69,27 @@ impl Repo {
         old_path: Option<&str>,
         context_lines: u32,
     ) -> Result<Option<FileDiff>> {
+        self.compare_file_diff_with(base, head, three_dot, path, old_path, context_lines, false)
+    }
+
+    /// [`Repo::compare_file_diff`], optionally ignoring whitespace (`git diff
+    /// -w`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn compare_file_diff_with(
+        &self,
+        base: &str,
+        head: &str,
+        three_dot: bool,
+        path: &str,
+        old_path: Option<&str>,
+        context_lines: u32,
+        ignore_whitespace: bool,
+    ) -> Result<Option<FileDiff>> {
         let ends = self.compare_ends(base, head)?;
         let mut opts = git2::DiffOptions::new();
         opts.patience(true)
             .context_lines(context_lines)
+            .ignore_whitespace(ignore_whitespace)
             .disable_pathspec_match(true)
             .pathspec(path);
         if let Some(old) = old_path {

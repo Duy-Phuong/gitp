@@ -301,3 +301,32 @@ fn status_summary_never_rewrites_the_index() {
         "status must not write the index"
     );
 }
+
+#[test]
+fn file_diff_can_ignore_whitespace_while_hunk_ops_use_the_real_diff() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\ntwo\n", "c1");
+    std::fs::write(fx.path().join("a.txt"), "one  \ntwo\n").unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    let real = repo
+        .file_diff_with("a.txt", false, DEFAULT_CONTEXT_LINES, false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(real.hunks.len(), 1);
+    let no_ws = repo
+        .file_diff_with("a.txt", false, DEFAULT_CONTEXT_LINES, true)
+        .unwrap()
+        .unwrap();
+    assert!(
+        no_ws.hunks.is_empty(),
+        "a whitespace-only change has no blocks"
+    );
+
+    // Staging block 0 still stages the real (whitespace) change.
+    repo.stage_hunk("a.txt", 0, DEFAULT_CONTEXT_LINES).unwrap();
+    assert!(repo
+        .file_diff("a.txt", false, DEFAULT_CONTEXT_LINES)
+        .unwrap()
+        .is_none());
+}

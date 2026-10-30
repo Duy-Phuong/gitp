@@ -15,6 +15,7 @@ fn compare_revs_impl(
     with_repo(state, |repo| repo.compare(&base, &head, three_dot))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn get_compare_file_diff_impl(
     state: &RepoState,
     base: String,
@@ -23,15 +24,17 @@ fn get_compare_file_diff_impl(
     path: String,
     old_path: Option<String>,
     context_lines: u32,
+    ignore_whitespace: bool,
 ) -> Result<Option<FileDiff>, String> {
     with_repo(state, |repo| {
-        repo.compare_file_diff(
+        repo.compare_file_diff_with(
             &base,
             &head,
             three_dot,
             &path,
             old_path.as_deref(),
             context_lines,
+            ignore_whitespace,
         )
     })
 }
@@ -49,6 +52,7 @@ pub(crate) fn compare_revs(
 }
 
 #[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn get_compare_file_diff(
     base: String,
     head: String,
@@ -56,9 +60,19 @@ pub(crate) fn get_compare_file_diff(
     path: String,
     old_path: Option<String>,
     context_lines: u32,
+    ignore_whitespace: bool,
     state: State<RepoState>,
 ) -> Result<Option<FileDiff>, String> {
-    get_compare_file_diff_impl(&state, base, head, three_dot, path, old_path, context_lines)
+    get_compare_file_diff_impl(
+        &state,
+        base,
+        head,
+        three_dot,
+        path,
+        old_path,
+        context_lines,
+        ignore_whitespace,
+    )
 }
 
 #[cfg(test)]
@@ -90,6 +104,7 @@ mod tests {
             "f.txt".into(),
             None,
             0,
+            false,
         )
         .expect("file diff");
         assert_eq!(file.map(|f| f.path), Some("f.txt".to_string()));
