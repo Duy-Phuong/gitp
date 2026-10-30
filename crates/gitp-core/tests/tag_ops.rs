@@ -1,6 +1,5 @@
-//! Tag inspection and deletion behind the sidebar's tag menu. Push and remote
-//! delete aren't covered here — they need a real remote, and they're a single
-//! `run_git` call each with nothing to get wrong locally.
+//! Tag inspection, deletion, and push behind the sidebar's tag menu. Push and
+//! remote delete go to bare repos on disk standing in for remotes — no network.
 
 mod common;
 
@@ -161,4 +160,60 @@ fn annotate_tag_turns_a_lightweight_tag_into_an_annotated_one_in_place() {
         repo.tag_detail("v1.0").unwrap().message.as_deref(),
         Some("Release 1\n")
     );
+}
+
+/// Run git in `dir`, failing the test on error; returns trimmed stdout.
+fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+#[test]
+fn push_and_delete_a_tag_on_the_chosen_remote_only() {
+    let fx = FixtureRepo::init();
+    let oid = fx.commit_file("a.txt", "one\n", "first commit");
+    // Two bare repos standing in for `origin` and `upstream`.
+    let origin = tempfile::tempdir().unwrap();
+    let upstream = tempfile::tempdir().unwrap();
+    for (name, dir) in [("origin", &origin), ("upstream", &upstream)] {
+        git(dir.path(), &["init", "--bare", "-q"]);
+        git(
+            fx.path(),
+            &["remote", "add", name, dir.path().to_str().unwrap()],
+        );
+    }
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.create_tag_at("v1.0", &oid.to_string()).unwrap();
+
+    repo.push_tag("v1.0", "upstream").unwrap();
+    assert!(repo.remote_tag_exists("v1.0", "upstream").unwrap());
+    assert!(
+        !repo.remote_tag_exists("v1.0", "origin").unwrap(),
+        "only the chosen remote got the tag"
+    );
+    assert_eq!(
+        git(upstream.path(), &["rev-parse", "refs/tags/v1.0"]),
+        oid.to_string()
+    );
+
+    repo.push_tag("v1.0", "origin").unwrap();
+    repo.delete_remote_tag("v1.0", "upstream").unwrap();
+    assert!(!repo.remote_tag_exists("v1.0", "upstream").unwrap());
+    assert!(
+        repo.remote_tag_exists("v1.0", "origin").unwrap(),
+        "deleting on one remote leaves the other's copy"
+    );
+
+    // A remote name that git would read as an option is refused.
+    assert!(repo.push_tag("v1.0", "--upload-pack=x").is_err());
+    assert!(repo.remote_tag_exists("v1.0", "-x").is_err());
 }
