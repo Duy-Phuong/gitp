@@ -747,9 +747,9 @@ export async function fetchTagDetail(name: string): Promise<TagDetail> {
   return invoke<TagDetail>("tag_detail", { name });
 }
 
-export async function pushTag(name: string): Promise<string> {
-  if (!isTauri()) return `Pushed ${name} to origin (preview mock)`;
-  return invokeNetwork<string>("push_tag", { name });
+export async function pushTag(name: string, remote: string): Promise<string> {
+  if (!isTauri()) return `Pushed ${name} to ${remote} (preview mock)`;
+  return invokeNetwork<string>("push_tag", { name, remote });
 }
 
 export async function deleteTag(name: string): Promise<string> {
@@ -760,14 +760,14 @@ export async function deleteTag(name: string): Promise<string> {
   return invoke<string>("delete_tag", { name });
 }
 
-export async function deleteRemoteTag(name: string): Promise<string> {
-  if (!isTauri()) return `Deleted ${name} on origin (preview mock)`;
-  return invokeNetwork<string>("delete_remote_tag", { name });
+export async function deleteRemoteTag(name: string, remote: string): Promise<string> {
+  if (!isTauri()) return `Deleted ${name} on ${remote} (preview mock)`;
+  return invokeNetwork<string>("delete_remote_tag", { name, remote });
 }
 
-export async function remoteTagExists(name: string): Promise<boolean> {
+export async function remoteTagExists(name: string, remote: string): Promise<boolean> {
   if (!isTauri()) return name.endsWith("0");
-  return invoke<boolean>("remote_tag_exists", { name });
+  return invoke<boolean>("remote_tag_exists", { name, remote });
 }
 
 export async function cherryPick(rev: string): Promise<string> {
@@ -1534,7 +1534,7 @@ export async function unsetConfig(scope: ConfigScope, name: string): Promise<voi
 // The identity git commits as outside any repo (global config, else system),
 // read without an open repo — the first-run "Default" profile starts from it.
 export async function fetchGlobalIdentity(): Promise<Identity> {
-  if (!isTauri()) return { name: "Ada Lovelace", email: "ada@example.com", signing_key: "" };
+  if (!isTauri()) return { name: "Ada Lovelace", email: "ada@example.com", signing_key: "", signing_format: "" };
   return invoke<Identity>("get_global_identity", {});
 }
 

@@ -507,6 +507,14 @@ export function onMoreRefsMenu(id: string, x: number, y: number): void {
   showContextMenu(x, y, items);
 }
 
+// The remotes a tag can be pushed to or deleted from. With none configured
+// (or the list unreadable) it is origin, as before remotes could be chosen, so
+// git gives its own error.
+function tagRemotes(): string[] {
+  const names = state.remoteList.map((r) => r.name);
+  return names.length ? names : ["origin"];
+}
+
 // Right-click a tag. A tag names a commit, so most of these are the commit
 // operations aimed at that commit, plus the tag-only ones (details, push,
 // delete). Nothing here moves the tag itself — retagging is a delete plus a
@@ -514,13 +522,21 @@ export function onMoreRefsMenu(id: string, x: number, y: number): void {
 export function onTagMenu(name: string, target: string, x: number, y: number): void {
   const current = state.refs.head;
   const short = target.slice(0, 7);
+  const remotes = tagRemotes();
+  const push = (remote: string) => void runTagOp(`Pushing ${name} to ${remote}`, () => pushTag(name, remote));
   const items: MenuItem[] = [
     { label: "Checkout Commit…", run: () => void checkoutCommitAction(target, `${name} (${short})`) },
     { label: "Show Tag Details…", run: () => openTagDetailsModal(name, fetchTagDetail(name)) },
     compareWithHeadItem(name),
     compareWithWorkdirItem(name),
     { separator: true },
-    { label: "Push to 'origin'…", run: () => void runTagOp(`Pushing ${name}`, () => pushTag(name)) },
+    // One remote: one click, as always. Several: pick one.
+    remotes.length === 1
+      ? { label: `Push to '${remotes[0]}'…`, run: () => push(remotes[0]) }
+      : {
+          label: "Push to",
+          submenu: [{ heading: `Push ${name} to` }, ...remotes.map((r) => ({ label: r, run: () => push(r) }))],
+        },
   ];
 
   if (current) {
@@ -561,7 +577,26 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
   items.push(...visibilityItems(tagRefName(name)));
 
   items.push({ separator: true });
-  items.push({ label: "Delete…", danger: true, run: () => deleteTagAction(name) });
+  items.push({ label: "Delete…", danger: true, run: () => deleteTagAction(name, remotes) });
+  // With one remote, Delete… offers it; with several, each is its own choice.
+  if (remotes.length > 1) {
+    items.push({
+      label: "Delete from",
+      submenu: [
+        { heading: `Delete ${name} from` },
+        ...remotes.map((r) => ({
+          label: r,
+          danger: true,
+          run: () =>
+            void confirmThenRunTag(
+              `Delete tag ${name} from ${r}?\n\nThe local tag is kept.`,
+              `Deleting ${name} on ${r}`,
+              () => deleteRemoteTag(name, r),
+            ),
+        })),
+      ],
+    });
+  }
 
   items.push({ separator: true });
   items.push({ label: "Copy Tag Name", run: () => void copyText(name, `Copied ${name}`) });
@@ -611,16 +646,18 @@ async function runTagOp(label: string, op: () => Promise<string>): Promise<void>
   }
 }
 
-// Delete a tag, offering to remove it from origin too when it's actually there
-// (probed live), the same flow as deleting a branch.
-function deleteTagAction(name: string): void {
-  const probe = remoteTagExists(name).catch(() => false);
-  openDeleteTagModal(name, probe, (deleteRemote) => {
-    void runDeleteTag(name, deleteRemote);
+// Delete a tag, offering to remove it from the remote too when there is only
+// one and the tag is actually there (probed live), the same flow as deleting a
+// branch. With several remotes the menu's Delete from ▸ covers them.
+function deleteTagAction(name: string, remotes: string[]): void {
+  const remote = remotes[0];
+  const probe = remotes.length === 1 ? remoteTagExists(name, remote).catch(() => false) : Promise.resolve(false);
+  openDeleteTagModal(name, remote, probe, (deleteRemote) => {
+    void runDeleteTag(name, deleteRemote, remote);
   });
 }
 
-async function runDeleteTag(name: string, deleteRemote: boolean): Promise<void> {
+async function runDeleteTag(name: string, deleteRemote: boolean, remote: string): Promise<void> {
   setStatus(`Deleting tag ${name}…`);
   try {
     await deleteTag(name);
@@ -632,11 +669,11 @@ async function runDeleteTag(name: string, deleteRemote: boolean): Promise<void> 
   let note = `Deleted tag ${name}`;
   if (deleteRemote) {
     try {
-      await deleteRemoteTag(name);
-      note += " (local and origin)";
+      await deleteRemoteTag(name, remote);
+      note += ` (local and ${remote})`;
     } catch (err) {
       await loadSidebar();
-      opFailed(`Deleted local tag ${name}, but deleting it on origin failed`, err);
+      opFailed(`Deleted local tag ${name}, but deleting it on ${remote} failed`, err);
       return;
     }
   }

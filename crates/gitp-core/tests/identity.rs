@@ -8,6 +8,7 @@ fn work() -> Identity {
         name: "Ada Work".into(),
         email: "ada@work.example".into(),
         signing_key: String::new(),
+        signing_format: String::new(),
     }
 }
 
@@ -58,4 +59,32 @@ fn a_local_identity_without_a_key_drops_the_previous_profiles_key() {
         .open_level(git2::ConfigLevel::Local)
         .unwrap();
     assert!(cfg.get_string("user.signingkey").is_err());
+}
+
+#[test]
+fn a_local_identity_writes_its_signing_format_and_an_empty_one_removes_it() {
+    let fixture = FixtureRepo::init();
+    let repo = Repo::open(fixture.path()).unwrap();
+    let ssh = Identity {
+        signing_key: "/home/ada/.ssh/id_ed25519.pub".into(),
+        signing_format: "ssh".into(),
+        ..work()
+    };
+
+    assert!(repo.apply_local_identity(&ssh).unwrap());
+    assert!(!repo.apply_local_identity(&ssh).unwrap(), "already there");
+
+    let local = || {
+        fixture
+            .repo
+            .config()
+            .unwrap()
+            .open_level(git2::ConfigLevel::Local)
+            .unwrap()
+    };
+    assert_eq!(local().get_string("gpg.format").unwrap(), "ssh");
+
+    // A profile with no format removes it again.
+    repo.apply_local_identity(&work()).unwrap();
+    assert!(local().get_string("gpg.format").is_err());
 }

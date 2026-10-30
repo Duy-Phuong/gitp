@@ -25,12 +25,14 @@ const BRANCH: RefKindCopy = {
   remoteText: (remote) => `Also delete remote branch ${remote}`,
 };
 
-const TAG: RefKindCopy = {
-  title: "Delete Tag",
-  sub: "Delete local tag from your repository",
-  label: "Tag:",
-  remoteText: (name) => `Also delete tag ${name} on origin`,
-};
+function tagCopy(remote: string): RefKindCopy {
+  return {
+    title: "Delete Tag",
+    sub: "Delete local tag from your repository",
+    label: "Tag:",
+    remoteText: (name) => `Also delete tag ${name} on ${remote}`,
+  };
+}
 
 export function openDeleteBranchModal(
   branchName: string,
@@ -40,15 +42,16 @@ export function openDeleteBranchModal(
   openDeleteRefModal(BRANCH, branchName, remoteProbe, onConfirm);
 }
 
-// A tag's probe answers "is it on origin?" rather than naming a remote ref, so
-// the caller maps true to the tag's own name for the checkbox label.
+// A tag's probe answers "is it on `remote`?" rather than naming a remote ref,
+// so the caller maps true to the tag's own name for the checkbox label.
 export function openDeleteTagModal(
   tagName: string,
+  remote: string,
   remoteProbe: Promise<boolean>,
   onConfirm: (deleteRemote: boolean) => void,
 ): void {
   openDeleteRefModal(
-    TAG,
+    tagCopy(remote),
     tagName,
     remoteProbe.then((exists) => (exists ? tagName : null)),
     onConfirm,

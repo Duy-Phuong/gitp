@@ -256,8 +256,11 @@ impl Repo {
     /// Finish the Git Flow branch `branch`. A feature is merged (`--no-ff`)
     /// into develop. A release or hotfix is merged into production, tagged
     /// there with the version-tag prefix plus its name (annotated with
-    /// `tag_message`), then merged into develop. Either way the branch is
-    /// deleted at the end, leaving develop checked out.
+    /// `tag_message`), then merged into develop — except that a hotfix goes
+    /// into the open release branch instead when there is one, as git-flow
+    /// does, so the fix ships with that release and reaches develop when it
+    /// finishes. Either way the branch is deleted at the end, leaving the last
+    /// branch merged into checked out.
     ///
     /// Refuses up front while there are uncommitted changes or another
     /// operation is paused. A step that fails stops the finish there: see the
@@ -279,12 +282,18 @@ impl Repo {
 
         let steps = match kind {
             FlowKind::Feature => vec![Step::Merge(cfg.develop.clone()), Step::Delete],
-            FlowKind::Release | FlowKind::Hotfix => vec![
-                Step::Merge(cfg.production.clone()),
-                Step::Tag(format!("{}{name}", cfg.version_tag)),
-                Step::Merge(cfg.develop.clone()),
-                Step::Delete,
-            ],
+            FlowKind::Release | FlowKind::Hotfix => {
+                let back = match kind {
+                    FlowKind::Hotfix => self.gitflow_open_release(&cfg)?,
+                    _ => None,
+                };
+                vec![
+                    Step::Merge(cfg.production.clone()),
+                    Step::Tag(format!("{}{name}", cfg.version_tag)),
+                    Step::Merge(back.unwrap_or_else(|| cfg.develop.clone())),
+                    Step::Delete,
+                ]
+            }
         };
         let default_message = match kind {
             FlowKind::Release => format!("Release {name}"),
@@ -312,6 +321,25 @@ impl Repo {
             kind.word(),
             done.join(", ")
         ))
+    }
+
+    /// The release in progress: the one local branch with the release prefix,
+    /// or `None` when there is none — or several, since git-flow allows only
+    /// one at a time and picking between them would be a guess.
+    fn gitflow_open_release(&self, cfg: &GitFlowConfig) -> Result<Option<String>> {
+        let mut releases = Vec::new();
+        for branch in self.inner.branches(Some(git2::BranchType::Local))? {
+            let (branch, _) = branch?;
+            if let Some(name) = branch.name()? {
+                if matches!(cfg.classify(name), Some((FlowKind::Release, _))) {
+                    releases.push(name.to_string());
+                }
+            }
+        }
+        Ok(match <[String; 1]>::try_from(releases) {
+            Ok([only]) => Some(only),
+            Err(_) => None,
+        })
     }
 
     /// Switch to `into` and merge `branch` into it, always with a merge commit.

@@ -14,6 +14,7 @@ import {
   activeProfile,
   deleteProfile,
   ensureStore,
+  fillSigningFormats,
   loadStore,
   profileIdentity,
   profileInitials,
@@ -29,10 +30,13 @@ function currentStore(): ProfileStore | null {
 }
 
 export async function setupProfileMenu(): Promise<void> {
-  if (!currentStore()) {
-    // First run: the Default profile commits as whoever git does today.
-    const identity = await fetchGlobalIdentity().catch(() => ({ name: "", email: "", signing_key: "" }));
-    ensureStore(localStorage, identity);
+  const store = currentStore();
+  if (!store || store.profiles.some((p) => p.signingFormat === undefined)) {
+    // First run: the Default profile commits as whoever git does today. A
+    // store saved before profiles had a signing format takes git's current one.
+    const identity = await fetchGlobalIdentity().catch(() => null);
+    if (!store) ensureStore(localStorage, identity ?? { name: "", email: "", signing_key: "", signing_format: "" });
+    else if (identity) fillSigningFormats(localStorage, identity.signing_format);
   }
   const btn = $("#profile-btn");
   const menu = $("#profile-menu");
