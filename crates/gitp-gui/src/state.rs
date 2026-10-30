@@ -148,10 +148,10 @@ impl NetworkOps {
         }
     }
 
-    /// Raise the cancel flag of every operation running on `path`.
-    pub(crate) fn cancel(&self, path: &str) {
+    /// Raise the cancel flag of every operation whose path `matches`.
+    pub(crate) fn cancel(&self, matches: impl Fn(&str) -> bool) {
         if let Ok(ops) = self.in_flight.lock() {
-            for (_, flag) in ops.iter().filter(|(p, _)| p == path) {
+            for (_, flag) in ops.iter().filter(|(p, _)| matches(p)) {
                 flag.store(true, Ordering::SeqCst);
             }
         }
@@ -329,6 +329,27 @@ fn run_networked<P, T>(
     Ok(out)
 }
 
+/// Run a network operation that has no repository to run against yet — a
+/// clone — with what `with_repo_networked` gives one that has: progress as
+/// `git-progress` events tagged `op`, Cancel, and credential prompts. It is
+/// registered under `path`, where the repository will be.
+pub(crate) fn run_networked_unopened<T>(
+    state: &RepoState,
+    op: &'static str,
+    path: &str,
+    f: impl FnOnce(&NetworkHooks) -> gitp_core::Result<T>,
+) -> Result<T, String> {
+    let cancel = state.1.begin(path);
+    let hooks = NetworkHooks {
+        on_progress: state.1.reporter(op),
+        cancel: Some(Arc::clone(&cancel)),
+        askpass: state.1.askpass.get().cloned(),
+    };
+    let out = f(&hooks);
+    state.1.end(&cancel);
+    out.map_err(to_message)
+}
+
 /// The active session's full log, computing and caching it on first use so
 /// lanes stay globally consistent across pages and searches. When the refs
 /// move (or the all-branches toggle flips) the cache is refreshed — extended
@@ -428,7 +449,7 @@ mod tests {
     // --- network operations ------------------------------------------------
 
     use super::ProgressEvent;
-    use crate::remote::{cancel_network_op_impl, fetch_all_impl};
+    use crate::remote::{cancel_network_op_impl, clone_repository_impl, fetch_all_impl};
     use gitp_core::Progress;
     use std::sync::{Arc, Mutex};
 
@@ -467,19 +488,58 @@ mod tests {
     }
 
     #[test]
-    fn cancel_reaches_only_the_active_repos_operations() {
+    fn cancel_reaches_the_active_repos_operations_and_clones_only() {
         let dir = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
         make_repo(dir.path(), &["c1"]);
+        make_repo(other.path(), &["c1"]);
         let state = RepoState::default();
+        let other_path = other.path().to_str().unwrap().to_string();
+        open_repo_impl(&state, other_path.clone()).expect("open other");
         open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
-        let path = state.0.lock().unwrap().sessions[0].path.clone();
+        let path = state.0.lock().unwrap().sessions[1].path.clone();
 
         let ours = state.1.begin(&path);
-        let theirs = state.1.begin("/some/other/repo");
+        let theirs = state.1.begin(&other_path);
+        // A clone runs on a path no tab has yet.
+        let clone = state.1.begin("/some/new/clone");
         cancel_network_op_impl(&state).expect("cancel");
 
         assert!(ours.load(std::sync::atomic::Ordering::SeqCst));
         assert!(!theirs.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(clone.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_clone_reports_progress_as_clone_and_then_opens() {
+        let src = tempfile::tempdir().unwrap();
+        make_repo(src.path(), &["c1", "c2"]);
+        let parent = tempfile::tempdir().unwrap();
+        let dest = parent.path().join("copy").to_str().unwrap().to_string();
+        let state = RepoState::default();
+        let events: Arc<Mutex<Vec<ProgressEvent>>> = Arc::default();
+        let sink = Arc::clone(&events);
+        state.1.set_emitter(move |e| sink.lock().unwrap().push(e));
+
+        // file:// for the real transport — a plain path takes git's local
+        // shortcut, which has no meters to report.
+        let url = format!("file://{}", src.path().display());
+        clone_repository_impl(&state, url, dest.clone(), Default::default()).expect("clone");
+
+        assert!(state.1.in_flight.lock().unwrap().is_empty());
+        let events = events.lock().unwrap();
+        assert!(!events.is_empty(), "git's meters were forwarded");
+        assert!(events.iter().all(|e| e.op == "clone"));
+        open_repo_impl(&state, dest).expect("open the clone");
+        assert_eq!(get_log_page_impl(&state, 0, 100, true).unwrap().total, 2);
+    }
+
+    #[test]
+    fn a_clone_can_be_cancelled_with_no_repository_open() {
+        let state = RepoState::default();
+        let clone = state.1.begin("/some/new/clone");
+        cancel_network_op_impl(&state).expect("cancel");
+        assert!(clone.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]

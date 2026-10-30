@@ -353,6 +353,14 @@ export interface Worktree {
   prunable: boolean;
 }
 
+// The optional parts of a clone (mirrors gitp-core's CloneOptions).
+export interface CloneOptions {
+  branch: string | null;
+  single_branch: boolean;
+  depth: number | null;
+  recurse_submodules: boolean;
+}
+
 // What a new worktree checks out (mirrors gitp-core's WorktreeTarget).
 export type WorktreeTarget =
   | { kind: "branch"; name: string }

@@ -1,13 +1,15 @@
-//! Network operations — pull, push, fetch, and cancelling them — plus opening
-//! a pull request.
+//! Network operations — pull, push, fetch, clone, and cancelling them — plus
+//! opening a pull request.
 
-use gitp_core::{PullMode, Repo};
+use std::path::Path;
+
+use gitp_core::{CloneOptions, PullMode, Repo};
 use tauri::State;
 
 use crate::os::open_in_browser;
 use crate::state::{
-    to_message, with_repo, with_repo_networked, with_repo_networked_background,
-    with_repo_networked_prepared, RepoState,
+    run_networked_unopened, to_message, with_repo, with_repo_networked,
+    with_repo_networked_background, with_repo_networked_prepared, RepoState,
 };
 use crate::undo::{clear_undo, record_pull};
 
@@ -79,17 +81,40 @@ fn fetch_and_update_branch_impl(state: &RepoState, name: String) -> Result<Strin
     )
 }
 
-/// Cancel whatever network operation is running on the active repo: its `git`
-/// is killed and the operation's command returns "operation cancelled". A
-/// no-op when nothing is running.
+/// Cancel whatever network operation is running on the active repo, and any
+/// clone: its `git` is killed and the operation's command returns "operation
+/// cancelled". A no-op when nothing is running.
+///
+/// A clone has no tab of its own — the status bar's Cancel is the only way to
+/// stop it, whichever tab is active — so an operation on a path that isn't an
+/// open tab is taken to be one.
 pub(crate) fn cancel_network_op_impl(state: &RepoState) -> Result<(), String> {
-    let path = {
+    let (active, open): (Option<String>, Vec<String>) = {
         let guard = state.0.lock().map_err(to_message)?;
-        let idx = guard.active.ok_or("no repository is open")?;
-        guard.sessions[idx].path.clone()
+        let active = guard.active.map(|i| guard.sessions[i].path.clone());
+        (
+            active,
+            guard.sessions.iter().map(|s| s.path.clone()).collect(),
+        )
     };
-    state.1.cancel(&path);
+    state
+        .1
+        .cancel(|path| active.as_deref() == Some(path) || !open.iter().any(|p| p == path));
     Ok(())
+}
+
+/// `git clone` `url` into `dest` as `options` say (see `gitp_core::clone_repo`),
+/// reporting progress and offering Cancel like a fetch. The frontend opens the
+/// result as a tab the way it opens any folder.
+pub(crate) fn clone_repository_impl(
+    state: &RepoState,
+    url: String,
+    dest: String,
+    options: CloneOptions,
+) -> Result<String, String> {
+    run_networked_unopened(state, "clone", &dest, |hooks| {
+        gitp_core::clone_repo(&url, Path::new(&dest), &options, hooks)
+    })
 }
 
 /// Compute the pull/merge-request URL for `branch` and open it in the default
@@ -146,6 +171,16 @@ pub(crate) fn fetch_and_update_branch(
     state: State<RepoState>,
 ) -> Result<String, String> {
     fetch_and_update_branch_impl(&state, name)
+}
+
+#[tauri::command(async)]
+pub(crate) fn clone_repository(
+    url: String,
+    dest: String,
+    options: CloneOptions,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    clone_repository_impl(&state, url, dest, options)
 }
 
 #[tauri::command(async)]

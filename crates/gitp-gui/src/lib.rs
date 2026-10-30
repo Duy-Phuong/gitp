@@ -84,6 +84,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             workspace::open_repo,
+            workspace::init_repository,
             workspace::list_repos,
             workspace::activate_repo,
             workspace::close_repo,
@@ -148,6 +149,7 @@ pub fn run() {
             branches::unset_upstream,
             remote::create_pull_request,
             remote::cancel_network_op,
+            remote::clone_repository,
             rebase::get_rebase_todo,
             rebase::interactive_rebase,
             rebase::rebase_status,

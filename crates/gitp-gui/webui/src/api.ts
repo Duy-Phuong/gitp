@@ -6,6 +6,7 @@ import type {
   BisectMark,
   BisectStatus,
   BlameLine,
+  CloneOptions,
   CommitDetail,
   CommitRow,
   CommitSignature,
@@ -151,18 +152,32 @@ export async function closeRepo(path: string): Promise<Workspace> {
 // Show a native folder picker. Returns the chosen directory, or null if the
 // user cancelled (or if running outside the Tauri shell, where no picker exists).
 export async function browseForRepo(): Promise<string | null> {
-  if (!isTauri()) return null;
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const selected = await open({ directory: true, multiple: false, title: "Open Repository" });
-  return typeof selected === "string" ? selected : null;
+  return browseForFolder("Open Repository");
 }
 
-// A native folder picker titled `title`; null if cancelled or outside Tauri.
+// The same picker under another title — where to init or clone a repository.
 export async function browseForFolder(title: string): Promise<string | null> {
   if (!isTauri()) return null;
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({ directory: true, multiple: false, title });
   return typeof selected === "string" ? selected : null;
+}
+
+// `git clone` `url` into `dest`, a new folder, as `options` say. A network
+// operation: progress and Cancel as for a fetch, credentials asked for in a
+// dialog. Returns git's output; open `dest` with openRepo afterwards. In
+// preview mode it simply succeeds.
+export async function cloneRepository(url: string, dest: string, options: CloneOptions): Promise<string> {
+  if (!isTauri()) return `Cloning into '${dest}'... (preview mock)`;
+  return invokeNetwork<string>("clone_repository", { url, dest, options });
+}
+
+// `git init` a new repository at `path` (created if missing), writing a
+// `.gitignore` with `gitignore` and a README.md when asked. Open it afterwards
+// with openRepo. In preview mode it simply succeeds.
+export async function initRepository(path: string, gitignore: string | null, readme: boolean): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("init_repository", { path, gitignore, readme });
 }
 
 // A cheap "has history changed?" probe. Pulling a page to find out costs ~264 KB

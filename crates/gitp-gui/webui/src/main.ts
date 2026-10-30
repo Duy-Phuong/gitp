@@ -105,6 +105,7 @@ import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
 import { openQuickLaunch } from "./quick-launch-commands";
+import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { setupLogKeyboardNav, setupShortcuts } from "./keyboard";
 import { setupBranchMenu, setupPullMenu, setupSettingsMenu } from "./topbar-menus";
 import { showComparison } from "./compare";
@@ -119,6 +120,8 @@ function wireUi(): void {
     if (path) void loadRepo(path).then(warmTerminal);
     else if (!isTauri()) setStatus("The folder picker is only available in the desktop app.");
   });
+  $("#clone-btn").addEventListener("click", cloneRepoAction);
+  $("#init-btn").addEventListener("click", initRepoAction);
   $<HTMLInputElement>("#repo-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") $("#open-btn").click();
   });

@@ -142,6 +142,38 @@ export function forgetRecentRepo(path: string): void {
   );
 }
 
+// Starred repositories, in the order they were starred: Quick Launch lists them
+// above the recent ones, and Cmd/Ctrl+1…9 switch to the first nine. Unlike the
+// recent list nothing ever drops off it — only unstarring removes one.
+const FAVORITE_REPOS_KEY = "gitp-favorite-repos";
+
+export function loadFavoriteRepos(): string[] {
+  try {
+    const raw = localStorage.getItem(FAVORITE_REPOS_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function isFavoriteRepo(path: string): boolean {
+  return loadFavoriteRepos().includes(path);
+}
+
+// Star `path`, or unstar it if it already is. Returns whether it's now starred.
+export function toggleFavoriteRepo(path: string): boolean {
+  const next = withFavoriteToggled(loadFavoriteRepos(), path);
+  localStorage.setItem(FAVORITE_REPOS_KEY, JSON.stringify(next));
+  return next.includes(path);
+}
+
+// A newly starred repo goes last, so the shortcuts of the ones before it
+// don't move.
+export function withFavoriteToggled(favorites: string[], path: string): string[] {
+  return favorites.includes(path) ? favorites.filter((p) => p !== path) : [...favorites, path];
+}
+
 export function loadWorkspace(): { paths: string[]; active: string } | null {
   try {
     const raw = localStorage.getItem(REPOS_KEY);

@@ -34,8 +34,24 @@ import {
 import type { BranchRef, ResetMode, StashRef, WorktreeTarget } from "./types";
 import { state, ui } from "./app-state";
 import { cancelNetworkAction, canCancelNetwork, readFailed, setStatus } from "./report";
-import { forgetRecentRepo, loadRecentRepos, PULL_DEFAULT_LABEL, PULL_DEFAULTS } from "./prefs";
-import { bisectStep, closeRepoTab, loadRepo, selectCommit, showReflog, showView, switchRepo } from "./shell";
+import {
+  forgetRecentRepo,
+  isFavoriteRepo,
+  loadFavoriteRepos,
+  loadRecentRepos,
+  PULL_DEFAULT_LABEL,
+  PULL_DEFAULTS,
+} from "./prefs";
+import {
+  bisectStep,
+  closeRepoTab,
+  loadRepo,
+  selectCommit,
+  showReflog,
+  showView,
+  switchRepo,
+  toggleFavorite,
+} from "./shell";
 import {
   cleanUpAction,
   createBranchAction,
@@ -77,6 +93,7 @@ import {
 import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
 import { syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
+import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 
 // --- Quick Launch -----------------------------------------------------------
 
@@ -95,7 +112,9 @@ export function openQuickLaunch(): void {
   showQuickLaunch({
     placeholder: state.repoPath ? "Command" : "Open a repository",
     sections: [
-      { title: "Recent Repositories", items: recentRepoItems() },
+      { title: "Favorites", items: favoriteRepoItems() },
+      // A favorite is already listed above; once is enough.
+      { title: "Recent Repositories", items: recentRepoItems({ skipFavorites: true }) },
       { title: "Commands", items: state.repoPath ? repoCommands() : openOnlyCommands() },
     ],
   });
@@ -110,18 +129,30 @@ function tildePath(path: string): string {
   return path.replace(/^\/(?:Users|home)\/[^/]+\//, "~/");
 }
 
-function recentRepoItems(opts: { skipActive?: boolean } = {}): QuickItem[] {
+function recentRepoItems(opts: { skipActive?: boolean; skipFavorites?: boolean } = {}): QuickItem[] {
+  const favorites = opts.skipFavorites ? loadFavoriteRepos() : [];
   return loadRecentRepos()
-    .filter((path) => !(opts.skipActive && path === state.repoPath))
-    .map((path) => ({
-      kind: "repo" as const,
-      label: path.split("/").filter(Boolean).pop() ?? path,
-      detail: tildePath(path),
-      run: () => void openRecentRepo(path),
-    }));
+    .filter((path) => !(opts.skipActive && path === state.repoPath) && !favorites.includes(path))
+    .map((path) => repoItem(path, tildePath(path)));
 }
 
-async function openRecentRepo(path: string): Promise<void> {
+// The first nine carry their Cmd/Ctrl+N shortcut, which is otherwise only
+// discoverable by accident.
+function favoriteRepoItems(): QuickItem[] {
+  return loadFavoriteRepos().map((path, i) => repoItem(path, i < 9 ? `⌘${i + 1} · ${tildePath(path)}` : tildePath(path)));
+}
+
+function repoItem(path: string, detail: string): QuickItem {
+  return {
+    kind: "repo",
+    label: path.split("/").filter(Boolean).pop() ?? path,
+    detail,
+    run: () => void openRecentRepo(path),
+  };
+}
+
+// Switch to `path`'s tab, or open it as a new one.
+export async function openRecentRepo(path: string): Promise<void> {
   if (path === state.repoPath) {
     setStatus(`Already in ${path}.`);
     return;
@@ -144,6 +175,8 @@ async function openRecentRepo(path: string): Promise<void> {
 function openOnlyCommands(): QuickItem[] {
   return [
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
+    { kind: "command", label: "Clone Repository…", run: cloneRepoAction },
+    { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Terminal", run: toggleTerminal },
   ];
 }
@@ -340,7 +373,15 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Show Reflog", run: () => showReflog() },
     { kind: "command", label: "Switch Repository", next: () => repoStage() },
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
+    { kind: "command", label: "Clone Repository…", run: cloneRepoAction },
+    { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Close Repository", run: () => void closeRepoTab(state.repoPath) },
+    {
+      kind: "command",
+      label: "Toggle Favorite",
+      detail: isFavoriteRepo(state.repoPath) ? "remove this repository from Favorites" : "add this repository to Favorites",
+      run: () => toggleFavorite(state.repoPath),
+    },
     { kind: "command", label: "Terminal", run: toggleTerminal },
     {
       kind: "command",
@@ -451,7 +492,7 @@ function repoCommands(): QuickItem[] {
   }
   if (ui.undoLabels.undo) items.push({ kind: "command", label: `Undo ${ui.undoLabels.undo}`, run: () => void undoAction() });
   if (ui.undoLabels.redo) items.push({ kind: "command", label: `Redo ${ui.undoLabels.redo}`, run: () => void redoAction() });
-  if (canCancelNetwork()) items.push({ kind: "command", label: "Cancel Fetch / Pull / Push", run: cancelNetworkAction });
+  if (canCancelNetwork()) items.push({ kind: "command", label: "Cancel Fetch / Pull / Push / Clone", run: cancelNetworkAction });
   items.sort((a, b) => a.label.localeCompare(b.label));
   return items;
 }
