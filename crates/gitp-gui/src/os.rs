@@ -31,6 +31,16 @@ fn reveal_path_impl(state: &RepoState, path: String) -> Result<(), String> {
     reveal_in_file_manager(&full)
 }
 
+/// Reveal the folder at the absolute `path` — a workspace's repo, which needn't
+/// be open — in the OS file manager.
+fn reveal_folder_impl(path: String) -> Result<(), String> {
+    let full = Path::new(&path);
+    if !full.is_absolute() || !full.is_dir() {
+        return Err(format!("folder not found: {path}"));
+    }
+    reveal_in_file_manager(full)
+}
+
 /// Open the repo-relative `path` for editing: prefer VS Code (the `code` CLI)
 /// when it's on PATH, since the OS's registered default app for a file type
 /// is often not an editor at all (e.g. a terminal app claiming shell scripts).
@@ -130,6 +140,11 @@ fn open_mergetool_impl(state: &RepoState, path: String) -> Result<bool, String> 
 #[tauri::command(async)]
 pub(crate) fn reveal_path(path: String, state: State<RepoState>) -> Result<(), String> {
     reveal_path_impl(&state, path)
+}
+
+#[tauri::command(async)]
+pub(crate) fn reveal_folder(path: String) -> Result<(), String> {
+    reveal_folder_impl(path)
 }
 
 #[tauri::command(async)]

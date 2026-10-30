@@ -96,6 +96,7 @@ import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
 import { addSubmoduleAction, syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
+import { openWorkspacesAction } from "./local-workspace-actions";
 import { addRemoteAction } from "./remote-actions";
 import { createFileAction, editFileStage } from "./editor-actions";
 
@@ -181,6 +182,7 @@ function openOnlyCommands(): QuickItem[] {
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
     { kind: "command", label: "Clone Repository…", run: cloneRepoAction },
     { kind: "command", label: "Init Repository…", run: initRepoAction },
+    { kind: "command", label: "Workspaces…", detail: "groups of repositories to fetch, pull or open together", run: openWorkspacesAction },
     { kind: "command", label: "Terminal", run: toggleTerminal },
   ];
 }
@@ -381,6 +383,7 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
     { kind: "command", label: "Clone Repository…", run: cloneRepoAction },
     { kind: "command", label: "Init Repository…", run: initRepoAction },
+    { kind: "command", label: "Workspaces…", detail: "groups of repositories to fetch, pull or open together", run: openWorkspacesAction },
     { kind: "command", label: "Close Repository", run: () => void closeRepoTab(state.repoPath) },
     {
       kind: "command",

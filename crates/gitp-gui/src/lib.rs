@@ -18,6 +18,7 @@ mod config;
 mod conflict;
 mod editor;
 mod history;
+mod local_workspaces;
 mod os;
 mod rebase;
 mod reflog;
@@ -59,6 +60,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(RepoState::default())
         .manage(TerminalState::default())
+        .manage(local_workspaces::WorkspaceOps::default())
         .setup(|app| {
             // Repository watchers push changes on disk to the frontend (see
             // `watch`); they need the app handle to emit, which exists only now.
@@ -166,6 +168,11 @@ pub fn run() {
             remote::create_pull_request,
             remote::cancel_network_op,
             remote::clone_repository,
+            local_workspaces::workspace_repo_summary,
+            local_workspaces::workspace_scan_folder,
+            local_workspaces::workspace_fetch,
+            local_workspaces::workspace_pull,
+            local_workspaces::cancel_workspace_ops,
             rebase::get_rebase_todo,
             rebase::interactive_rebase,
             rebase::rebase_status,
@@ -190,6 +197,7 @@ pub fn run() {
             staging::add_to_gitignore,
             staging::untrack_files,
             os::reveal_path,
+            os::reveal_folder,
             workspace::workspace_snapshot,
             os::open_in_editor,
             editor::read_text_file,

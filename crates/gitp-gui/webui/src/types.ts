@@ -324,6 +324,26 @@ export interface GitProgress {
   cancellable: boolean;
 }
 
+// A local workspace's repo, as its row in the Workspaces screen shows it.
+// `missing`: the folder is gone. `branch` is null when HEAD is detached.
+export interface RepoSummary {
+  missing: boolean;
+  branch: string | null;
+  ahead: number;
+  behind: number;
+  has_upstream: boolean;
+  changes: number;
+}
+
+// Git's progress for one repo of a Workspaces bulk fetch or pull.
+export interface WorkspaceProgress {
+  path: string;
+  phase: string;
+  percent: number | null;
+  detail: string;
+  cancellable: boolean;
+}
+
 // One reflog entry: the ref moved from `old_id` to `new_id` because of
 // `message` (git's own, e.g. "commit: …", "checkout: moving from a to b").
 export interface ReflogEntry {

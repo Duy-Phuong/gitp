@@ -37,6 +37,7 @@ import type {
   Refs,
   RemoteInfo,
   RepoChanged,
+  RepoSummary,
   ResetMode,
   SigningConfig,
   Identity,
@@ -45,6 +46,7 @@ import type {
   TextFile,
   UndoState,
   Workspace,
+  WorkspaceProgress,
   WorkspaceSnapshot,
   Worktree,
   WorktreeTarget,
@@ -177,6 +179,67 @@ export async function browseForFolder(title: string): Promise<string | null> {
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({ directory: true, multiple: false, title });
   return typeof selected === "string" ? selected : null;
+}
+
+// --- Local workspaces (the Workspaces screen) -------------------------------
+// Each call is about one repo folder, open as a tab or not, and leaves the
+// active repo alone. Fetch and pull are network operations of their own: not
+// counted by invokeNetwork, since the status bar's Cancel can't reach them —
+// cancelWorkspaceOps does — and their progress comes per repo as
+// `workspace-progress` events.
+
+export async function workspaceRepoSummary(path: string): Promise<RepoSummary> {
+  if (!isTauri()) {
+    // Something different per path, so the table has some variety to show.
+    const n = path.length;
+    return { missing: path.includes("missing"), branch: "main", ahead: n % 2, behind: n % 3, has_upstream: true, changes: n % 4 };
+  }
+  return invoke<RepoSummary>("workspace_repo_summary", { path });
+}
+
+// The repositories directly inside `folder` (and `folder` itself if it is one).
+export async function workspaceScanFolder(folder: string): Promise<string[]> {
+  if (!isTauri()) return [`${folder}/alpha`, `${folder}/beta`];
+  return invoke<string[]>("workspace_scan_folder", { folder });
+}
+
+// The mocks take a moment, so the screen's per-row progress can be seen.
+const mockNetworkDelay = () => new Promise((resolve) => setTimeout(resolve, 600));
+
+export async function workspaceFetch(path: string): Promise<string> {
+  if (!isTauri()) {
+    await mockNetworkDelay();
+    return "Fetched (preview mock)";
+  }
+  return invoke<string>("workspace_fetch", { path });
+}
+
+export async function workspacePull(path: string, mode: PullMode): Promise<string> {
+  if (!isTauri()) {
+    await mockNetworkDelay();
+    return "Already up to date. (preview mock)";
+  }
+  return invoke<string>("workspace_pull", { path, mode });
+}
+
+/// Stop every running Workspaces fetch / pull; each rejects as cancelled.
+export async function cancelWorkspaceOps(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("cancel_workspace_ops", {});
+}
+
+/// Listen for per-repo progress of Workspaces fetches and pulls. Returns the
+/// unsubscribe function. No-op in preview mode.
+export async function onWorkspaceProgress(cb: (progress: WorkspaceProgress) => void): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<WorkspaceProgress>("workspace-progress", (event) => cb(event.payload));
+}
+
+// Reveal an absolute folder (a workspace's repo) in Finder / Explorer.
+export async function revealFolder(path: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("reveal_folder", { path });
 }
 
 // `git clone` `url` into `dest`, a new folder, as `options` say. A network

@@ -133,6 +133,7 @@ import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-pan
 import { setupExternalChangeRefresh } from "./external-refresh";
 import { openQuickLaunch } from "./quick-launch-commands";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
+import { openWorkspacesAction } from "./local-workspace-actions";
 import { openInDiffTool, openInMergeTool } from "./external-tools";
 import { setupLogKeyboardNav, setupShortcuts } from "./keyboard";
 import { setupBranchMenu, setupPullMenu, setupSettingsMenu } from "./topbar-menus";
@@ -151,6 +152,7 @@ function wireUi(): void {
   });
   $("#clone-btn").addEventListener("click", cloneRepoAction);
   $("#init-btn").addEventListener("click", initRepoAction);
+  $("#workspaces-btn").addEventListener("click", openWorkspacesAction);
   $<HTMLInputElement>("#repo-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") $("#open-btn").click();
   });
