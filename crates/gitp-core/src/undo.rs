@@ -63,8 +63,9 @@ pub enum Undoable {
     ///
     /// `backup` is set for a hard reset that threw away uncommitted work: the
     /// commit [`Repo::backup_uncommitted_work`] saved it in. Undo puts that work
-    /// back in the working tree after moving the tip; `before` and `after` may
-    /// then be equal (a hard reset to HEAD only discards changes).
+    /// back in the working tree and the index after moving the tip; `before`
+    /// and `after` may then be equal (a hard reset to HEAD only discards
+    /// changes).
     HeadMoved {
         label: String,
         before: String,
@@ -605,7 +606,8 @@ impl Repo {
                 // back to `--keep`, which refuses to overwrite it.
                 if let Some(backup) = backup {
                     let saved = self.run_git(&["rev-parse", &format!("{backup}^{{tree}}")])?;
-                    if self.work_tree_snapshot()? == saved {
+                    let (index, work) = self.uncommitted_trees()?;
+                    if work == saved && index == Some(self.backup_index_tree(backup)?) {
                         return self.run_git(&["reset", "--hard", after]).map(|_| ());
                     }
                 }
@@ -735,18 +737,24 @@ impl Repo {
 
     // --- hard-reset backups ----------------------------------------------------
 
-    /// Save the uncommitted work — tracked changes and untracked, non-ignored
-    /// files — as a commit on top of HEAD, kept reachable under
-    /// `refs/gitp/backups/<millis>`, so a hard reset can be undone with the work
-    /// it threw away. Neither the working tree nor the real index is touched.
-    /// `None` when there is nothing to save.
+    /// Save the uncommitted work a hard reset throws away — the tracked files'
+    /// changes and the index, staged new files included — as a commit on top
+    /// of HEAD, kept reachable under `refs/gitp/backups/<millis>`, so a hard
+    /// reset can be undone with that work. Like a stash, the commit's tree is
+    /// the working tree and its second parent holds the index; with unmerged
+    /// entries, which can't be written as a tree, there is no second parent
+    /// and only the working tree comes back. Untracked files are left out: the
+    /// reset leaves them alone, and copying them (build output, datasets) into
+    /// the object database would only cost time and space. Neither the working
+    /// tree nor the real index is touched. `None` when there is nothing to save.
     ///
     /// Only the newest [`BACKUPS_KEPT`] backups are kept; older refs are deleted
     /// (their commits then go with the next gc).
     pub fn backup_uncommitted_work(&self) -> Result<Option<String>> {
-        let tree = self.work_tree_snapshot()?;
+        let (index, work) = self.uncommitted_trees()?;
         let head = self.head_commit_id()?;
-        if tree == self.run_git(&["rev-parse", "HEAD^{tree}"])? {
+        let head_tree = self.run_git(&["rev-parse", "HEAD^{tree}"])?;
+        if work == head_tree && index.as_deref().is_none_or(|t| t == head_tree) {
             return Ok(None);
         }
         // A fixed identity: the commit is private and never pushed, and a
@@ -757,17 +765,26 @@ impl Repo {
             ("GIT_COMMITTER_NAME", "gitp"),
             ("GIT_COMMITTER_EMAIL", "gitp@localhost"),
         ];
-        let commit = self.run_git_env(
-            &[
-                "commit-tree",
-                &tree,
-                "-p",
-                &head,
-                "-m",
-                "gitp: uncommitted work before a hard reset",
-            ],
-            &identity,
-        )?;
+        let index_commit = match &index {
+            Some(tree) => Some(self.run_git_env(
+                &[
+                    "commit-tree",
+                    tree,
+                    "-p",
+                    &head,
+                    "-m",
+                    "gitp: index before a hard reset",
+                ],
+                &identity,
+            )?),
+            None => None,
+        };
+        let mut args = vec!["commit-tree", &work, "-p", &head];
+        if let Some(index_commit) = &index_commit {
+            args.extend(["-p", index_commit]);
+        }
+        args.extend(["-m", "gitp: uncommitted work before a hard reset"]);
+        let commit = self.run_git_env(&args, &identity)?;
         let millis = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
@@ -777,13 +794,15 @@ impl Repo {
         Ok(Some(commit))
     }
 
-    /// The tree the working tree would commit as with `git add -A` — written
-    /// through a scratch copy of the index, so the real one is left alone.
+    /// The index as a tree (`None` while it has unmerged entries, which
+    /// `write-tree` refuses), and the tree the tracked files would commit as
+    /// with `git add -u` — both written through a scratch copy of the index,
+    /// so the real one is left alone (`write-tree` would store its cache in it).
     ///
     /// The copy starts from the real index rather than an empty `read-tree
-    /// HEAD` so it keeps the stat cache: `add -A` then hashes only the files
+    /// HEAD` so it keeps the stat cache: `add -u` then hashes only the files
     /// that changed, not the whole working tree.
-    fn work_tree_snapshot(&self) -> Result<String> {
+    fn uncommitted_trees(&self) -> Result<(Option<String>, String)> {
         // Named like the undo index snapshots so the sweep on open
         // (`remove_index_snapshots`) also clears one left by a crash.
         let scratch = self.inner.path().join("gitp-undo-index-backup.tmp");
@@ -795,15 +814,24 @@ impl Repo {
         }
         let scratch_str = scratch.to_string_lossy().into_owned();
         let env = [("GIT_INDEX_FILE", scratch_str.as_str())];
-        let tree = (|| {
+        let trees = (|| {
             if !real.exists() {
                 self.run_git_env(&["read-tree", "HEAD"], &env)?;
             }
-            self.run_git_env(&["add", "-A"], &env)?;
-            self.run_git_env(&["write-tree"], &env)
+            let index = self.run_git_env(&["write-tree"], &env).ok();
+            self.run_git_env(&["add", "-u"], &env)?;
+            Ok((index, self.run_git_env(&["write-tree"], &env)?))
         })();
         let _ = fs::remove_file(&scratch);
-        tree
+        trees
+    }
+
+    /// The index tree `backup` saved: its second parent's, or — for one taken
+    /// with unmerged entries, which has none — HEAD's tree at the time, which
+    /// is what undo then leaves in the index.
+    fn backup_index_tree(&self, backup: &str) -> Result<String> {
+        self.run_git(&["rev-parse", "-q", "--verify", &format!("{backup}^2^{{tree}}")])
+            .or_else(|_| self.run_git(&["rev-parse", &format!("{backup}^1^{{tree}}")]))
     }
 
     /// Delete all but the newest [`BACKUPS_KEPT`] backup refs. Best effort: a
@@ -830,8 +858,9 @@ impl Repo {
     /// Refuse to undo a backed-up hard reset when restoring the backup would
     /// overwrite work done since: any tracked change (the reset left the tracked
     /// files clean, so it is new), or an untracked file that differs from the
-    /// one the backup would write there. Untracked files the reset left alone
-    /// are identical and pass.
+    /// one the backup would write there (a staged new file the reset deleted,
+    /// made again). Untracked files the reset left alone aren't in the backup
+    /// and pass.
     fn check_backup_restorable(&self, backup: &str) -> Result<()> {
         let mut blocking = self.git_paths(&["diff", "--name-only", "-z", "HEAD"])?;
         let untracked = self.untracked_paths()?;
@@ -866,9 +895,9 @@ impl Repo {
         }
     }
 
-    /// Write the backed-up work back into the working tree: every file as the
-    /// backup holds it, tracked files it lacks deleted. The index stays at HEAD,
-    /// so the work comes back as uncommitted changes, untracked files untracked.
+    /// Write the backed-up work back: every tracked file as the backup holds
+    /// it, those it lacks deleted, then the index it saved — so staged and
+    /// unstaged changes come back split as they were.
     fn restore_backup(&self, backup: &str) -> Result<()> {
         self.run_git(&[
             "restore",
@@ -876,8 +905,9 @@ impl Repo {
             "--worktree",
             "--",
             ".",
-        ])
-        .map(|_| ())
+        ])?;
+        let index = self.backup_index_tree(backup)?;
+        self.run_git(&["read-tree", &index]).map(|_| ())
     }
 
     /// Write each file's captured bytes back (or delete it when that side was

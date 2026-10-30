@@ -97,6 +97,22 @@ fn the_editor_reads_and_writes_in_the_repo_encoding() {
     );
 }
 
+// WHATWG Shift_JIS reads NEC's 0xED40 and IBM's 0xFA5C as the same kanji and
+// writes it back as the latter, so opening and saving the file unchanged would
+// rewrite bytes no one touched. Such a file isn't opened for editing at all.
+#[test]
+fn a_file_that_would_not_save_back_byte_for_byte_is_refused() {
+    let fx = FixtureRepo::init();
+    let raw = b"abc \xED\x40 def\n";
+    fs::write(fx.path().join("n.txt"), raw).unwrap();
+    let repo = with_encoding(&fx, "shift_jis");
+
+    let err = repo.read_text_file("n.txt").unwrap_err();
+
+    assert!(err.to_string().contains("can't be edited here"), "{err}");
+    assert_eq!(fs::read(fx.path().join("n.txt")).unwrap(), raw);
+}
+
 #[test]
 fn utf16_files_are_text_to_the_editor() {
     let fx = FixtureRepo::init();
