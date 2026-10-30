@@ -9,7 +9,8 @@
 import { applyLocalIdentity, closeRepo, confirmDialog, fetchGlobalIdentity, setGlobalIdentity } from "./api";
 import { clear, el, $ } from "./dom";
 import { state, ui } from "./app-state";
-import { opFailed, reportDone } from "./report";
+import { opFailed, readFailed, reportDone } from "./report";
+import { operationInFlight } from "./shell";
 import {
   activeProfile,
   deleteProfile,
@@ -17,6 +18,7 @@ import {
   loadStore,
   profileIdentity,
   profileInitials,
+  profileSwitchPrompt,
   putProfile,
   switchProfile,
   type Profile,
@@ -74,7 +76,7 @@ function buildProfileMenu(menu: HTMLElement, close: () => void): void {
     });
     item.addEventListener("click", () => {
       close();
-      if (p.id !== store.active) void switchToProfile(p);
+      if (p.id !== store.active) switchToProfile(p).catch((err) => opFailed(`Couldn't switch to “${p.name}”`, err));
     });
     menu.append(item);
   }
@@ -88,33 +90,54 @@ function buildProfileMenu(menu: HTMLElement, close: () => void): void {
 }
 
 async function switchToProfile(target: Profile): Promise<void> {
-  // A global identity is written first: if that fails, nothing has changed
-  // yet. A local one is written as each repo becomes active
-  // (applyProfileIdentityHere), after the reload.
+  const from = currentStore()?.active;
+  if (!from) return;
+  // Who git commits as now, for the prompt to name when the target has no
+  // identity to replace it with.
+  const current = await fetchGlobalIdentity().catch(() => null);
+  const prompt = profileSwitchPrompt(target, state.repos.length, operationInFlight(), current);
+  if ("refuse" in prompt) {
+    readFailed("Can't switch profile now", prompt.refuse);
+    return;
+  }
+  if (!(await confirmDialog(prompt.confirm, "Switch Profile"))) return;
+  // Started while the question was open.
+  if (operationInFlight()) {
+    readFailed("Can't switch profile now", "A git operation is still running.");
+    return;
+  }
+
+  // The settings are swapped first: a swap that fails (storage full) has
+  // changed nothing, and the window carries on as it was. Only then is a
+  // global identity written — undone by swapping back should that fail — so
+  // ~/.gitconfig never holds a profile the app isn't on. A local identity is
+  // written as each repo becomes active (applyProfileIdentityHere), after the
+  // reload.
+  try {
+    switchProfile(localStorage, target.id);
+  } catch (err) {
+    opFailed(`Couldn't switch to “${target.name}”: saving the settings failed`, err);
+    return;
+  }
   const identity = profileIdentity(target);
   if (identity && target.scope === "global") {
     try {
       await setGlobalIdentity(identity);
     } catch (err) {
+      switchProfile(localStorage, from);
       opFailed(`Couldn't switch to “${target.name}”: writing ~/.gitconfig failed`, err);
       return;
     }
   }
   // Close this profile's tabs in the backend, which outlives the reload, so
   // they don't reappear among the next profile's. Through the API rather than
-  // closeRepoTab: that would save the shrinking tab list as this profile's.
+  // closeRepoTab: that would save the shrinking tab list — now into the new
+  // profile's keys. Nothing else here writes settings before the reload.
   for (const repo of [...state.repos]) {
     await closeRepo(repo.path).catch(() => undefined);
     ui.terminal?.closeRepo(repo.path);
   }
-  try {
-    switchProfile(localStorage, target.id);
-  } finally {
-    // Swapped and reloaded in one go, so nothing can write the old profile's
-    // state into the new one's keys in between. Should the swap itself have
-    // failed (storage full), the reload brings this profile's tabs back.
-    location.reload();
-  }
+  location.reload();
 }
 
 // Make the open repo commit as the active profile, when that profile applies

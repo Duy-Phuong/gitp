@@ -155,6 +155,33 @@ export function profileIdentity(profile: Profile): Identity | null {
   return { name: profile.authorName, email: profile.authorEmail, signing_key: profile.signingKey };
 }
 
+// The confirmation a switch to `target` asks for, or why it can't happen now.
+// The window starts again on the target's settings and tabs, so whatever lives
+// only in this session goes with it. `identity` is who git commits as today
+// (~/.gitconfig): a target without an identity of its own leaves it in place,
+// which is said rather than left to be found in the next commit.
+export function profileSwitchPrompt(
+  target: Profile,
+  openTabs: number,
+  busy: boolean,
+  identity: Identity | null,
+): { refuse: string } | { confirm: string } {
+  if (busy) return { refuse: `A git operation is still running. Switch to “${target.name}” once it has finished.` };
+  const tabs = openTabs === 1 ? "1 open tab closes" : `${openTabs} open tabs close`;
+  const lines = [
+    `Switch to the profile “${target.name}”?`,
+    `The window reloads: ${tabs} (they reopen when you switch back), terminal sessions end, and Undo history, ` +
+      "the unsent commit message and any paused cherry-picks are lost.",
+  ];
+  if (!profileIdentity(target) && identity?.email) {
+    lines.push(
+      `“${target.name}” has no commit identity, so git keeps committing as ${identity.name} <${identity.email}>. ` +
+        "Give it one under Manage Profiles….",
+    );
+  }
+  return { confirm: lines.join("\n\n") };
+}
+
 // "Ada Lovelace" → "AL", "work" → "WO": the top bar's profile badge.
 export function profileInitials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);

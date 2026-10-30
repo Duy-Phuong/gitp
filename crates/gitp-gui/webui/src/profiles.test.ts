@@ -7,6 +7,7 @@ import {
   loadStore,
   profileIdentity,
   profileInitials,
+  profileSwitchPrompt,
   putProfile,
   switchProfile,
   type KeyValueStorage,
@@ -173,5 +174,31 @@ describe("profileInitials", () => {
     expect(profileInitials("Ada Byron Lovelace")).toBe("AL");
     expect(profileInitials("work")).toBe("WO");
     expect(profileInitials("  ")).toBe("?");
+  });
+});
+
+describe("profileSwitchPrompt", () => {
+  const noIdentity: Profile = { ...work, id: "default", name: "Default", authorName: "", authorEmail: "", signingKey: "" };
+
+  it("refuses while a git operation is running, and says why", () => {
+    const prompt = profileSwitchPrompt(work, 3, true, ADA);
+    expect(prompt).toEqual({ refuse: expect.stringMatching(/still running/) });
+  });
+
+  it("lists what the switch drops before it happens", () => {
+    const prompt = profileSwitchPrompt(work, 3, false, ADA);
+    if (!("confirm" in prompt)) throw new Error("expected a confirmation");
+    expect(prompt.confirm).toMatch(/“Work”/);
+    expect(prompt.confirm).toMatch(/3 open tabs close/);
+    expect(prompt.confirm).toMatch(/terminal/);
+    expect(prompt.confirm).toMatch(/Undo history/);
+    expect(prompt.confirm).not.toMatch(/no commit identity/);
+  });
+
+  it("says who git keeps committing as when the target has no identity", () => {
+    const prompt = profileSwitchPrompt(noIdentity, 1, false, { name: "Ada L.", email: "ada@work.example", signing_key: "" });
+    if (!("confirm" in prompt)) throw new Error("expected a confirmation");
+    expect(prompt.confirm).toMatch(/1 open tab closes/);
+    expect(prompt.confirm).toMatch(/“Default” has no commit identity.*Ada L\. <ada@work\.example>/s);
   });
 });
