@@ -55,6 +55,21 @@ export function updatePullButtonTitle(): void {
   $<HTMLButtonElement>("#pull-btn").title = PULL_DEFAULT_LABEL[loadPullDefault()];
 }
 
+// Width of the ref-badge column on the GitKraken themes, dragged in the log
+// header.
+const REF_COLUMN_KEY = "gitp-ref-column";
+
+export const REF_COLUMN_DEFAULT = 170;
+
+export function loadRefColumnWidth(): number {
+  const v = Number(localStorage.getItem(REF_COLUMN_KEY));
+  return Number.isFinite(v) && v > 0 ? v : REF_COLUMN_DEFAULT;
+}
+
+export function saveRefColumnWidth(width: number): void {
+  localStorage.setItem(REF_COLUMN_KEY, String(Math.round(width)));
+}
+
 // The history toggle, persisted across restarts. Defaults to all branches.
 export function loadAllBranches(): boolean {
   return localStorage.getItem(ALL_BRANCHES_KEY) !== "current";

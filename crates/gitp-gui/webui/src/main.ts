@@ -41,6 +41,7 @@ import {
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
+import { setOnMoreRefs } from "./views/log";
 import { setupChanges } from "./views/changes";
 import { setupConflict } from "./views/conflict";
 import { setupReflog } from "./views/reflog";
@@ -89,6 +90,7 @@ import {
   onBranchMenu,
   onRemoteMenu,
   onStashMenu,
+  onMoreRefsMenu,
   onTagMenu,
 } from "./ref-actions";
 import { onCommitContextMenu, onReflogMenu, runNextCherryPick } from "./commit-actions";
@@ -193,6 +195,7 @@ function setupBranchToggle(): void {
 async function init(): Promise<void> {
   // The shell draws the sidebar and the log; the menus and actions behind their
   // rows live in modules built on top of it, so they are plugged in from here.
+  setOnMoreRefs(onMoreRefsMenu);
   setRefActions({
     checkoutBranchAction,
     onBranchMenu,

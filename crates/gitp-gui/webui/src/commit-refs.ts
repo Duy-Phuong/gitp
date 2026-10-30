@@ -1,8 +1,8 @@
 // Which branches and tags each loaded commit belongs to — the log rows' ref chips
 // and the Commit tab's ref labels.
 
-import type { RefLabel, RefLabels } from "./views/log";
-import type { CommitRow } from "./types";
+import type { RefLabel, RefLabels, TipRef } from "./views/log";
+import type { BranchRef, CommitRow, RemoteBranch, TagRef } from "./types";
 import { state } from "./app-state";
 
 // Labels of refs whose tip is this commit — shown as chips in the Commit tab.
@@ -21,6 +21,13 @@ export function refsAt(id: string): string[] {
 // Per commit: the nearest labels to draw, plus the exact number of refs that
 // contain it. Rebuilt only when the loaded rows or the refs actually change.
 let commitRefs = new Map<string, RefLabels>();
+
+// What the last rebuild knew, kept so allRefsAt can list every ref containing a
+// commit on demand: the branches in bit order, each loaded commit's row, and
+// the containment bitsets (`words` 32-bit words per row).
+let containment: { branches: BranchRef[]; index: Map<string, number>; bits: Uint32Array; words: number } | null =
+  null;
+let commitTips = new Map<string, TipRef[]>();
 
 const NO_REFS: RefLabels = { labels: [], total: 0 };
 
@@ -151,6 +158,7 @@ export function rebuildCommitRefs(): boolean {
   for (const t of state.refs.tags) addTip(t.target, { name: t.name, kind: "tag" });
   for (const r of state.refs.remotes) addTip(r.target, { name: r.name, kind: "remote" });
 
+  const tips = mergeTipRefs(state.refs.branches, state.refs.remotes, state.refs.tags);
   const labels = new Map<string, RefLabels>();
   for (let i = 0; i < rows.length; i++) {
     const list = top[i];
@@ -158,10 +166,69 @@ export function rebuildCommitRefs(): boolean {
     let total = tipTotals[i];
     const from = i * words;
     for (let w = 0; w < words; w++) total += popcount(bits[from + w]);
-    labels.set(rows[i].id, { labels: list.map((c) => c.label), total });
+    labels.set(rows[i].id, { labels: list.map((c) => c.label), total, tips: tips.get(rows[i].id) });
   }
   commitRefs = labels;
+  commitTips = tips;
+  containment = { branches, index, bits, words };
   return true;
+}
+
+// The badges for the refs pointing at each commit, keyed by commit id.
+//
+// GitKraken draws a branch and its remote counterpart as one badge when they
+// sit on the same commit, which is the usual case for anything pushed; drawn
+// separately they would take two of the few badges a row has room for. A remote
+// branch merges with the local branch whose name it has after the remote
+// prefix ("origin/dev" with "dev"). Order per commit: the checked-out branch,
+// other local branches, remote-only branches, then tags.
+export function mergeTipRefs(
+  branches: BranchRef[],
+  remotes: RemoteBranch[],
+  tags: TagRef[],
+): Map<string, TipRef[]> {
+  const byCommit = new Map<string, TipRef[]>();
+  const listAt = (target: string): TipRef[] => {
+    let list = byCommit.get(target);
+    if (!list) {
+      list = [];
+      byCommit.set(target, list);
+    }
+    return list;
+  };
+  for (const b of branches) {
+    listAt(b.target).push({ name: b.name, kind: "branch", head: b.is_head, local: true, remotes: [] });
+  }
+  for (const r of remotes) {
+    const short = r.name.startsWith(`${r.remote}/`) ? r.name.slice(r.remote.length + 1) : r.name;
+    const list = listAt(r.target);
+    const local = list.find((t) => t.kind === "branch" && t.name === short);
+    if (local) local.remotes.push(r.name);
+    else list.push({ name: short, kind: "branch", head: false, local: false, remotes: [r.name] });
+  }
+  for (const t of tags) {
+    listAt(t.target).push({ name: t.name, kind: "tag", head: false, local: false, remotes: [] });
+  }
+  const rank = (t: TipRef) => (t.head ? 0 : t.kind === "tag" ? 3 : t.local ? 1 : 2);
+  for (const list of byCommit.values()) list.sort((a, b) => rank(a) - rank(b));
+  return byCommit;
+}
+
+// Every ref on a commit, for the "+N" menu: the badges pointing at it, then the
+// names of the other local branches that contain it. Only covers the loaded
+// log (that's all the containment bitsets know about).
+export function allRefsAt(id: string): { tips: TipRef[]; containing: string[] } {
+  const tips = commitTips.get(id) ?? [];
+  const containing: string[] = [];
+  const ri = containment?.index.get(id);
+  if (containment && ri !== undefined) {
+    const { branches, bits, words } = containment;
+    const atTip = new Set(tips.filter((t) => t.local).map((t) => t.name));
+    branches.forEach((b, bi) => {
+      if (bits[ri * words + (bi >> 5)] & (1 << (bi & 31)) && !atTip.has(b.name)) containing.push(b.name);
+    });
+  }
+  return { tips, containing };
 }
 
 // Bits set in a 32-bit word (SWAR), turning a commit's containment bitset into
