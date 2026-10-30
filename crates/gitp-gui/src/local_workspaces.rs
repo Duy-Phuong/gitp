@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use gitp_core::{NetworkHooks, Progress, ProgressFn, PullMode, Repo};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::state::{invalidate_status, throttled, to_message, NetworkOps, RepoState, Session};
 use crate::undo::clear_undo;
@@ -207,9 +207,21 @@ fn row_progress(app: AppHandle, path: String) -> ProgressFn {
 
 // --- Tauri commands --------------------------------------------------------
 
-#[tauri::command(async)]
-pub(crate) fn workspace_repo_summary(path: String) -> Result<RepoSummary, String> {
-    workspace_repo_summary_impl(&path)
+/// Run `f` on tokio's blocking pool and await it. A plain `(async)` command
+/// runs on one of the few async workers, and a Workspaces batch (several
+/// fetches or pulls plus the summary loaders, each blocking on git and the
+/// network) can occupy all of them, stalling every other command meanwhile.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(to_message)?
+}
+
+#[tauri::command]
+pub(crate) async fn workspace_repo_summary(path: String) -> Result<RepoSummary, String> {
+    blocking(move || workspace_repo_summary_impl(&path)).await
 }
 
 #[tauri::command(async)]
@@ -217,27 +229,28 @@ pub(crate) fn workspace_scan_folder(folder: String) -> Result<Vec<String>, Strin
     workspace_scan_folder_impl(&folder)
 }
 
-#[tauri::command(async)]
-pub(crate) fn workspace_fetch(
-    path: String,
-    app: AppHandle,
-    state: State<RepoState>,
-    ops: State<WorkspaceOps>,
-) -> Result<String, String> {
-    let progress = row_progress(app, path.clone());
-    workspace_fetch_impl(&state, &ops, &path, Some(progress))
+#[tauri::command]
+pub(crate) async fn workspace_fetch(path: String, app: AppHandle) -> Result<String, String> {
+    blocking(move || {
+        let progress = row_progress(app.clone(), path.clone());
+        let (state, ops) = (app.state::<RepoState>(), app.state::<WorkspaceOps>());
+        workspace_fetch_impl(&state, &ops, &path, Some(progress))
+    })
+    .await
 }
 
-#[tauri::command(async)]
-pub(crate) fn workspace_pull(
+#[tauri::command]
+pub(crate) async fn workspace_pull(
     path: String,
     mode: PullMode,
     app: AppHandle,
-    state: State<RepoState>,
-    ops: State<WorkspaceOps>,
 ) -> Result<String, String> {
-    let progress = row_progress(app, path.clone());
-    workspace_pull_impl(&state, &ops, &path, mode, Some(progress))
+    blocking(move || {
+        let progress = row_progress(app.clone(), path.clone());
+        let (state, ops) = (app.state::<RepoState>(), app.state::<WorkspaceOps>());
+        workspace_pull_impl(&state, &ops, &path, mode, Some(progress))
+    })
+    .await
 }
 
 #[tauri::command(async)]
