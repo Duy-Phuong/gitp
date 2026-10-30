@@ -164,10 +164,15 @@ mod tests {
         assert_eq!(list.len(), 2);
         assert_eq!(list[1].branch.as_deref(), Some("side"));
 
+        // The sidebar counts and the graph's WIP rows: each worktree, by its
+        // listed path.
         std::fs::write(Path::new(&added).join("new.txt"), "x").unwrap();
         let summaries = worktree_summaries_impl(&state).unwrap();
         assert_eq!(summaries.len(), 2);
-        assert_eq!(summaries[1].changed, 1);
+        assert_eq!(
+            (summaries[1].path.as_str(), summaries[1].changed),
+            (list[1].path.as_str(), 1)
+        );
         let unsaved = worktree_unsaved_work_impl(&state, added.clone()).unwrap();
         assert_eq!(unsaved.changed, vec!["new.txt".to_string()]);
         std::fs::remove_file(Path::new(&added).join("new.txt")).unwrap();

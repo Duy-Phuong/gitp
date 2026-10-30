@@ -138,6 +138,24 @@ export function laptopIcon(): SVGElement {
   return s;
 }
 
+// A folder with a branch fork on it, colored via `currentColor`. Marks another
+// worktree in the commit log: its WIP row, and the badge of the branch it has
+// checked out.
+export function worktreeIcon(): SVGElement {
+  const s = svg("svg", { viewBox: "0 0 16 16", class: "worktree-icon" });
+  s.appendChild(
+    svg("path", {
+      d: "M1.8 4.2a.8.8 0 0 1 .8-.8h3.2l1.4 1.5h6.2a.8.8 0 0 1 .8.8v6.9a.8.8 0 0 1-.8.8H2.6a.8.8 0 0 1-.8-.8zM6.5 7.2v3.6M6.5 9c2.4 0 3-.6 3-1.8",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": "1.2",
+      "stroke-linejoin": "round",
+      "stroke-linecap": "round",
+    }),
+  );
+  return s;
+}
+
 // A small tag/label glyph, colored via `currentColor` so it inherits the chip's
 // text color. Used on tag ref chips in the commit log.
 export function tagIcon(): SVGElement {

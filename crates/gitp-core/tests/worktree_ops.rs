@@ -483,3 +483,47 @@ fn stale_worktrees_lists_what_prune_would_remove_without_removing_it() {
         "dry run: still listed"
     );
 }
+
+#[test]
+fn summaries_count_each_changed_path_of_every_worktree_once() {
+    let s = Setup::new();
+    git(
+        &s.main(),
+        &["worktree", "add", "-q", "-b", "dirty", "../dirty"],
+    );
+    git(
+        &s.main(),
+        &["worktree", "add", "-q", "-b", "clean", "../clean"],
+    );
+    git(
+        &s.main(),
+        &["worktree", "add", "-q", "--detach", "../vanished"],
+    );
+    std::fs::remove_dir_all(s.sibling("vanished")).unwrap();
+    let dirty = s.sibling("dirty");
+    // One partially staged file (in both status lists, counted once), one
+    // staged new file and one untracked: three paths.
+    std::fs::write(dirty.join("a.txt"), "three\n").unwrap();
+    git(&dirty, &["add", "a.txt"]);
+    std::fs::write(dirty.join("a.txt"), "four\n").unwrap();
+    std::fs::write(dirty.join("b.txt"), "new\n").unwrap();
+    git(&dirty, &["add", "b.txt"]);
+    std::fs::write(dirty.join("c.txt"), "untracked\n").unwrap();
+    // The current worktree is summarised too.
+    std::fs::write(s.main().join("a.txt"), "main edit\n").unwrap();
+
+    let list = s.repo().worktree_summaries().unwrap();
+    let count_of = |name: &Path| {
+        list.iter()
+            .find(|w| canon(&w.path) == canon(name))
+            .map(|w| w.changed)
+    };
+    assert_eq!(list.len(), 3, "the vanished one is left out: {list:?}");
+    assert_eq!(count_of(&s.main()), Some(1));
+    assert_eq!(count_of(&dirty), Some(3));
+    assert_eq!(count_of(&s.sibling("clean")), Some(0));
+
+    // Seen from the linked worktree, the same counts.
+    let from_dirty = Repo::open(&dirty).unwrap().worktree_summaries().unwrap();
+    assert_eq!(from_dirty, list);
+}

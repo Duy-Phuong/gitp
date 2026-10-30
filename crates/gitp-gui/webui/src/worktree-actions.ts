@@ -17,6 +17,7 @@ import {
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { siblingWorktreePath, worktreeName } from "./views/sidebar";
 import type { BranchRef, StaleWorktree, Worktree, WorktreeTarget, WorktreeUnsavedWork } from "./types";
+import type { WipRow } from "./worktree-wip";
 import { state } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
@@ -65,6 +66,16 @@ export function onWorktreeMenu(w: Worktree, x: number, y: number): void {
   items.push({ separator: true });
   items.push({ label: "Copy Path", run: () => void copyText(w.path, `Copied ${w.path}`) });
   showContextMenu(x, y, items);
+}
+
+// Click another worktree's WIP row in the graph. Its changes can be staged and
+// committed only from its own tab, so offer to open that.
+export async function openWorktreeWip(row: WipRow): Promise<void> {
+  const wt = row.worktree;
+  if (!wt) return;
+  const files = `${row.changes} changed file${row.changes === 1 ? "" : "s"}`;
+  const question = `The worktree ${wt.name} has ${files}, in ${wt.path}.\n\nThey can be staged and committed from its own tab. Open it now?`;
+  if (await confirmDialog(question)) await loadRepo(wt.path);
 }
 
 async function revealWorktree(w: Worktree): Promise<void> {

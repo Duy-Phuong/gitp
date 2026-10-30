@@ -5,9 +5,10 @@
 // full geometry is computed once (cheap math); only rendering is windowed.
 
 import { authorInitials, avatarUrl } from "../avatar";
-import { clear, el, githubIcon, laptopIcon, svg, tagIcon } from "../dom";
+import { clear, el, githubIcon, laptopIcon, svg, tagIcon, worktreeIcon } from "../dom";
 import { edgePath, fitLaneWidth, GRAPH_METRICS, type GraphMetrics, layoutGraph } from "../graph";
 import { ghostBranch } from "../commit-refs";
+import { orderWipRows, type WipRow } from "../worktree-wip";
 import {
   DEFAULT_LOG_COLUMNS,
   LOG_COLUMN_LABEL,
@@ -157,7 +158,7 @@ const REF_COLUMN_MAX = 420;
 const HEADER_H = 26;
 
 // Where row `index` of the last rendered log starts, for callers that scroll to
-// a row. Not just `index * rowHeight`: the WIP row, when shown, sits above row 0.
+// a row. Not just `index * rowHeight`: the WIP rows, when shown, sit above row 0.
 export function logRowTop(index: number): number {
   return index * graphThemeFor().metrics.rowHeight + wipLead;
 }
@@ -170,7 +171,7 @@ export function logRowTop(index: number): number {
 // (see setWipRow), like the bisect marks.
 let wip: { changes: number; head: string | null } | null = null;
 let onOpenWip: (() => void) | null = null;
-// Height of the WIP row in the last rendered log: 0, or one row.
+// Height of the WIP rows in the last rendered log: a row each, or 0.
 let wipLead = 0;
 
 // Adopt the change count and HEAD's commit. Returns whether the WIP row
@@ -185,6 +186,61 @@ export function setWipRow(changes: number, head: string | null): boolean {
 // What clicking the WIP row does: open Local Changes. Set once at startup.
 export function setOnOpenWip(handler: () => void): void {
   onOpenWip = handler;
+}
+
+// The WIP rows of the repo's other worktrees (see worktree-wip.ts), drawn under
+// this worktree's own. Their changes can't be staged from here, so clicking one
+// offers to open its worktree instead. Set from the worktree change counts, which
+// arrive after the workspace snapshot.
+let otherWips: WipRow[] = [];
+let otherWipSig = "";
+// Branches another worktree has checked out, to its path: their badges carry a
+// worktree mark and double-click opens that worktree.
+let elsewhere = new Map<string, string>();
+let elsewhereSig = "";
+let worktreeHandlers: { wip: (row: WipRow) => void; open: (path: string) => void } | null = null;
+
+// Adopt the other worktrees' WIP rows. Returns whether they changed, so the
+// caller knows the log needs repainting.
+export function setOtherWipRows(next: WipRow[]): boolean {
+  const sig = next.map((r) => `${r.worktree?.path}:${r.head}:${r.changes}`).join("|");
+  if (sig === otherWipSig) return false;
+  otherWipSig = sig;
+  otherWips = next;
+  return true;
+}
+
+// Adopt the branches checked out in other worktrees. Returns whether they
+// changed.
+export function setWorktreeBranches(next: Map<string, string>): boolean {
+  const sig = [...next].map(([b, p]) => `${b}:${p}`).join("|");
+  if (sig === elsewhereSig) return false;
+  elsewhereSig = sig;
+  elsewhere = next;
+  return true;
+}
+
+// What another worktree's WIP row (click) and its branch's badge (double-click)
+// do. Set once at startup.
+export function setWorktreeHandlers(handlers: { wip: (row: WipRow) => void; open: (path: string) => void }): void {
+  worktreeHandlers = handlers;
+}
+
+// Mark the badge of a branch another worktree has checked out: a worktree icon,
+// where it is in the tooltip, and double-click opens that worktree — a checkout
+// here would only be refused. Returns whether the branch is one of those.
+function markWorktreeBranch(chip: HTMLElement, branch: string): boolean {
+  const path = elsewhere.get(branch);
+  if (!path) return false;
+  chip.append(worktreeIcon());
+  chip.title = `${chip.title}\nchecked out in ${path}\nDouble-click: open that worktree`;
+  chip.addEventListener("click", (e) => {
+    // The click count, as on the ghost badge (see ghostBadge).
+    if (e.detail !== 2) return;
+    e.stopPropagation();
+    worktreeHandlers?.open(path);
+  });
+  return true;
 }
 
 // Stashes, drawn on the row of the commit each was taken on: a dashed line from
@@ -307,6 +363,7 @@ function tipBadge(t: TipRef): HTMLElement {
   chip.append(el("span", { class: "commit-ref-name", text: t.head ? `✓ ${t.name}` : t.name }));
   if (t.local) chip.append(laptopIcon());
   for (let k = 0; k < t.remotes.length; k++) chip.append(githubIcon());
+  if (t.local) markWorktreeBranch(chip, t.name);
   // A merged badge drags as its local branch, or else its (first) remote one.
   if (t.local) refDragHandle(chip, { kind: "local", name: t.name });
   else if (t.remotes.length) refDragHandle(chip, { kind: "remote", name: t.remotes[0] });
@@ -324,15 +381,19 @@ export function setOnGhostCheckout(handler: (branch: string) => void): void {
 }
 
 function ghostBadge(name: string): HTMLElement {
-  const chip = el("span", { class: "commit-ref tip ghost", title: `On ${name}\nDouble-click: checkout` });
+  const chip = el("span", { class: "commit-ref tip ghost", title: `On ${name}` });
   chip.append(el("span", { class: "commit-ref-name", text: name }));
-  chip.addEventListener("click", (e) => {
-    // The click count rather than a dblclick listener: the first click selects
-    // the row, which redraws it, so the second lands on a new badge.
-    if (e.detail !== 2) return;
-    e.stopPropagation();
-    onGhostCheckout?.(name);
-  });
+  // Checked out in another worktree: double-click opens that one instead.
+  if (!markWorktreeBranch(chip, name)) {
+    chip.title += "\nDouble-click: checkout";
+    chip.addEventListener("click", (e) => {
+      // The click count rather than a dblclick listener: the first click selects
+      // the row, which redraws it, so the second lands on a new badge.
+      if (e.detail !== 2) return;
+      e.stopPropagation();
+      onGhostCheckout?.(name);
+    });
+  }
   // A branch like any other badge: it drags, and hovering it fades the rest.
   refDragHandle(chip, { kind: "local", name });
   return chip;
@@ -573,14 +634,16 @@ export function renderLog(
   // caller to re-invoke renderLog with a fresh `multiSelected`.
   let currentMultiSelected = multiSelected;
 
-  // The WIP row, when there is one, takes the first row slot and pushes the
-  // commits down by `lead`; HEAD's row is where its dashed line ends. HEAD not
+  // The WIP rows, when there are any, take the first row slots and push the
+  // commits down by `lead`: this worktree's, then other worktrees' (see
+  // orderWipRows). A row's HEAD is where its dashed line ends; a HEAD not
   // loaded (a detached checkout far down the log) still gets the row, in lane 0
   // with no line.
-  const wipRow = historyExtras ? wip : null;
+  const rowIndex = (id: string) => rows.findIndex((r) => r.id === id);
+  const wipRows = historyExtras ? orderWipRows(wip, otherWips, rowIndex) : [];
   const stashesAt = historyExtras ? stashesByBase : new Map<string, StashRef[]>();
-  const headIdx = wipRow?.head ? rows.findIndex((r) => r.id === wipRow.head) : -1;
-  const lead = wipRow ? rowH : 0;
+  const wipHeads = wipRows.map((r) => (r.head ? rowIndex(r.head) : -1));
+  const lead = wipRows.length * rowH;
   wipLead = lead;
 
   // A full-height spacer establishes the scrollbar; children are absolutely
@@ -726,21 +789,37 @@ export function renderLog(
     }
   }
 
-  // The WIP row and its node: a dashed hollow circle in HEAD's lane, joined to
-  // HEAD's node by a dashed line. Drawn in graph coordinates, one row above row 0.
-  function renderWip(textLeft: number, changes: number): void {
-    const head = headIdx >= 0 ? layout.nodes[headIdx] : null;
+  // WIP row `k` and its node: a dashed hollow circle in its HEAD's lane, joined
+  // to HEAD's node by a dashed line. Drawn in graph coordinates, above row 0.
+  // Another worktree's row is labelled with its folder name, in a badge where
+  // a commit's refs go.
+  function renderWip(textLeft: number, k: number): void {
+    const { changes, worktree } = wipRows[k];
+    const head = wipHeads[k] >= 0 ? layout.nodes[wipHeads[k]] : null;
     const x = head?.x ?? metrics.originX + metrics.marginX;
-    const y = -rowH / 2;
+    const y = k * rowH + rowH / 2 - lead;
     const color = laneColor(head?.color ?? 0);
 
-    const rowEl = el("div", { class: "commit-row wip-row", title: "Uncommitted changes · Click: open Local Changes" });
-    placeRow(rowEl, 0, x, color, textLeft);
-    rowEl.append(
-      el("span", { class: "commit-summary", text: "// WIP" }),
-      el("span", { class: "commit-meta wip-count", text: `${changes} changed file${changes === 1 ? "" : "s"}` }),
-    );
-    rowEl.addEventListener("click", () => onOpenWip?.());
+    const rowEl = el("div", {
+      class: `commit-row wip-row${worktree ? " worktree-wip" : ""}`,
+      title: worktree
+        ? `Uncommitted changes in ${worktree.path}\nClick: open that worktree to commit them`
+        : "Uncommitted changes · Click: open Local Changes",
+    });
+    placeRow(rowEl, k * rowH, x, color, textLeft);
+    rowEl.append(el("span", { class: "commit-summary", text: "// WIP" }));
+    if (worktree) {
+      const box = el("span", { class: refsColumn ? "commit-refs refs-col" : "commit-refs" }, [
+        el("span", { class: "commit-ref tip worktree" }, [
+          worktreeIcon(),
+          el("span", { class: "commit-ref-name", text: worktree.name }),
+        ]),
+      ]);
+      if (refsColumn) box.style.width = `${metrics.originX - 16}px`;
+      rowEl.append(box);
+    }
+    rowEl.append(el("span", { class: "commit-meta wip-count", text: `${changes} changed file${changes === 1 ? "" : "s"}` }));
+    rowEl.addEventListener("click", () => (worktree ? worktreeHandlers?.wip(wipRows[k]) : onOpenWip?.()));
     rowsLayer.append(rowEl);
 
     if (head) {
@@ -821,6 +900,7 @@ export function renderLog(
           if (r.kind === "tag") chip.append(tagIcon());
           else if (r.kind === "remote") chip.append(githubIcon());
           chip.append(el("span", { class: "commit-ref-name", text: r.kind === "head" ? `✓ ${r.name}` : r.name }));
+          if (r.kind === "branch") markWorktreeBranch(chip, r.name);
           if (r.kind !== "tag") refDragHandle(chip, { kind: r.kind === "remote" ? "remote" : "local", name: r.name });
           box.append(chip);
         }
@@ -891,15 +971,15 @@ export function renderLog(
     // which the stylesheet fades. Under everything else, so the branch's own
     // lines run over the faded ones.
     const faded = svg("g", { class: "graph-faded" });
-    // The WIP row is on screen whenever the first rows are.
-    const wipShown = wipRow !== null && start === 0;
+    // The WIP rows are on screen whenever the first rows are.
+    const wipShown = wipRows.length > 0 && start === 0;
     if (theme.guides) {
       for (let lane = 0; lane <= maxLane; lane++) {
         const x = metrics.originX + metrics.marginX + lane * laneWidth;
         graphBody.append(svg("line", { class: "lane-guide", x1: x, y1: wipShown ? -lead : top, x2: x, y2: bottom }));
       }
     }
-    if (wipShown) renderWip(textLeft, wipRow.changes);
+    if (wipShown) for (let k = 0; k < wipRows.length; k++) renderWip(textLeft, k);
     graphBody.append(faded);
     for (const edge of layout.edges) {
       if (Math.max(edge.fromY, edge.toY) < top || Math.min(edge.fromY, edge.toY) > bottom) {

@@ -48,7 +48,7 @@ import {
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
-import { setAuthorFilter, setOnGhostCheckout, setOnMoreRefs, setOnOpenWip, setStashHandlers } from "./views/log";
+import { setAuthorFilter, setOnGhostCheckout, setOnMoreRefs, setOnOpenWip, setStashHandlers, setWorktreeHandlers } from "./views/log";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { authorsOf, authorSearchValue, authorTerm, withAuthorTerm } from "./log-columns";
 import { setupBranchHover } from "./branch-hover";
@@ -127,7 +127,7 @@ import {
   resumeCherryPickPlan,
   runNextCherryPick,
 } from "./commit-actions";
-import { onWorktreeDrop, onWorktreeMenu } from "./worktree-actions";
+import { onWorktreeDrop, onWorktreeMenu, openWorktreeWip } from "./worktree-actions";
 import { addRemoteAction, onRemoteFolderMenu } from "./remote-actions";
 import { addSubmoduleAction, onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { createFileAction, editFileAction } from "./editor-actions";
@@ -277,6 +277,7 @@ async function init(): Promise<void> {
   // rows live in modules built on top of it, so they are plugged in from here.
   setOnMoreRefs(onMoreRefsMenu);
   setOnOpenWip(() => showView("changes"));
+  setWorktreeHandlers({ wip: (row) => void openWorktreeWip(row), open: (path) => void loadRepo(path) });
   setAuthorFilter({ active: authorFilterActive, open: openAuthorFilterMenu });
   setOnGhostCheckout((name) => {
     const b = state.refs.branches.find((x) => x.name === name);
