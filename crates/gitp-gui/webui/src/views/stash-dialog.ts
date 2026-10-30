@@ -1,14 +1,22 @@
 // Stash popup behind the toolbar's Stash button and Quick Launch's "Save
 // Stash": an optional message, "Include untracked files" (on, as the plain
 // stash always was) and "Staged changes only" (git stash push --staged).
-// Enter anywhere submits, so Stash + Enter is still the one-step stash it used
-// to be. Reuses the `.modal-overlay` / `.modal` shell.
+// Enter submits, so Stash + Enter is still the one-step stash it used to be.
+// Reuses the `.modal-overlay` / `.modal` shell.
 
 import { el } from "../dom";
 import type { StashOptions } from "../types";
 
 let overlay: HTMLElement | null = null;
 let onKey: ((e: KeyboardEvent) => void) | null = null;
+
+// Whether a key submits the stash: Enter, except on a focused button (Cancel
+// must cancel; the Stash button clicks itself) and the Enter that confirms an
+// IME composition in the message.
+export function submitsOnEnter(e: KeyboardEvent): boolean {
+  if (e.key !== "Enter" || e.isComposing) return false;
+  return !(e.target instanceof HTMLElement && e.target.matches("button"));
+}
 
 export function closeStashDialog(): void {
   overlay?.remove();
@@ -67,7 +75,7 @@ export function openStashDialog(onStash: (opts: StashOptions) => void): void {
 
   onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") closeStashDialog();
-    else if (e.key === "Enter") {
+    else if (submitsOnEnter(e)) {
       e.preventDefault();
       submit();
     }

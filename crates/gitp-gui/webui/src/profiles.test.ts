@@ -5,10 +5,15 @@ import {
   deleteProfile,
   ensureStore,
   fillSigningFormats,
+  forgetIdentityWrite,
+  loadIdentityWrites,
   loadStore,
   profileIdentity,
   profileInitials,
+  profileSwitchPrompt,
   putProfile,
+  recordIdentityWrite,
+  staleIdentityWrites,
   switchProfile,
   type KeyValueStorage,
   type Profile,
@@ -209,5 +214,99 @@ describe("profileInitials", () => {
     expect(profileInitials("Ada Byron Lovelace")).toBe("AL");
     expect(profileInitials("work")).toBe("WO");
     expect(profileInitials("  ")).toBe("?");
+  });
+});
+
+describe("profileSwitchPrompt", () => {
+  const noIdentity: Profile = { ...work, id: "default", name: "Default", authorName: "", authorEmail: "", signingKey: "" };
+
+  it("refuses while a git operation is running, and says why", () => {
+    const prompt = profileSwitchPrompt(work, 3, true, ADA);
+    expect(prompt).toEqual({ refuse: expect.stringMatching(/still running/) });
+  });
+
+  it("lists what the switch drops before it happens", () => {
+    const prompt = profileSwitchPrompt(work, 3, false, ADA);
+    if (!("confirm" in prompt)) throw new Error("expected a confirmation");
+    expect(prompt.confirm).toMatch(/“Work”/);
+    expect(prompt.confirm).toMatch(/3 open tabs close/);
+    expect(prompt.confirm).toMatch(/terminal/);
+    expect(prompt.confirm).toMatch(/Undo history/);
+    expect(prompt.confirm).not.toMatch(/no commit identity/);
+  });
+
+  it("says who git keeps committing as when the target has no identity", () => {
+    const prompt = profileSwitchPrompt(noIdentity, 1, false, { name: "Ada L.", email: "ada@work.example", signing_key: "", signing_format: "" });
+    if (!("confirm" in prompt)) throw new Error("expected a confirmation");
+    expect(prompt.confirm).toMatch(/1 open tab closes/);
+    expect(prompt.confirm).toMatch(/“Default” has no commit identity.*Ada L\. <ada@work\.example>/s);
+  });
+});
+
+describe("identity writes", () => {
+  const OWN = { name: "Repo Owner", email: "owner@example.org", signing_key: "", signing_format: "" };
+  const WORK_ID = { name: "Ada L.", email: "ada@work.example", signing_key: "ABC123", signing_format: "ssh" };
+  const home: Profile = { ...work, id: "home", name: "Home", authorEmail: "ada@home.example" };
+  const blank: Profile = { ...work, id: "blank", name: "Blank", authorName: "", authorEmail: "" };
+
+  function storeWith(...profiles: Profile[]) {
+    const storage = memoryStorage();
+    ensureStore(storage, ADA);
+    for (const p of profiles) putProfile(storage, p);
+    return storage;
+  }
+
+  it("outlive a profile switch: they are about the repos, not a profile's settings", () => {
+    const storage = storeWith(work);
+    switchProfile(storage, "work");
+    recordIdentityWrite(storage, "/r/x", "work", WORK_ID, OWN);
+
+    switchProfile(storage, "default");
+
+    expect(loadIdentityWrites(storage)).toEqual({ "/r/x": { profile: "work", wrote: WORK_ID, previous: OWN } });
+  });
+
+  it("keep the repo's own identity as the one to give back", () => {
+    const storage = storeWith(work);
+    recordIdentityWrite(storage, "/r/x", "work", WORK_ID, OWN);
+    // Applied again after an edit to the profile: what it replaced was its own.
+    const edited = { ...WORK_ID, email: "ada@new.example" };
+    recordIdentityWrite(storage, "/r/x", "work", edited, WORK_ID);
+
+    expect(loadIdentityWrites(storage)["/r/x"]).toEqual({ profile: "work", wrote: edited, previous: OWN });
+  });
+
+  it("are all stale under a global-scope profile or one without an identity", () => {
+    const storage = storeWith(work, blank);
+    recordIdentityWrite(storage, "/r/x", "work", WORK_ID, OWN);
+    recordIdentityWrite(storage, "/r/y", "work", WORK_ID, OWN);
+    const defaultProfile = activeProfile(loadStore(storage)!);
+
+    expect(staleIdentityWrites(storage, defaultProfile).map(([path]) => path)).toEqual(["/r/x", "/r/y"]);
+    expect(staleIdentityWrites(storage, blank).map(([path]) => path)).toEqual(["/r/x", "/r/y"]);
+  });
+
+  it("are stale under another local profile, but not under the one that wrote them", () => {
+    const storage = storeWith(work, home);
+    recordIdentityWrite(storage, "/r/x", "work", WORK_ID, OWN);
+
+    expect(staleIdentityWrites(storage, work)).toEqual([]);
+    expect(staleIdentityWrites(storage, home).map(([path]) => path)).toEqual(["/r/x"]);
+  });
+
+  it("carry the signing format, so a restore gives back gpg.format too", () => {
+    const storage = storeWith(work);
+    recordIdentityWrite(storage, "/r/x", "work", profileIdentity(work)!, { ...OWN, signing_format: "x509" });
+
+    const w = loadIdentityWrites(storage)["/r/x"];
+    expect(w.wrote.signing_format).toBe("ssh");
+    expect(w.previous.signing_format).toBe("x509");
+  });
+
+  it("are forgotten once given back", () => {
+    const storage = storeWith(work);
+    recordIdentityWrite(storage, "/r/x", "work", WORK_ID, OWN);
+    forgetIdentityWrite(storage, "/r/x");
+    expect(loadIdentityWrites(storage)).toEqual({});
   });
 });

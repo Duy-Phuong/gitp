@@ -301,6 +301,9 @@ export interface StashSwitch {
   // Popping on the new HEAD conflicted: markers are in the files and the
   // auto-stash is still stash@{0}.
   stash_kept: boolean;
+  // What was staged couldn't be staged again on the new HEAD: the work came
+  // back all unstaged.
+  staging_lost: boolean;
 }
 
 export interface ConflictSides {

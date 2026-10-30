@@ -238,6 +238,7 @@ pub fn run() {
             config::get_global_identity,
             config::set_global_identity,
             config::apply_local_identity,
+            config::restore_local_identity,
             reflog::get_reflog,
             activity::get_activity_log,
             activity::clear_activity_log,

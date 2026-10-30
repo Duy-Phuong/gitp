@@ -423,3 +423,91 @@ fn stash_and_switch_puts_the_work_back_when_the_switch_fails() {
         "staged work stays staged"
     );
 }
+
+/// What the index and the working tree hold for `name`: (staged, on disk).
+fn staged_and_worktree(fx: &FixtureRepo, name: &str) -> (String, String) {
+    let index = git2::Repository::open(fx.path()).unwrap().index().unwrap();
+    let entry = index.get_path(std::path::Path::new(name), 0).expect("in the index");
+    let blob = fx.repo.find_blob(entry.id).unwrap();
+    (String::from_utf8(blob.content().to_vec()).unwrap(), read(fx, name))
+}
+
+fn stage(fx: &FixtureRepo, name: &str, contents: &str) {
+    std::fs::write(fx.path().join(name), contents).unwrap();
+    let mut index = fx.repo.index().unwrap();
+    // fx.repo's index is cached from before the checkouts `Repo` made.
+    index.read(true).unwrap();
+    index.add_path(std::path::Path::new(name)).unwrap();
+    index.write().unwrap();
+}
+
+#[test]
+fn stash_and_switch_keeps_what_was_staged_apart_from_what_was_not() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "c1");
+    {
+        let c1 = fx.repo.head().unwrap().peel_to_commit().unwrap();
+        fx.repo.branch("feature", &c1, false).unwrap();
+    }
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.checkout_branch("feature").unwrap();
+    fx.commit_file("other.txt", "feature\n", "c2");
+    repo.checkout_branch("master").unwrap();
+    // One file, half of its edits staged.
+    stage(&fx, "a.txt", "1\nTWO\n3\n4\n5\n6\n7\n8\n9\n10\n");
+    std::fs::write(fx.path().join("a.txt"), "1\nTWO\n3\n4\n5\n6\n7\n8\nNINE\n10\n").unwrap();
+
+    let out = repo
+        .stash_and_switch("feature", |r| {
+            r.checkout_branch("feature").map(|()| String::new())
+        })
+        .unwrap();
+
+    assert!(!out.stash_kept && !out.staging_lost, "{out:?}");
+    assert_eq!(head_branch(&repo), "feature");
+    assert_eq!(
+        staged_and_worktree(&fx, "a.txt"),
+        (
+            "1\nTWO\n3\n4\n5\n6\n7\n8\n9\n10\n".to_string(),
+            "1\nTWO\n3\n4\n5\n6\n7\n8\nNINE\n10\n".to_string()
+        ),
+        "the staged half stays staged, the rest stays unstaged"
+    );
+    assert_eq!(stash_count(&fx), 0);
+}
+
+#[test]
+fn stash_and_switch_re_applies_unstaged_when_the_staging_cannot_be_restored() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "c1");
+    {
+        let c1 = fx.repo.head().unwrap().peel_to_commit().unwrap();
+        fx.repo.branch("feature", &c1, false).unwrap();
+    }
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.checkout_branch("feature").unwrap();
+    // Close enough to the staged edit to break its patch's context, far
+    // enough for a three-way merge of the working tree to succeed.
+    fx.commit_file("a.txt", "ONE\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "c2");
+    repo.checkout_branch("master").unwrap();
+    stage(&fx, "a.txt", "1\n2\n3\nFOUR\n5\n6\n7\n8\n9\n10\n");
+
+    let out = repo
+        .stash_and_switch("feature", |r| {
+            r.checkout_branch("feature").map(|()| String::new())
+        })
+        .unwrap();
+
+    assert!(!out.stash_kept, "{out:?}");
+    assert!(out.staging_lost, "{out:?}");
+    assert_eq!(head_branch(&repo), "feature");
+    assert_eq!(
+        staged_and_worktree(&fx, "a.txt"),
+        (
+            "ONE\n2\n3\n4\n5\n6\n7\n8\n9\n10\n".to_string(),
+            "ONE\n2\n3\nFOUR\n5\n6\n7\n8\n9\n10\n".to_string()
+        ),
+        "the work comes back, unstaged"
+    );
+    assert_eq!(stash_count(&fx), 0);
+}

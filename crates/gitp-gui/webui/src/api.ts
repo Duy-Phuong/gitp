@@ -712,7 +712,7 @@ export async function stashAndSwitch(kind: "branch" | "remote" | "commit", targe
     if (kind === "branch") await checkoutBranch(target);
     else if (kind === "remote") output = await checkoutRemoteBranch(target);
     else output = await checkoutCommit(target);
-    return { output, stash_kept: false };
+    return { output, stash_kept: false, staging_lost: false };
   }
   return invoke<StashSwitch>("stash_and_switch", { kind, target });
 }
@@ -1573,11 +1573,19 @@ export async function setGlobalIdentity(identity: Identity): Promise<void> {
   await invoke<void>("set_global_identity", { identity });
 }
 
-// Write a profile's identity into the active repo's local config; true when it
-// wasn't already there.
-export async function applyLocalIdentity(identity: Identity): Promise<boolean> {
-  if (!isTauri()) return false;
-  return invoke<boolean>("apply_local_identity", { identity });
+// Write a profile's identity into the active repo's local config; what was
+// there before when that changed anything (null when it was already there).
+export async function applyLocalIdentity(identity: Identity): Promise<Identity | null> {
+  if (!isTauri()) return null;
+  return invoke<Identity | null>("apply_local_identity", { identity });
+}
+
+// Give the repo at `path` (open or not) back the identity it had before
+// `wrote` was applied: each key still holding what was written goes back to
+// `previous`, or is unset where that is empty.
+export async function restoreLocalIdentity(path: string, wrote: Identity, previous: Identity): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("restore_local_identity", { path, wrote, previous });
 }
 
 // The path each DotfileKind resolves to, purely for display — the backend

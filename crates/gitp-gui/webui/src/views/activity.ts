@@ -66,6 +66,9 @@ export function setupActivity(host: HTMLElement, cb: ActivityCallbacks): Activit
   let timer: number | null = null;
   // Drops a slow poll's result once the view was reset or restarted.
   let generation = 0;
+  // Between the handle's `start` and `stop`: a Clear that finishes after the
+  // user left the view mustn't start polling again behind it.
+  let active = false;
 
   const quietBox = el("input", { type: "checkbox" }) as HTMLInputElement;
   quietBox.addEventListener("change", () => {
@@ -80,7 +83,7 @@ export function setupActivity(host: HTMLElement, cb: ActivityCallbacks): Activit
       () => {
         entries = [];
         expanded.clear();
-        start();
+        if (active) start();
       },
       (err) => cb.reportError("Failed to clear the activity log", err),
     );
@@ -179,8 +182,14 @@ export function setupActivity(host: HTMLElement, cb: ActivityCallbacks): Activit
   }
 
   return {
-    start,
-    stop,
+    start: () => {
+      active = true;
+      start();
+    },
+    stop: () => {
+      active = false;
+      stop();
+    },
     reset: () => {
       stop();
       entries = [];

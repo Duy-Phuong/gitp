@@ -67,7 +67,7 @@ import { rebuildCommitRefs, refLabelsAt } from "./commit-refs";
 import { refreshConfig } from "./config-panel";
 import { refreshActionButtons } from "./toolbar";
 import { cancelComparison, compareSelectedCommits, showComparison } from "./compare";
-import { cycledTabIndex } from "./tab-order";
+import { tabCycler } from "./tab-order";
 import { applyProfileIdentityHere } from "./profile-menu";
 
 // What a ref or commit row does when it's right-clicked (or, for a branch,
@@ -245,11 +245,9 @@ async function moveRepoTab(path: string, to: number): Promise<void> {
 }
 
 // Ctrl+Tab / Ctrl+Shift+Tab: the next or previous tab, wrapping around.
+const cycleTabs = tabCycler(() => state.repoPath, switchRepo);
 export function cycleRepoTab(step: 1 | -1): void {
-  const n = state.repos.length;
-  if (n < 2) return;
-  const i = state.repos.findIndex((r) => r.path === state.repoPath);
-  void switchRepo(state.repos[cycledTabIndex(n, Math.max(i, 0), step)].path);
+  cycleTabs(state.repos.map((r) => r.path), step);
 }
 
 export async function switchRepo(path: string): Promise<void> {
