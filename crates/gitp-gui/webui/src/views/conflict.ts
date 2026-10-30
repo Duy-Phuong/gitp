@@ -76,6 +76,17 @@ export function parseConflictRegions(text: string): ConflictRegion[] {
   return regions;
 }
 
+// The question to ask before "take ours/theirs" replaces `path` wholesale, or
+// null when nothing would be lost: the file still holds what git wrote, and
+// no choices for it are pending in the resolver.
+export function takeSideWarning(path: string, ours: boolean, edited: boolean, choices: boolean): string | null {
+  const lost = [
+    edited ? "edits made to the file on disk" : null,
+    choices ? "the choices made for it here" : null,
+  ].filter(Boolean);
+  if (!lost.length) return null;
+  return `Take ${ours ? "ours" : "theirs"} for ${path}?\n\nThis replaces the whole file and discards ${lost.join(" and ")}.`;
+}
 
 // --- 3-way diff (diff3) ----------------------------------------------------
 // Aligns base/ours/theirs so the editor can show ALL changes — not just the
@@ -852,6 +863,15 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     const path = selected;
     if (!path) return;
     await run(async () => {
+      // Taking a side replaces the working file, so look at it afresh: it
+      // may have been edited (Edit File) since the conflict was loaded.
+      const s = await cb.fetchSides(path);
+      const choices = resStore.get(path)?.res.some((r) => r !== null) ?? false;
+      const warning = takeSideWarning(path, ours, s.edited, choices);
+      if (warning && !(await cb.confirm(warning))) {
+        cb.setStatus(`Kept ${path} as it is.`);
+        return;
+      }
       await cb.resolveSide(path, ours);
       resStore.delete(path);
       cb.setStatus(`Resolved ${path} (took ${ours ? "ours" : "theirs"}).`);

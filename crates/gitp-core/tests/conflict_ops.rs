@@ -398,3 +398,21 @@ fn aborting_a_squash_merge_restores_the_branch() {
     );
     assert_eq!(repo.local_change_count().unwrap(), 0, "nothing left behind");
 }
+
+#[test]
+fn conflict_sides_flags_a_working_file_edited_since_the_conflict() {
+    let fx = conflicted_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+    assert!(
+        !repo.conflict_sides("f.txt").unwrap().edited,
+        "git's marked-up merge"
+    );
+
+    // One side's version as is, the way git leaves binary files: not an edit.
+    git(fx.path(), &["checkout", "--ours", "--", "f.txt"]);
+    assert!(!repo.conflict_sides("f.txt").unwrap().edited);
+
+    // Hand-resolved in an editor: taking a side would overwrite this.
+    std::fs::write(fx.path().join("f.txt"), "a\nhand-made\nc\n").unwrap();
+    assert!(repo.conflict_sides("f.txt").unwrap().edited);
+}

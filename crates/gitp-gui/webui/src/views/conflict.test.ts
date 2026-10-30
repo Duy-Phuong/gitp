@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { acceptLines, assembleLines, diff3, parseConflictRegions, splitLines } from "./conflict";
+import { acceptLines, assembleLines, diff3, parseConflictRegions, splitLines, takeSideWarning } from "./conflict";
 import type { Diff3Chunk } from "./conflict";
 
 describe("parseConflictRegions", () => {
@@ -131,5 +131,18 @@ describe("acceptLines", () => {
     const o = acceptLines(null, accepted, "ours", ["O"]);
     expect(acceptLines(o, accepted, "theirs", ["T"])).toEqual(["O", "T"]);
     expect([...accepted].sort()).toEqual(["ours", "theirs"]);
+  });
+});
+
+describe("takeSideWarning", () => {
+  it("asks nothing when the file is as git wrote it and no choices are pending", () => {
+    expect(takeSideWarning("a.png", true, false, false)).toBeNull();
+  });
+
+  it("names what taking the side would discard", () => {
+    expect(takeSideWarning("a.txt", false, true, false)).toContain("edits made to the file on disk");
+    const both = takeSideWarning("a.txt", true, true, true)!;
+    expect(both).toContain("Take ours for a.txt?");
+    expect(both).toContain("on disk and the choices made for it here");
   });
 });

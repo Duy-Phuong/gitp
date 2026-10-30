@@ -309,6 +309,8 @@ export interface ConflictSides {
   base: string | null;
   working: string;
   binary: boolean;
+  // Changed on disk since git wrote it (matches neither side, no markers).
+  edited: boolean;
 }
 
 // Pushed by the backend's filesystem watcher (Tauri event `repo-changed`) when

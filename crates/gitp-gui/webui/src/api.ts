@@ -1315,7 +1315,7 @@ export async function conflictStatus(): Promise<ConflictStatus> {
 
 export async function conflictSides(path: string): Promise<ConflictSides> {
   if (!isTauri()) {
-    return MOCK_SIDES[path] ?? { ours: "", theirs: "", base: null, working: "", binary: false };
+    return MOCK_SIDES[path] ?? { ours: "", theirs: "", base: null, working: "", binary: false, edited: false };
   }
   return invoke<ConflictSides>("conflict_sides", { path });
 }
@@ -1908,6 +1908,7 @@ const MOCK_SIDES: Record<string, ConflictSides> = {
     base: `${BASE_README.join("\n")}\n`,
     working: "<<<<<<< HEAD\n(conflict)\n=======\n(conflict)\n>>>>>>> test-1\n",
     binary: false,
+    edited: false,
   },
   "reset.css": {
     ours: "body {\n  margin: 10px;\n}\n",
@@ -1915,6 +1916,7 @@ const MOCK_SIDES: Record<string, ConflictSides> = {
     base: "body {\n  margin: 0;\n}\n",
     working: "body {\n<<<<<<< HEAD\n  margin: 10px;\n=======\n  margin: 20px;\n>>>>>>> test-1\n}\n",
     binary: false,
+    edited: false,
   },
 };
 

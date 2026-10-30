@@ -38,6 +38,11 @@ pub struct ConflictSides {
     pub working: String,
     /// Any side is binary (or the working file contains a NUL byte).
     pub binary: bool,
+    /// The working file was changed after git wrote it: it matches neither
+    /// side and has no conflict markers. git leaves one side's version there
+    /// (binary and delete/modify conflicts) or its marked-up merge, so
+    /// anything else is someone's edit — which taking a side would overwrite.
+    pub edited: bool,
 }
 
 impl Repo {
@@ -120,7 +125,13 @@ impl Repo {
         let base = stage(1);
         let ours = stage(2);
         let theirs = stage(3);
-        let working = std::fs::read(self.workdir_path()?.join(path)).unwrap_or_default();
+        let on_disk = std::fs::read(self.workdir_path()?.join(path)).ok();
+        let edited = on_disk.as_deref().is_some_and(|w| {
+            Some(w) != ours.as_deref()
+                && Some(w) != theirs.as_deref()
+                && !w.split(|&b| b == b'\n').any(|l| l.starts_with(b"<<<<<<<"))
+        });
+        let working = on_disk.unwrap_or_default();
 
         let has_nul = |b: &[u8]| b.contains(&0);
         let binary = has_nul(&working)
@@ -136,6 +147,7 @@ impl Repo {
             base: to_text(base),
             working: String::from_utf8_lossy(&working).into_owned(),
             binary,
+            edited,
         })
     }
 
