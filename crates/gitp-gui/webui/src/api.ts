@@ -940,6 +940,15 @@ export async function addToGitignore(paths: string[]): Promise<number> {
   return invoke<number>("add_to_gitignore", { paths });
 }
 
+// Stop tracking `paths` (`git rm --cached`), keeping the files on disk.
+export async function untrackFiles(paths: string[]): Promise<void> {
+  if (!isTauri()) {
+    for (const p of paths) mockMove(MOCK_STATUS.unstaged, [], p);
+    return;
+  }
+  await invoke<void>("untrack_files", { paths });
+}
+
 // Reveal the repo-relative `path` in the OS file manager.
 export async function revealPath(path: string): Promise<void> {
   if (!isTauri()) return;

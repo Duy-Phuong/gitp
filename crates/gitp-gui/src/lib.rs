@@ -167,6 +167,7 @@ pub fn run() {
             stash::stash_files,
             staging::save_files_patch,
             staging::add_to_gitignore,
+            staging::untrack_files,
             os::reveal_path,
             workspace::workspace_snapshot,
             os::open_in_editor,

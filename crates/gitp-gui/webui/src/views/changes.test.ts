@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isActionable, movedBetweenPanels, sameDiff } from "./changes";
+import { ignorePattern, ignoreRules, isActionable, movedBetweenPanels, sameDiff } from "./changes";
 import type { ChangeKind, FileDiff, StatusLists } from "../types";
 
 // A status-list entry; the optimistic move only ever looks at path and status.
@@ -137,5 +137,34 @@ describe("sameDiff", () => {
     const more = diff("new");
     more.hunks.push({ header: "@@ -9 +9 @@", lines: [] });
     expect(sameDiff(diff("new"), more)).toBe(false);
+  });
+});
+
+describe("ignoreRules", () => {
+  it("offers the file, its extension and its two nearest folders, anchored to the root", () => {
+    expect(ignoreRules("src/gen/out/app.min.js")).toEqual([
+      { label: "Ignore this file", rule: "/src/gen/out/app.min.js" },
+      { label: "Ignore all *.js files", rule: "*.js" },
+      { label: "Ignore folder src/gen/out/", rule: "/src/gen/out/" },
+      { label: "Ignore folder src/gen/", rule: "/src/gen/" },
+    ]);
+  });
+
+  it("offers only the immediate folder one level down, and none at the root", () => {
+    expect(ignoreRules("logs/today.log").map((r) => r.rule)).toEqual(["/logs/today.log", "*.log", "/logs/"]);
+    expect(ignoreRules("notes.txt").map((r) => r.rule)).toEqual(["/notes.txt", "*.txt"]);
+  });
+
+  it("treats a leading dot as part of the name, not an extension", () => {
+    expect(ignoreRules(".env").map((r) => r.label)).toEqual(["Ignore this file"]);
+  });
+});
+
+describe("ignorePattern", () => {
+  it("escapes glob characters and trailing spaces so only that path matches", () => {
+    expect(ignorePattern("a[1].txt")).toBe("/a\\[1].txt");
+    expect(ignorePattern("what?*")).toBe("/what\\?\\*");
+    expect(ignorePattern("odd ")).toBe("/odd\\ ");
+    expect(ignorePattern("#notes")).toBe("/#notes");
   });
 });

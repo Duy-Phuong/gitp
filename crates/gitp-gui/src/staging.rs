@@ -167,6 +167,12 @@ fn add_to_gitignore_impl(state: &RepoState, paths: Vec<String>) -> Result<usize,
     with_repo_clearing_undo(state, |repo| repo.add_to_gitignore(&paths))
 }
 
+/// Stop tracking `paths`, keeping the files (the second half of "Ignore and
+/// Stop Tracking").
+fn untrack_files_impl(state: &RepoState, paths: Vec<String>) -> Result<(), String> {
+    with_repo_clearing_undo(state, |repo| repo.untrack_files(&paths))
+}
+
 // --- Tauri commands --------------------------------------------------------
 
 #[tauri::command(async)]
@@ -311,4 +317,9 @@ pub(crate) fn add_to_gitignore(
     state: State<RepoState>,
 ) -> Result<usize, String> {
     add_to_gitignore_impl(&state, paths)
+}
+
+#[tauri::command(async)]
+pub(crate) fn untrack_files(paths: Vec<String>, state: State<RepoState>) -> Result<(), String> {
+    untrack_files_impl(&state, paths)
 }

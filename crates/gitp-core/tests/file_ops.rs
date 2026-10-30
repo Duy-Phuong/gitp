@@ -227,3 +227,22 @@ fn discard_files_with_a_glob_like_name_does_not_touch_the_lookalike() {
         "the lookalike keeps its edit"
     );
 }
+
+#[test]
+fn untrack_files_stages_the_removal_and_keeps_the_file() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("secret.env", "KEY=1\n", "c1");
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.untrack_files(&["secret.env".into()]).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("secret.env")).unwrap(),
+        "KEY=1\n",
+        "the working copy stays"
+    );
+    let s = repo.status_lists().unwrap();
+    assert_eq!(s.staged.len(), 1);
+    assert_eq!(s.staged[0].path, "secret.env");
+    assert_eq!(s.staged[0].status, gitp_core::ChangeKind::Deleted);
+}
