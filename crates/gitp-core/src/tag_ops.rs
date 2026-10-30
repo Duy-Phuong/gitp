@@ -1,5 +1,5 @@
-//! Tag operations behind the sidebar's tag right-click menu: inspect, push,
-//! and delete. Tag *creation* lives in commit_ops.rs, next to the other
+//! Tag operations behind the sidebar's tag right-click menu: inspect, annotate,
+//! push, and delete. Tag *creation* lives in commit_ops.rs, next to the other
 //! "act on this commit" operations the log's menu offers.
 //!
 //! Push/delete shell out through `run_git` for the same reasons as the rest of
@@ -8,7 +8,7 @@
 
 use serde::Serialize;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::remote::ref_arg;
 use crate::repo::Repo;
 
@@ -65,6 +65,28 @@ impl Repo {
             message,
             target_summary: commit.summary().unwrap_or_default().to_string(),
         })
+    }
+
+    /// Recreate lightweight tag `name` as an annotated tag carrying `message`,
+    /// at the same commit and under the same name (`git tag -a -f`). Refuses a
+    /// tag that is already annotated: replacing its message would also drop
+    /// its original tagger and date, which is not what "annotate" asks for.
+    pub fn annotate_tag(&self, name: &str, message: &str) -> Result<String> {
+        let obj = self.inner.revparse_single(&format!("refs/tags/{name}"))?;
+        if obj.as_tag().is_some() {
+            return Err(Error::Message(format!("{name} is already an annotated tag")));
+        }
+        let commit = obj.peel_to_commit()?.id().to_string();
+        self.run_git(&[
+            "tag",
+            "-a",
+            "-f",
+            "--cleanup=whitespace",
+            "-m",
+            message,
+            ref_arg(name)?,
+            &commit,
+        ])
     }
 
     /// Push tag `name` to `origin` (`git push origin <tag>`).

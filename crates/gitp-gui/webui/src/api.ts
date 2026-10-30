@@ -530,9 +530,20 @@ export async function createBranchAt(name: string, rev: string): Promise<string>
   return invoke<string>("create_branch_at", { name, rev });
 }
 
-export async function createTagAt(name: string, rev: string): Promise<string> {
+// A non-empty `message` makes an annotated tag; without one it's lightweight.
+export async function createTagAt(name: string, rev: string, message = ""): Promise<string> {
   if (!isTauri()) return `Tagged ${rev.slice(0, 10)} as ${name} (preview mock)`;
-  return invoke<string>("create_tag_at", { name, rev });
+  return invoke<string>("create_tag_at", { name, rev, message: message || null });
+}
+
+// Recreate lightweight tag `name` as an annotated one at the same commit.
+export async function annotateTag(name: string, message: string): Promise<string> {
+  if (!isTauri()) {
+    const tag = MOCK_REFS.tags.find((t) => t.name === name);
+    if (tag) tag.message = message;
+    return `Annotated ${name} (preview mock)`;
+  }
+  return invoke<string>("annotate_tag", { name, message });
 }
 
 export async function fetchTagDetail(name: string): Promise<TagDetail> {
@@ -1296,10 +1307,11 @@ export const MOCK_REFS: Refs = {
     { remote: "origin", name: "origin/develop/3.33.0", target: mockOid("f") },
     { remote: "origin", name: "origin/feature/dashboard", target: mockOid("e") },
   ],
+  // Same annotated/lightweight split as the fetchTagDetail mock.
   tags: [
-    { name: "v3.31.2", target: mockOid("b") },
-    { name: "v3.32.0", target: mockOid("d") },
-    { name: "v3.33.0", target: mockOid("g") },
+    { name: "v3.31.2", target: mockOid("b"), message: null },
+    { name: "v3.32.0", target: mockOid("d"), message: "Release v3.32.0\n\nMock annotation shown in preview mode." },
+    { name: "v3.33.0", target: mockOid("g"), message: "Release v3.33.0\n\nMock annotation shown in preview mode." },
   ],
   stashes: [
     { index: 0, message: "config 3.31.2" },

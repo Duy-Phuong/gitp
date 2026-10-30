@@ -260,8 +260,11 @@ function tagLeaf(
   target: string,
   cb: SidebarCallbacks,
   full: string = label,
+  message: string | null = null,
 ): HTMLElement {
-  const row = leaf(label, true, `${full}\nClick: jump to commit · Right-click: actions`);
+  // An annotated tag's message goes in its tooltip, between name and hints.
+  const note = message ? `\n\n${message}\n\n` : "\n";
+  const row = leaf(label, true, `${full}${note}Click: jump to commit · Right-click: actions`);
   if (target) row.addEventListener("click", () => cb.onRefJump(target, full));
   row.addEventListener("contextmenu", (e) => {
     e.preventDefault();
@@ -421,12 +424,13 @@ function buildTags(
   tree.append(row);
   if (collapsed) return;
 
-  const folders = new Map<string, { full: string; label: string; target: string }[]>();
-  const loose: { full: string; label: string; target: string }[] = [];
+  type TagEntry = { full: string; label: string; target: string; message: string | null };
+  const folders = new Map<string, TagEntry[]>();
+  const loose: TagEntry[] = [];
   for (const tag of s.refs.tags) {
     if (!match(tag.name)) continue;
     const { folder, label } = splitRef(tag.name);
-    const entry = { full: tag.name, label, target: tag.target };
+    const entry = { full: tag.name, label, target: tag.target, message: tag.message };
     if (folder) {
       const list = folders.get(folder) ?? [];
       list.push(entry);
@@ -442,11 +446,11 @@ function buildTags(
     const fcollapsed = s.collapsed.has(fkey) && !filtering;
     tree.append(folderRow(fkey, folder, fcollapsed, cb));
     if (!fcollapsed) {
-      for (const t of folders.get(folder)!) tree.append(tagLeaf(t.label, t.target, cb, t.full));
+      for (const t of folders.get(folder)!) tree.append(tagLeaf(t.label, t.target, cb, t.full, t.message));
     }
   }
   // Unfoldered tags after the groups, matching how branches are laid out.
-  for (const t of loose) tree.append(tagLeaf(t.label, t.target, cb, t.full));
+  for (const t of loose) tree.append(tagLeaf(t.label, t.target, cb, t.full, t.message));
 }
 
 function buildStashes(

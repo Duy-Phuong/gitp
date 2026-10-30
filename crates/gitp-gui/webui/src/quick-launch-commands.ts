@@ -72,7 +72,7 @@ import {
   resetAction,
   runCommitOp,
   startBisect,
-  tagAction,
+  newTagAction,
 } from "./commit-actions";
 import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
@@ -264,14 +264,13 @@ function repoCommands(): QuickItem[] {
     {
       kind: "command",
       label: "Create Tag…",
-      run: () =>
-        promptFor("New tag name", (name) => {
-          // Tag the selected commit, or the branch tip when nothing is selected
-          // (opening the palette straight after launch, say).
-          const rev = state.selectedId ?? headTarget();
-          if (!rev) return setStatus("Nothing to tag — no commit is selected.");
-          void tagAction(name, rev, rev.slice(0, 7));
-        }),
+      run: () => {
+        // Tag the selected commit, or the branch tip when nothing is selected
+        // (opening the palette straight after launch, say).
+        const rev = state.selectedId ?? headTarget();
+        if (!rev) return setStatus("Nothing to tag — no commit is selected.");
+        newTagAction(rev, rev.slice(0, 7));
+      },
     },
     {
       kind: "command",

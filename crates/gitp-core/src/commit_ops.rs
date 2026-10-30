@@ -53,6 +53,23 @@ impl Repo {
         self.run_git(&["tag", ref_arg(name)?, ref_arg(rev)?])
     }
 
+    /// Create an annotated tag `name` at `rev` carrying `message`
+    /// (`git tag -a -m <message> <name> <rev>`): a tag object of its own, with
+    /// a tagger and date, rather than a bare ref. `--cleanup=whitespace` keeps a
+    /// line starting with `#` (an issue number, say), which git's default for
+    /// tags would strip as a comment.
+    pub fn create_annotated_tag_at(&self, name: &str, rev: &str, message: &str) -> Result<String> {
+        self.run_git(&[
+            "tag",
+            "-a",
+            "--cleanup=whitespace",
+            "-m",
+            message,
+            ref_arg(name)?,
+            ref_arg(rev)?,
+        ])
+    }
+
     /// Apply `rev` on top of the current branch (`git cherry-pick <rev>`).
     /// Conflicts leave the repo mid-cherry-pick and surface as an error.
     pub fn cherry_pick(&self, rev: &str) -> Result<String> {

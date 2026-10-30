@@ -14,7 +14,7 @@ export interface CommitMenuHandlers {
   copySha: () => void;
   checkoutCommit: () => void;
   newBranch: (name: string) => void;
-  newTag: (name: string) => void;
+  newTag: () => void;
   cherryPick: () => void;
   revert: () => void;
   reset: (mode: ResetMode) => void;
@@ -121,7 +121,7 @@ function buildRoot(menu: HTMLElement, row: CommitRow, h: CommitMenuHandlers): vo
     item("Checkout Commit", h.checkoutCommit),
     sep(),
     submenuItem("New Branch here…", () => promptName(menu, row, h, "New branch name", h.newBranch)),
-    submenuItem("New Tag here…", () => promptName(menu, row, h, "New tag name", h.newTag)),
+    item("New Tag here…", h.newTag),
     sep(),
     item("Cherry-pick Commit", h.cherryPick),
     item("Revert Commit", h.revert),

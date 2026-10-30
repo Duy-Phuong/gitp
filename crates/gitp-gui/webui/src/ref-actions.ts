@@ -2,6 +2,7 @@
 // menus and the operations behind them.
 
 import {
+  annotateTag,
   checkoutBranch,
   checkoutRemoteBranch,
   deleteRemoteTag,
@@ -12,7 +13,6 @@ import {
   confirmDialog,
   createBranchAt,
   createPullRequest,
-  createTagAt,
   deleteBranch,
   deleteBranches,
   deleteRemoteBranch,
@@ -53,7 +53,8 @@ import {
   showReflog,
   showView,
 } from "./shell";
-import { checkoutCommitAction, confirmThenRun, openInteractiveRebase } from "./commit-actions";
+import { checkoutCommitAction, confirmThenRun, newTagAction, openInteractiveRebase } from "./commit-actions";
+import { openFormDialog } from "./views/form-dialog";
 import { showComparison } from "./compare";
 import { checkoutInNewWorktreeItem, worktreeOf } from "./worktree-actions";
 import { worktreeName } from "./views/sidebar";
@@ -120,13 +121,7 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
       onSubmit: (name) => onBranch(`Creating ${name}`, () => createBranchAt(name, b.target), true),
     },
   });
-  items.push({
-    label: "New Tag here…",
-    prompt: {
-      placeholder: "New tag name",
-      onSubmit: (name) => onBranch(`Tagging ${b.name} as ${name}`, () => createTagAt(name, b.target), false),
-    },
-  });
+  items.push({ label: "New Tag here…", run: () => newTagAction(b.target, b.name) });
 
   if (!b.is_head && current) {
     items.push({ separator: true });
@@ -348,14 +343,12 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
         void runBranchOp(`Creating ${branch}`, () => createBranchAt(branch, target), true, name),
     },
   });
-  items.push({
-    label: "New Tag…",
-    prompt: {
-      placeholder: "New tag name",
-      onSubmit: (tag) =>
-        void runTagOp(`Tagging ${short} as ${tag}`, () => createTagAt(tag, target)),
-    },
-  });
+  items.push({ label: "New Tag…", run: () => newTagAction(target, short) });
+  // Only a lightweight tag: re-annotating would replace the original tagger
+  // and date along with the message.
+  if (state.refs.tags.find((t) => t.name === name)?.message === null) {
+    items.push({ label: "Annotate Tag…", run: () => annotateTagAction(name) });
+  }
 
   items.push({ separator: true });
   items.push({ label: "Delete…", danger: true, run: () => deleteTagAction(name) });
@@ -364,6 +357,35 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
   items.push({ label: "Copy Tag Name", run: () => void copyText(name, `Copied ${name}`) });
 
   showContextMenu(x, y, items);
+}
+
+// Turn a lightweight tag into an annotated one: same name, same commit, now
+// with a message. A copy already pushed stays lightweight on the remote, and
+// replacing it there takes a forced push — the confirmation says so.
+function annotateTagAction(name: string): void {
+  openFormDialog(
+    {
+      title: `Annotate Tag ${name}`,
+      sub: "Recreates the tag as an annotated tag at the same commit.",
+      fields: [{ label: "Message:", placeholder: "Cmd/Ctrl+Enter to annotate", multiline: true, required: true }],
+      submitLabel: "Annotate",
+    },
+    ([message]) =>
+      void confirmThenRunTag(
+        `Recreate ${name} as an annotated tag?\n\n` +
+          "It keeps its name and commit. If it was already pushed, the remote copy stays lightweight until it's force-pushed.",
+        `Annotating ${name}`,
+        () => annotateTag(name, message),
+      ),
+  );
+}
+
+async function confirmThenRunTag(question: string, label: string, op: () => Promise<string>): Promise<void> {
+  if (!(await confirmDialog(question))) {
+    setStatus("Cancelled.");
+    return;
+  }
+  await runTagOp(label, op);
 }
 
 // A tag operation: run it, then reload the sidebar so the Tags section reflects

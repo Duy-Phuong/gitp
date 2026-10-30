@@ -1,4 +1,4 @@
-//! Tags: create, inspect, push, and delete (locally and on origin).
+//! Tags: create, annotate, inspect, push, and delete (locally and on origin).
 
 use gitp_core::{TagDetail, Undoable};
 use tauri::State;
@@ -6,19 +6,22 @@ use tauri::State;
 use crate::state::{to_message, with_repo, with_repo_networked, RepoState};
 use crate::undo::set_undo;
 
-/// Tag `rev` as `name`. HEAD doesn't move, so the log cache is left intact.
+/// Tag `rev` as `name`: annotated when there is a `message`, lightweight when
+/// there isn't. HEAD doesn't move, so the log cache is left intact.
 pub(crate) fn create_tag_at_impl(
     state: &RepoState,
     name: String,
     rev: String,
+    message: Option<String>,
 ) -> Result<String, String> {
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
-    let out = session
-        .repo
-        .create_tag_at(&name, &rev)
-        .map_err(to_message)?;
+    let out = match message.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+        Some(message) => session.repo.create_annotated_tag_at(&name, &rev, message),
+        None => session.repo.create_tag_at(&name, &rev),
+    }
+    .map_err(to_message)?;
     // Read back what the ref actually holds, so redo can recreate it after undo
     // has removed it.
     let target = session.repo.tag_ref_target(&name).map_err(to_message)?;
@@ -31,6 +34,13 @@ pub(crate) fn create_tag_at_impl(
         },
     );
     Ok(out)
+}
+
+/// Recreate lightweight tag `name` as an annotated one. Not recorded for undo:
+/// no undo action moves a tag in place, and an armed one about this tag (its
+/// creation, say) stops being offered on its own once the ref has changed.
+fn annotate_tag_impl(state: &RepoState, name: String, message: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.annotate_tag(&name, &message))
 }
 
 /// Read tag `name`'s metadata for the tag details dialog. Read-only.
@@ -81,9 +91,19 @@ fn remote_tag_exists_impl(state: &RepoState, name: String) -> Result<bool, Strin
 pub(crate) fn create_tag_at(
     name: String,
     rev: String,
+    message: Option<String>,
     state: State<RepoState>,
 ) -> Result<String, String> {
-    create_tag_at_impl(&state, name, rev)
+    create_tag_at_impl(&state, name, rev, message)
+}
+
+#[tauri::command(async)]
+pub(crate) fn annotate_tag(
+    name: String,
+    message: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    annotate_tag_impl(&state, name, message)
 }
 
 #[tauri::command(async)]

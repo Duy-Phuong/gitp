@@ -109,6 +109,8 @@ export interface RemoteBranch {
 export interface TagRef {
   name: string;
   target: string;
+  // An annotated tag's message (signature cut, capped); null for a lightweight tag.
+  message: string | null;
 }
 
 export interface StashRef {

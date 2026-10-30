@@ -832,6 +832,18 @@ body {
   font-family: var(--mono);
   font-size: 13px;
 }
+/* A multi-line field in a form dialog (e.g. a tag's annotation). */
+.rename-row.multiline {
+  align-items: flex-start;
+}
+.rename-row.multiline .rename-label {
+  padding-top: 7px;
+}
+textarea.rename-input {
+  min-height: 84px;
+  resize: vertical;
+  font-family: inherit;
+}
 .delete-remote-slot {
   min-height: 20px;
   margin: 8px 0 4px;

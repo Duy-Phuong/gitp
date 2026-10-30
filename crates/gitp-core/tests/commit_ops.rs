@@ -144,6 +144,7 @@ fn names_that_read_as_git_options_are_refused() {
         repo.checkout_commit("--detach"),
         repo.create_branch_at("--force", &oids[0]),
         repo.create_tag_at("-f", &oids[0]),
+        repo.create_annotated_tag_at("-f", &oids[0], "msg"),
         repo.cherry_pick("--exec=touch pwned"),
         repo.revert("-n"),
         repo.reset("--hard", ResetMode::Soft),

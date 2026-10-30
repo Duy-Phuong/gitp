@@ -119,6 +119,7 @@ pub fn run() {
             commits::checkout_commit,
             branches::create_branch_at,
             tags::create_tag_at,
+            tags::annotate_tag,
             history::history_fingerprint,
             tags::tag_detail,
             tags::push_tag,

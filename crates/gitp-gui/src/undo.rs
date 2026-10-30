@@ -580,7 +580,7 @@ mod tests {
             .id
             .clone();
 
-        create_tag_at_impl(&state, "v1.0".into(), head).expect("tag");
+        create_tag_at_impl(&state, "v1.0".into(), head, None).expect("tag");
         assert_eq!(
             undo_state_impl(&state).unwrap().undo.as_deref(),
             Some("Tag v1.0")
@@ -604,6 +604,27 @@ mod tests {
             tag_names(&state).contains(&"v1.0".to_string()),
             "delete undone"
         );
+    }
+
+    #[test]
+    fn an_annotated_tag_comes_back_annotated_after_undo_and_redo() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
+        let head = get_log_page_impl(&state, 0, 1, true).unwrap().rows[0]
+            .id
+            .clone();
+
+        create_tag_at_impl(&state, "v2".into(), head, Some("Release 2\n".into())).expect("tag");
+        undo_impl(&state).expect("undo tag create");
+        assert!(!tag_names(&state).contains(&"v2".to_string()));
+        // Redo restores the ref to the tag object, not to the commit, so the
+        // annotation survives the round trip.
+        redo_impl(&state).expect("redo tag create");
+        let tags = workspace_snapshot_impl(&state).unwrap().refs.tags;
+        let v2 = tags.iter().find(|t| t.name == "v2").expect("tag back");
+        assert_eq!(v2.message.as_deref(), Some("Release 2"));
     }
 
     fn tag_names(state: &RepoState) -> Vec<String> {
@@ -686,7 +707,7 @@ mod tests {
         let (c3, c2, c1) = (rows[0].id.clone(), rows[1].id.clone(), rows[2].id.clone());
 
         // Arm the slot with something, so we can see the rebase clear it.
-        create_tag_at_impl(&state, "t".into(), c1.clone()).unwrap();
+        create_tag_at_impl(&state, "t".into(), c1.clone(), None).unwrap();
         assert!(undo_state_impl(&state).unwrap().undo.is_some());
 
         let steps = vec![
