@@ -34,6 +34,9 @@ let containment: {
   index: Map<string, number>;
   bits: Uint32Array;
   words: number;
+  /// The tests branchReach walked out for refs the bitsets don't track, by
+  /// "kind:name", so hovering one again walks no further than it has.
+  walked: Map<string, (id: string) => boolean>;
 } | null = null;
 let commitTips = new Map<string, TipRef[]>();
 
@@ -185,7 +188,7 @@ export function rebuildCommitRefs(): boolean {
   }
   commitRefs = labels;
   commitTips = tips;
-  containment = { rows, branches, index, bits, words };
+  containment = { rows, branches, index, bits, words, walked: new Map() };
   return true;
 }
 
@@ -257,12 +260,15 @@ export function ghostBranch(refs: RefLabels | undefined): string | null {
 // The loaded commits on a branch, as a test per commit id: what hovering a
 // branch leaves unfaded in the log. A local branch reads its bit from the
 // containment bitsets. A remote branch, which the bitsets don't track (nor a
-// local one hidden from the graph), is walked from its tip once over the loaded
-// rows, children before parents as in rebuildCommitRefs. A commit outside the
-// loaded log (a search result further down) is never faded: there's no telling.
+// local one hidden from the graph), is walked from its tip over the loaded
+// rows, children before parents as in rebuildCommitRefs — only as far down as
+// the rows asked about, and kept until the next rebuild, so a hover costs the
+// rows on screen rather than the whole loaded log (100k rows: ~11ms per
+// hover). A commit outside the loaded log (a search result further down) is
+// never faded: there's no telling.
 export function branchReach(ref: DragRef): ((id: string) => boolean) | null {
   if (!containment) return null;
-  const { rows, branches, index, bits, words } = containment;
+  const { rows, branches, index, bits, words, walked } = containment;
   if (ref.kind === "local") {
     const bi = branches.findIndex((b) => b.name === ref.name);
     if (bi >= 0) {
@@ -274,26 +280,36 @@ export function branchReach(ref: DragRef): ((id: string) => boolean) | null {
       };
     }
   }
+  const key = `${ref.kind}:${ref.name}`;
+  const cached = walked.get(key);
+  if (cached) return cached;
   const target =
     ref.kind === "local"
       ? state.refs.branches.find((b) => b.name === ref.name)?.target
       : state.refs.remotes.find((r) => r.name === ref.name)?.target;
   const reach = new Uint8Array(rows.length);
   const start = target === undefined ? undefined : index.get(target);
-  if (start !== undefined) {
-    reach[start] = 1;
-    for (let i = start; i < rows.length; i++) {
-      if (!reach[i]) continue;
-      for (const parent of rows[i].parents) {
+  // Rows from `next` on haven't handed their reach to their parents yet. A
+  // row's own reach is settled once every row above it has.
+  let next = start ?? rows.length;
+  if (start !== undefined) reach[start] = 1;
+  const test = (id: string) => {
+    const ri = index.get(id);
+    if (ri === undefined) return true;
+    for (; next < ri; next++) {
+      if (!reach[next]) continue;
+      for (const parent of rows[next].parents) {
         const j = index.get(parent);
         if (j !== undefined) reach[j] = 1;
       }
     }
-  }
-  return (id) => {
-    const ri = index.get(id);
-    return ri === undefined || reach[ri] === 1;
+    return reach[ri] === 1;
   };
+  // A byte per loaded row each: forget them all now and then rather than
+  // keep one for every ref the pointer ever crossed.
+  if (walked.size >= 32) walked.clear();
+  walked.set(key, test);
+  return test;
 }
 
 // Bits set in a 32-bit word (SWAR), turning a commit's containment bitset into

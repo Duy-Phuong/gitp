@@ -6,7 +6,7 @@
 
 import { authorInitials, avatarUrl } from "../avatar";
 import { clear, el, githubIcon, laptopIcon, svg, tagIcon } from "../dom";
-import { edgePath, fitLaneWidth, GRAPH_METRICS, type GraphMetrics, layoutGraph } from "../graph";
+import { edgePath, fitLaneWidth, GRAPH_METRICS, type GraphMetrics, layoutGraph, visibleEdges } from "../graph";
 import { ghostBranch } from "../commit-refs";
 import {
   DEFAULT_LOG_COLUMNS,
@@ -901,10 +901,7 @@ export function renderLog(
     }
     if (wipShown) renderWip(textLeft, wipRow.changes);
     graphBody.append(faded);
-    for (const edge of layout.edges) {
-      if (Math.max(edge.fromY, edge.toY) < top || Math.min(edge.fromY, edge.toY) > bottom) {
-        continue;
-      }
+    for (const edge of visibleEdges(layout, top, bottom)) {
       // An edge belongs to the commit it leaves, the row its fromY is in.
       const from = rows[Math.floor(edge.fromY / rowH)];
       (highlight && !highlight(from.id) ? faded : graphBody).append(
@@ -917,8 +914,8 @@ export function renderLog(
         }),
       );
     }
-    for (const node of layout.nodes) {
-      if (node.y < top || node.y > bottom) continue;
+    // Node i is row i, so the window's nodes are rows start..end.
+    for (const node of layout.nodes.slice(start, end)) {
       const color = laneColor(node.color);
       const isSelected = node.id === currentSelected;
       const r = theme.nodeRadius;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { edgePath, layoutGraph, fitLaneWidth, GRAPH_METRICS } from "./graph";
+import { edgePath, layoutGraph, fitLaneWidth, GRAPH_METRICS, visibleEdges } from "./graph";
 import type { CommitRow } from "./types";
 
 function row(partial: Partial<CommitRow> & { id: string }): CommitRow {
@@ -209,5 +209,31 @@ describe("occupiedLane", () => {
   it("ignores parents outside the loaded window", () => {
     const rows = [row("a", 4, ["missing"]), row("b", 0, [])];
     expect([...layoutGraph(rows).occupiedLane]).toEqual([4, 0]);
+  });
+});
+
+describe("visibleEdges", () => {
+  // A main line with a side branch every few commits, some of them running a
+  // long way down before they merge, so bands are crossed by long edges too.
+  const rows: CommitRow[] = [];
+  for (let i = 0; i < 1000; i++) {
+    const parents = i + 1 < 1000 ? [`c${i + 1}`] : [];
+    if (i % 7 === 0 && i + 300 < 1000) parents.push(`c${i + (i % 3 === 0 ? 300 : 5)}`);
+    rows.push(row({ id: `c${i}`, parents, lane: i % 4 }));
+  }
+  const layout = layoutGraph(rows);
+
+  it("finds exactly the edges a test of every edge finds, in the same order", () => {
+    const rowH = GRAPH_METRICS.rowHeight;
+    for (const [start, end] of [[0, 30], [140, 180], [500, 540], [960, 1000], [0, 1000]]) {
+      const top = start * rowH;
+      const bottom = end * rowH;
+      const all = layout.edges.filter((e) => !(Math.max(e.fromY, e.toY) < top || Math.min(e.fromY, e.toY) > bottom));
+      expect(visibleEdges(layout, top, bottom)).toEqual(all);
+    }
+  });
+
+  it("is empty below the log", () => {
+    expect(visibleEdges(layout, layout.height + 100, layout.height + 200)).toEqual([]);
   });
 });
