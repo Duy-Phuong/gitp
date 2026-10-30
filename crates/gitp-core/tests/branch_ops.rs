@@ -147,7 +147,7 @@ fn squash_merge_stages_the_changes_and_prepares_a_message() {
     assert!(message.contains("add side"), "{message}");
 
     // Committing finishes the squash: git removes SQUASH_MSG.
-    repo.commit("Squash side", "", false, None).unwrap();
+    repo.commit("Squash side", "", false, None, false).unwrap();
     assert_eq!(
         head_parents(&fx),
         1,
