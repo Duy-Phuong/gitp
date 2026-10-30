@@ -18,6 +18,7 @@ import type {
   ConflictSides,
   ConflictStatus,
   DotfileKind,
+  Editor,
   FileCommit,
   FileContent,
   FileDiff,
@@ -875,6 +876,13 @@ export async function fetchAll(opts: { background?: boolean; prune?: boolean } =
   return invokeNetwork<string>("fetch_all", { background: opts.background ?? false, prune: opts.prune ?? true });
 }
 
+// `git maintenance run --task=gc`: runs like a fetch (Cancel, the status
+// bar's busy state) though nothing goes over the network.
+export async function performMaintenance(): Promise<string> {
+  if (!isTauri()) return "";
+  return invokeNetwork<string>("perform_maintenance");
+}
+
 export async function fetchAndUpdateBranch(name: string): Promise<string> {
   if (!isTauri()) return `Fetched and updated ${name} (preview mock)`;
   return invokeNetwork<string>("fetch_and_update_branch", { name });
@@ -1170,6 +1178,17 @@ export async function saveFilesPatch(
   return invoke<string>("save_files_patch", { paths, staged, path: dest });
 }
 
+// Prompt for a destination and write every local change — staged, unstaged and
+// untracked — there as one patch against HEAD. Returns a status string, or null
+// if the user cancelled.
+export async function saveAllChangesPatch(defaultName: string): Promise<string | null> {
+  if (!isTauri()) return "Saved patch of all changes (preview mock)";
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const dest = await save({ title: "Create Patch from All Changes", defaultPath: defaultName });
+  if (!dest) return null;
+  return invoke<string>("save_all_changes_patch", { path: dest });
+}
+
 // Prompt for a destination and write `revs` (in that order) there as one patch
 // file. Returns a status string, or null if the user cancelled.
 export async function saveCommitsPatch(revs: string[], defaultName: string): Promise<string | null> {
@@ -1222,6 +1241,23 @@ export async function revealPath(path: string): Promise<void> {
 export async function openInEditor(path: string): Promise<void> {
   if (!isTauri()) return;
   await invoke<void>("open_in_editor", { path });
+}
+
+// The editors and IDEs installed here that the repository can be opened in.
+export async function listEditors(): Promise<Editor[]> {
+  if (!isTauri()) {
+    return [
+      { id: "vscode", name: "Visual Studio Code" },
+      { id: "cursor", name: "Cursor" },
+    ];
+  }
+  return invoke<Editor[]>("list_editors");
+}
+
+// Open the active repository's folder in the editor `id` (from listEditors).
+export async function openRepoInEditor(id: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("open_repo_in_editor", { id });
 }
 
 // --- In-app file editor ------------------------------------------------------

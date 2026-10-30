@@ -305,6 +305,11 @@ const RECENT_REPOS_KEY = "gitp-recent-repos";
 // Enough to fill Quick Launch's list without it becoming an archive.
 const MAX_RECENT_REPOS = 12;
 
+// The dark theme Toggle Theme goes back to: the last one chosen.
+const LAST_DARK_THEME_KEY = "gitp-last-dark-theme";
+
+const DARK_THEMES: ThemeChoice[] = ["dark", "gitkraken", "gitkraken-neon"];
+
 export function currentTheme(): ThemeChoice {
   const v = localStorage.getItem(THEME_KEY);
   return (THEME_CHOICES as string[]).includes(v ?? "") ? (v as ThemeChoice) : "system";
@@ -319,8 +324,24 @@ export function applyTheme(choice: ThemeChoice): void {
   } else {
     document.documentElement.dataset.theme = choice;
     localStorage.setItem(THEME_KEY, choice);
+    if (DARK_THEMES.includes(choice)) localStorage.setItem(LAST_DARK_THEME_KEY, choice);
   }
   // xterm keeps its palette as JS values, so the CSS change alone leaves the
   // terminal on the old theme until it's told.
   ui.terminal?.syncTheme();
+}
+
+// Toggle Theme (Quick Launch): from whatever is showing that is dark — a dark
+// theme, or System while the OS is dark — to Light; from light back to the
+// dark theme last chosen (Dark if none was). One keystroke flips between the
+// two looks someone actually uses, without stepping through every theme.
+export function toggledTheme(): ThemeChoice {
+  const saved = localStorage.getItem(LAST_DARK_THEME_KEY);
+  const lastDark = (DARK_THEMES as string[]).includes(saved ?? "") ? (saved as ThemeChoice) : "dark";
+  return nextToggleTheme(currentTheme(), window.matchMedia("(prefers-color-scheme: dark)").matches, lastDark);
+}
+
+export function nextToggleTheme(current: ThemeChoice, osDark: boolean, lastDark: ThemeChoice): ThemeChoice {
+  const showingDark = DARK_THEMES.includes(current) || (current === "system" && osDark);
+  return showingDark ? "light" : lastDark;
 }

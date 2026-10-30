@@ -222,6 +222,12 @@ fn save_files_patch_impl(
     })
 }
 
+/// Write every local change, untracked files included, to `dest` as one patch
+/// against HEAD.
+fn save_all_changes_patch_impl(state: &RepoState, dest: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.save_all_changes_patch(dest.as_ref()))
+}
+
 /// Apply the patch file at `path` (`git apply --3way`) to the working tree and
 /// index.
 fn apply_patch_impl(state: &RepoState, path: String) -> Result<(), String> {
@@ -404,6 +410,14 @@ pub(crate) fn save_files_patch(
     state: State<RepoState>,
 ) -> Result<String, String> {
     save_files_patch_impl(&state, paths, staged, path)
+}
+
+#[tauri::command(async)]
+pub(crate) fn save_all_changes_patch(
+    path: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    save_all_changes_patch_impl(&state, path)
 }
 
 #[tauri::command(async)]

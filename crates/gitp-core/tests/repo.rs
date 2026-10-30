@@ -49,3 +49,30 @@ fn ignore_rules_cover_ignored_directories_and_everything_under_them() {
     assert!(ignored("target/debug/build.o", false));
     assert!(!ignored("target", false), "a *file* named target is not");
 }
+
+#[test]
+fn maintenance_packs_the_loose_objects() {
+    let fixture = FixtureRepo::init();
+    for i in 0..3 {
+        fixture.commit_file(&format!("f{i}.txt"), &format!("{i}\n"), &format!("c{i}"));
+    }
+    let loose = || {
+        let out = std::process::Command::new("git")
+            .current_dir(fixture.path())
+            .args(["count-objects", "-v"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find_map(|l| l.strip_prefix("count: ").map(|n| n.parse::<u32>().unwrap()))
+            .unwrap()
+    };
+    assert!(loose() > 0, "the fixture starts with loose objects");
+
+    Repo::open(fixture.path())
+        .unwrap()
+        .perform_maintenance()
+        .unwrap();
+
+    assert_eq!(loose(), 0, "gc packed them");
+}

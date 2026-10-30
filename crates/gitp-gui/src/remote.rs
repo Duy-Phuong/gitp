@@ -95,6 +95,13 @@ pub(crate) fn fetch_all_impl(
     }
 }
 
+/// `git maintenance run --task=gc`. Nothing on the network, but a gc can take
+/// a while on a big repository, so it runs like a fetch: off the session lock,
+/// shown as running, and cancellable. Leaves the log and refs as they were.
+fn perform_maintenance_impl(state: &RepoState) -> Result<String, String> {
+    with_repo_networked(state, "maintenance", Repo::perform_maintenance, |_| {})
+}
+
 /// Fetch one named remote, for repos with more than one.
 fn fetch_remote_impl(state: &RepoState, remote: String) -> Result<String, String> {
     with_repo_networked(state, "fetch", |repo| repo.fetch_remote(&remote), |_| {})
@@ -247,6 +254,11 @@ pub(crate) fn fetch_all(
     state: State<RepoState>,
 ) -> Result<String, String> {
     fetch_all_impl(&state, background.unwrap_or(false), prune.unwrap_or(true))
+}
+
+#[tauri::command(async)]
+pub(crate) fn perform_maintenance(state: State<RepoState>) -> Result<String, String> {
+    perform_maintenance_impl(&state)
 }
 
 #[tauri::command(async)]
