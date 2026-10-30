@@ -148,7 +148,10 @@ mod tests {
     }
 }
 
-#[tauri::command]
+// `(async)`: a write to the PTY blocks while the child isn't reading (a
+// paused pager, a stopped job), and a plain command runs on the webview's
+// thread, so a large paste into a stalled shell would freeze the window.
+#[tauri::command(async)]
 pub fn terminal_write(data: String, state: State<TerminalState>) -> Result<(), String> {
     let mut guard = state.0.lock().map_err(s)?;
     if let Some(session) = guard.as_mut() {
@@ -158,7 +161,7 @@ pub fn terminal_write(data: String, state: State<TerminalState>) -> Result<(), S
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminal_resize(cols: u16, rows: u16, state: State<TerminalState>) -> Result<(), String> {
     let guard = state.0.lock().map_err(s)?;
     if let Some(session) = guard.as_ref() {

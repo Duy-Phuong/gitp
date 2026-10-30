@@ -13,7 +13,7 @@
 // differ — so the diff renderer, context controls and Blame / History (as of
 // the head side) all work unchanged.
 
-import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT } from "../api";
+import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT, MAX_DIFF_LINES } from "../api";
 import { clear, copyToClipboard, el, statusBadge, svg } from "../dom";
 import type { BlameLine, CommitDetail, CommitSignature, CompareEnd, Comparison, FileCommit, FileDiff, SignatureStatus } from "../types";
 import { hunkWordDiffs, type Seg } from "../worddiff";
@@ -37,9 +37,11 @@ export interface DetailCallbacks {
   fetchFileHistory: (id: string, path: string) => Promise<FileCommit[]>;
   // Re-diff one of the commit's files with `contextLines` of context (the
   // commit detail's own diffs use the default).
-  fetchFileDiff: (id: string, file: FileDiff, contextLines: number) => Promise<FileDiff | null>;
+  // `full` lifts the backend's line cap once the user asks for a truncated
+  // file's whole diff.
+  fetchFileDiff: (id: string, file: FileDiff, contextLines: number, full: boolean) => Promise<FileDiff | null>;
   // The same for one of a comparison's files.
-  fetchCompareFileDiff: (cmp: Comparison, file: FileDiff, contextLines: number) => Promise<FileDiff | null>;
+  fetchCompareFileDiff: (cmp: Comparison, file: FileDiff, contextLines: number, full: boolean) => Promise<FileDiff | null>;
   // The compare header: re-run the comparison with these ends and mode (Swap,
   // the two-dot / three-dot toggle), or close it.
   onCompare: (base: string, head: string, threeDot: boolean) => void;
@@ -90,6 +92,9 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   let fileMode: FileMode = "diff";
   let splitView = false;
   let contextLines = DEFAULT_CONTEXT_LINES;
+  // Whether the user asked for a truncated file's whole diff; back to the cap
+  // on the next commit, since one giant file is no reason to load them all.
+  let fullDiff = false;
   let currentHunk = 0;
   let tree: { id: string; paths: string[] } | null = null;
   let blame: Cached<BlameLine[]> | null = null;
@@ -114,6 +119,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     if (isNewCommit) {
       selectedFile = 0;
       currentHunk = 0;
+      fullDiff = false;
       tree = null;
       collapsed.clear();
     }
@@ -324,6 +330,14 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     if (fileMode === "history") return renderHistoryView(view, file);
     const shown = displayedDiff(selectedFile);
     if (shown === undefined) return renderRecontexted(view, file);
+    if (shown.truncated) {
+      view.append(
+        truncatedNotice(() => {
+          fullDiff = true;
+          render();
+        }),
+      );
+    }
     view.append(splitView ? renderSplitDiff(shown) : renderUnifiedDiff(shown));
   }
 
@@ -332,13 +346,13 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   // that re-diff hasn't been fetched yet.
   function displayedDiff(idx: number): FileDiff | undefined {
     const file = detail!.files[idx];
-    if (contextLines === DEFAULT_CONTEXT_LINES) return file;
+    if (contextLines === DEFAULT_CONTEXT_LINES && !fullDiff) return file;
     if (recontexted?.key !== contextKey(file)) return undefined;
     return recontexted.data ?? file;
   }
 
   function contextKey(file: FileDiff): string {
-    return `${viewKey()}:${file.path}:${contextLines}`;
+    return `${viewKey()}:${file.path}:${contextLines}:${fullDiff ? "full" : "capped"}`;
   }
 
   function renderRecontexted(view: HTMLElement, file: FileDiff): void {
@@ -349,8 +363,8 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     // Only repaint if the user is still looking at this file and context.
     const stillViewing = () => detail !== null && contextKey(detail.files[selectedFile]) === key;
     const fetched = compare
-      ? cb.fetchCompareFileDiff(compare, file, contextLines)
-      : cb.fetchFileDiff(detail!.id, file, contextLines);
+      ? cb.fetchCompareFileDiff(compare, file, contextLines, fullDiff)
+      : cb.fetchFileDiff(detail!.id, file, contextLines, fullDiff);
     fetched
       .then((data) => {
         recontexted = { key, data };
@@ -759,6 +773,19 @@ function hunkHeader(hunk: FileDiff["hunks"][number]): HTMLElement {
   });
   header.append(copy);
   return header;
+}
+
+// The bar above a diff the backend cut short at its line cap, with the way to
+// get the rest. Shared with the Local Changes view.
+export function truncatedNotice(onShowAll: () => void): HTMLElement {
+  const btn = el("button", { class: "btn ghost small", text: "Show full diff" });
+  btn.addEventListener("click", onShowAll);
+  return el("div", { class: "diff-truncated" }, [
+    el("span", {
+      text: `This diff has more than ${MAX_DIFF_LINES.toLocaleString()} lines, so only the first blocks are shown.`,
+    }),
+    btn,
+  ]);
 }
 
 export function renderFile(file: FileDiff): HTMLElement {

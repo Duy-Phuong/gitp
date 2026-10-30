@@ -7,7 +7,7 @@ import { DEFAULT_CONTEXT_LINES } from "../api";
 import { autoGrowTextarea, clear, copyToClipboard, el } from "../dom";
 import type { ChangeKind, CommitDetail, FileDiff, SigningConfig, StatusLists } from "../types";
 import { type MenuItem, showContextMenu } from "./context-menu";
-import { contextControls, renderFile, renderSplitDiff } from "./detail";
+import { contextControls, renderFile, renderSplitDiff, truncatedNotice } from "./detail";
 import {
   changedLines,
   dragOver,
@@ -28,7 +28,9 @@ export interface ChangesCallbacks {
   fetchStatus: () => Promise<StatusLists>;
   // The selected file's full diff (with hunks), fetched on demand with
   // `contextLines` of unchanged context around each change.
-  fetchFileDiff: (path: string, staged: boolean, contextLines: number) => Promise<FileDiff | null>;
+  // `full` lifts the backend's line cap once the user asks for a truncated
+  // file's whole diff.
+  fetchFileDiff: (path: string, staged: boolean, contextLines: number, full: boolean) => Promise<FileDiff | null>;
   stage: (path: string) => Promise<void>;
   unstage: (path: string) => Promise<void>;
   stageAll: () => Promise<void>;
@@ -127,6 +129,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let selectedDiffSummary: FileDiff | null = null;
   // The context size selectedDiff was fetched with (what its blocks are cut at).
   let selectedDiffContext = DEFAULT_CONTEXT_LINES;
+  // Whether selectedDiff was fetched without the line cap, and whether the
+  // user wants the current file that way (reset on each selection).
+  let selectedDiffFull = false;
+  let fullDiff = false;
   // Whether the current selection's diff fetch has completed — distinguishes
   // "still loading" from "loaded but no textual diff" (binary / Git LFS file).
   let diffLoaded = false;
@@ -229,20 +235,23 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       selectedDiff &&
       summary &&
       sameSummary(summary, selectedDiffSummary) &&
-      selectedDiffContext === contextLines
+      selectedDiffContext === contextLines &&
+      selectedDiffFull === fullDiff
     ) {
       return; // status for this file is unchanged — the hunks we have are still current
     }
     const token = ++diffToken;
     const ctx = contextLines;
+    const full = fullDiff;
     selectedDiff = null;
     diffLoaded = false;
-    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", ctx);
+    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", ctx, full);
     if (token !== diffToken) return; // selection moved on; drop this result
     selectedDiff = file;
     diffLoaded = true;
     selectedDiffSummary = summary;
     selectedDiffContext = ctx;
+    selectedDiffFull = full;
     if (diffHost) renderDiffInto(diffHost);
   }
 
@@ -253,7 +262,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     if (!sel || !diffLoaded || !selectedDiff || busy) return;
     if (sel.panel === "staged" && amendOnly(sel.path)) return;
     const token = ++diffToken;
-    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", selectedDiffContext);
+    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", selectedDiffContext, selectedDiffFull);
     if (token !== diffToken) return; // selection moved on; drop this result
     // Unchanged: keep the very same object, so the line selection survives and
     // nothing is repainted.
@@ -385,6 +394,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   // Selecting a file updates only the highlight + diff — it must NOT rebuild the
   // trees, so file rows survive for a native double-click (instant staging).
   function selectFile(panel: Panel, path: string): void {
+    if (selected?.path !== path) fullDiff = false;
     selected = { panel, path };
     selectedDiff = null;
     diffLoaded = false;
@@ -419,6 +429,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     // stage piecemeal, only the whole entry (from the file list).
     const submodule = selectedDiff ? parseSubmoduleDiff(selectedDiff) : null;
     const hasDiff = selectedDiff != null && selectedDiff.hunks.length > 0 && !submodule;
+    const truncated = selectedDiff?.truncated === true && !submodule;
     pane.append(diffToolbar(hasDiff));
     const body = el("div", { class: "staging-diff-body" });
     // The selected-lines action bar, under the diff (not scrolled with it).
@@ -440,8 +451,16 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
           ...notes.map((text) => el("div", { class: "submodule-change-note", text })),
         ]),
       );
-    } else if (hasDiff) {
-      body.append(splitView ? renderSplitDiff(selectedDiff!) : renderFile(selectedDiff!));
+    } else if (hasDiff || truncated) {
+      if (truncated) {
+        body.append(
+          truncatedNotice(() => {
+            fullDiff = true;
+            void loadSelectedDiff();
+          }),
+        );
+      }
+      if (hasDiff) body.append(splitView ? renderSplitDiff(selectedDiff!) : renderFile(selectedDiff!));
       attachHunkMenus(body);
       // Amend-only files (shown while amending) aren't in the index — their
       // blocks can't be staged/unstaged, so skip the per-hunk controls.

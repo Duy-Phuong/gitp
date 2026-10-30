@@ -18,7 +18,7 @@ fn pick(
     wanted: &[&str],
 ) -> Vec<(usize, usize)> {
     let diff = repo
-        .file_diff(path, staged, context)
+        .file_diff(path, staged, context, None)
         .unwrap()
         .expect("file has a diff");
     wanted
@@ -152,7 +152,7 @@ fn unstage_lines_moves_only_the_selected_lines_back() {
         base_with(&[("line 2\n", ""), ("line 3\n", "line 3\nNEW\n")])
     );
     let unstaged = repo
-        .file_diff("f.txt", false, DEFAULT_CONTEXT_LINES)
+        .file_diff("f.txt", false, DEFAULT_CONTEXT_LINES, None)
         .unwrap()
         .expect("TWO is unstaged again");
     let changed: Vec<String> = unstaged
@@ -205,7 +205,7 @@ fn stage_lines_across_two_blocks() {
     let fx = two_block_repo();
     let repo = Repo::open(fx.path()).unwrap();
     assert_eq!(
-        repo.file_diff("f.txt", false, DEFAULT_CONTEXT_LINES)
+        repo.file_diff("f.txt", false, DEFAULT_CONTEXT_LINES, None)
             .unwrap()
             .unwrap()
             .hunks

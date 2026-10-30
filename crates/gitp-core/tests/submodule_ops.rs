@@ -209,7 +209,7 @@ fn a_moved_submodule_diffs_as_a_subproject_commit_change() {
     assert_eq!(status.unstaged[0].path, "lib");
 
     // The shape Local Changes recognises a submodule by (see submodule-diff.ts).
-    let diff = repo.file_diff("lib", false, 3).unwrap().unwrap();
+    let diff = repo.file_diff("lib", false, 3, None).unwrap().unwrap();
     let lines: Vec<String> = diff.hunks[0]
         .lines
         .iter()

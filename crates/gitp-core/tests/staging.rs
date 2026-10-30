@@ -19,7 +19,7 @@ fn stage_hunk_stages_only_the_chosen_block_of_a_multi_hunk_file() {
 
     let repo = Repo::open(fx.path()).unwrap();
     let hunks = repo
-        .file_diff("a.txt", false, DEFAULT_CONTEXT_LINES)
+        .file_diff("a.txt", false, DEFAULT_CONTEXT_LINES, None)
         .unwrap()
         .unwrap()
         .hunks
@@ -32,7 +32,7 @@ fn stage_hunk_stages_only_the_chosen_block_of_a_multi_hunk_file() {
     // The staged (index) diff has just the first edit; the working tree still
     // has the second edit unstaged.
     let staged = repo
-        .file_diff("a.txt", true, DEFAULT_CONTEXT_LINES)
+        .file_diff("a.txt", true, DEFAULT_CONTEXT_LINES, None)
         .unwrap()
         .unwrap();
     let staged_text: String = staged
@@ -48,7 +48,7 @@ fn stage_hunk_stages_only_the_chosen_block_of_a_multi_hunk_file() {
     );
 
     let unstaged = repo
-        .file_diff("a.txt", false, DEFAULT_CONTEXT_LINES)
+        .file_diff("a.txt", false, DEFAULT_CONTEXT_LINES, None)
         .unwrap()
         .unwrap();
     let unstaged_text: String = unstaged
@@ -117,14 +117,14 @@ fn status_summary_lists_files_without_hunks_and_file_diff_fills_them_in() {
 
     // file_diff fills in the hunks for a modified file, in the staged direction.
     let staged_diff = repo
-        .file_diff("a.txt", true, DEFAULT_CONTEXT_LINES)
+        .file_diff("a.txt", true, DEFAULT_CONTEXT_LINES, None)
         .unwrap()
         .expect("a.txt staged diff");
     assert!(!staged_diff.hunks.is_empty(), "staged diff has hunks");
     // An untracked file's content is viewable too (show_untracked_content), so it
     // has a hunk with its added lines — not a blank diff.
     let untracked = repo
-        .file_diff("new.txt", false, DEFAULT_CONTEXT_LINES)
+        .file_diff("new.txt", false, DEFAULT_CONTEXT_LINES, None)
         .unwrap()
         .expect("new.txt diff");
     assert_eq!(untracked.status, gitp_core::ChangeKind::Untracked);
@@ -135,7 +135,7 @@ fn status_summary_lists_files_without_hunks_and_file_diff_fills_them_in() {
 
     // No change in a direction → None (a.txt has nothing left unstaged).
     assert!(
-        repo.file_diff("a.txt", false, DEFAULT_CONTEXT_LINES)
+        repo.file_diff("a.txt", false, DEFAULT_CONTEXT_LINES, None)
             .unwrap()
             .is_none(),
         "a.txt fully staged"
@@ -152,7 +152,7 @@ fn file_diff_shows_content_of_untracked_and_deleted_files() {
     let repo = Repo::open(fx.path()).unwrap();
 
     let new = repo
-        .file_diff("new.txt", false, DEFAULT_CONTEXT_LINES)
+        .file_diff("new.txt", false, DEFAULT_CONTEXT_LINES, None)
         .unwrap()
         .expect("untracked diff");
     assert_eq!(new.status, gitp_core::ChangeKind::Untracked);
@@ -168,7 +168,7 @@ fn file_diff_shows_content_of_untracked_and_deleted_files() {
     );
 
     let del = repo
-        .file_diff("keep.txt", false, DEFAULT_CONTEXT_LINES)
+        .file_diff("keep.txt", false, DEFAULT_CONTEXT_LINES, None)
         .unwrap()
         .expect("deleted diff");
     assert_eq!(del.status, gitp_core::ChangeKind::Deleted);
@@ -240,7 +240,7 @@ fn stage_of_a_glob_like_path_is_literal() {
     assert_eq!(staged, vec!["a[1].txt"]);
     // And the per-file diff of the lookalike is its own, not the bracket file's.
     let d = repo
-        .file_diff("a1.txt", false, DEFAULT_CONTEXT_LINES)
+        .file_diff("a1.txt", false, DEFAULT_CONTEXT_LINES, None)
         .unwrap()
         .unwrap();
     assert_eq!(d.path, "a1.txt");
