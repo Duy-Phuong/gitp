@@ -7,11 +7,12 @@ import {
   loadPullDefault,
   PULL_DEFAULT_LABEL,
   PULL_DEFAULTS,
+  saveAutoFetchMinutes,
   savePullDefault,
   type ThemeChoice,
 } from "./prefs";
 import { setConfigTab } from "./config-panel";
-import { showView, updateLogView } from "./shell";
+import { showView, startAutoFetch, updateLogView } from "./shell";
 import { createBranchAction, runPullMethod } from "./repo-actions";
 import { checkoutBranchAction } from "./ref-actions";
 import { closeSettingsDialog, openSettingsDialog } from "./views/settings-dialog";
@@ -133,6 +134,10 @@ export function setupSettingsMenu(): void {
       // The toggle above the log owns the switch (persisting it and reloading
       // the history), so the dialog just presses it.
       setAllBranches: (all) => $(all ? "#branches-all" : "#branches-current").click(),
+      setAutoFetch: (minutes) => {
+        saveAutoFetchMinutes(minutes);
+        startAutoFetch(minutes);
+      },
       openConfig: (tab) => {
         closeSettingsDialog();
         setConfigTab(tab);

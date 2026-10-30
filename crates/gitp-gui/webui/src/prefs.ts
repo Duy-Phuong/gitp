@@ -55,6 +55,21 @@ export function updatePullButtonTitle(): void {
   $<HTMLButtonElement>("#pull-btn").title = PULL_DEFAULT_LABEL[loadPullDefault()];
 }
 
+// Fetch all remotes of the open repo every N minutes (Settings → Pull). 0, the
+// default, leaves only the fetch on opening History / Local Changes.
+const AUTO_FETCH_KEY = "gitp-auto-fetch-minutes";
+
+export const AUTO_FETCH_MINUTES = [0, 1, 5, 15, 30];
+
+export function loadAutoFetchMinutes(): number {
+  const v = Number(localStorage.getItem(AUTO_FETCH_KEY));
+  return AUTO_FETCH_MINUTES.includes(v) ? v : 0;
+}
+
+export function saveAutoFetchMinutes(minutes: number): void {
+  localStorage.setItem(AUTO_FETCH_KEY, String(minutes));
+}
+
 // The commit box's "Push after commit" toggle. Off by default: pushing is a
 // network action nobody should get without asking for it.
 const PUSH_AFTER_COMMIT_KEY = "gitp-push-after-commit";

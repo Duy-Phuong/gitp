@@ -479,10 +479,10 @@ const REMOTE_REFRESH_THROTTLE_MS = 60_000;
 // (offline, no cached credentials) — a background refresh must never
 // interrupt navigation with an error dialog, only a status-bar note; nor with a
 // credential prompt, so it runs as a background fetch, which never asks.
-async function refreshRemoteQuietly(): Promise<void> {
+async function refreshRemoteQuietly(throttleMs = REMOTE_REFRESH_THROTTLE_MS): Promise<void> {
   if (!state.repoPath || ui.actionsBusy) return;
   const last = remoteFetchedAt.get(state.repoPath);
-  if (last !== undefined && Date.now() - last < REMOTE_REFRESH_THROTTLE_MS) return;
+  if (last !== undefined && Date.now() - last < throttleMs) return;
   // Recorded before the round trip, so a slow or failing fetch can't have every
   // navigation start another one.
   markRemoteFetched();
@@ -492,6 +492,25 @@ async function refreshRemoteQuietly(): Promise<void> {
   } catch (err) {
     readFailed("Background fetch failed", err);
   }
+}
+
+let autoFetchTimer: number | undefined;
+
+// The "Auto-fetch" setting: the same quiet fetch on a timer, for whichever repo
+// is active when it fires. A tick is skipped while gitp runs an operation of
+// its own or the window is hidden (nobody is looking, and a laptop lid closed
+// overnight shouldn't fetch every minute), and when a fetch — navigation,
+// Reload — already ran within half an interval. Half, not the full interval,
+// because timer drift would otherwise skip every other tick. 0 turns it off.
+export function startAutoFetch(minutes: number): void {
+  window.clearInterval(autoFetchTimer);
+  autoFetchTimer = undefined;
+  if (minutes <= 0) return;
+  const every = minutes * 60_000;
+  autoFetchTimer = window.setInterval(() => {
+    if (document.hidden || operationInFlight()) return;
+    void refreshRemoteQuietly(every / 2);
+  }, every);
 }
 
 // Whether gitp is running an operation of its own right now.

@@ -8,7 +8,9 @@
 
 import { el } from "../dom";
 import {
+  AUTO_FETCH_MINUTES,
   currentTheme,
+  loadAutoFetchMinutes,
   loadDetailTab,
   loadPullDefault,
   PULL_DEFAULT_LABEL,
@@ -25,6 +27,8 @@ export interface SettingsActions {
   setTheme: (choice: ThemeChoice) => void;
   allBranches: () => boolean;
   setAllBranches: (all: boolean) => void;
+  // Persist the auto-fetch interval (0 = off) and restart the timer on it.
+  setAutoFetch: (minutes: number) => void;
   // Leave the dialog for one of the Config view's tabs.
   openConfig: (tab: "git" | "dotfiles") => void;
 }
@@ -69,6 +73,12 @@ export function openSettingsDialog(actions: SettingsActions): void {
       title: "Pull",
       render: () => [
         row("Pull button runs", pullSelect(), "inline", "The Pull caret still offers every method."),
+        row(
+          "Auto-fetch",
+          autoFetchSelect(actions),
+          "inline",
+          "Fetches all remotes of the open repository in the background. Opening History or Local Changes fetches either way.",
+        ),
       ],
     },
     {
@@ -183,6 +193,17 @@ function pullSelect(): HTMLElement {
   for (const mode of PULL_DEFAULTS) select.append(el("option", { value: mode, text: PULL_DEFAULT_LABEL[mode] }));
   select.value = loadPullDefault();
   select.addEventListener("change", () => savePullDefault(select.value as PullDefault));
+  return select;
+}
+
+function autoFetchSelect(actions: SettingsActions): HTMLElement {
+  const select = el("select", { class: "settings-select" });
+  for (const m of AUTO_FETCH_MINUTES) {
+    const label = m === 0 ? "Off" : m === 1 ? "Every minute" : `Every ${m} minutes`;
+    select.append(el("option", { value: String(m), text: label }));
+  }
+  select.value = String(loadAutoFetchMinutes());
+  select.addEventListener("change", () => actions.setAutoFetch(Number(select.value)));
   return select;
 }
 

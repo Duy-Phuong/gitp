@@ -54,6 +54,7 @@ import {
   applyTheme,
   currentTheme,
   loadAllBranches,
+  loadAutoFetchMinutes,
   loadDetailTab,
   loadPushAfterCommit,
   saveAllBranches,
@@ -77,6 +78,7 @@ import {
   setRefActions,
   showReflogDetail,
   showView,
+  startAutoFetch,
   updateLogView,
 } from "./shell";
 import {
@@ -154,6 +156,7 @@ function wireUi(): void {
   setupExternalChangeRefresh();
   setupLogKeyboardNav();
   setupFetchAgeIndicator();
+  startAutoFetch(loadAutoFetchMinutes());
   setupBranchToggle();
   setupLogSearch();
   setupConfigTabs();
