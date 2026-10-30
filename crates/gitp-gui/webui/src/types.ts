@@ -77,6 +77,16 @@ export interface FileContent {
   base64: string | null;
 }
 
+// A working-tree file as the in-app editor holds it (mirrors gitp-core's
+// TextFile): line breaks as "\n", and the kind the file had, which saving
+// writes back. `mixed` when they weren't all one kind — saving then makes
+// them all the `crlf` kind.
+export interface TextFile {
+  text: string;
+  crlf: boolean;
+  mixed: boolean;
+}
+
 // What `git difftool` compares (mirrors gitp-core's DiffToolTarget): a commit
 // against its parent, two revisions, or the staged / unstaged changes.
 export type DiffToolTarget =

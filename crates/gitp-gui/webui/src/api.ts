@@ -40,6 +40,7 @@ import type {
   SigningConfig,
   StatusLists,
   TagDetail,
+  TextFile,
   UndoState,
   Workspace,
   WorkspaceSnapshot,
@@ -1172,6 +1173,65 @@ export async function openInEditor(path: string): Promise<void> {
   await invoke<void>("open_in_editor", { path });
 }
 
+// --- In-app file editor ------------------------------------------------------
+// Working-tree files as text. Saving, creating and deleting are undoable. In
+// preview mode the files live in MOCK_FILES.
+
+// `path` as text, null when it doesn't exist. Binary, non-UTF-8 and >2 MB
+// files are refused with an error.
+export async function readTextFile(path: string): Promise<TextFile | null> {
+  if (!isTauri()) {
+    const text = MOCK_FILES.get(path);
+    return text === undefined ? null : { text, crlf: false, mixed: false };
+  }
+  return invoke<TextFile | null>("read_text_file", { path });
+}
+
+// Save `text` ("\n" line breaks) to `path`, as "\r\n" when `crlf`.
+export async function writeTextFile(path: string, text: string, crlf: boolean): Promise<void> {
+  if (!isTauri()) {
+    MOCK_FILES.set(path, text);
+    mockMarkModified(path);
+    mockRecord(`Edit ${path}`);
+    return;
+  }
+  await invoke<void>("write_text_file", { path, text, crlf });
+}
+
+// Create `path` (repo-relative) as an empty file, with its folders. Refuses an
+// existing file and anything outside the working tree.
+export async function createFile(path: string): Promise<void> {
+  if (!isTauri()) {
+    if (MOCK_FILES.has(path)) throw new Error(`${path} already exists`);
+    if (path.startsWith("/") || path.split("/").includes("..")) {
+      throw new Error(`not a path inside the repository: ${path}`);
+    }
+    MOCK_FILES.set(path, "");
+    MOCK_STATUS.unstaged.push({ path, old_path: null, status: "Untracked", hunks: [] });
+    mockRecord(`Create ${path}`);
+    return;
+  }
+  await invoke<void>("create_file", { path });
+}
+
+// Delete the working-tree file `path`; the index is left alone.
+export async function deleteFile(path: string): Promise<void> {
+  if (!isTauri()) {
+    MOCK_FILES.delete(path);
+    mockMove(MOCK_STATUS.unstaged, [], path);
+    mockMove(MOCK_STATUS.staged, [], path);
+    mockRecord(`Delete ${path}`);
+    return;
+  }
+  await invoke<void>("delete_file", { path });
+}
+
+// Every tracked and untracked (not ignored) file in the working tree, sorted.
+export async function listWorkFiles(): Promise<string[]> {
+  if (!isTauri()) return [...MOCK_FILES.keys()].sort();
+  return invoke<string[]>("list_work_files", {});
+}
+
 // Open `paths` of `target` in the user's `git difftool` (diff.tool), without
 // waiting for it to close. False when no diff tool is configured — always, in
 // preview mode, where there's nothing to launch.
@@ -1577,6 +1637,20 @@ export const MOCK_TREE: string[] = [
   "src/views/log.ts",
   "src/views/sidebar.ts",
 ];
+
+// The working tree's files as text, for the in-app editor in preview mode.
+const MOCK_FILES = new Map<string, string>([
+  ...MOCK_TREE.map((p): [string, string] => [p, `// ${p}\n`]),
+  ["notes.md", "# Notes\n\nSome *emphasis*, `code` and a [link](https://example.com).\n\n- one\n- two\n"],
+]);
+
+// Show a saved file as modified in Local Changes, as git status would.
+function mockMarkModified(path: string): void {
+  const all = [...MOCK_STATUS.unstaged, ...MOCK_STATUS.staged];
+  if (!all.some((f) => f.path === path)) {
+    MOCK_STATUS.unstaged.push({ path, old_path: null, status: "Modified", hunks: [] });
+  }
+}
 
 // Per-line blame for the blame view in preview mode. Commit ids are full (as
 // the backend returns) so clicking a line can navigate to that commit.

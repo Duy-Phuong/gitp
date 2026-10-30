@@ -16,6 +16,7 @@ mod commits;
 mod compare;
 mod config;
 mod conflict;
+mod editor;
 mod history;
 mod os;
 mod rebase;
@@ -188,6 +189,11 @@ pub fn run() {
             os::reveal_path,
             workspace::workspace_snapshot,
             os::open_in_editor,
+            editor::read_text_file,
+            editor::write_text_file,
+            editor::create_file,
+            editor::delete_file,
+            editor::list_work_files,
             os::open_difftool,
             os::open_mergetool,
             config::read_dotfile,

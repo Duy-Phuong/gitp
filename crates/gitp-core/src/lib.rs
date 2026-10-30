@@ -16,6 +16,7 @@ mod diff;
 mod error;
 mod external_tool;
 mod file_content;
+mod file_edit;
 mod file_ops;
 mod filelog;
 mod git_bin;
@@ -53,6 +54,7 @@ pub use diff::{ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff, DEFAULT_C
 pub use error::{Error, Result};
 pub use external_tool::DiffToolTarget;
 pub use file_content::{FileContent, FileSide, PREVIEW_MAX_BYTES};
+pub use file_edit::{TextFile, EDIT_MAX_BYTES};
 pub use filelog::FileCommit;
 pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope};
 pub use progress::{NetworkHooks, Progress, ProgressFn};

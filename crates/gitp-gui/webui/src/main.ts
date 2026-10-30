@@ -36,6 +36,7 @@ import {
   untrackFiles,
   revealPath,
   openInEditor,
+  deleteFile,
   unstage,
   unstageAll,
   unstageHunk,
@@ -121,6 +122,7 @@ import {
 import { onWorktreeMenu } from "./worktree-actions";
 import { addRemoteAction, onRemoteFolderMenu, onRemotesMenu } from "./remote-actions";
 import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
+import { createFileAction, editFileAction } from "./editor-actions";
 import { toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
 import { openQuickLaunch } from "./quick-launch-commands";
@@ -289,6 +291,9 @@ async function init(): Promise<void> {
     untrackFiles,
     revealPath,
     openInEditor,
+    editInApp: editFileAction,
+    createFile: createFileAction,
+    deleteFile,
     openInDiffTool: (target, paths) => void openInDiffTool(target, paths),
     repoRoot: () => state.repoPath || null,
     confirm: confirmDialog,
