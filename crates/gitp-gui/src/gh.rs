@@ -43,7 +43,9 @@ fn gh_account_impl() -> Result<GhAccount, String> {
 
 /// The open repo's GitHub repository, or none — also when no repo is open.
 fn gh_repo_impl(state: &RepoState) -> Option<String> {
-    with_repo(state, |repo| Ok(repo.github_repo())).ok().flatten()
+    with_repo(state, |repo| Ok(repo.github_repo()))
+        .ok()
+        .flatten()
 }
 
 fn gh_pull_requests_impl(state: &RepoState, filter: PrFilter) -> Result<Vec<PullRequest>, String> {

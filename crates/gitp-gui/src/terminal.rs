@@ -32,7 +32,9 @@ impl Session {
     /// out of the map; dropping the session afterwards closes the PTY master,
     /// which ends the reader thread.
     fn end(&self) {
-        let Ok(mut child) = self.child.lock() else { return };
+        let Ok(mut child) = self.child.lock() else {
+            return;
+        };
         // Already exited (the user typed `exit`): reap it, and don't signal a
         // pid that may by now belong to some other process.
         if let Ok(Some(_)) = child.try_wait() {
@@ -107,7 +109,8 @@ impl TerminalState {
             // replaced (the id reused) its output belongs to no tab, and under
             // that id it would land in the replacement's.
             let current = |map: &HashMap<u32, Arc<Session>>| {
-                map.get(&id).is_some_and(|s| Arc::as_ptr(s) == this.as_ptr())
+                map.get(&id)
+                    .is_some_and(|s| Arc::as_ptr(s) == this.as_ptr())
             };
             let mut buf = [0u8; 32 * 1024];
             let mut pending = Vec::new();
@@ -155,7 +158,12 @@ impl TerminalState {
 
     fn resize(&self, id: u32, cols: u16, rows: u16) -> Result<(), String> {
         if let Some(session) = self.get(id)? {
-            session.master.lock().map_err(s)?.resize(size(cols, rows)).map_err(s)?;
+            session
+                .master
+                .lock()
+                .map_err(s)?
+                .resize(size(cols, rows))
+                .map_err(s)?;
         }
         Ok(())
     }
@@ -280,7 +288,9 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         while !seen[id as usize].contains(needle) {
             let left = deadline.saturating_duration_since(Instant::now());
-            let (from, data) = rx.recv_timeout(left).unwrap_or_else(|_| panic!("no {needle:?} from session {id}"));
+            let (from, data) = rx
+                .recv_timeout(left)
+                .unwrap_or_else(|_| panic!("no {needle:?} from session {id}"));
             seen[from as usize].push_str(&data);
         }
     }
@@ -301,7 +311,16 @@ mod tests {
             let (out, exit) = (tx.clone(), tx.clone());
             let on_output = move |data| out.send((id, data)).is_ok();
             let on_exit = move || drop(exit.send((id, "<exited>".to_string())));
-            terms.spawn(id, CommandBuilder::new("/bin/sh"), 80, 24, on_output, on_exit).unwrap()
+            terms
+                .spawn(
+                    id,
+                    CommandBuilder::new("/bin/sh"),
+                    80,
+                    24,
+                    on_output,
+                    on_exit,
+                )
+                .unwrap()
         };
         let one = spawn(1);
         let two = spawn(2);
@@ -313,13 +332,22 @@ mod tests {
         terms.write(2, b"echo two-$((50+5))\n").unwrap();
         wait_for(&rx, &mut seen, 1, "one-42");
         wait_for(&rx, &mut seen, 2, "two-55");
-        assert!(!seen[1].contains("two-"), "session 1 saw session 2's output");
-        assert!(!seen[2].contains("one-"), "session 2 saw session 1's output");
+        assert!(
+            !seen[1].contains("two-"),
+            "session 1 saw session 2's output"
+        );
+        assert!(
+            !seen[2].contains("one-"),
+            "session 2 saw session 1's output"
+        );
 
         // Killing one ends its shell and its reader thread (which holds the
         // last PTY descriptor) and forgets it; the other carries on.
         terms.kill(1).unwrap();
-        assert!(joins_soon(&one), "the killed session's reader thread is still running");
+        assert!(
+            joins_soon(&one),
+            "the killed session's reader thread is still running"
+        );
         assert!(!terms.0.lock().unwrap().contains_key(&1));
         terms.write(1, b"echo ignored\n").unwrap(); // a gone session is a no-op
         terms.write(2, b"echo still-$((1+1))\n").unwrap();
@@ -328,7 +356,10 @@ mod tests {
         // A shell that exits by itself is removed and reaped as well, and
         // reported — unlike the killed one, whose tab is already gone.
         terms.write(2, b"exit\n").unwrap();
-        assert!(joins_soon(&two), "the exited session's reader thread is still running");
+        assert!(
+            joins_soon(&two),
+            "the exited session's reader thread is still running"
+        );
         assert!(terms.0.lock().unwrap().is_empty());
         wait_for(&rx, &mut seen, 2, "<exited>");
         while let Ok((from, data)) = rx.try_recv() {
@@ -344,16 +375,34 @@ mod tests {
         // A shell that shrugs off SIGHUP goes on printing through the grace
         // period before it's killed, while its replacement is already live.
         let mut old = CommandBuilder::new("/bin/sh");
-        old.args(["-c", "trap '' HUP; while :; do echo old-out; sleep 0.01; done"]);
+        old.args([
+            "-c",
+            "trap '' HUP; while :; do echo old-out; sleep 0.01; done",
+        ]);
         let out = tx.clone();
-        let old = terms.spawn(1, old, 80, 24, move |_| out.send(Instant::now()).is_ok(), || {}).unwrap();
-        rx.recv_timeout(Duration::from_secs(10)).expect("no output from the first session");
+        let old = terms
+            .spawn(
+                1,
+                old,
+                80,
+                24,
+                move |_| out.send(Instant::now()).is_ok(),
+                || {},
+            )
+            .unwrap();
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("no output from the first session");
 
         // Same id again, as a reloaded webview numbers its tabs from 1.
         let swapping = Instant::now();
-        terms.spawn(1, CommandBuilder::new("/bin/sh"), 80, 24, |_| true, || {}).unwrap();
+        terms
+            .spawn(1, CommandBuilder::new("/bin/sh"), 80, 24, |_| true, || {})
+            .unwrap();
         let swapped = Instant::now();
-        assert!(joins_soon(&old), "the replaced session's reader thread is still running");
+        assert!(
+            joins_soon(&old),
+            "the replaced session's reader thread is still running"
+        );
         // Output read just before the swap may still land; nothing after.
         let late = rx
             .try_iter()
@@ -378,7 +427,12 @@ pub fn terminal_write(id: u32, data: String, state: State<TerminalState>) -> Res
 }
 
 #[tauri::command(async)]
-pub fn terminal_resize(id: u32, cols: u16, rows: u16, state: State<TerminalState>) -> Result<(), String> {
+pub fn terminal_resize(
+    id: u32,
+    cols: u16,
+    rows: u16,
+    state: State<TerminalState>,
+) -> Result<(), String> {
     state.resize(id, cols, rows)
 }
 

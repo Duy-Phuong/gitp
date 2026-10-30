@@ -479,8 +479,8 @@ mod tests {
 
         let path = path_of(&inner);
         assert!(workspace_repo_summary_impl(&path).is_err());
-        let err = workspace_pull_impl(&state, &ops, &path, PullMode::FastForward, None)
-            .unwrap_err();
+        let err =
+            workspace_pull_impl(&state, &ops, &path, PullMode::FastForward, None).unwrap_err();
         assert!(err.contains("not a git repository"), "{err}");
         assert_eq!(head(&repo), before, "the parent repo was pulled");
     }
@@ -539,7 +539,10 @@ mod tests {
         let app = root.path().join("app");
         std::fs::create_dir(&app).unwrap();
         make_repo(&app, &["c1"]);
-        git(&app, &["worktree", "add", "-q", "-b", "feat", "../app-feat"]);
+        git(
+            &app,
+            &["worktree", "add", "-q", "-b", "feat", "../app-feat"],
+        );
         git(&app, &["worktree", "add", "-q", "--detach", "../gone"]);
         std::fs::remove_dir_all(root.path().join("gone")).unwrap();
         let lib = root.path().join("lib");
@@ -556,7 +559,7 @@ mod tests {
         };
 
         // Add Folder…: the repo, then its live linked worktree.
-        let added = workspace_with_worktrees_impl(&[], &[app.clone()]);
+        let added = workspace_with_worktrees_impl(&[], std::slice::from_ref(&app));
         assert_eq!(names(added), ["app", "app-feat"]);
 
         // Add All in Folder…: the scan finds the worktree as a folder of its
@@ -570,8 +573,20 @@ mod tests {
         // Add Worktrees of… a repo already in the workspace: just the
         // worktrees, and from a linked worktree its main one counts too.
         let feat = path_of(&root.path().join("app-feat"));
-        assert_eq!(names(workspace_with_worktrees_impl(&[app.clone()], &[app.clone()])), ["app-feat"]);
-        assert_eq!(names(workspace_with_worktrees_impl(&[feat.clone()], &[feat])), ["app"]);
+        assert_eq!(
+            names(workspace_with_worktrees_impl(
+                std::slice::from_ref(&app),
+                std::slice::from_ref(&app)
+            )),
+            ["app-feat"]
+        );
+        assert_eq!(
+            names(workspace_with_worktrees_impl(
+                std::slice::from_ref(&feat),
+                std::slice::from_ref(&feat)
+            )),
+            ["app"]
+        );
         assert!(workspace_with_worktrees_impl(&found, &[app]).is_empty());
     }
 

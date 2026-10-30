@@ -52,7 +52,8 @@ const NOT_INSTALLED: &str = "The GitHub CLI (gh) is not installed. Install it (f
      `brew install gh`), then sign in to GitHub.";
 const NOT_SIGNED_IN: &str = "gh is not signed in to GitHub. Sign in (the Pull Requests section's \
      Sign in to GitHub, or `gh auth login` in a terminal), then try again.";
-const RATE_LIMITED: &str = "GitHub's API rate limit was reached. Wait a few minutes, then try again.";
+const RATE_LIMITED: &str =
+    "GitHub's API rate limit was reached. Wait a few minutes, then try again.";
 const NO_GITHUB_REMOTE: &str = "This repository has no GitHub remote, so it has no pull requests.";
 
 /// How gitp runs `gh`: which folders it is looked for in, and the PATH it
@@ -500,7 +501,9 @@ impl Gh {
         };
         let mut args = args.to_vec();
         args.extend(["--user", user]);
-        Ok(self.call(None, &args, None, TIMEOUT, None, None)?.combined())
+        Ok(self
+            .call(None, &args, None, TIMEOUT, None, None)?
+            .combined())
     }
 }
 
@@ -665,7 +668,15 @@ impl Repo {
         let target = self.github_target()?;
         let repo = target.repo_arg();
         let mut args = vec![
-            "pr", "list", "--repo", &repo, "--state", "open", "--limit", "100", "--json",
+            "pr",
+            "list",
+            "--repo",
+            &repo,
+            "--state",
+            "open",
+            "--limit",
+            "100",
+            "--json",
             LIST_FIELDS,
         ];
         match filter {
@@ -1004,7 +1015,9 @@ fn github_repo_from_url(url: &str) -> Option<GitHubRepo> {
     if !host.contains("github") {
         return None;
     }
-    let path = base.strip_prefix(&format!("https://{host}/"))?.trim_end_matches('/');
+    let path = base
+        .strip_prefix(&format!("https://{host}/"))?
+        .trim_end_matches('/');
     let (owner, name) = path.split_once('/')?;
     if owner.is_empty() || name.is_empty() || name.contains('/') {
         return None;
@@ -1094,8 +1107,10 @@ impl RawCheck {
             Some("SUCCESS") => "success",
             Some("NEUTRAL") => "neutral",
             Some("SKIPPED") => "skipped",
-            Some("FAILURE" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED" | "STARTUP_FAILURE"
-                | "STALE") => "failure",
+            Some(
+                "FAILURE" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED" | "STARTUP_FAILURE"
+                | "STALE",
+            ) => "failure",
             _ => "neutral",
         }
     }
@@ -1366,8 +1381,8 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         /// The fake first on PATH, then the real PATH for sh, git and sleep.
         fn gh(&self) -> Gh {
             let real = std::env::var_os("PATH").unwrap_or_default();
-            let dirs = std::iter::once(self.bin.path().to_path_buf())
-                .chain(std::env::split_paths(&real));
+            let dirs =
+                std::iter::once(self.bin.path().to_path_buf()).chain(std::env::split_paths(&real));
             Gh::with_search_path(std::env::join_paths(dirs).unwrap())
         }
 
@@ -1391,7 +1406,8 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let sig = git2::Signature::now("T", "t@example.com").unwrap();
         let tree = git.treebuilder(None).unwrap().write().unwrap();
         let tree = git.find_tree(tree).unwrap();
-        git.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+        git.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
         for (name, url) in remotes {
             git.remote(name, url).unwrap();
         }
@@ -1434,7 +1450,19 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let calls = fake.calls();
         assert_eq!(calls.len(), 1);
         let args = &calls[0];
-        assert_eq!(args[..8], ["pr", "list", "--repo", "octo/hello", "--state", "open", "--limit", "100"]);
+        assert_eq!(
+            args[..8],
+            [
+                "pr",
+                "list",
+                "--repo",
+                "octo/hello",
+                "--state",
+                "open",
+                "--limit",
+                "100"
+            ]
+        );
         assert_eq!(args[8], "--json");
         assert!(args[9].split(',').any(|f| f == "statusCheckRollup"));
         assert_eq!(args[10..], ["--author", "@me"]);
@@ -1446,7 +1474,13 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert_eq!(prs[0].review_decision.as_deref(), Some("APPROVED"));
         // A failing commit status fails the lot, whatever the check runs say.
         assert_eq!(prs[0].checks.as_deref(), Some("failure"));
-        assert_eq!(prs[0].labels, [PrLabel { name: "enhancement".into(), color: "a2eeef".into() }]);
+        assert_eq!(
+            prs[0].labels,
+            [PrLabel {
+                name: "enhancement".into(),
+                color: "a2eeef".into()
+            }]
+        );
         assert_eq!(prs[1].author, "ghost");
         assert!(prs[1].is_draft);
         assert_eq!(prs[1].review_decision, None);
@@ -1458,7 +1492,8 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let fake = Fake::new();
         fake.answer("pr list", "[]", "", 0);
         let (_dir, repo) = github_repo();
-        repo.pull_requests(&fake.gh(), PrFilter::ReviewRequested).unwrap();
+        repo.pull_requests(&fake.gh(), PrFilter::ReviewRequested)
+            .unwrap();
         repo.pull_requests(&fake.gh(), PrFilter::All).unwrap();
         let calls = fake.calls();
         assert_eq!(calls[0][10..], ["--search", "review-requested:@me"]);
@@ -1480,7 +1515,10 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert_eq!(aliased.github_repo().as_deref(), Some("corp/app"));
 
         let (_d, enterprise) = repo_with(&[("origin", "https://github.corp.example/team/app")]);
-        assert_eq!(enterprise.github_repo().as_deref(), Some("github.corp.example/team/app"));
+        assert_eq!(
+            enterprise.github_repo().as_deref(),
+            Some("github.corp.example/team/app")
+        );
 
         let (dir, resolved) = repo_with(&[
             ("origin", "git@github.com:me/hello.git"),
@@ -1508,14 +1546,27 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
     #[test]
     fn a_comment_goes_in_on_stdin_never_on_the_command_line() {
         let fake = Fake::new();
-        fake.answer("pr comment", "https://github.com/octo/hello/pull/7#issuecomment-1\n", "", 0);
+        fake.answer(
+            "pr comment",
+            "https://github.com/octo/hello/pull/7#issuecomment-1\n",
+            "",
+            0,
+        );
         let (_dir, repo) = github_repo();
         let body = "--repo evil/repo\n$(touch pwned) `id` 'quoted' \"double\"";
         let url = repo.comment_on_pull_request(&fake.gh(), 7, body).unwrap();
         assert_eq!(url, "https://github.com/octo/hello/pull/7#issuecomment-1");
         assert_eq!(
             fake.calls(),
-            [["pr", "comment", "7", "--repo", "octo/hello", "--body-file", "-"]]
+            [[
+                "pr",
+                "comment",
+                "7",
+                "--repo",
+                "octo/hello",
+                "--body-file",
+                "-"
+            ]]
         );
         assert_eq!(fake.read("stdin"), body);
     }
@@ -1534,19 +1585,35 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         fake.answer("pr review", "", "✓ Approved pull request #7\n", 0);
         let (_dir, repo) = github_repo();
         let gh = fake.gh();
-        let said = repo.review_pull_request(&gh, 7, ReviewVerdict::Approve, "").unwrap();
+        let said = repo
+            .review_pull_request(&gh, 7, ReviewVerdict::Approve, "")
+            .unwrap();
         assert_eq!(said, "✓ Approved pull request #7");
         repo.review_pull_request(&gh, 7, ReviewVerdict::RequestChanges, "Please add tests")
             .unwrap();
-        let err = repo.review_pull_request(&gh, 7, ReviewVerdict::Comment, " ").unwrap_err();
+        let err = repo
+            .review_pull_request(&gh, 7, ReviewVerdict::Comment, " ")
+            .unwrap_err();
         assert!(message(err).contains("needs a message"));
 
         let calls = fake.calls();
         assert_eq!(calls.len(), 2, "the empty comment review never ran gh");
-        assert_eq!(calls[0], ["pr", "review", "7", "--repo", "octo/hello", "--approve"]);
+        assert_eq!(
+            calls[0],
+            ["pr", "review", "7", "--repo", "octo/hello", "--approve"]
+        );
         assert_eq!(
             calls[1],
-            ["pr", "review", "7", "--repo", "octo/hello", "--request-changes", "--body-file", "-"]
+            [
+                "pr",
+                "review",
+                "7",
+                "--repo",
+                "octo/hello",
+                "--request-changes",
+                "--body-file",
+                "-"
+            ]
         );
         assert_eq!(fake.read("stdin"), "Please add tests");
     }
@@ -1573,7 +1640,14 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert_eq!(made.line, Some(14));
         assert_eq!(
             fake.calls(),
-            [["api", "--method", "POST", "repos/octo/hello/pulls/7/comments", "--input", "-"]]
+            [[
+                "api",
+                "--method",
+                "POST",
+                "repos/octo/hello/pulls/7/comments",
+                "--input",
+                "-"
+            ]]
         );
         let sent: serde_json::Value = serde_json::from_str(&fake.read("stdin")).unwrap();
         assert_eq!(
@@ -1588,8 +1662,12 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let fake = Fake::new();
         fake.answer("api --method", COMMENT_JSON, "", 0);
         let (_dir, repo) = github_repo();
-        repo.reply_to_review_comment(&fake.gh(), 7, 99, "Done").unwrap();
-        assert_eq!(fake.calls()[0][3], "repos/octo/hello/pulls/7/comments/99/replies");
+        repo.reply_to_review_comment(&fake.gh(), 7, 99, "Done")
+            .unwrap();
+        assert_eq!(
+            fake.calls()[0][3],
+            "repos/octo/hello/pulls/7/comments/99/replies"
+        );
         let sent: serde_json::Value = serde_json::from_str(&fake.read("stdin")).unwrap();
         assert_eq!(sent, serde_json::json!({"body": "Done"}));
     }
@@ -1599,7 +1677,8 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let fake = Fake::new();
         fake.answer("api --hostname", COMMENT_JSON, "", 0);
         let (_dir, repo) = repo_with(&[("origin", "https://github.corp.example/team/app.git")]);
-        repo.reply_to_review_comment(&fake.gh(), 3, 5, "ok").unwrap();
+        repo.reply_to_review_comment(&fake.gh(), 3, 5, "ok")
+            .unwrap();
         assert_eq!(
             fake.calls()[0][..4],
             ["api", "--hostname", "github.corp.example", "--method"]
@@ -1626,8 +1705,15 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             "",
             0,
         );
-        let page2 = COMMENT_JSON.replace("101", "102").replace("\"line\": 14", "\"line\": null");
-        fake.answer("api --paginate", &format!("[{COMMENT_JSON}]\n[{page2}]"), "", 0);
+        let page2 = COMMENT_JSON
+            .replace("101", "102")
+            .replace("\"line\": 14", "\"line\": null");
+        fake.answer(
+            "api --paginate",
+            &format!("[{COMMENT_JSON}]\n[{page2}]"),
+            "",
+            0,
+        );
         let (_dir, repo) = github_repo();
         let pr = repo.pull_request(&fake.gh(), 7).unwrap();
 
@@ -1635,13 +1721,21 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert_eq!(calls[0][..5], ["pr", "view", "7", "--repo", "octo/hello"]);
         assert_eq!(
             calls[1],
-            ["api", "--paginate", "repos/octo/hello/pulls/7/comments?per_page=100"]
+            [
+                "api",
+                "--paginate",
+                "repos/octo/hello/pulls/7/comments?per_page=100"
+            ]
         );
         assert_eq!(pr.head_oid, "abc123");
         assert_eq!(pr.review_decision.as_deref(), Some("CHANGES_REQUESTED"));
         assert_eq!(
             pr.checks,
-            [PrCheck { name: "lint".into(), state: "skipped".into(), url: Some("https://ci.example/1".into()) }]
+            [PrCheck {
+                name: "lint".into(),
+                state: "skipped".into(),
+                url: Some("https://ci.example/1".into())
+            }]
         );
         assert_eq!(pr.reviews[0].author, "hubot");
         assert_eq!(pr.comments[0].id, "IC_1");
@@ -1663,7 +1757,15 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let files = repo.pull_request_files(&fake.gh(), 7).unwrap();
         assert_eq!(
             fake.calls(),
-            [["pr", "diff", "7", "--repo", "octo/hello", "--color", "never"]]
+            [[
+                "pr",
+                "diff",
+                "7",
+                "--repo",
+                "octo/hello",
+                "--color",
+                "never"
+            ]]
         );
         assert_eq!(files.len(), 3);
         assert_eq!(files[0].path, "src/a.rs");
@@ -1674,7 +1776,12 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             .collect();
         assert_eq!(
             lines,
-            [(' ', Some(1), Some(1)), ('-', Some(2), None), ('+', None, Some(2)), (' ', Some(3), Some(3))]
+            [
+                (' ', Some(1), Some(1)),
+                ('-', Some(2), None),
+                ('+', None, Some(2)),
+                (' ', Some(3), Some(3))
+            ]
         );
         assert_eq!(files[1].status, crate::ChangeKind::Added);
         assert_eq!(files[1].hunks[0].lines[0].content, "hello");
@@ -1690,14 +1797,37 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let (_dir, repo) = github_repo();
         let gh = fake.gh();
 
-        fake.answer("pr list", "", "To get started with GitHub CLI, please run:  gh auth login\n", 4);
-        assert_eq!(message(repo.pull_requests(&gh, PrFilter::All).unwrap_err()), NOT_SIGNED_IN);
+        fake.answer(
+            "pr list",
+            "",
+            "To get started with GitHub CLI, please run:  gh auth login\n",
+            4,
+        );
+        assert_eq!(
+            message(repo.pull_requests(&gh, PrFilter::All).unwrap_err()),
+            NOT_SIGNED_IN
+        );
 
-        fake.answer("pr list", "", "HTTP 401: Bad credentials (https://api.github.com/graphql)\n", 1);
-        assert_eq!(message(repo.pull_requests(&gh, PrFilter::All).unwrap_err()), NOT_SIGNED_IN);
+        fake.answer(
+            "pr list",
+            "",
+            "HTTP 401: Bad credentials (https://api.github.com/graphql)\n",
+            1,
+        );
+        assert_eq!(
+            message(repo.pull_requests(&gh, PrFilter::All).unwrap_err()),
+            NOT_SIGNED_IN
+        );
 
-        fake.answer("pr list", "", "GraphQL: API rate limit exceeded for user ID 1.\n", 1);
-        assert!(message(repo.pull_requests(&gh, PrFilter::All).unwrap_err()).starts_with(RATE_LIMITED));
+        fake.answer(
+            "pr list",
+            "",
+            "GraphQL: API rate limit exceeded for user ID 1.\n",
+            1,
+        );
+        assert!(
+            message(repo.pull_requests(&gh, PrFilter::All).unwrap_err()).starts_with(RATE_LIMITED)
+        );
 
         fake.answer(
             "pr list",
@@ -1706,13 +1836,20 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             1,
         );
         let msg = message(repo.pull_requests(&gh, PrFilter::All).unwrap_err());
-        assert!(msg.starts_with("GitHub has no repository octo/hello"), "{msg}");
+        assert!(
+            msg.starts_with("GitHub has no repository octo/hello"),
+            "{msg}"
+        );
 
         fake.answer("pr list", "", "something else broke\n", 1);
-        assert_eq!(message(repo.pull_requests(&gh, PrFilter::All).unwrap_err()), "something else broke");
+        assert_eq!(
+            message(repo.pull_requests(&gh, PrFilter::All).unwrap_err()),
+            "something else broke"
+        );
 
         fake.answer("pr list", "not json", "", 0);
-        assert!(message(repo.pull_requests(&gh, PrFilter::All).unwrap_err()).starts_with("couldn't read gh's answer"));
+        assert!(message(repo.pull_requests(&gh, PrFilter::All).unwrap_err())
+            .starts_with("couldn't read gh's answer"));
     }
 
     #[test]
@@ -1733,7 +1870,13 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let gh = fake.gh();
         let started = Instant::now();
         let err = gh
-            .run(None, &["pr", "list"], None, Duration::from_millis(200), None)
+            .run(
+                None,
+                &["pr", "list"],
+                None,
+                Duration::from_millis(200),
+                None,
+            )
             .err()
             .unwrap();
         assert!(message(err).contains("didn't finish"));
@@ -1753,7 +1896,10 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let (dir, repo) = github_repo();
         let out = repo.checkout_pull_request(&fake.gh(), 7).unwrap();
         assert_eq!(out, "Switched to a new branch 'fix'");
-        assert_eq!(fake.calls(), [["pr", "checkout", "7", "--repo", "octo/hello"]]);
+        assert_eq!(
+            fake.calls(),
+            [["pr", "checkout", "7", "--repo", "octo/hello"]]
+        );
         assert_eq!(
             fake.read("cwd").trim(),
             dir.path().canonicalize().unwrap().to_str().unwrap()
@@ -1775,11 +1921,16 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let full = repo.checkout_pull_request_in_worktree(&gh, 7, wt).unwrap();
         assert!(full.is_dir());
         assert_eq!(fake.read("cwd").trim(), full.to_str().unwrap());
-        assert_eq!(fake.calls(), [["pr", "checkout", "7", "--repo", "octo/hello"]]);
+        assert_eq!(
+            fake.calls(),
+            [["pr", "checkout", "7", "--repo", "octo/hello"]]
+        );
         repo.remove_worktree(&full, true).unwrap();
 
         fake.answer("pr checkout", "", "fatal: couldn't find remote ref\n", 1);
-        let err = repo.checkout_pull_request_in_worktree(&gh, 7, wt).unwrap_err();
+        let err = repo
+            .checkout_pull_request_in_worktree(&gh, 7, wt)
+            .unwrap_err();
         assert!(message(err).contains("couldn't find remote ref"));
         assert!(!Path::new(wt).exists(), "the half-made worktree is removed");
         assert_eq!(repo.worktrees().unwrap().len(), 1);
@@ -1803,7 +1954,9 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert_eq!(account.login.as_deref(), Some("hubot"));
         assert_eq!(account.scopes, ["gist", "read:org", "repo"]);
 
-        let out = parse_auth_status("You are not logged into any GitHub hosts. To log in, run: gh auth login\n");
+        let out = parse_auth_status(
+            "You are not logged into any GitHub hosts. To log in, run: gh auth login\n",
+        );
         assert_eq!(out, GhAccount::default());
 
         let expired = parse_auth_status(
@@ -1817,14 +1970,30 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
     #[test]
     fn account_runs_auth_status_and_takes_a_signed_out_exit_as_an_answer() {
         let fake = Fake::new();
-        fake.answer("auth status", "", "You are not logged into any GitHub hosts.\n", 1);
+        fake.answer(
+            "auth status",
+            "",
+            "You are not logged into any GitHub hosts.\n",
+            1,
+        );
         let account = fake.gh().account().unwrap();
         assert!(account.installed);
         assert!(!account.signed_in);
-        assert_eq!(fake.calls(), [["auth", "status", "--hostname", "github.com"]]);
+        assert_eq!(
+            fake.calls(),
+            [["auth", "status", "--hostname", "github.com"]]
+        );
 
-        fake.answer("auth status", "github.com\n  ✓ Logged in to github.com account octocat (keyring)\n", "", 0);
-        assert_eq!(fake.gh().account().unwrap().login.as_deref(), Some("octocat"));
+        fake.answer(
+            "auth status",
+            "github.com\n  ✓ Logged in to github.com account octocat (keyring)\n",
+            "",
+            0,
+        );
+        assert_eq!(
+            fake.gh().account().unwrap().login.as_deref(),
+            Some("octocat")
+        );
     }
 
     /// A fake `gh auth login`: the device-flow lines gh prints without a
@@ -1848,9 +2017,20 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert_eq!(login.url(), "https://github.com/login/device");
         assert_eq!(
             fake.calls(),
-            [["auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "https"]]
+            [[
+                "auth",
+                "login",
+                "--hostname",
+                "github.com",
+                "--web",
+                "--git-protocol",
+                "https"
+            ]]
         );
-        assert_eq!(login.wait(Duration::from_secs(10)).unwrap(), "✓ Logged in as octocat");
+        assert_eq!(
+            login.wait(Duration::from_secs(10)).unwrap(),
+            "✓ Logged in as octocat"
+        );
     }
 
     #[test]
@@ -1876,17 +2056,27 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
 
     #[test]
     fn a_sign_in_gh_refuses_reports_why() {
-        let fake = Fake::with_script("#!/bin/sh\necho 'error connecting to github.com' >&2\nexit 1\n");
+        let fake =
+            Fake::with_script("#!/bin/sh\necho 'error connecting to github.com' >&2\nexit 1\n");
         let err = fake.gh().start_login().err().unwrap();
         assert_eq!(message(err), "error connecting to github.com");
     }
 
     #[test]
     fn device_lines_parse() {
-        assert_eq!(device_code("! First copy your one-time code: 1A2B-3C4D").as_deref(), Some("1A2B-3C4D"));
-        assert_eq!(device_code("Press Enter to open github.com in your browser..."), None);
         assert_eq!(
-            device_url("Open this URL to continue in your web browser: https://github.com/login/device").as_deref(),
+            device_code("! First copy your one-time code: 1A2B-3C4D").as_deref(),
+            Some("1A2B-3C4D")
+        );
+        assert_eq!(
+            device_code("Press Enter to open github.com in your browser..."),
+            None
+        );
+        assert_eq!(
+            device_url(
+                "Open this URL to continue in your web browser: https://github.com/login/device"
+            )
+            .as_deref(),
             Some("https://github.com/login/device")
         );
     }

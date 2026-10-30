@@ -182,8 +182,16 @@ fn checkout_of_a_tag_with_no_branch_detaches_head() {
 // commits onto the branch switched to, and a continued rebase rewrites it.
 
 fn git(dir: &std::path::Path, args: &[&str]) {
-    let out = std::process::Command::new("git").current_dir(dir).args(args).output().unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    let out = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// `dev` and `theirs` both change f.txt's middle line. `side` is dev's tip plus
@@ -214,15 +222,25 @@ fn paused_op_repo() -> (FixtureRepo, Repo) {
 }
 
 fn assert_refused(fx: &FixtureRepo, err: gitp_core::Error, op: &str) {
-    assert!(err.to_string().contains(&format!("{op} is in progress")), "{err}");
-    assert_eq!(read(fx, "f.txt"), "a\nMY RESOLUTION\nc\n", "the resolution must stay");
+    assert!(
+        err.to_string().contains(&format!("{op} is in progress")),
+        "{err}"
+    );
+    assert_eq!(
+        read(fx, "f.txt"),
+        "a\nMY RESOLUTION\nc\n",
+        "the resolution must stay"
+    );
 }
 
 #[test]
 fn a_switch_mid_merge_is_refused_even_when_no_file_clashes() {
     let (fx, repo) = paused_op_repo();
-    assert!(repo.merge_branch("theirs", gitp_core::MergeMode::Default).is_err());
-    repo.resolve_conflict("f.txt", "a\nMY RESOLUTION\nc\n").unwrap();
+    assert!(repo
+        .merge_branch("theirs", gitp_core::MergeMode::Default)
+        .is_err());
+    repo.resolve_conflict("f.txt", "a\nMY RESOLUTION\nc\n")
+        .unwrap();
 
     let err = repo.checkout_branch("side").expect_err("must refuse");
 
@@ -231,8 +249,15 @@ fn a_switch_mid_merge_is_refused_even_when_no_file_clashes() {
     // The merge is still there to finish, on the branch it was started on.
     repo.finish_conflict("merge theirs").unwrap();
     assert_eq!(head_branch(&repo), "dev");
-    let side = fx.repo.find_branch("side", git2::BranchType::Local).unwrap();
-    assert_eq!(side.get().peel_to_commit().unwrap().parent_count(), 1, "side untouched");
+    let side = fx
+        .repo
+        .find_branch("side", git2::BranchType::Local)
+        .unwrap();
+    assert_eq!(
+        side.get().peel_to_commit().unwrap().parent_count(),
+        1,
+        "side untouched"
+    );
 }
 
 #[test]
@@ -240,21 +265,27 @@ fn a_switch_mid_rebase_is_refused_even_when_no_file_clashes() {
     let (fx, repo) = paused_op_repo();
     let side2_before = fx.repo.revparse_single("side2").unwrap().id();
     assert!(repo.rebase_onto("theirs").is_err());
-    repo.resolve_conflict("f.txt", "a\nMY RESOLUTION\nc\n").unwrap();
+    repo.resolve_conflict("f.txt", "a\nMY RESOLUTION\nc\n")
+        .unwrap();
 
     let err = repo.checkout_branch("side2").expect_err("must refuse");
 
     assert_refused(&fx, err, "a rebase");
     repo.finish_conflict("").unwrap();
     assert_eq!(head_branch(&repo), "dev");
-    assert_eq!(fx.repo.revparse_single("side2").unwrap().id(), side2_before, "side2 untouched");
+    assert_eq!(
+        fx.repo.revparse_single("side2").unwrap().id(),
+        side2_before,
+        "side2 untouched"
+    );
 }
 
 #[test]
 fn a_switch_mid_cherry_pick_is_refused() {
     let (fx, repo) = paused_op_repo();
     assert!(repo.cherry_pick("theirs").is_err());
-    repo.resolve_conflict("f.txt", "a\nMY RESOLUTION\nc\n").unwrap();
+    repo.resolve_conflict("f.txt", "a\nMY RESOLUTION\nc\n")
+        .unwrap();
 
     let err = repo.checkout_branch("side").expect_err("must refuse");
 
@@ -264,18 +295,35 @@ fn a_switch_mid_cherry_pick_is_refused() {
 #[test]
 fn detaching_or_branching_mid_merge_is_refused_and_creates_no_branch() {
     let (fx, repo) = paused_op_repo();
-    assert!(repo.merge_branch("theirs", gitp_core::MergeMode::Default).is_err());
-    repo.resolve_conflict("f.txt", "a\nMY RESOLUTION\nc\n").unwrap();
+    assert!(repo
+        .merge_branch("theirs", gitp_core::MergeMode::Default)
+        .is_err());
+    repo.resolve_conflict("f.txt", "a\nMY RESOLUTION\nc\n")
+        .unwrap();
 
     assert!(repo.checkout_commit("side").is_err(), "detach must refuse");
-    assert!(repo.create_branch("fresh").is_err(), "create-and-switch must refuse");
+    assert!(
+        repo.create_branch("fresh").is_err(),
+        "create-and-switch must refuse"
+    );
     assert!(repo.create_branch_at("fresh2", "side").is_err());
     assert!(repo.checkout_remote("origin/side").is_err());
 
-    assert!(fx.repo.find_branch("fresh", git2::BranchType::Local).is_err(), "no stray branch");
-    assert!(fx.repo.find_branch("fresh2", git2::BranchType::Local).is_err());
+    assert!(
+        fx.repo
+            .find_branch("fresh", git2::BranchType::Local)
+            .is_err(),
+        "no stray branch"
+    );
+    assert!(fx
+        .repo
+        .find_branch("fresh2", git2::BranchType::Local)
+        .is_err());
     assert_eq!(head_branch(&repo), "dev");
-    assert!(fx.path().join(".git/MERGE_HEAD").exists(), "the merge is still paused");
+    assert!(
+        fx.path().join(".git/MERGE_HEAD").exists(),
+        "the merge is still paused"
+    );
     assert_eq!(read(&fx, "f.txt"), "a\nMY RESOLUTION\nc\n");
 }
 
@@ -284,17 +332,29 @@ fn detaching_or_branching_mid_merge_is_refused_and_creates_no_branch() {
 #[test]
 fn a_switch_with_a_squash_merge_pending_is_refused() {
     let (fx, repo) = paused_op_repo();
-    repo.merge_branch("side", gitp_core::MergeMode::Squash).unwrap();
+    repo.merge_branch("side", gitp_core::MergeMode::Squash)
+        .unwrap();
 
     let err = repo.checkout_branch("side2").expect_err("must refuse");
-    assert!(err.to_string().contains("a squash merge is in progress"), "{err}");
+    assert!(
+        err.to_string().contains("a squash merge is in progress"),
+        "{err}"
+    );
     let err = repo
-        .stash_and_switch("side2", |r| r.checkout_branch("side2").map(|()| String::new()))
+        .stash_and_switch("side2", |r| {
+            r.checkout_branch("side2").map(|()| String::new())
+        })
         .expect_err("must refuse");
-    assert!(err.to_string().contains("a squash merge is in progress"), "{err}");
+    assert!(
+        err.to_string().contains("a squash merge is in progress"),
+        "{err}"
+    );
 
     assert_eq!(head_branch(&repo), "dev");
-    assert!(fx.path().join(".git/SQUASH_MSG").exists(), "the squash is still pending");
+    assert!(
+        fx.path().join(".git/SQUASH_MSG").exists(),
+        "the squash is still pending"
+    );
     assert_eq!(read(&fx, "h.txt"), "h\n");
 }
 
@@ -303,7 +363,8 @@ fn a_switch_with_a_squash_merge_pending_is_refused() {
 #[test]
 fn a_stale_squash_msg_does_not_block_a_switch_and_is_dropped() {
     let (fx, repo) = paused_op_repo();
-    repo.merge_branch("side", gitp_core::MergeMode::Squash).unwrap();
+    repo.merge_branch("side", gitp_core::MergeMode::Squash)
+        .unwrap();
     git(fx.path(), &["rm", "-q", "-f", "h.txt"]);
 
     repo.checkout_branch("side2").unwrap();
@@ -427,9 +488,14 @@ fn stash_and_switch_puts_the_work_back_when_the_switch_fails() {
 /// What the index and the working tree hold for `name`: (staged, on disk).
 fn staged_and_worktree(fx: &FixtureRepo, name: &str) -> (String, String) {
     let index = git2::Repository::open(fx.path()).unwrap().index().unwrap();
-    let entry = index.get_path(std::path::Path::new(name), 0).expect("in the index");
+    let entry = index
+        .get_path(std::path::Path::new(name), 0)
+        .expect("in the index");
     let blob = fx.repo.find_blob(entry.id).unwrap();
-    (String::from_utf8(blob.content().to_vec()).unwrap(), read(fx, name))
+    (
+        String::from_utf8(blob.content().to_vec()).unwrap(),
+        read(fx, name),
+    )
 }
 
 fn stage(fx: &FixtureRepo, name: &str, contents: &str) {
@@ -455,7 +521,11 @@ fn stash_and_switch_keeps_what_was_staged_apart_from_what_was_not() {
     repo.checkout_branch("master").unwrap();
     // One file, half of its edits staged.
     stage(&fx, "a.txt", "1\nTWO\n3\n4\n5\n6\n7\n8\n9\n10\n");
-    std::fs::write(fx.path().join("a.txt"), "1\nTWO\n3\n4\n5\n6\n7\n8\nNINE\n10\n").unwrap();
+    std::fs::write(
+        fx.path().join("a.txt"),
+        "1\nTWO\n3\n4\n5\n6\n7\n8\nNINE\n10\n",
+    )
+    .unwrap();
 
     let out = repo
         .stash_and_switch("feature", |r| {

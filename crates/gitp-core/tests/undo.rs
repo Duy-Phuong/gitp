@@ -1038,7 +1038,11 @@ fn git_out(fx: &FixtureRepo, args: &[&str]) -> String {
         .args(args)
         .output()
         .unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8(out.stdout).unwrap()
 }
 
@@ -1064,16 +1068,26 @@ fn hard_reset_undo_restores_the_staged_and_unstaged_split() {
     let index = git_out(&fx, &["ls-files", "-s"]);
     assert_eq!(work, "?? u.txt\nA  t.txt\nAD s.txt\nMM f.txt");
 
-    let backup = repo.backup_uncommitted_work().unwrap().expect("work to save");
+    let backup = repo
+        .backup_uncommitted_work()
+        .unwrap()
+        .expect("work to save");
     let saved = git_out(&fx, &["ls-tree", "-r", "--name-only", &backup]);
-    assert!(!saved.contains("u.txt"), "untracked files stay out: {saved}");
+    assert!(
+        !saved.contains("u.txt"),
+        "untracked files stay out: {saved}"
+    );
     repo.reset(&c1, ResetMode::Hard).unwrap();
     let action = head_moved(&c2, &c1, HeadMoveMode::Keep, Some(backup));
 
     repo.undo(&action).unwrap();
     assert_eq!(repo.head_commit_id().unwrap(), c2);
     assert_eq!(porcelain(&fx), work);
-    assert_eq!(git_out(&fx, &["ls-files", "-s"]), index, "the index exactly");
+    assert_eq!(
+        git_out(&fx, &["ls-files", "-s"]),
+        index,
+        "the index exactly"
+    );
     assert_eq!(git_out(&fx, &["show", ":f.txt"]), "v2\n");
     assert_eq!(read(&fx, "f.txt").as_deref(), Some("v3\n"));
 

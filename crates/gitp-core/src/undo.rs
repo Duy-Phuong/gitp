@@ -850,8 +850,13 @@ impl Repo {
     /// with unmerged entries, which has none — HEAD's tree at the time, which
     /// is what undo then leaves in the index.
     fn backup_index_tree(&self, backup: &str) -> Result<String> {
-        self.run_git(&["rev-parse", "-q", "--verify", &format!("{backup}^2^{{tree}}")])
-            .or_else(|_| self.run_git(&["rev-parse", &format!("{backup}^1^{{tree}}")]))
+        self.run_git(&[
+            "rev-parse",
+            "-q",
+            "--verify",
+            &format!("{backup}^2^{{tree}}"),
+        ])
+        .or_else(|_| self.run_git(&["rev-parse", &format!("{backup}^1^{{tree}}")]))
     }
 
     /// Delete all but the newest [`BACKUPS_KEPT`] backup refs. Best effort: a

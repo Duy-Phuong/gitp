@@ -825,17 +825,27 @@ mod tests {
 
         std::fs::write(dir.path().join("f.txt"), "resolved\n").unwrap();
         git(dir.path(), &["add", "f.txt"]);
-        git(dir.path(), &["-c", "core.editor=true", "cherry-pick", "--continue"]);
+        git(
+            dir.path(),
+            &["-c", "core.editor=true", "cherry-pick", "--continue"],
+        );
         let out = continue_cherry_pick_plan_impl(&state).unwrap();
         assert!(!out.paused);
-        assert!(dir.path().join("g.txt").exists(), "s2 applied after the pause");
+        assert!(
+            dir.path().join("g.txt").exists(),
+            "s2 applied after the pause"
+        );
         assert_eq!(
             undo_state_impl(&state).unwrap().undo.as_deref(),
             Some("Cherry-pick")
         );
 
         undo_impl(&state).expect("undo");
-        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), start, "both picks undone");
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "HEAD"]),
+            start,
+            "both picks undone"
+        );
     }
 
     #[test]
@@ -1038,7 +1048,10 @@ mod tests {
         reset_impl(&state, "HEAD~1".into(), ResetMode::Hard).expect("hard reset");
         let f = std::fs::read_to_string(dir.path().join("f.txt")).unwrap();
         assert_eq!(f, "line 0\n", "the edit is gone");
-        assert_eq!(undo_state_impl(&state).unwrap().undo.as_deref(), Some("Reset"));
+        assert_eq!(
+            undo_state_impl(&state).unwrap().undo.as_deref(),
+            Some("Reset")
+        );
 
         undo_impl(&state).expect("undo hard reset");
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), c2);

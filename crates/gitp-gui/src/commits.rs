@@ -135,7 +135,9 @@ pub(crate) fn cherry_pick_plan(
 }
 
 #[tauri::command(async)]
-pub(crate) fn continue_cherry_pick_plan(state: State<RepoState>) -> Result<PickPlanOutcome, String> {
+pub(crate) fn continue_cherry_pick_plan(
+    state: State<RepoState>,
+) -> Result<PickPlanOutcome, String> {
     continue_cherry_pick_plan_impl(&state)
 }
 

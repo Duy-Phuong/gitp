@@ -429,7 +429,10 @@ fn clean_squash_repo() -> FixtureRepo {
     std::fs::write(dir.join("a.txt"), "feat\n").unwrap();
     git(dir, &["commit", "-qam", "feat change"]);
     git(dir, &["checkout", "-q", "dev"]);
-    Repo::open(dir).unwrap().merge_branch("feat", MergeMode::Squash).unwrap();
+    Repo::open(dir)
+        .unwrap()
+        .merge_branch("feat", MergeMode::Squash)
+        .unwrap();
     assert!(dir.join(".git/SQUASH_MSG").exists());
     fx
 }
@@ -442,7 +445,10 @@ fn a_discarded_squash_is_no_longer_pending_and_abort_keeps_later_staged_work() {
     let fx = clean_squash_repo();
     let repo = Repo::open(fx.path()).unwrap();
     repo.discard_files(&["a.txt".into()]).unwrap();
-    assert!(!fx.path().join(".git/SQUASH_MSG").exists(), "discard drops it");
+    assert!(
+        !fx.path().join(".git/SQUASH_MSG").exists(),
+        "discard drops it"
+    );
     assert_eq!(repo.conflict_status().unwrap().kind, "none");
 
     std::fs::write(fx.path().join("b.txt"), "my work\n").unwrap();
@@ -450,7 +456,10 @@ fn a_discarded_squash_is_no_longer_pending_and_abort_keeps_later_staged_work() {
     assert_eq!(repo.conflict_status().unwrap().kind, "none");
     let _ = repo.abort_conflict();
 
-    assert_eq!(std::fs::read_to_string(fx.path().join("b.txt")).unwrap(), "my work\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("b.txt")).unwrap(),
+        "my work\n"
+    );
     let staged = repo.status_summary().unwrap().staged;
     assert_eq!(staged.len(), 1, "b.txt stays staged: {staged:?}");
 }
@@ -477,6 +486,9 @@ fn aborting_a_clean_squash_merge_restores_the_branch() {
 
     assert_eq!(repo.conflict_status().unwrap().kind, "none");
     assert!(!fx.path().join(".git/SQUASH_MSG").exists());
-    assert_eq!(std::fs::read_to_string(fx.path().join("a.txt")).unwrap(), "one\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "one\n"
+    );
     assert_eq!(repo.local_change_count().unwrap(), 0);
 }
