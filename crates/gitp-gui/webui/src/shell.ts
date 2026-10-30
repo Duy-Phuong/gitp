@@ -35,12 +35,13 @@ import { clear, el, $ } from "./dom";
 import { logRowHeight, renderLog, setBisectMarks } from "./views/log";
 import { bisectBannerText } from "./bisect-text";
 import { closeCommitMenu } from "./views/commit-menu";
+import { showContextMenu } from "./views/context-menu";
 import { renderSidebar, type SidebarView, type SidebarCallbacks } from "./views/sidebar";
 import type { BisectMark, CommitRow, ConflictStatus, LogPage, ReflogEntry, StashRef, Workspace } from "./types";
 import { EMPTY_REFS, PAGE_SIZE, state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { markRemoteFetched, remoteFetchedAt, renderFetchAge } from "./fetch-age";
-import { loadWorkspace, rememberRecentRepo, saveWorkspace } from "./prefs";
+import { loadFavoriteRepos, loadWorkspace, rememberRecentRepo, saveWorkspace, toggleFavoriteRepo } from "./prefs";
 import { rebuildCommitRefs, refLabelsAt } from "./commit-refs";
 import { refreshConfig } from "./config-panel";
 import { refreshActionButtons } from "./toolbar";
@@ -143,12 +144,25 @@ function renderRepoTabs(): void {
   const host = $("#repo-tabs");
   host.classList.toggle("hidden", state.repos.length === 0);
   clear(host);
+  const favorites = loadFavoriteRepos();
   for (const repo of state.repos) {
     const active = repo.path === state.repoPath;
     const tab = el("div", { class: `repo-tab${active ? " active" : ""}`, title: repo.path }, [
       repo.name,
     ]);
+    if (favorites.includes(repo.path)) {
+      tab.prepend(el("span", { class: "repo-tab-star", title: "Favorite", "aria-label": "Favorite" }, ["★"]));
+    }
     tab.addEventListener("click", () => void switchRepo(repo.path));
+    tab.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const starred = favorites.includes(repo.path);
+      showContextMenu(e.clientX, e.clientY, [
+        { label: starred ? "Remove from Favorites" : "Add to Favorites", run: () => toggleFavorite(repo.path) },
+        { separator: true },
+        { label: "Close", run: () => void closeRepoTab(repo.path) },
+      ]);
+    });
     const close = el("span", { class: "repo-tab-close", title: "Close" }, ["×"]);
     close.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -157,6 +171,14 @@ function renderRepoTabs(): void {
     tab.append(close);
     host.append(tab);
   }
+}
+
+// Star or unstar `path` (see loadFavoriteRepos) and show it on its tab.
+export function toggleFavorite(path: string): void {
+  const starred = toggleFavoriteRepo(path);
+  renderRepoTabs();
+  const name = state.repos.find((r) => r.path === path)?.name ?? path;
+  setStatus(starred ? `Added ${name} to Favorites.` : `Removed ${name} from Favorites.`);
 }
 
 export async function switchRepo(path: string): Promise<void> {

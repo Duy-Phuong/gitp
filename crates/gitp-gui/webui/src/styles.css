@@ -1335,6 +1335,11 @@ body {
   border-color: var(--border);
   color: var(--text);
 }
+.repo-tab-star {
+  margin-right: -4px;
+  color: var(--accent);
+  font-size: 11px;
+}
 .repo-tab-close {
   display: inline-flex;
   align-items: center;

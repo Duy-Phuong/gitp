@@ -1,10 +1,13 @@
-// Keyboard shortcuts: walking the commit log, Undo / Redo, and Quick Launch.
+// Keyboard shortcuts: walking the commit log, Undo / Redo, Quick Launch, and
+// switching to a favorite repository.
 
 import { $ } from "./dom";
 import { state, ui } from "./app-state";
 import { leaveComparison, selectCommit } from "./shell";
 import { redoAction, undoAction } from "./repo-actions";
-import { openQuickLaunch } from "./quick-launch-commands";
+import { openQuickLaunch, openRecentRepo } from "./quick-launch-commands";
+import { loadFavoriteRepos } from "./prefs";
+import { setStatus } from "./report";
 
 // --- Keyboard navigation in the commit log --------------------------------
 //
@@ -97,7 +100,7 @@ function focusDetailPane(): void {
   target.focus();
 }
 
-// The global shortcuts: Undo / Redo and Quick Launch.
+// The global shortcuts: Undo / Redo, Quick Launch, and the favorites.
 export function setupShortcuts(): void {
   // Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y = redo. Ignored while
   // typing so the native text-editing undo (commit message, conflict editor)
@@ -126,5 +129,20 @@ export function setupShortcuts(): void {
     if (t?.isContentEditable || t?.closest("#terminal-host")) return;
     e.preventDefault();
     openQuickLaunch();
+  });
+  // Cmd/Ctrl+1…9 switch to favorite #1–9 (the order Quick Launch lists them),
+  // opening it as a tab if it isn't one. Live while typing, like Cmd+K — a
+  // digit with Cmd or Ctrl held types nothing — but not in the terminal, and
+  // not while a dialog owns the keyboard.
+  document.addEventListener("keydown", (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || !/^[1-9]$/.test(e.key)) return;
+    const t = e.target instanceof HTMLElement ? e.target : null;
+    if (t?.isContentEditable || t?.closest("#terminal-host")) return;
+    if (document.querySelector(".modal-overlay, .ql-overlay")) return;
+    e.preventDefault();
+    const n = Number(e.key);
+    const path = loadFavoriteRepos()[n - 1];
+    if (path) void openRecentRepo(path);
+    else setStatus(`No favorite #${n} — star a repository from its tab's menu or Quick Launch.`);
   });
 }
