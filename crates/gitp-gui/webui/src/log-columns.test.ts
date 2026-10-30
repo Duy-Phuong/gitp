@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   authorsOf,
+  authorSearchValue,
   authorTerm,
   normalizeLogColumns,
   shownColumns,
@@ -56,6 +57,18 @@ describe("author filter terms", () => {
     expect(withAuthorTerm('fix author:old path:"a b"', "ada@example.com")).toBe('fix path:"a b" author:ada@example.com');
     expect(withAuthorTerm("", "Ada Lovelace")).toBe('author:"Ada Lovelace"');
     expect(withAuthorTerm("fix AUTHOR:old", null)).toBe("fix");
+  });
+
+  it("builds a term the search can read from a name with quotes in it", () => {
+    const query = withAuthorTerm("fix", 'Ada "The Countess" Lovelace');
+    expect(query).toBe('fix author:"The Countess"');
+    expect(authorTerm(query)).toBe("The Countess");
+    expect(withAuthorTerm("", 'O"Brien')).toBe("author:Brien");
+  });
+
+  it("is what the author menu compares the term with, so its checkmark shows", () => {
+    expect(authorSearchValue('Ada "The Countess" Lovelace')).toBe(authorTerm(withAuthorTerm("", 'Ada "The Countess" Lovelace')));
+    expect(authorSearchValue("ada@example.com")).toBe("ada@example.com");
   });
 });
 
