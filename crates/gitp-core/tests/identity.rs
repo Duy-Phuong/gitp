@@ -59,3 +59,32 @@ fn a_local_identity_without_a_key_drops_the_previous_profiles_key() {
         .unwrap();
     assert!(cfg.get_string("user.signingkey").is_err());
 }
+
+#[test]
+fn an_identity_without_a_name_or_email_is_refused() {
+    let fixture = FixtureRepo::init();
+    let repo = Repo::open(fixture.path()).unwrap();
+    repo.apply_local_identity(&work()).unwrap();
+
+    for blank in [
+        Identity {
+            name: String::new(),
+            ..work()
+        },
+        Identity {
+            email: " ".into(),
+            ..work()
+        },
+    ] {
+        assert!(repo.apply_local_identity(&blank).is_err(), "{blank:?}");
+    }
+
+    let cfg = fixture
+        .repo
+        .config()
+        .unwrap()
+        .open_level(git2::ConfigLevel::Local)
+        .unwrap();
+    assert_eq!(cfg.get_string("user.name").unwrap(), "Ada Work");
+    assert_eq!(cfg.get_string("user.email").unwrap(), "ada@work.example");
+}

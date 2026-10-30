@@ -78,6 +78,13 @@ fn read_identity(cfg: &git2::Config) -> Result<Identity> {
 }
 
 fn write_identity(cfg: &mut git2::Config, id: &Identity) -> Result<()> {
+    // Written as-is, an empty name or email would be an empty value, not an
+    // unset key, and git would then refuse to commit as nobody.
+    if id.name.trim().is_empty() || id.email.trim().is_empty() {
+        return Err(Error::Message(
+            "a commit identity needs both a name and an email".into(),
+        ));
+    }
     cfg.set_str(NAME, &id.name)?;
     cfg.set_str(EMAIL, &id.email)?;
     if id.signing_key.is_empty() {
