@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { ignorePattern, ignoreRules, isActionable, movedBetweenPanels, sameDiff, templateMessage } from "./changes";
+import {
+  ignorePattern,
+  ignoreRules,
+  isActionable,
+  keepRecheckedDiff,
+  movedBetweenPanels,
+  sameDiff,
+  templateMessage,
+} from "./changes";
 import type { ChangeKind, FileDiff, StatusLists } from "../types";
 
 // A status-list entry; the optimistic move only ever looks at path and status.
@@ -137,6 +145,27 @@ describe("sameDiff", () => {
     const more = diff("new");
     more.hunks.push({ header: "@@ -9 +9 @@", lines: [] });
     expect(sameDiff(diff("new"), more)).toBe(false);
+  });
+});
+
+describe("keepRecheckedDiff", () => {
+  const svg = (content: string): FileDiff => ({
+    path: "logo.svg",
+    old_path: null,
+    status: "Modified",
+    hunks: [{ header: "@@ -1 +1 @@", lines: [{ origin: "+", old_lineno: null, new_lineno: 1, content }] }],
+  });
+  const png = (): FileDiff => ({ path: "logo.png", old_path: null, status: "Modified", hunks: [] });
+
+  it("keeps an unchanged SVG's diff, so its line selection survives a recheck", () => {
+    expect(keepRecheckedDiff(svg("<svg/>"), svg("<svg/>"), "logo.svg", false)).toBe(true);
+    expect(keepRecheckedDiff(svg("<svg/>"), svg("<svg/>"), "logo.svg", true)).toBe(true);
+    expect(keepRecheckedDiff(svg("<svg a/>"), svg("<svg/>"), "logo.svg", false)).toBe(false);
+  });
+
+  it("re-reads a binary image only when asked to, since its diff can't show an edit", () => {
+    expect(keepRecheckedDiff(png(), png(), "logo.png", false)).toBe(true);
+    expect(keepRecheckedDiff(png(), png(), "logo.png", true)).toBe(false);
   });
 });
 
