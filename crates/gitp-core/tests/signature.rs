@@ -135,7 +135,7 @@ fn committing_with_sign_on_makes_a_good_signature() {
     let repo = Repo::open(fx.path()).unwrap();
     repo.stage_all().unwrap();
 
-    repo.commit("signed", "", false, Some(true)).unwrap();
+    repo.commit("signed", "", false, Some(true), false).unwrap();
 
     let sig = repo.commit_signature("HEAD").unwrap().expect("signed");
     assert_eq!(sig.status, SignatureStatus::Good);
@@ -149,11 +149,12 @@ fn committing_with_sign_off_overrides_commit_gpgsign() {
     set(&fx, "commit.gpgsign", "true");
     let repo = Repo::open(fx.path()).unwrap();
 
-    repo.commit("unsigned", "", true, Some(false)).unwrap();
+    repo.commit("unsigned", "", true, Some(false), false)
+        .unwrap();
     assert!(repo.commit_signature("HEAD").unwrap().is_none());
 
     // No explicit choice: git's own config applies, as before.
-    repo.commit("signed", "", true, None).unwrap();
+    repo.commit("signed", "", true, None, false).unwrap();
     assert!(repo.commit_signature("HEAD").unwrap().is_some());
 }
 

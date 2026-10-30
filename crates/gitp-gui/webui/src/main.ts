@@ -38,6 +38,7 @@ import {
   unstageLines,
   fetchCommitSignature,
   fetchSigningConfig,
+  fetchCommitTemplate,
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
@@ -53,8 +54,10 @@ import {
   currentTheme,
   loadAllBranches,
   loadDetailTab,
+  loadPushAfterCommit,
   saveAllBranches,
   saveDetailTab,
+  savePushAfterCommit,
   updatePullButtonTitle,
 } from "./prefs";
 import { refsAt } from "./commit-refs";
@@ -256,6 +259,10 @@ async function init(): Promise<void> {
     },
     commit: commitChanges,
     fetchSigningConfig,
+    fetchCommitTemplate,
+    pushAfterCommit: loadPushAfterCommit,
+    setPushAfterCommit: savePushAfterCommit,
+    push: () => void pushAction(),
     // Staging doesn't change refs or history, so just update the badge — no ref
     // walk or log rebuild (that's what made each stage/unstage feel slow).
     onChanged: (count) => {

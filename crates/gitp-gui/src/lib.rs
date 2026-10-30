@@ -195,6 +195,7 @@ pub fn run() {
             bisect::bisect_reset,
             history::get_commit_signature,
             staging::get_signing_config,
+            staging::get_commit_template,
             worktrees::list_worktrees,
             worktrees::add_worktree,
             worktrees::remove_worktree,

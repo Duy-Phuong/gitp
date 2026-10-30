@@ -434,19 +434,27 @@ export async function commitChanges(
   body: string,
   amend: boolean,
   sign: boolean | null,
+  noVerify: boolean,
 ): Promise<string> {
   if (!isTauri()) {
     const n = MOCK_STATUS.staged.length;
     MOCK_STATUS.staged.splice(0);
     mockRecord(amend ? "Amend commit" : "Commit");
-    return `[preview ${amend ? "amend" : "commit"}${sign ? ", signed" : ""}] ${subject} — ${n} file(s)`;
+    const flags = `${sign ? ", signed" : ""}${noVerify ? ", no hooks" : ""}`;
+    return `[preview ${amend ? "amend" : "commit"}${flags}] ${subject} — ${n} file(s)`;
   }
-  return invoke<string>("commit_changes", { subject, body, amend, sign });
+  return invoke<string>("commit_changes", { subject, body, amend, sign, noVerify });
 }
 
 export async function fetchSigningConfig(): Promise<SigningConfig> {
   if (!isTauri()) return { can_sign: true, sign_by_default: false };
   return invoke<SigningConfig>("get_signing_config", {});
+}
+
+// The raw text of the file commit.template names; null when it isn't set.
+export async function fetchCommitTemplate(): Promise<string | null> {
+  if (!isTauri()) return null; // the preview repo has no template configured
+  return invoke<string | null>("get_commit_template", {});
 }
 
 export async function fetchWorkingChanges(): Promise<FileDiff[]> {

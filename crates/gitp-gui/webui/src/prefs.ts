@@ -55,6 +55,18 @@ export function updatePullButtonTitle(): void {
   $<HTMLButtonElement>("#pull-btn").title = PULL_DEFAULT_LABEL[loadPullDefault()];
 }
 
+// The commit box's "Push after commit" toggle. Off by default: pushing is a
+// network action nobody should get without asking for it.
+const PUSH_AFTER_COMMIT_KEY = "gitp-push-after-commit";
+
+export function loadPushAfterCommit(): boolean {
+  return localStorage.getItem(PUSH_AFTER_COMMIT_KEY) === "1";
+}
+
+export function savePushAfterCommit(on: boolean): void {
+  localStorage.setItem(PUSH_AFTER_COMMIT_KEY, on ? "1" : "0");
+}
+
 // Width of the ref-badge column on the GitKraken themes, dragged in the log
 // header.
 const REF_COLUMN_KEY = "gitp-ref-column";

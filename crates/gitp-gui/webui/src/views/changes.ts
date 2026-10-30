@@ -62,10 +62,23 @@ export interface ChangesCallbacks {
   // showing the commit being amended. Null when the branch has no commits.
   fetchHead: () => Promise<CommitDetail | null>;
   // `sign` is the Sign toggle: force signing on / off, or null to leave it to
-  // git's commit.gpgsign (no signing key configured).
-  commit: (subject: string, body: string, amend: boolean, sign: boolean | null) => Promise<string>;
+  // git's commit.gpgsign (no signing key configured). `noVerify` is Skip hooks.
+  commit: (
+    subject: string,
+    body: string,
+    amend: boolean,
+    sign: boolean | null,
+    noVerify: boolean,
+  ) => Promise<string>;
   // Whether commits can be signed here, and the default (commit.gpgsign).
   fetchSigningConfig: () => Promise<SigningConfig>;
+  // The raw text of the configured commit.template, or null when none is set.
+  fetchCommitTemplate: () => Promise<string | null>;
+  // The persisted "Push after commit" toggle, and the push it runs once a
+  // commit lands.
+  pushAfterCommit: () => boolean;
+  setPushAfterCommit: (on: boolean) => void;
+  push: () => void;
   // After every reload: the number of distinct changed paths, for the sidebar
   // badge — cheap enough to pass along instead of a separate backend scan.
   onChanged: (localChangeCount: number) => void;
@@ -151,6 +164,13 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let signing: SigningConfig | null = null;
   let sign = false;
   let signingToken = 0;
+  // "Skip hooks" (--no-verify). Deliberately not remembered: it's a one-off
+  // escape hatch, so it switches itself off after the commit it was for.
+  let skipHooks = false;
+  // The repo's commit.template as a subject/body, filled into an empty commit
+  // box. Reloaded per repo by reset(); the token drops a superseded load.
+  let template: { subject: string; body: string } | null = null;
+  let templateToken = 0;
   let busy = false;
   let splitView = false;
   // Unchanged lines shown around each change (toolbar: fewer / more / full).
@@ -950,6 +970,14 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       subject = subjectInput.value;
       commitBtn.disabled = !canCommit();
     });
+    // Cmd/Ctrl+Enter commits from either field, as in most commit boxes. A
+    // disabled button ignores click(), so nothing to commit means no-op.
+    const commitOnShortcut = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || !(e.metaKey || e.ctrlKey)) return;
+      e.preventDefault();
+      commitBtn.click();
+    };
+    subjectInput.addEventListener("keydown", commitOnShortcut);
 
     const bodyInput = el("textarea", {
       class: "commit-body",
@@ -963,6 +991,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     bodyInput.addEventListener("input", () => {
       body = bodyInput.value;
     });
+    bodyInput.addEventListener("keydown", commitOnShortcut);
     autoGrowTextarea(bodyInput);
 
     const amendBox = el("input", { type: "checkbox" }) as HTMLInputElement;
@@ -970,6 +999,24 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     amendBox.addEventListener("change", () => void toggleAmend(amendBox.checked));
     const amendLabel = el("label", { class: "commit-amend" }, [amendBox, "Amend"]);
     const signLabel = signToggle();
+
+    const skipBox = el("input", { type: "checkbox" }) as HTMLInputElement;
+    skipBox.checked = skipHooks;
+    skipBox.addEventListener("change", () => {
+      skipHooks = skipBox.checked;
+    });
+    const skipLabel = el(
+      "label",
+      { class: "commit-amend", title: "Skip the pre-commit and commit-msg hooks (git commit --no-verify)" },
+      [skipBox, "Skip hooks"],
+    );
+    const pushBox = el("input", { type: "checkbox" }) as HTMLInputElement;
+    pushBox.checked = cb.pushAfterCommit();
+    pushBox.addEventListener("change", () => cb.setPushAfterCommit(pushBox.checked));
+    const pushLabel = el("label", { class: "commit-amend", title: "Push the branch after committing" }, [
+      pushBox,
+      "Push after commit",
+    ]);
 
     const commitBtn = el("button", { class: "btn commit-btn", text: "Commit" }) as HTMLButtonElement;
     commitBtn.disabled = !canCommit();
@@ -979,24 +1026,27 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       const bdy = body;
       const am = amend;
       const sg = signing?.can_sign ? sign : null;
+      const noVerify = skipHooks;
+      const pushAfter = cb.pushAfterCommit();
       run(
         async () => {
-          const out = await cb.commit(subj, bdy, am, sg);
+          const out = await cb.commit(subj, bdy, am, sg, noVerify);
           cb.reportDone(out || "Committed.");
         },
         () => {
-          subject = "";
-          body = "";
+          resetMessage();
           amend = false;
           amendFiles = [];
           amendPrefill = null;
+          skipHooks = false;
           cb.onCommitted();
+          if (pushAfter) cb.push();
         },
         "Commit failed",
       );
     });
 
-    const toggles = signLabel ? [amendLabel, signLabel] : [amendLabel];
+    const toggles = [amendLabel, ...(signLabel ? [signLabel] : []), skipLabel, pushLabel];
     const controls = el("div", { class: "commit-controls" }, [...toggles, commitBtn]);
     box.append(subjectInput, bodyInput, controls);
     return box;
@@ -1016,6 +1066,36 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       : "No signing key configured — set user.signingkey to sign commits";
     const cls = `commit-amend${signing.can_sign ? "" : " disabled"}`;
     return el("label", { class: cls, title }, [box, "Sign"]);
+  }
+
+  // Read the repo's commit.template and, if the box is still empty, fill it in.
+  function loadTemplate(): void {
+    const token = ++templateToken;
+    template = null;
+    cb.fetchCommitTemplate()
+      .then((raw) => {
+        if (token !== templateToken) return;
+        const wasEmpty = subject.trim() === "" && body.trim() === "";
+        template = raw === null ? null : templateMessage(raw);
+        if (template && wasEmpty) {
+          resetMessage();
+          render();
+        }
+      })
+      .catch(() => {}); // unreadable template file: just no pre-fill
+  }
+
+  // Whether the box holds nothing the user wrote: empty, or still exactly the
+  // template — which other pre-fills (amend, a merge message) may replace.
+  function messageUntouched(): boolean {
+    if (subject.trim() === "" && body.trim() === "") return true;
+    return template !== null && subject === template.subject && body === template.body;
+  }
+
+  // Empty the box — back to the template, when there is one.
+  function resetMessage(): void {
+    subject = template?.subject ?? "";
+    body = template?.body ?? "";
   }
 
   function loadSigning(): void {
@@ -1043,7 +1123,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       if (head) {
         amendFiles = head.files;
         // Only pre-fill an empty box, so we never clobber a typed message.
-        if (subject.trim() === "" && body.trim() === "") {
+        if (messageUntouched()) {
           subject = head.summary;
           const rest = head.message.startsWith(head.summary)
             ? head.message.slice(head.summary.length)
@@ -1056,8 +1136,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       amendFiles = [];
       // Clear the message only if it's still exactly what we pre-filled.
       if (amendPrefill && subject === amendPrefill.subject && body === amendPrefill.body) {
-        subject = "";
-        body = "";
+        resetMessage();
       }
       amendPrefill = null;
     }
@@ -1085,7 +1164,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   }
 
   function prefillMessage(newSubject: string, newBody: string): void {
-    if (subject.trim() !== "" || body.trim() !== "") return; // don't clobber what's already typed
+    if (!messageUntouched()) return; // don't clobber what's already typed
     subject = newSubject;
     body = newBody;
     render();
@@ -1093,8 +1172,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
 
   function clearPrefill(oldSubject: string, oldBody: string): void {
     if (subject !== oldSubject || body !== oldBody) return; // the user changed it; keep it
-    subject = "";
-    body = "";
+    resetMessage();
     render();
   }
 
@@ -1115,12 +1193,29 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     amend = false;
     amendFiles = [];
     amendPrefill = null;
+    skipHooks = false;
     loadSigning();
+    loadTemplate();
     render();
   }
 
   render();
   return { reload, isBusy: () => busy, applyStatus, recheckDiff, prefillMessage, clearPrefill, reset };
+}
+
+// A commit.template's text as a subject and body: lines starting with `#` are
+// dropped (git strips them from the final message anyway), the first line is
+// the subject and the rest, past any blank lines, the body. Null when nothing
+// but comments and whitespace is left.
+export function templateMessage(raw: string): { subject: string; body: string } | null {
+  const text = raw
+    .split(/\r?\n/)
+    .filter((line) => !line.startsWith("#"))
+    .join("\n")
+    .trimEnd();
+  if (text.trim() === "") return null;
+  const [subject, ...rest] = text.split("\n");
+  return { subject, body: rest.join("\n").replace(/^\s*\n/, "") };
 }
 
 // Whether two fetched diffs show exactly the same thing: same file, same

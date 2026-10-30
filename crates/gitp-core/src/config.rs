@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::repo::Repo;
 
 /// Which config file a value comes from / is written to.
@@ -77,5 +77,24 @@ impl Repo {
         let mut leveled = cfg.open_level(level)?;
         leveled.set_str(name, value)?;
         Ok(())
+    }
+
+    /// The text of the file `commit.template` names (from any config level),
+    /// or `None` when it isn't set. libgit2 expands a leading `~/`; a relative
+    /// path is taken from the working directory, which is where git itself
+    /// resolves it when gitp commits.
+    pub fn commit_template(&self) -> Result<Option<String>> {
+        let path = match self.inner.config()?.get_path("commit.template") {
+            Ok(p) => p,
+            Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        let full = self.workdir().join(path);
+        std::fs::read_to_string(&full).map(Some).map_err(|e| {
+            Error::Message(format!(
+                "cannot read commit template {}: {e}",
+                full.display()
+            ))
+        })
     }
 }

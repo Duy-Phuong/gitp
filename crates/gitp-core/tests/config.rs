@@ -54,3 +54,42 @@ fn overwrites_an_existing_local_value() {
     assert_eq!(matches.len(), 1, "value replaced, not duplicated");
     assert_eq!(matches[0].value, "hx");
 }
+
+#[test]
+fn commit_template_is_none_when_unset() {
+    let fixture = FixtureRepo::init();
+    let repo = Repo::open(fixture.path()).unwrap();
+
+    assert_eq!(repo.commit_template().unwrap(), None);
+}
+
+#[test]
+fn commit_template_reads_an_absolute_path() {
+    let fixture = FixtureRepo::init();
+    let tmpl = fixture.path().join("msg.txt");
+    std::fs::write(&tmpl, "feat: \n# hint\n").unwrap();
+    let repo = Repo::open(fixture.path()).unwrap();
+    repo.set_config(
+        ConfigScope::Local,
+        "commit.template",
+        tmpl.to_str().unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        repo.commit_template().unwrap().as_deref(),
+        Some("feat: \n# hint\n")
+    );
+}
+
+#[test]
+fn commit_template_resolves_a_relative_path_from_the_working_directory() {
+    let fixture = FixtureRepo::init();
+    std::fs::create_dir(fixture.path().join(".github")).unwrap();
+    std::fs::write(fixture.path().join(".github/msg.txt"), "fix: ").unwrap();
+    let repo = Repo::open(fixture.path()).unwrap();
+    repo.set_config(ConfigScope::Local, "commit.template", ".github/msg.txt")
+        .unwrap();
+
+    assert_eq!(repo.commit_template().unwrap().as_deref(), Some("fix: "));
+}

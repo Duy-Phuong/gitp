@@ -316,7 +316,8 @@ mod tests {
         // A new commit must move it, or the frontend would keep showing stale history.
         std::fs::write(dir.path().join("f.txt"), "new\n").unwrap();
         git(dir.path(), &["add", "f.txt"]);
-        commit_changes_impl(&state, "c3".into(), String::new(), false, None).expect("commit");
+        commit_changes_impl(&state, "c3".into(), String::new(), false, None, false)
+            .expect("commit");
         let after_commit = history_fingerprint_impl(&state).unwrap();
         assert_ne!(
             base, after_commit,

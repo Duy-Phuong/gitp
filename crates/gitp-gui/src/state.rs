@@ -551,7 +551,8 @@ mod tests {
         // more, so this only works if the state fingerprint notices HEAD moved.
         std::fs::write(dir.path().join("f.txt"), "new\n").unwrap();
         git(dir.path(), &["add", "f.txt"]);
-        commit_changes_impl(&state, "c3".into(), String::new(), false, None).expect("commit");
+        commit_changes_impl(&state, "c3".into(), String::new(), false, None, false)
+            .expect("commit");
 
         let page = get_log_page_impl(&state, 0, 100, true).unwrap();
         assert_eq!(page.total, 3, "the new commit must appear");
