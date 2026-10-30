@@ -1422,16 +1422,17 @@ export async function createFile(path: string): Promise<void> {
   await invoke<void>("create_file", { path });
 }
 
-// Delete the working-tree file `path`; the index is left alone.
-export async function deleteFile(path: string): Promise<void> {
+// Delete the working-tree file `path`; the index is left alone. False when
+// the file was too large to keep for Undo.
+export async function deleteFile(path: string): Promise<boolean> {
   if (!isTauri()) {
     MOCK_FILES.delete(path);
     mockMove(MOCK_STATUS.unstaged, [], path);
     mockMove(MOCK_STATUS.staged, [], path);
     mockRecord(`Delete ${path}`);
-    return;
+    return true;
   }
-  await invoke<void>("delete_file", { path });
+  return invoke<boolean>("delete_file", { path });
 }
 
 // Every tracked and untracked (not ignored) file in the working tree, sorted.

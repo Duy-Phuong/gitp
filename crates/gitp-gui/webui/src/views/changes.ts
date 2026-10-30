@@ -84,7 +84,7 @@ export interface ChangesCallbacks {
   editInApp: (path: string) => void;
   createFile: () => void;
   // Delete a working-tree file (undoable, like a discard).
-  deleteFile: (path: string) => Promise<void>;
+  deleteFile: (path: string) => Promise<boolean>;
   // Open the file's staged / unstaged change in `git difftool`.
   openInDiffTool: (target: DiffToolTarget, paths: string[]) => void;
   // Absolute path of the active repo's working directory (for Copy Absolute
@@ -1046,7 +1046,14 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       cb.setStatus("Delete cancelled.");
       return;
     }
-    await run(() => cb.deleteFile(path), () => cb.setStatus(`Deleted ${path}.`), "Delete failed");
+    let undoable = true;
+    await run(
+      async () => {
+        undoable = await cb.deleteFile(path);
+      },
+      () => cb.setStatus(undoable ? `Deleted ${path}.` : `Deleted ${path}. It was too large to keep for Undo.`),
+      "Delete failed",
+    );
   }
 
   async function ignoreAction(rules: string[]): Promise<void> {
