@@ -4,6 +4,7 @@ import {
   deleteBlocker,
   deleteProfile,
   ensureStore,
+  fillSigningFormats,
   loadStore,
   profileIdentity,
   profileInitials,
@@ -28,7 +29,7 @@ function memoryStorage(entries: Record<string, string> = {}): KeyValueStorage & 
   };
 }
 
-const ADA = { name: "Ada Lovelace", email: "ada@example.com", signing_key: "" };
+const ADA = { name: "Ada Lovelace", email: "ada@example.com", signing_key: "", signing_format: "" };
 
 const work: Profile = {
   id: "work",
@@ -36,6 +37,7 @@ const work: Profile = {
   authorName: "Ada L.",
   authorEmail: "ada@work.example",
   signingKey: "ABC123",
+  signingFormat: "ssh",
   scope: "local",
 };
 
@@ -65,7 +67,7 @@ describe("ensureStore", () => {
     ensureStore(storage, ADA);
     putProfile(storage, work);
 
-    expect(ensureStore(storage, { name: "Other", email: "o@x", signing_key: "" }).profiles).toHaveLength(2);
+    expect(ensureStore(storage, { name: "Other", email: "o@x", signing_key: "", signing_format: "" }).profiles).toHaveLength(2);
   });
 });
 
@@ -163,8 +165,42 @@ describe("putProfile", () => {
 
 describe("profileIdentity", () => {
   it("maps to git's keys, and is null without both name and email", () => {
-    expect(profileIdentity(work)).toEqual({ name: "Ada L.", email: "ada@work.example", signing_key: "ABC123" });
+    expect(profileIdentity(work)).toEqual({
+      name: "Ada L.",
+      email: "ada@work.example",
+      signing_key: "ABC123",
+      signing_format: "ssh",
+    });
     expect(profileIdentity({ ...work, authorEmail: "" })).toBeNull();
+  });
+
+  it("sends an empty format, which unsets gpg.format, when the profile has none", () => {
+    expect(profileIdentity({ ...work, signingFormat: undefined })?.signing_format).toBe("");
+  });
+});
+
+describe("signing formats", () => {
+  it("the first-run Default profile takes git's global format", () => {
+    const store = ensureStore(memoryStorage(), { ...ADA, signing_format: "x509" });
+    expect(activeProfile(store).signingFormat).toBe("x509");
+  });
+
+  it("fills profiles saved before formats existed: global ones from git, local ones empty", () => {
+    const storage = memoryStorage();
+    ensureStore(storage, ADA);
+    const { signingFormat: _a, ...oldDefault } = activeProfile(loadStore(storage)!);
+    const { signingFormat: _b, ...oldWork } = work;
+    putProfile(storage, oldDefault as Profile);
+    putProfile(storage, oldWork as Profile);
+    putProfile(storage, { ...work, id: "new", signingFormat: "x509" });
+
+    fillSigningFormats(storage, "ssh");
+
+    expect(loadStore(storage)?.profiles.map((p) => [p.id, p.signingFormat])).toEqual([
+      ["default", "ssh"],
+      ["work", ""],
+      ["new", "x509"],
+    ]);
   });
 });
 

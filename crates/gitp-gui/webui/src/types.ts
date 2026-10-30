@@ -463,12 +463,13 @@ export interface SigningConfig {
   sign_by_default: boolean;
 }
 
-// The user.name / user.email / user.signingkey a profile commits as (mirrors
-// gitp-core's Identity). An empty field is an unset key.
+// The user.name / user.email / user.signingkey / gpg.format a profile commits
+// as (mirrors gitp-core's Identity). An empty field is an unset key.
 export interface Identity {
   name: string;
   email: string;
   signing_key: string;
+  signing_format: string;
 }
 
 // One working tree of the repository (mirrors gitp-core's Worktree): the main

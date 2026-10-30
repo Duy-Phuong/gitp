@@ -4,7 +4,15 @@
 
 import { el } from "../dom";
 import { openFormDialog } from "./form-dialog";
-import { deleteBlocker, profileInitials, type IdentityScope, type Profile, type ProfileStore } from "../profiles";
+import {
+  asSigningFormat,
+  deleteBlocker,
+  profileInitials,
+  type IdentityScope,
+  type Profile,
+  type ProfileStore,
+  type SigningFormat,
+} from "../profiles";
 
 export interface ProfilesDialogActions {
   store: () => ProfileStore;
@@ -17,6 +25,13 @@ export interface ProfilesDialogActions {
 const SCOPES: { value: IdentityScope; label: string }[] = [
   { value: "local", label: "This repo only (local config)" },
   { value: "global", label: "Global .gitconfig" },
+];
+
+const SIGNING_FORMATS: { value: SigningFormat; label: string }[] = [
+  { value: "", label: "Git's default (OpenPGP)" },
+  { value: "openpgp", label: "OpenPGP (gpg)" },
+  { value: "ssh", label: "SSH key" },
+  { value: "x509", label: "X.509 (gpgsm)" },
 ];
 
 export function openProfilesDialog(actions: ProfilesDialogActions): void {
@@ -55,7 +70,7 @@ export function openProfilesDialog(actions: ProfilesDialogActions): void {
           el("span", { class: "profile-badge", text: profileInitials(p.name) }),
           el("div", { class: "profiles-text" }, [
             el("div", { class: "profiles-name", text: p.id === store.active ? `${p.name} (active)` : p.name }),
-            el("div", { class: "profiles-sub", text: `${identity} · ${scope}${p.signingKey ? " · signs" : ""}` }),
+            el("div", { class: "profiles-sub", text: `${identity} · ${scope}${p.signingKey ? ` · signs${p.signingFormat ? ` (${p.signingFormat})` : ""}` : ""}` }),
           ]),
           edit,
           del,
@@ -95,17 +110,19 @@ function editProfile(profile: Profile | null, onSave: (p: Profile) => void): voi
         { label: "Author name", value: profile?.authorName, placeholder: "Ada Lovelace", required: true },
         { label: "Author email", value: profile?.authorEmail, placeholder: "ada@example.com", required: true },
         { label: "Signing key", value: profile?.signingKey, placeholder: "Optional: key id or ~/.ssh/key.pub" },
+        { label: "Signing format", value: profile?.signingFormat ?? "", choices: SIGNING_FORMATS },
         { label: "Apply identity to", value: profile?.scope ?? "local", choices: SCOPES },
       ],
       submitLabel: profile ? "Save" : "Add",
     },
-    ([name, authorName, authorEmail, signingKey, scope]) =>
+    ([name, authorName, authorEmail, signingKey, signingFormat, scope]) =>
       onSave({
         id: profile?.id ?? crypto.randomUUID(),
         name,
         authorName,
         authorEmail,
         signingKey,
+        signingFormat: asSigningFormat(signingFormat),
         scope: scope === "global" ? "global" : "local",
       }),
   );

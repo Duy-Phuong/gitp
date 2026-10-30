@@ -17,6 +17,10 @@ import type { Identity } from "./types";
 // repo's .git/config, or ~/.gitconfig.
 export type IdentityScope = "local" | "global";
 
+// git's `gpg.format`: which tool signs with the key. Empty leaves it unset,
+// which git reads as openpgp.
+export type SigningFormat = "" | "openpgp" | "ssh" | "x509";
+
 // No passwords or tokens: the signing key is git's `user.signingkey` — a key
 // id or the path to a public key — which is no secret.
 export interface Profile {
@@ -25,6 +29,8 @@ export interface Profile {
   authorName: string;
   authorEmail: string;
   signingKey: string;
+  // Missing on a profile saved before gitp could set it (see fillSigningFormats).
+  signingFormat?: SigningFormat;
   scope: IdentityScope;
 }
 
@@ -76,6 +82,7 @@ export function ensureStore(storage: KeyValueStorage, identity: Identity): Profi
         authorName: identity.name,
         authorEmail: identity.email,
         signingKey: identity.signing_key,
+        signingFormat: asSigningFormat(identity.signing_format),
         // It came from the global config, so that is where it goes back to.
         scope: "global",
       },
@@ -83,6 +90,24 @@ export function ensureStore(storage: KeyValueStorage, identity: Identity): Profi
   };
   saveStore(storage, store);
   return store;
+}
+
+// `value` as a SigningFormat; one git doesn't know is read as unset.
+export function asSigningFormat(value: string): SigningFormat {
+  return value === "openpgp" || value === "ssh" || value === "x509" ? value : "";
+}
+
+// Give profiles saved before the signing format existed one, so applying them
+// doesn't unset a gpg.format set by hand: a global profile takes the global
+// one (`globalFormat`); a local one gets none, so the repo goes on inheriting
+// the global one.
+export function fillSigningFormats(storage: KeyValueStorage, globalFormat: string): void {
+  const store = loadStore(storage);
+  if (!store || store.profiles.every((p) => p.signingFormat !== undefined)) return;
+  const profiles = store.profiles.map((p) =>
+    p.signingFormat !== undefined ? p : { ...p, signingFormat: p.scope === "global" ? asSigningFormat(globalFormat) : "" },
+  );
+  saveStore(storage, { ...store, profiles });
 }
 
 export function activeProfile(store: ProfileStore): Profile {
@@ -152,7 +177,12 @@ export function deleteProfile(storage: KeyValueStorage, id: string): void {
 // email — that one leaves git's config alone.
 export function profileIdentity(profile: Profile): Identity | null {
   if (!profile.authorName || !profile.authorEmail) return null;
-  return { name: profile.authorName, email: profile.authorEmail, signing_key: profile.signingKey };
+  return {
+    name: profile.authorName,
+    email: profile.authorEmail,
+    signing_key: profile.signingKey,
+    signing_format: profile.signingFormat ?? "",
+  };
 }
 
 // "Ada Lovelace" → "AL", "work" → "WO": the top bar's profile badge.

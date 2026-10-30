@@ -1534,7 +1534,7 @@ export async function unsetConfig(scope: ConfigScope, name: string): Promise<voi
 // The identity git commits as outside any repo (global config, else system),
 // read without an open repo — the first-run "Default" profile starts from it.
 export async function fetchGlobalIdentity(): Promise<Identity> {
-  if (!isTauri()) return { name: "Ada Lovelace", email: "ada@example.com", signing_key: "" };
+  if (!isTauri()) return { name: "Ada Lovelace", email: "ada@example.com", signing_key: "", signing_format: "" };
   return invoke<Identity>("get_global_identity", {});
 }
 

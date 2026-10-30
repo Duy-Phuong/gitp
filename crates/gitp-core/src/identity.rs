@@ -1,5 +1,5 @@
-//! The commit identity a gitp profile carries: `user.name`, `user.email` and
-//! an optional `user.signingkey`.
+//! The commit identity a gitp profile carries: `user.name`, `user.email`, an
+//! optional `user.signingkey` and the optional `gpg.format` it is used with.
 //!
 //! gitp commits (and merges, reverts, cherry-picks…) by running `git`, which
 //! takes the author from git's config. So a profile's identity is applied by
@@ -16,6 +16,7 @@ use crate::repo::Repo;
 const NAME: &str = "user.name";
 const EMAIL: &str = "user.email";
 const SIGNING_KEY: &str = "user.signingkey";
+const SIGNING_FORMAT: &str = "gpg.format";
 
 /// Who commits are made as. An empty field is an unset key.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +26,9 @@ pub struct Identity {
     /// Empty when the profile signs with nothing of its own: applying it then
     /// removes `user.signingkey`, so the previous profile's key isn't used.
     pub signing_key: String,
+    /// `openpgp`, `ssh` or `x509`, or empty for git's default (openpgp) —
+    /// applying an empty one removes `gpg.format`, like the key.
+    pub signing_format: String,
 }
 
 /// The identity git uses outside any repository: global config, falling back
@@ -74,19 +78,26 @@ fn read_identity(cfg: &git2::Config) -> Result<Identity> {
         name: get(NAME)?,
         email: get(EMAIL)?,
         signing_key: get(SIGNING_KEY)?,
+        signing_format: get(SIGNING_FORMAT)?,
     })
 }
 
 fn write_identity(cfg: &mut git2::Config, id: &Identity) -> Result<()> {
     cfg.set_str(NAME, &id.name)?;
     cfg.set_str(EMAIL, &id.email)?;
-    if id.signing_key.is_empty() {
-        match cfg.remove(SIGNING_KEY) {
+    set_or_remove(cfg, SIGNING_KEY, &id.signing_key)?;
+    set_or_remove(cfg, SIGNING_FORMAT, &id.signing_format)
+}
+
+/// Set `name` to `value`, or remove it when `value` is empty.
+fn set_or_remove(cfg: &mut git2::Config, name: &str, value: &str) -> Result<()> {
+    if value.is_empty() {
+        match cfg.remove(name) {
             Err(e) if e.code() != git2::ErrorCode::NotFound => return Err(e.into()),
             _ => {}
         }
     } else {
-        cfg.set_str(SIGNING_KEY, &id.signing_key)?;
+        cfg.set_str(name, value)?;
     }
     Ok(())
 }
@@ -100,6 +111,7 @@ mod tests {
             name: name.into(),
             email: email.into(),
             signing_key: key.into(),
+            signing_format: String::new(),
         }
     }
 
@@ -107,7 +119,10 @@ mod tests {
     fn writes_an_identity_into_a_config_file_that_did_not_exist() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gitconfig");
-        let id = identity("Ada", "ada@example.com", "ABC123");
+        let id = Identity {
+            signing_format: "ssh".into(),
+            ..identity("Ada", "ada@example.com", "~/.ssh/id.pub")
+        };
 
         write_identity(&mut git2::Config::open(&path).unwrap(), &id).unwrap();
 
@@ -122,7 +137,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gitconfig");
         let mut cfg = git2::Config::open(&path).unwrap();
-        write_identity(&mut cfg, &identity("Ada", "ada@work.com", "WORKKEY")).unwrap();
+        let work = Identity {
+            signing_format: "x509".into(),
+            ..identity("Ada", "ada@work.com", "WORKKEY")
+        };
+        write_identity(&mut cfg, &work).unwrap();
 
         let home = identity("Ada", "ada@home.org", "");
         write_identity(&mut cfg, &home).unwrap();
@@ -131,5 +150,10 @@ mod tests {
             read_identity(&git2::Config::open(&path).unwrap()).unwrap(),
             home
         );
+        // Its format went with it, so git falls back to openpgp.
+        assert!(git2::Config::open(&path)
+            .unwrap()
+            .get_string("gpg.format")
+            .is_err());
     }
 }
