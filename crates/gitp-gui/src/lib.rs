@@ -171,6 +171,8 @@ pub fn run() {
             os::reveal_path,
             workspace::workspace_snapshot,
             os::open_in_editor,
+            os::open_difftool,
+            os::open_mergetool,
             config::read_dotfile,
             config::write_dotfile,
             config::export_config_template,

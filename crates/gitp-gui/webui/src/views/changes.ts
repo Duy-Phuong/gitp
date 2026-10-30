@@ -5,7 +5,16 @@
 
 import { DEFAULT_CONTEXT_LINES } from "../api";
 import { autoGrowTextarea, clear, copyToClipboard, el } from "../dom";
-import type { ChangeKind, CommitDetail, FileContent, FileDiff, FileSide, SigningConfig, StatusLists } from "../types";
+import type {
+  ChangeKind,
+  CommitDetail,
+  DiffToolTarget,
+  FileContent,
+  FileDiff,
+  FileSide,
+  SigningConfig,
+  StatusLists,
+} from "../types";
 import { type MenuItem, showContextMenu } from "./context-menu";
 import { contextControls, diffToggles, renderFile, renderSplitDiff } from "./detail";
 import { loadDiffWrap, loadIgnoreWhitespace } from "../prefs";
@@ -63,6 +72,8 @@ export interface ChangesCallbacks {
   revealPath: (path: string) => Promise<void>;
   // Open the file in the OS default application (e.g. the user's editor).
   openInEditor: (path: string) => Promise<void>;
+  // Open the file's staged / unstaged change in `git difftool`.
+  openInDiffTool: (target: DiffToolTarget, paths: string[]) => void;
   // Absolute path of the active repo's working directory (for Copy Absolute
   // Path). Null when no repo is open.
   repoRoot: () => string | null;
@@ -817,6 +828,16 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     paths = paths.filter((p) => isActionable(statusOf.get(p)));
     if (paths.length === 0) return;
     const allUntracked = paths.every((p) => statusOf.get(p) === "Untracked");
+    // git difftool only knows tracked files — an untracked one has no diff.
+    const diffTool: MenuItem[] =
+      statusOf.get(path) === "Untracked"
+        ? []
+        : [
+            {
+              label: "Open in External Diff Tool",
+              run: () => cb.openInDiffTool(which === "staged" ? "Staged" : "Unstaged", [path]),
+            },
+          ];
 
     const copy = (abs: boolean) => {
       const root = cb.repoRoot();
@@ -845,6 +866,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
             { label: "Save as Patch…", run: patch },
             { separator: true },
             { label: "Edit File", run: () => void cb.openInEditor(path) },
+            ...diffTool,
             { label: "Show in Finder", run: () => void cb.revealPath(path) },
             { label: "Copy Relative Path", run: () => copy(false) },
             { label: "Copy Absolute Path", run: () => copy(true) },
@@ -860,6 +882,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
             { label: "Save as Patch…", run: patch },
             { separator: true },
             { label: "Edit File", run: () => void cb.openInEditor(path) },
+            ...diffTool,
             { label: "Show in Finder", run: () => void cb.revealPath(path) },
             { label: "Copy Relative Path", run: () => copy(false) },
             { label: "Copy Absolute Path", run: () => copy(true) },

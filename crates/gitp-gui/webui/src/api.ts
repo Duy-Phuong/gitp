@@ -22,6 +22,7 @@ import type {
   FileSide,
   GitProgress,
   DeleteBranchesResult,
+  DiffToolTarget,
   LogPage,
   PullMode,
   RebaseCommit,
@@ -970,6 +971,21 @@ export async function revealPath(path: string): Promise<void> {
 export async function openInEditor(path: string): Promise<void> {
   if (!isTauri()) return;
   await invoke<void>("open_in_editor", { path });
+}
+
+// Open `paths` of `target` in the user's `git difftool` (diff.tool), without
+// waiting for it to close. False when no diff tool is configured — always, in
+// preview mode, where there's nothing to launch.
+export async function openDiffTool(target: DiffToolTarget, paths: string[]): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("open_difftool", { target, paths });
+}
+
+// Open the conflicted `path` in the user's `git mergetool` (merge.tool). False
+// when no merge tool is configured (always, in preview mode).
+export async function openMergeTool(path: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("open_mergetool", { path });
 }
 
 // --- Conflict resolution (merge/rebase conflict resolver view) -------------

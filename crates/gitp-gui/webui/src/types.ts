@@ -63,6 +63,14 @@ export interface FileContent {
   base64: string | null;
 }
 
+// What `git difftool` compares (mirrors gitp-core's DiffToolTarget): a commit
+// against its parent, two revisions, or the staged / unstaged changes.
+export type DiffToolTarget =
+  | { Commit: string }
+  | { Compare: { base: string; head: string; three_dot: boolean } }
+  | "Staged"
+  | "Unstaged";
+
 export interface CommitDetail {
   id: string;
   summary: string;

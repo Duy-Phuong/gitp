@@ -100,6 +100,7 @@ import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
 import { openQuickLaunch } from "./quick-launch-commands";
+import { openInDiffTool, openInMergeTool } from "./external-tools";
 import { setupLogKeyboardNav, setupShortcuts } from "./keyboard";
 import { setupBranchMenu, setupPullMenu, setupSettingsMenu } from "./topbar-menus";
 import { showComparison } from "./compare";
@@ -223,6 +224,7 @@ async function init(): Promise<void> {
     fetchCompareFileDiff,
     onCompare: (base, head, threeDot) => void showComparison(base, head, threeDot),
     fetchFileContent,
+    openInDiffTool: (target, paths) => void openInDiffTool(target, paths),
     onCloseCompare: () => void leaveComparison(),
     fetchSignature: fetchCommitSignature,
     initialTab: loadDetailTab(),
@@ -248,6 +250,7 @@ async function init(): Promise<void> {
     addToGitignore,
     revealPath,
     openInEditor,
+    openInDiffTool: (target, paths) => void openInDiffTool(target, paths),
     repoRoot: () => state.repoPath || null,
     confirm: confirmDialog,
     fetchHead: async () => {
@@ -284,6 +287,7 @@ async function init(): Promise<void> {
     resolve: resolveConflict,
     resolveSide: resolveConflictSide,
     openInEditor,
+    openInMergeTool: (path) => void openInMergeTool(path),
     abort: abortConflict,
     finish: finishConflict,
     confirm: confirmDialog,

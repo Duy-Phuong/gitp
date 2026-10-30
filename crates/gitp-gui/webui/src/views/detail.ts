@@ -24,6 +24,7 @@ import type {
   CommitSignature,
   CompareEnd,
   Comparison,
+  DiffToolTarget,
   FileCommit,
   FileContent,
   FileDiff,
@@ -31,6 +32,7 @@ import type {
   SignatureStatus,
 } from "../types";
 import { hunkWordDiffs, type Seg } from "../worddiff";
+import { showContextMenu } from "./context-menu";
 import { imageMime, loadOnce, renderImageDiff, type ImageLoad } from "./image-diff";
 import { renderFileTree } from "./tree";
 
@@ -66,6 +68,8 @@ export interface DetailCallbacks {
   onCompare: (base: string, head: string, threeDot: boolean) => void;
   // One side of an image file, for the image diff.
   fetchFileContent: (side: FileSide, path: string) => Promise<FileContent | null>;
+  // A changed file's right-click "Open in External Diff Tool" (git difftool).
+  openInDiffTool: (target: DiffToolTarget, paths: string[]) => void;
   onCloseCompare: () => void;
   // Verify the commit's signature (null when unsigned). Can be slow — it runs
   // gpg / ssh-keygen — so the Commit tab fills its badge in when this lands.
@@ -698,6 +702,17 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
       file.old_path && file.old_path !== file.path ? `${file.old_path} → ${file.path}` : file.path;
     row.append(el("span", { class: "file-item-path", text: label }));
     row.addEventListener("click", onClick);
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const target: DiffToolTarget = compare
+        ? { Compare: { base: compare.base.rev, head: compare.head.rev, three_dot: compare.three_dot } }
+        : { Commit: detail!.id };
+      // Both names of a rename, so git pairs them up.
+      const paths = file.old_path && file.old_path !== file.path ? [file.old_path, file.path] : [file.path];
+      showContextMenu(e.clientX, e.clientY, [
+        { label: "Open in External Diff Tool", run: () => cb.openInDiffTool(target, paths) },
+      ]);
+    });
     return row;
   }
 
