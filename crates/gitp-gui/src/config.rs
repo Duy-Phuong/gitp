@@ -2,11 +2,11 @@
 
 use std::path::Path;
 
-use gitp_core::{ConfigEntry, ConfigScope};
+use gitp_core::{ConfigEntry, ConfigScope, Identity};
 use serde::Deserialize;
 use tauri::State;
 
-use crate::state::{with_repo, RepoState};
+use crate::state::{to_message, with_repo, RepoState};
 use crate::template;
 
 fn get_config_impl(state: &RepoState) -> Result<Vec<ConfigEntry>, String> {
@@ -24,6 +24,15 @@ fn set_config_impl(
 
 fn unset_config_impl(state: &RepoState, scope: ConfigScope, name: String) -> Result<(), String> {
     with_repo(state, |repo| repo.unset_config(scope, &name))
+}
+
+// --- Profile identity (user.name / user.email / user.signingkey) -----------
+// The local side writes the active repo; the global side needs no open repo:
+// the first-run "Default" profile is read from it, and a profile switch can
+// write it with every tab closed.
+
+fn apply_local_identity_impl(state: &RepoState, identity: Identity) -> Result<bool, String> {
+    with_repo(state, |repo| repo.apply_local_identity(&identity))
 }
 
 // --- User dotfiles (~/.gitconfig, ~/.tigrc) ---------------------------------
@@ -106,6 +115,26 @@ pub(crate) fn unset_config(
     state: State<RepoState>,
 ) -> Result<(), String> {
     unset_config_impl(&state, scope, name)
+}
+
+#[tauri::command(async)]
+pub(crate) fn get_global_identity() -> Result<Identity, String> {
+    gitp_core::global_identity().map_err(to_message)
+}
+
+#[tauri::command(async)]
+pub(crate) fn set_global_identity(identity: Identity) -> Result<(), String> {
+    gitp_core::set_global_identity(&identity).map_err(to_message)
+}
+
+/// Write the profile's identity into the active repo's local config; true when
+/// it wasn't already there.
+#[tauri::command(async)]
+pub(crate) fn apply_local_identity(
+    identity: Identity,
+    state: State<RepoState>,
+) -> Result<bool, String> {
+    apply_local_identity_impl(&state, identity)
 }
 
 #[tauri::command(async)]
