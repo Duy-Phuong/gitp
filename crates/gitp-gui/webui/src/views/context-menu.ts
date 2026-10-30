@@ -69,6 +69,14 @@ export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
   document.addEventListener("scroll", onScroll, true);
 }
 
+// Open straight into a name prompt, for a button whose only job is to ask for
+// one (the detached-HEAD banner's "Create Branch Here…").
+export function showPrompt(x: number, y: number, prompt: NonNullable<MenuItem["prompt"]>): void {
+  const items: MenuItem[] = [{ label: prompt.placeholder, prompt }];
+  showContextMenu(x, y, items);
+  if (openMenu) renderPrompt(openMenu, items, prompt);
+}
+
 function renderItems(menu: HTMLElement, items: MenuItem[]): void {
   menu.replaceChildren();
   for (const it of items) {

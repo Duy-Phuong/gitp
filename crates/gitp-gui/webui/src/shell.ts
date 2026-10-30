@@ -35,6 +35,7 @@ import { clear, el, $ } from "./dom";
 import { logRowHeight, renderLog, setBisectMarks } from "./views/log";
 import { bisectBannerText } from "./bisect-text";
 import { closeCommitMenu } from "./views/commit-menu";
+import { showPrompt } from "./views/context-menu";
 import { renderSidebar, type SidebarView, type SidebarCallbacks } from "./views/sidebar";
 import type { BisectMark, CommitRow, ConflictStatus, LogPage, ReflogEntry, StashRef, Workspace } from "./types";
 import { EMPTY_REFS, PAGE_SIZE, state, ui, type View } from "./app-state";
@@ -59,6 +60,8 @@ interface RefActions {
   onWorktreeMenu: SidebarCallbacks["onWorktreeMenu"];
   onSubmoduleOpen: SidebarCallbacks["onSubmoduleOpen"];
   onSubmoduleMenu: SidebarCallbacks["onSubmoduleMenu"];
+  // The detached-HEAD banner's "Create Branch Here…".
+  createBranchAt: (name: string, rev: string) => void;
 }
 
 let refActions: RefActions;
@@ -194,6 +197,7 @@ export async function closeRepoTab(path: string): Promise<void> {
       renderRebaseBanner();
       renderConflictBanner();
       renderBisectBanner();
+      renderDetachedBanner();
       refreshActionButtons();
       ui.terminal?.setCwd(".");
       renderTerminalCwd();
@@ -513,6 +517,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   }
   renderSidebarNow();
   renderConflictBanner(); // entering/leaving the resolver toggles the banner
+  renderDetachedBanner(); // History only
   if (view === "config") void refreshConfig();
   else if (view === "changes") void loadChanges();
   else if (view === "conflict") void ui.conflictView?.reload();
@@ -570,6 +575,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     state.bisect = snap.bisect;
     marksChanged = setBisectMarks(state.bisect);
     renderBisectBanner();
+    renderDetachedBanner();
     // Whatever moved a ref (an action, undo, a terminal command) added a reflog
     // entry the open Reflog should list.
     if (state.view === "reflog") void ui.reflogView?.reload();
@@ -1055,6 +1061,55 @@ export async function opFailedMaybeConflict(title: string, err: unknown): Promis
     (state.conflict !== null && state.conflict.conflicted.length > 0) ||
     (state.rebase?.in_progress === true && state.rebase.paused_for === "conflict");
   opFailed(title, err, inConflict ? { label: "Resolve Conflicts", run: () => showView("conflict") } : undefined);
+}
+
+// --- Detached HEAD ------------------------------------------------------------
+
+// A bar in History while HEAD is detached (a commit or tag checked out), where
+// new commits belong to no branch and are easy to lose: offer a branch at HEAD,
+// or the way back to the last branch. Not while a rebase, bisect or conflict is
+// in progress — those detach HEAD on purpose and have banners of their own.
+// HEAD's commit comes from the current worktree's entry, the one place the
+// refresh already reads it.
+function renderDetachedBanner(): void {
+  let banner = document.getElementById("detached-banner");
+  const here = state.worktrees.find((w) => w.is_current);
+  const sha = here && here.branch === null ? here.head : null;
+  const busy = state.rebase?.in_progress || state.bisect !== null || state.conflict !== null;
+  if (!sha || busy || state.view !== "history") {
+    banner?.remove();
+    return;
+  }
+  if (!banner) {
+    banner = el("div", { id: "detached-banner", class: "rebase-banner" });
+    document.body.append(banner);
+  }
+  clear(banner);
+
+  const short = sha.slice(0, 7);
+  const info = el("div", { class: "rebase-banner-info" }, [
+    el("span", { class: "rebase-banner-title", text: `You are in a detached HEAD state at ${short}` }),
+    el("span", { class: "rebase-banner-sub", text: "Commits made here belong to no branch." }),
+  ]);
+  const actions = el("div", { class: "rebase-banner-actions" });
+  const create = el("button", { class: "btn small", text: "Create Branch Here…" });
+  create.addEventListener("click", () => {
+    const r = create.getBoundingClientRect();
+    showPrompt(r.left, r.top - 48, {
+      placeholder: "New branch name",
+      onSubmit: (name) => refActions.createBranchAt(name, sha),
+    });
+  });
+  actions.append(create);
+  // `recent` skips HEAD and detached checkouts, so its first entry is the
+  // branch this checkout left.
+  const last = state.refs.branches.find((b) => b.name === state.refs.recent[0]);
+  if (last) {
+    const back = el("button", { class: "btn small ghost", text: `Checkout ${last.name}` });
+    back.addEventListener("click", () => refActions.checkoutBranchAction(last));
+    actions.append(back);
+  }
+  banner.append(info, actions);
 }
 
 // --- Bisect in progress (good / bad / skip / reset) --------------------------

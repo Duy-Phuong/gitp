@@ -39,6 +39,7 @@ import {
   fetchCommitSignature,
   fetchSigningConfig,
   fetchCommitTemplate,
+  createBranchAt,
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
@@ -96,7 +97,7 @@ import {
   onMoreRefsMenu,
   onTagMenu,
 } from "./ref-actions";
-import { onCommitContextMenu, onReflogMenu, runNextCherryPick } from "./commit-actions";
+import { onCommitContextMenu, onReflogMenu, runCommitOp, runNextCherryPick } from "./commit-actions";
 import { onWorktreeMenu } from "./worktree-actions";
 import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { toggleTerminal, warmTerminal } from "./terminal-panel";
@@ -210,6 +211,7 @@ async function init(): Promise<void> {
     onWorktreeMenu,
     onSubmoduleOpen: openSubmodule,
     onSubmoduleMenu,
+    createBranchAt: (name, rev) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
   });
   applyTheme(currentTheme());
   state.allBranches = loadAllBranches(); // before wireUi so the toggle reflects it
