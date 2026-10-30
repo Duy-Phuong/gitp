@@ -662,29 +662,7 @@ export function deleteBranchAction(b: BranchRef): void {
 }
 
 async function runDelete(b: BranchRef, deleteRemote: boolean): Promise<void> {
-  setStatus(`Deleting ${b.name}…`);
-  try {
-    await withBusyRef(b.name, () => deleteBranch(b.name, false));
-  } catch (err) {
-    const msg = String(err);
-    if (!/not fully merged/i.test(msg)) {
-      opFailed("Delete failed", err);
-      return;
-    }
-    const force = await confirmDialog(
-      `${b.name} is not fully merged. Force delete? Unmerged commits will be lost.`,
-    );
-    if (!force) {
-      setStatus("Delete cancelled.");
-      return;
-    }
-    try {
-      await withBusyRef(b.name, () => deleteBranch(b.name, true));
-    } catch (err2) {
-      opFailed("Delete failed", err2);
-      return;
-    }
-  }
+  if (!(await deleteLocalBranch(b.name))) return;
 
   let note = `Deleted ${b.name}`;
   if (deleteRemote) {
@@ -699,6 +677,37 @@ async function runDelete(b: BranchRef, deleteRemote: boolean): Promise<void> {
   }
   await loadSidebar();
   reportDone(note);
+}
+
+// Delete local branch `name` safely (-d); if git refuses because it isn't
+// merged, offer a force delete behind a second, explicit confirmation. Reports
+// a failure or a cancel itself; true once the branch is gone.
+export async function deleteLocalBranch(name: string): Promise<boolean> {
+  setStatus(`Deleting ${name}…`);
+  try {
+    await withBusyRef(name, () => deleteBranch(name, false));
+    return true;
+  } catch (err) {
+    const msg = String(err);
+    if (!/not fully merged/i.test(msg)) {
+      opFailed("Delete failed", err);
+      return false;
+    }
+    const force = await confirmDialog(
+      `${name} is not fully merged. Force delete? Unmerged commits will be lost.`,
+    );
+    if (!force) {
+      setStatus("Delete cancelled.");
+      return false;
+    }
+    try {
+      await withBusyRef(name, () => deleteBranch(name, true));
+      return true;
+    } catch (err2) {
+      opFailed("Delete failed", err2);
+      return false;
+    }
+  }
 }
 
 // Open the branch's pull-request page in the browser, on its default remote
