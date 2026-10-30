@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use gitp_core::{PullMode, Repo};
+use gitp_core::{CloneOptions, PullMode, Repo};
 use tauri::State;
 
 use crate::os::open_in_browser;
@@ -103,16 +103,17 @@ pub(crate) fn cancel_network_op_impl(state: &RepoState) -> Result<(), String> {
     Ok(())
 }
 
-/// `git clone` `url` into `dest` (see `gitp_core::clone_repo`), reporting
-/// progress and offering Cancel like a fetch. The frontend opens the result
-/// as a tab the way it opens any folder.
+/// `git clone` `url` into `dest` as `options` say (see `gitp_core::clone_repo`),
+/// reporting progress and offering Cancel like a fetch. The frontend opens the
+/// result as a tab the way it opens any folder.
 pub(crate) fn clone_repository_impl(
     state: &RepoState,
     url: String,
     dest: String,
+    options: CloneOptions,
 ) -> Result<String, String> {
     run_networked_unopened(state, "clone", &dest, |hooks| {
-        gitp_core::clone_repo(&url, Path::new(&dest), hooks)
+        gitp_core::clone_repo(&url, Path::new(&dest), &options, hooks)
     })
 }
 
@@ -176,9 +177,10 @@ pub(crate) fn fetch_and_update_branch(
 pub(crate) fn clone_repository(
     url: String,
     dest: String,
+    options: CloneOptions,
     state: State<RepoState>,
 ) -> Result<String, String> {
-    clone_repository_impl(&state, url, dest)
+    clone_repository_impl(&state, url, dest, options)
 }
 
 #[tauri::command(async)]

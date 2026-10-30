@@ -6,6 +6,8 @@
 
 use std::path::Path;
 
+use serde::Deserialize;
+
 use crate::error::{Error, Result};
 use crate::git_bin::git_command;
 use crate::progress::{run_progress, NetworkHooks};
@@ -63,13 +65,32 @@ pub fn init_repo(path: &Path, gitignore: Option<&str>, readme: bool) -> Result<(
     Ok(())
 }
 
+/// The optional parts of a clone. The default is a plain `git clone`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CloneOptions {
+    /// `--branch`: check this branch (or tag) out instead of the remote's HEAD.
+    pub branch: Option<String>,
+    /// `--single-branch`: fetch only that one branch's history.
+    pub single_branch: bool,
+    /// `--depth`: a shallow clone of the last this-many commits.
+    pub depth: Option<u32>,
+    /// `--recurse-submodules`: clone and check out the submodules too.
+    pub recurse_submodules: bool,
+}
+
 /// `git clone` `url` into `dest`, a folder that doesn't exist yet (or is
-/// empty) inside one that does. Runs like a fetch: progress and Cancel through
-/// `hooks`, and its askpass for credentials. Returns git's output.
+/// empty) inside one that does, as `options` say. Runs like a fetch: progress
+/// and Cancel through `hooks`, and its askpass for credentials. Returns git's
+/// output.
 ///
 /// A cancelled clone leaves nothing behind: git deletes the half-made folder
 /// on the SIGTERM Cancel sends.
-pub fn clone_repo(url: &str, dest: &Path, hooks: &NetworkHooks) -> Result<String> {
+pub fn clone_repo(
+    url: &str,
+    dest: &Path,
+    options: &CloneOptions,
+    hooks: &NetworkHooks,
+) -> Result<String> {
     // After `--` git couldn't read it as an option anyway; refusing it here
     // says so, rather than leaving git to fail on a "repository" called
     // `--upload-pack=…`.
@@ -90,12 +111,31 @@ pub fn clone_repo(url: &str, dest: &Path, hooks: &NetworkHooks) -> Result<String
     let dest = dest
         .to_str()
         .ok_or_else(|| Error::Message(format!("unsupported path: {}", dest.display())))?;
-    run_progress(
-        parent,
-        &["clone", "--progress", "--", url, dest],
-        hooks,
-        own_askpass(),
-    )
+
+    let branch = options
+        .branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .map(ref_arg)
+        .transpose()?;
+    let depth = options.depth.map(|d| format!("--depth={d}"));
+
+    let mut args = vec!["clone", "--progress"];
+    if let Some(branch) = branch {
+        args.extend(["--branch", branch]);
+    }
+    if options.single_branch {
+        args.push("--single-branch");
+    }
+    if let Some(depth) = &depth {
+        args.push(depth);
+    }
+    if options.recurse_submodules {
+        args.push("--recurse-submodules");
+    }
+    args.extend(["--", url, dest]);
+    run_progress(parent, &args, hooks, own_askpass())
 }
 
 /// Whether the user's global config sets `core.askPass`, which ours must not

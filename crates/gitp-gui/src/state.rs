@@ -524,7 +524,7 @@ mod tests {
         // file:// for the real transport — a plain path takes git's local
         // shortcut, which has no meters to report.
         let url = format!("file://{}", src.path().display());
-        clone_repository_impl(&state, url, dest.clone()).expect("clone");
+        clone_repository_impl(&state, url, dest.clone(), Default::default()).expect("clone");
 
         assert!(state.1.in_flight.lock().unwrap().is_empty());
         let events = events.lock().unwrap();

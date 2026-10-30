@@ -42,7 +42,7 @@ pub use commit_ops::ResetMode;
 pub use compare::{CompareEnd, Comparison};
 pub use config::{ConfigEntry, ConfigScope};
 pub use conflict_ops::{ConflictSides, ConflictStatus};
-pub use create::{clone_repo, init_repo};
+pub use create::{clone_repo, init_repo, CloneOptions};
 pub use diff::{ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff, DEFAULT_CONTEXT_LINES};
 pub use error::{Error, Result};
 pub use filelog::FileCommit;

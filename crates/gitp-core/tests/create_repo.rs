@@ -7,7 +7,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use gitp_core::{clone_repo, init_repo, Error, NetworkHooks, Progress, Repo};
+use gitp_core::{clone_repo, init_repo, CloneOptions, Error, NetworkHooks, Progress, Repo};
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -108,7 +108,7 @@ fn clone_reports_progress_and_makes_an_openable_repo() {
         ..Default::default()
     };
 
-    clone_repo(&url, &dest, &hooks).expect("clone");
+    clone_repo(&url, &dest, &CloneOptions::default(), &hooks).expect("clone");
 
     assert!(dest.join("f0.txt").is_file());
     assert_eq!(git(&dest, &["rev-parse", "--abbrev-ref", "HEAD"]), "main");
@@ -129,6 +129,7 @@ fn clone_refuses_a_url_git_would_read_as_an_option() {
     let err = clone_repo(
         "--upload-pack=touch /tmp/pwned",
         &dest,
+        &CloneOptions::default(),
         &NetworkHooks::default(),
     )
     .unwrap_err();
@@ -142,6 +143,7 @@ fn clone_into_a_folder_that_does_not_exist_is_refused() {
     let err = clone_repo(
         &url,
         Path::new("/no/such/parent/copy"),
+        &CloneOptions::default(),
         &NetworkHooks::default(),
     )
     .unwrap_err();
@@ -164,8 +166,61 @@ fn a_cancelled_clone_leaves_no_folder_behind() {
         ..Default::default()
     };
 
-    let result = clone_repo(&url, &dest, &hooks);
+    let result = clone_repo(&url, &dest, &CloneOptions::default(), &hooks);
 
     assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
     assert!(!dest.exists(), "git removed its half-made clone");
+}
+
+#[test]
+fn clone_options_pick_one_shallow_branch() {
+    let (_remote, url) = remote_with(1);
+    // A second branch two commits ahead of main, pushed to the remote from a
+    // scratch clone.
+    let scratch = TempDir::new().unwrap();
+    git(scratch.path(), &["clone", "-q", &url, "."]);
+    git(scratch.path(), &["config", "user.name", "Tester"]);
+    git(scratch.path(), &["config", "user.email", "t@t.io"]);
+    git(scratch.path(), &["checkout", "-q", "-b", "feat"]);
+    for msg in ["f1", "f2"] {
+        std::fs::write(scratch.path().join("feat.txt"), msg).unwrap();
+        git(scratch.path(), &["add", "feat.txt"]);
+        git(scratch.path(), &["commit", "-q", "-m", msg]);
+    }
+    git(scratch.path(), &["push", "-q", "origin", "feat"]);
+
+    let parent = TempDir::new().unwrap();
+    let dest = parent.path().join("copy");
+    let options = CloneOptions {
+        branch: Some("feat".into()),
+        single_branch: true,
+        depth: Some(1),
+        ..Default::default()
+    };
+    clone_repo(&url, &dest, &options, &NetworkHooks::default()).expect("clone");
+
+    assert_eq!(git(&dest, &["rev-parse", "--abbrev-ref", "HEAD"]), "feat");
+    assert_eq!(git(&dest, &["rev-list", "--count", "HEAD"]), "1", "shallow");
+    assert_eq!(
+        git(&dest, &["branch", "-r"]),
+        "origin/feat",
+        "single branch"
+    );
+}
+
+#[test]
+fn a_branch_option_git_would_read_as_an_option_is_refused() {
+    let parent = TempDir::new().unwrap();
+    let options = CloneOptions {
+        branch: Some("--upload-pack=x".into()),
+        ..Default::default()
+    };
+    let err = clone_repo(
+        "file:///nowhere",
+        &parent.path().join("x"),
+        &options,
+        &NetworkHooks::default(),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("read as an option"), "{err}");
 }

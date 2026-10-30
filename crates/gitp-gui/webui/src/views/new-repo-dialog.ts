@@ -8,6 +8,7 @@
 import { browseForFolder, isTauri } from "../api";
 import { el } from "../dom";
 import { GITIGNORE_TEMPLATES } from "../gitignore-templates";
+import type { CloneOptions } from "../types";
 
 export interface InitRequest {
   path: string;
@@ -53,6 +54,7 @@ export interface CloneRequest {
   url: string;
   /// The new repository's folder: the chosen parent plus the folder name.
   dest: string;
+  options: CloneOptions;
 }
 
 /// The folder name a clone of `url` gets by default — git's own choice: the
@@ -86,6 +88,21 @@ export function openCloneDialog(defaultParent: string, onSubmit: (req: CloneRequ
   });
   parent.addEventListener("input", showTarget);
 
+  // The extras most clones never need, folded away.
+  const branch = textInput("remote's default");
+  const singleBranch = el("input", { type: "checkbox" });
+  const depth = el("input", { class: "new-repo-input", type: "number", min: 1, placeholder: "full history" });
+  const submodules = el("input", { type: "checkbox" });
+  const options = el("details", { class: "new-repo-options" }, [
+    el("summary", { text: "Options" }),
+    el("div", { class: "new-repo-body" }, [
+      field("Branch", branch),
+      el("label", { class: "fetch-check new-repo-check" }, [singleBranch, el("span", { text: "Only this branch (--single-branch)" })]),
+      field("Depth", depth),
+      el("label", { class: "fetch-check new-repo-check" }, [submodules, el("span", { text: "Initialize submodules" })]),
+    ]),
+  ]);
+
   const modal = openShell("Clone a Repository", "Copy a remote repository to this computer.", "Clone", (fail) => {
     const u = url.value.trim();
     if (!u) return fail("Enter the URL of the repository to clone.");
@@ -93,13 +110,27 @@ export function openCloneDialog(defaultParent: string, onSubmit: (req: CloneRequ
     if (u.startsWith("-")) return fail("That isn't a repository URL.");
     if (!parent.value.trim()) return fail("Choose the folder to clone into.");
     if (!name.value.trim()) return fail("Enter a name for the new folder.");
-    onSubmit({ url: u, dest: joined() });
+    const b = branch.value.trim();
+    if (b.startsWith("-")) return fail("That isn't a branch name.");
+    const d = depth.value.trim();
+    if (d && !/^[1-9]\d*$/.test(d)) return fail("Depth is a number of commits, 1 or more.");
+    onSubmit({
+      url: u,
+      dest: joined(),
+      options: {
+        branch: b || null,
+        single_branch: singleBranch.checked,
+        depth: d ? Number(d) : null,
+        recurse_submodules: submodules.checked,
+      },
+    });
   });
   modal.body.append(
     field("URL", url),
     field("Where to clone", parent, browseButton(parent, "Folder to Clone Into", showTarget)),
     field("Folder name", name),
     target,
+    options,
   );
   requestAnimationFrame(() => url.focus());
 }

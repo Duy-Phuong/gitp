@@ -3,6 +3,7 @@
 
 import { cloneRepository, initRepository } from "./api";
 import { state } from "./app-state";
+import type { CloneOptions } from "./types";
 import { opFailed, reportDone, setStatus } from "./report";
 import { loadRepo } from "./shell";
 import { warmTerminal } from "./terminal-panel";
@@ -38,15 +39,15 @@ async function runInit(path: string, gitignore: string | null, readme: boolean):
 
 export function cloneRepoAction(): void {
   setStatus("Clone a repository…");
-  openCloneDialog(besideActiveRepo(), (req) => void runClone(req.url, req.dest));
+  openCloneDialog(besideActiveRepo(), (req) => void runClone(req.url, req.dest, req.options));
 }
 
 // The status ends in "…" and the call goes through invokeNetwork, so while git
 // runs the status bar shows its progress and offers Cancel, as for a fetch.
-async function runClone(url: string, dest: string): Promise<void> {
+async function runClone(url: string, dest: string, options: CloneOptions): Promise<void> {
   setStatus(`Cloning ${url}…`);
   try {
-    await cloneRepository(url, dest);
+    await cloneRepository(url, dest, options);
   } catch (err) {
     opFailed("Clone failed", err);
     return;
