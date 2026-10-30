@@ -207,6 +207,7 @@ pub fn run() {
             terminal::terminal_spawn,
             terminal::terminal_write,
             terminal::terminal_resize,
+            terminal::terminal_kill,
             bisect::bisect_status,
             bisect::bisect_start,
             bisect::bisect_mark,

@@ -129,7 +129,6 @@ export function applyWorkspace(ws: Workspace): void {
   renderRepoTabs();
   $("#action-bar").classList.toggle("hidden", state.repos.length === 0);
   $<HTMLInputElement>("#repo-input").value = state.repoPath;
-  if (state.repoPath) ui.terminal?.setCwd(state.repoPath);
   saveWorkspace();
 }
 
@@ -224,7 +223,6 @@ export async function closeRepoTab(path: string): Promise<void> {
       renderBisectBanner();
       renderDetachedBanner();
       refreshActionButtons();
-      ui.terminal?.setCwd(".");
       renderTerminalCwd();
       ui.logView = renderLog($("#log-pane"), [], null, selectCommit, loadMoreCommits, undefined, undefined, state.commitSelection, onCommitMultiSelect);
       shownDetailId = null;

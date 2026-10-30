@@ -17,8 +17,7 @@ function onTerminalCommand(): void {
 
 function ensureTerminal(): NonNullable<typeof ui.terminal> {
   if (!ui.terminal) {
-    ui.terminal = setupTerminal($("#terminal-host"), onTerminalCommand);
-    ui.terminal.setCwd(state.repoPath || ".");
+    ui.terminal = setupTerminal($("#terminal-host"), { cwd: state.repoPath || ".", onCommand: onTerminalCommand });
   }
   return ui.terminal;
 }
@@ -37,7 +36,7 @@ export function toggleTerminal(): void {
   $("#terminal-divider").classList.toggle("hidden", hidden);
   if (hidden) return;
 
-  ensureTerminal().setCwd(state.repoPath || ".");
+  ensureTerminal();
   renderTerminalCwd();
   requestAnimationFrame(() => {
     ui.terminal?.fit();
