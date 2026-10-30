@@ -219,6 +219,7 @@ body {
 .action-bar {
   display: flex;
   align-items: stretch;
+  justify-content: center;
   gap: 2px;
   padding: 4px 8px;
   background: var(--bg-elev);
@@ -483,6 +484,12 @@ body {
 /* Settings menu ---------------------------------------------------------- */
 .settings {
   position: relative;
+}
+/* Same height as the labelled top-bar buttons beside it. */
+#settings-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 9px;
 }
 /* A column with a real gap, rather than rows stacked flush against each other.
    Menu items had no separation at all — only their own padding — so in the
@@ -3812,4 +3819,124 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .submodule-change-note {
   color: var(--text-dim);
   font-size: 12px;
+}
+
+/* Settings dialog (the top bar's gear): a section list on the left, the
+   chosen section's rows on the right. */
+.settings-modal {
+  width: min(640px, 92vw);
+  height: min(440px, 84vh);
+}
+.settings-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+  margin: 12px 0 14px;
+}
+.settings-nav {
+  flex: 0 0 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+}
+.settings-nav-item {
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.settings-nav-item:hover {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+.settings-nav-item.active {
+  background: var(--bg-elev);
+  color: var(--text);
+  font-weight: 600;
+}
+.settings-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.settings-heading {
+  font-weight: 600;
+  font-size: 13px;
+}
+.settings-row.inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.settings-row.block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-row-label {
+  font-size: 13px;
+}
+.settings-row-hint {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.settings-select {
+  padding: 5px 8px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.theme-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+}
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+.theme-card:hover {
+  color: var(--text);
+}
+.theme-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+.theme-swatch {
+  position: relative;
+  height: 44px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+}
+.theme-swatch-accent {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  width: 28px;
+  height: 6px;
+  border-radius: 3px;
 }

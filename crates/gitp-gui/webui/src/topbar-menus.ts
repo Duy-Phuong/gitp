@@ -1,4 +1,4 @@
-// The top bar's dropdown menus: Branch, the Pull caret, and Settings.
+// The top bar's dropdown menus: Branch and the Pull caret; and the Settings gear.
 
 import { clear, el, $ } from "./dom";
 import { state } from "./app-state";
@@ -9,12 +9,12 @@ import {
   PULL_DEFAULTS,
   savePullDefault,
   type ThemeChoice,
-  updateThemeMenu,
 } from "./prefs";
 import { setConfigTab } from "./config-panel";
 import { showView, updateLogView } from "./shell";
 import { createBranchAction, runPullMethod } from "./repo-actions";
 import { checkoutBranchAction } from "./ref-actions";
+import { closeSettingsDialog, openSettingsDialog } from "./views/settings-dialog";
 
 // The Branch button's dropdown: pick a local branch to check out, or create a
 // new one from the current HEAD. Rebuilt from current refs each time it opens.
@@ -119,42 +119,25 @@ function buildPullMenu(menu: HTMLElement, close: () => void): void {
   }
 }
 
-// The settings gear opens a small menu; "Git Config" jumps to the config view.
+// The settings gear opens the Settings dialog.
 export function setupSettingsMenu(): void {
-  const btn = $("#settings-btn");
-  const menu = $("#settings-menu");
-  const close = () => {
-    menu.classList.add("hidden");
-    btn.setAttribute("aria-expanded", "false");
-  };
-
-  btn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const nowHidden = menu.classList.toggle("hidden");
-    btn.setAttribute("aria-expanded", String(!nowHidden));
-  });
-  menu.querySelector('[data-action="git-config"]')?.addEventListener("click", () => {
-    close();
-    setConfigTab("git");
-    showView("config");
-  });
-  menu.querySelector('[data-action="dotfiles"]')?.addEventListener("click", () => {
-    close();
-    setConfigTab("dotfiles");
-    showView("config");
-  });
-  for (const choice of menu.querySelectorAll<HTMLElement>("[data-theme-choice]")) {
-    choice.addEventListener("click", () => {
-      applyTheme(choice.dataset.themeChoice as ThemeChoice);
-      updateThemeMenu();
-      close();
-      // The GitKraken themes draw the graph differently, which CSS alone can't
-      // do, so the log is redrawn in the new style.
-      if (state.view === "history") void updateLogView();
-    });
-  }
-  updateThemeMenu();
-  document.addEventListener("click", (e) => {
-    if (!$("#settings").contains(e.target as Node)) close();
-  });
+  $("#settings-btn").addEventListener("click", () =>
+    openSettingsDialog({
+      setTheme: (choice: ThemeChoice) => {
+        applyTheme(choice);
+        // The GitKraken themes draw the graph differently, which CSS alone can't
+        // do, so the log is redrawn in the new style.
+        if (state.view === "history") void updateLogView();
+      },
+      allBranches: () => state.allBranches,
+      // The toggle above the log owns the switch (persisting it and reloading
+      // the history), so the dialog just presses it.
+      setAllBranches: (all) => $(all ? "#branches-all" : "#branches-current").click(),
+      openConfig: (tab) => {
+        closeSettingsDialog();
+        setConfigTab(tab);
+        showView("config");
+      },
+    }),
+  );
 }
