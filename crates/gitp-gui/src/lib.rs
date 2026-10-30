@@ -17,6 +17,7 @@ mod compare;
 mod config;
 mod conflict;
 mod editor;
+mod gitflow;
 mod history;
 mod os;
 mod rebase;
@@ -145,6 +146,10 @@ pub fn run() {
             branches::remote_branch_exists,
             branches::merge_branch,
             branches::squash_message,
+            gitflow::gitflow_config,
+            gitflow::gitflow_init,
+            gitflow::gitflow_start,
+            gitflow::gitflow_finish,
             remote::push_branch,
             remote::push_branch_to,
             remote::fetch_branch,

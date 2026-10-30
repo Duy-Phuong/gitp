@@ -73,6 +73,7 @@ import { worktreeName } from "./views/sidebar";
 import { allRefsAt } from "./commit-refs";
 import { pushTargets } from "./push-targets";
 import { dropActions, isAncestorInRows, type DragRef, type DropRef } from "./ref-drop";
+import { finishFlowItem, gitflowMenuItem } from "./gitflow-actions";
 
 // Double-click a branch: check it out, then reload history + sidebar from the new
 // HEAD. Warns first if the working tree has uncommitted changes.
@@ -155,6 +156,11 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
       run: () => void openInteractiveRebase(b.name, b.name),
     });
   }
+
+  items.push({ separator: true });
+  const finish = finishFlowItem(b.name);
+  if (finish) items.push(finish);
+  items.push(gitflowMenuItem());
 
   items.push({ separator: true });
   items.push({ label: "Fetch", run: () => onBranch(`Fetching updates for ${b.name}`, () => fetchBranch(b.name), false) });
@@ -300,7 +306,8 @@ function visibilityItems(refname: string): MenuItem[] {
 }
 
 // Right-click the Branches, Remotes or Tags header: hide or show every ref in
-// it at once (the checked-out branch stays: HEAD is always walked).
+// it at once (the checked-out branch stays: HEAD is always walked). Branches'
+// also has the Git Flow submenu.
 export function onSectionMenu(key: string, x: number, y: number): void {
   const refnames =
     key === "sec:branches"
@@ -310,14 +317,21 @@ export function onSectionMenu(key: string, x: number, y: number): void {
         : key === "sec:tags"
           ? state.refs.tags.map((t) => tagRefName(t.name))
           : [];
-  if (!refnames.length) return;
-  const items: MenuItem[] = [
-    { label: "Hide All", run: () => updateGraphPrefs(withHidden(state.graph, refnames, true)) },
-    { label: "Show All", run: () => updateGraphPrefs(withHidden(state.graph, refnames, false)) },
-  ];
-  if (refnames.some((r) => state.graph.solo.includes(r))) {
-    items.push({ label: "Unsolo All", run: () => updateGraphPrefs(withSolo(state.graph, refnames, false)) });
+  const items: MenuItem[] = [];
+  if (refnames.length) {
+    items.push(
+      { label: "Hide All", run: () => updateGraphPrefs(withHidden(state.graph, refnames, true)) },
+      { label: "Show All", run: () => updateGraphPrefs(withHidden(state.graph, refnames, false)) },
+    );
+    if (refnames.some((r) => state.graph.solo.includes(r))) {
+      items.push({ label: "Unsolo All", run: () => updateGraphPrefs(withSolo(state.graph, refnames, false)) });
+    }
   }
+  if (key === "sec:branches" && state.repoPath) {
+    if (items.length) items.push({ separator: true });
+    items.push(gitflowMenuItem());
+  }
+  if (!items.length) return;
   showContextMenu(x, y, items);
 }
 

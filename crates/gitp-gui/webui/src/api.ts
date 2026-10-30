@@ -49,6 +49,8 @@ import type {
   WorktreeTarget,
   Submodule,
   StashOptions,
+  FlowKind,
+  GitFlowConfig,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -780,6 +782,39 @@ export async function mergeBranch(name: string, mode: MergeMode = "Default"): Pr
 export async function squashMessage(): Promise<string | null> {
   if (!isTauri()) return "Squashed commit of the following:\n\ncommit 1111111\n\n    feat: add widget (preview mock)";
   return invoke<string | null>("squash_message", {});
+}
+
+// --- Git Flow ---------------------------------------------------------------
+
+// The repo's Git Flow settings, or null before it is initialised.
+export async function gitflowConfig(): Promise<GitFlowConfig | null> {
+  if (!isTauri()) return mockGitflow && { ...mockGitflow };
+  return invoke<GitFlowConfig | null>("gitflow_config", {});
+}
+
+// Store the settings (in git-flow's `gitflow.*` keys) and create develop if
+// it doesn't exist.
+export async function gitflowInit(config: GitFlowConfig): Promise<string> {
+  if (!isTauri()) {
+    mockGitflow = { ...config };
+    return `Git Flow initialized: production ${config.production}, develop ${config.develop}. (preview mock)`;
+  }
+  return invoke<string>("gitflow_init", { config });
+}
+
+// Create the feature / release / hotfix branch `name` (prefix added by the
+// backend) from develop, or production for a hotfix, and check it out.
+export async function gitflowStart(kind: FlowKind, name: string): Promise<string> {
+  if (!isTauri()) return `Switched to a new branch '${name}' (${kind}, preview mock)`;
+  return invoke<string>("gitflow_start", { kind, name });
+}
+
+// Merge the flow branch where it belongs (tagging a release or hotfix with
+// `tagMessage`), then delete it. Stops on a conflict with the merge left in
+// progress, saying what is left to do.
+export async function gitflowFinish(branch: string, tagMessage: string | null): Promise<string> {
+  if (!isTauri()) return `Finished ${branch} (preview mock)`;
+  return invoke<string>("gitflow_finish", { branch, tagMessage });
 }
 
 // `remote`: where to push; by default the remote the branch tracks, else origin.
@@ -2180,6 +2215,9 @@ const MOCK_WORKTREES: Worktree[] = [
   { ...MOCK_LINKED_WORKTREE, path: "/Users/you/Documents/mideal", head: mockOid("g"), branch: "develop/3.33.0", is_main: true },
   { ...MOCK_LINKED_WORKTREE },
 ];
+
+// Git Flow isn't set up in the mock repo until Initialize runs.
+let mockGitflow: GitFlowConfig | null = null;
 
 // One submodule, with an older commit checked out than the repo records.
 const MOCK_SUBMODULES: Submodule[] = [

@@ -22,6 +22,7 @@ import type {
   UndoState,
   Submodule,
   Worktree,
+  GitFlowConfig,
 } from "./types";
 
 export type View = "history" | "changes" | "config" | "conflict" | "reflog" | "activity";
@@ -65,6 +66,9 @@ interface State {
   worktrees: Worktree[];
   // The repo's submodules, refreshed with the sidebar.
   submodules: Submodule[];
+  // The repo's Git Flow settings (null: not initialised), refreshed with the
+  // sidebar.
+  gitflow: GitFlowConfig | null;
   // The repo's configured remotes, refreshed with the sidebar — including ones
   // never fetched, which have no remote branches in `refs` to show them by.
   remoteList: RemoteInfo[];
@@ -94,6 +98,7 @@ export const state: State = {
   busyRefs: new Set(),
   worktrees: [],
   submodules: [],
+  gitflow: null,
   remoteList: [],
   rebase: null,
   conflict: null,

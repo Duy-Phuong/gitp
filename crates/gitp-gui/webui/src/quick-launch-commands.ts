@@ -95,6 +95,8 @@ import {
 import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
 import { addSubmoduleAction, syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
+import { finishFlowAction, initGitflowAction, startFlowAction } from "./gitflow-actions";
+import { FLOW_KINDS, flowBranch } from "./gitflow";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { addRemoteAction } from "./remote-actions";
 import { createFileAction, editFileStage } from "./editor-actions";
@@ -442,6 +444,7 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Apply Patch…", run: () => void applyPatchAction() },
     { kind: "command", label: "Stage All Changes", run: () => void stageAllAction() },
     { kind: "command", label: "Unstage All Changes", run: () => void unstageAllAction() },
+    ...gitflowCommands(),
     ...commitCommands(),
   ];
 
@@ -497,6 +500,36 @@ function repoCommands(): QuickItem[] {
   if (canCancelNetwork()) items.push({ kind: "command", label: "Cancel Fetch / Pull / Push / Clone", run: cancelNetworkAction });
   items.sort((a, b) => a.label.localeCompare(b.label));
   return items;
+}
+
+// Git Flow: Initialize until it is set up; then Start, Finish and Settings.
+function gitflowCommands(): QuickItem[] {
+  if (!state.gitflow) return [{ kind: "command", label: "Git Flow: Initialize…", run: initGitflowAction }];
+  return [
+    ...FLOW_KINDS.map((kind) => ({
+      kind: "command" as const,
+      label: `Git Flow: Start ${kind}…`,
+      run: () => promptFor(`${kind} name`, (name) => void startFlowAction(kind, name)),
+    })),
+    { kind: "command", label: "Git Flow: Finish…", next: flowFinishStage },
+    { kind: "command", label: "Git Flow: Settings…", run: initGitflowAction },
+  ];
+}
+
+function flowFinishStage(): QuickStage {
+  return {
+    chip: "Finish",
+    placeholder: "branch",
+    emptyNote: "No feature, release or hotfix branches to finish.",
+    sections: [
+      {
+        title: "Git Flow Branches",
+        items: state.refs.branches
+          .filter((b) => flowBranch(state.gitflow, b.name))
+          .map((b) => ({ kind: "branch" as const, label: b.name, run: () => void finishFlowAction(b.name) })),
+      },
+    ],
+  };
 }
 
 // `open_in_editor`/`reveal` succeed or fail entirely in the OS, so without a

@@ -30,6 +30,7 @@ import {
   listWorktrees,
   listSubmodules,
   listRemotes,
+  gitflowConfig,
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el, $ } from "./dom";
@@ -230,6 +231,7 @@ export async function closeRepoTab(path: string): Promise<void> {
       state.refs = EMPTY_REFS;
       state.worktrees = [];
       state.submodules = [];
+      state.gitflow = null;
       state.localChanges = 0;
       // No repo: nothing is in progress and nothing can be undone. Left as
       // they were, the banners stay up with buttons that hit "no active repo".
@@ -644,11 +646,12 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
   try {
     // Worktrees, submodules and remotes are separate, cheap reads; failing one
     // only hides its section (or, for remotes, the never-fetched ones).
-    const [snap, worktrees, submodules, remoteList] = await Promise.all([
+    const [snap, worktrees, submodules, remoteList, gitflow] = await Promise.all([
       workspaceSnapshot(),
       listWorktrees().catch(() => []),
       listSubmodules().catch(() => []),
       listRemotes().catch(() => []),
+      gitflowConfig().catch(() => null),
     ]);
     // A passive refresh must not land a snapshot taken before an operation the
     // user started while it was in flight: that would repaint the pre-op state
@@ -660,6 +663,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     state.worktrees = worktrees;
     state.submodules = submodules;
     state.remoteList = remoteList;
+    state.gitflow = gitflow;
     state.localChanges = snap.local_changes;
     state.rebase = snap.rebase;
     ui.undoLabels = snap.undo;
