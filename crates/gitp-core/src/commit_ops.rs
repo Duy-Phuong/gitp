@@ -42,12 +42,14 @@ impl Repo {
     /// switching to that branch. A dirty tree that would be overwritten makes
     /// git error, which surfaces to the caller.
     pub fn checkout_commit(&self, rev: &str) -> Result<String> {
+        self.refuse_switch_mid_operation(rev)?;
         self.run_git(&["checkout", "--detach", ref_arg(rev)?])
     }
 
     /// Create branch `name` starting at `rev` and check it out
     /// (`git checkout -b <name> <rev>`). Errors if the branch already exists.
     pub fn create_branch_at(&self, name: &str, rev: &str) -> Result<String> {
+        self.refuse_switch_mid_operation(name)?;
         self.run_git(&["checkout", "-b", ref_arg(name)?, ref_arg(rev)?])
     }
 

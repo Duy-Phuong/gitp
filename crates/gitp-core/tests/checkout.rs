@@ -174,3 +174,107 @@ fn checkout_of_a_tag_with_no_branch_detaches_head() {
     assert!(fx.repo.head_detached().unwrap(), "a tag checkout detaches");
     assert_eq!(read(&fx, "a.txt"), "one\n");
 }
+
+// --- Switching while a merge / rebase / cherry-pick is paused ----------------
+//
+// A safe checkout only refuses when files clash. When they don't, git2 would
+// switch anyway and leave the operation's state behind: the pending merge then
+// commits onto the branch switched to, and a continued rebase rewrites it.
+
+fn git(dir: &std::path::Path, args: &[&str]) {
+    let out = std::process::Command::new("git").current_dir(dir).args(args).output().unwrap();
+    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+/// `dev` and `theirs` both change f.txt's middle line. `side` is dev's tip plus
+/// an unrelated file and `side2` is theirs' tip plus one, so f.txt never
+/// clashes with the branch switched to — only the paused operation can stop it.
+fn paused_op_repo() -> (FixtureRepo, Repo) {
+    let fx = FixtureRepo::init();
+    fx.commit_file("f.txt", "a\nbase\nc\n", "c1");
+    let d = fx.path();
+    git(d, &["branch", "-M", "dev"]);
+    git(d, &["checkout", "-q", "-b", "theirs"]);
+    std::fs::write(d.join("f.txt"), "a\ntheirs\nc\n").unwrap();
+    git(d, &["commit", "-qam", "theirs"]);
+    git(d, &["checkout", "-q", "-b", "side2"]);
+    std::fs::write(d.join("h.txt"), "h\n").unwrap();
+    git(d, &["add", "h.txt"]);
+    git(d, &["commit", "-qm", "side2"]);
+    git(d, &["checkout", "-q", "dev"]);
+    std::fs::write(d.join("f.txt"), "a\nours\nc\n").unwrap();
+    git(d, &["commit", "-qam", "ours"]);
+    git(d, &["checkout", "-q", "-b", "side"]);
+    std::fs::write(d.join("h.txt"), "h\n").unwrap();
+    git(d, &["add", "h.txt"]);
+    git(d, &["commit", "-qm", "side"]);
+    git(d, &["checkout", "-q", "dev"]);
+    let repo = Repo::open(d).unwrap();
+    (fx, repo)
+}
+
+fn assert_refused(fx: &FixtureRepo, err: gitp_core::Error, op: &str) {
+    assert!(err.to_string().contains(&format!("{op} is in progress")), "{err}");
+    assert_eq!(read(fx, "f.txt"), "a\nMY RESOLUTION\nc\n", "the resolution must stay");
+}
+
+#[test]
+fn a_switch_mid_merge_is_refused_even_when_no_file_clashes() {
+    let (fx, repo) = paused_op_repo();
+    assert!(repo.merge_branch("theirs", gitp_core::MergeMode::Default).is_err());
+    repo.resolve_conflict("f.txt", "a\nMY RESOLUTION\nc\n").unwrap();
+
+    let err = repo.checkout_branch("side").expect_err("must refuse");
+
+    assert_refused(&fx, err, "a merge");
+    assert_eq!(head_branch(&repo), "dev");
+    // The merge is still there to finish, on the branch it was started on.
+    repo.finish_conflict("merge theirs").unwrap();
+    assert_eq!(head_branch(&repo), "dev");
+    let side = fx.repo.find_branch("side", git2::BranchType::Local).unwrap();
+    assert_eq!(side.get().peel_to_commit().unwrap().parent_count(), 1, "side untouched");
+}
+
+#[test]
+fn a_switch_mid_rebase_is_refused_even_when_no_file_clashes() {
+    let (fx, repo) = paused_op_repo();
+    let side2_before = fx.repo.revparse_single("side2").unwrap().id();
+    assert!(repo.rebase_onto("theirs").is_err());
+    repo.resolve_conflict("f.txt", "a\nMY RESOLUTION\nc\n").unwrap();
+
+    let err = repo.checkout_branch("side2").expect_err("must refuse");
+
+    assert_refused(&fx, err, "a rebase");
+    repo.finish_conflict("").unwrap();
+    assert_eq!(head_branch(&repo), "dev");
+    assert_eq!(fx.repo.revparse_single("side2").unwrap().id(), side2_before, "side2 untouched");
+}
+
+#[test]
+fn a_switch_mid_cherry_pick_is_refused() {
+    let (fx, repo) = paused_op_repo();
+    assert!(repo.cherry_pick("theirs").is_err());
+    repo.resolve_conflict("f.txt", "a\nMY RESOLUTION\nc\n").unwrap();
+
+    let err = repo.checkout_branch("side").expect_err("must refuse");
+
+    assert_refused(&fx, err, "a cherry-pick");
+}
+
+#[test]
+fn detaching_or_branching_mid_merge_is_refused_and_creates_no_branch() {
+    let (fx, repo) = paused_op_repo();
+    assert!(repo.merge_branch("theirs", gitp_core::MergeMode::Default).is_err());
+    repo.resolve_conflict("f.txt", "a\nMY RESOLUTION\nc\n").unwrap();
+
+    assert!(repo.checkout_commit("side").is_err(), "detach must refuse");
+    assert!(repo.create_branch("fresh").is_err(), "create-and-switch must refuse");
+    assert!(repo.create_branch_at("fresh2", "side").is_err());
+    assert!(repo.checkout_remote("origin/side").is_err());
+
+    assert!(fx.repo.find_branch("fresh", git2::BranchType::Local).is_err(), "no stray branch");
+    assert!(fx.repo.find_branch("fresh2", git2::BranchType::Local).is_err());
+    assert_eq!(head_branch(&repo), "dev");
+    assert!(fx.path().join(".git/MERGE_HEAD").exists(), "the merge is still paused");
+    assert_eq!(read(&fx, "f.txt"), "a\nMY RESOLUTION\nc\n");
+}
