@@ -309,7 +309,7 @@ fn use_askpass(cmd: &mut Command, askpass: &Path) {
 /// The reader threads are left to finish on their own: a helper git spawned
 /// (ssh, a remote helper) can hold the pipes open a little longer, and waiting
 /// on them would be the hang Cancel exists to get out of.
-fn kill(mut child: Child) -> Error {
+pub(crate) fn kill(mut child: Child) -> Error {
     #[cfg(unix)]
     {
         // SAFETY: plain kill(2) on the process group led by a child we

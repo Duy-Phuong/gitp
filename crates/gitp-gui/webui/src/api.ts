@@ -57,6 +57,14 @@ import type {
   FlowKind,
   GitFlowConfig,
   LfsStatus,
+  DeviceCode,
+  GhAccount,
+  LineComment,
+  PrFilter,
+  PrReviewComment,
+  PullRequest,
+  PullRequestDetail,
+  ReviewVerdict,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -1749,6 +1757,167 @@ export async function lfsPull(): Promise<string> {
   return invokeNetwork<string>("lfs_pull", {});
 }
 
+// --- GitHub pull requests (gh) -----------------------------------------------
+// Everything goes through the user's own `gh` login; gitp stores no token.
+
+// Who gh is signed in to github.com as (asks GitHub, which checks the token).
+export async function ghAccount(): Promise<GhAccount> {
+  if (!isTauri()) return { ...MOCK_GH_ACCOUNT };
+  return invoke<GhAccount>("gh_account", {});
+}
+
+// The open repo's GitHub repository ("owner/name"), or null without a GitHub
+// remote. Local: no network.
+export async function ghRepo(): Promise<string | null> {
+  if (!isTauri()) return "example/mideal";
+  return invoke<string | null>("gh_repo", {});
+}
+
+export async function listPullRequests(filter: PrFilter): Promise<PullRequest[]> {
+  if (!isTauri()) {
+    await mockNetworkDelay();
+    const me = MOCK_GH_ACCOUNT.login;
+    return MOCK_PULL_REQUESTS.filter(
+      (pr) => filter === "all" || (filter === "mine" ? pr.author === me : pr.author !== me && !pr.is_draft),
+    ).map((pr) => ({ ...pr }));
+  }
+  return invoke<PullRequest[]>("gh_pull_requests", { filter });
+}
+
+export async function fetchPullRequest(number: number): Promise<PullRequestDetail> {
+  if (!isTauri()) {
+    const detail = MOCK_PR_DETAILS.get(number) ?? mockPrDetail(MOCK_PULL_REQUESTS.find((p) => p.number === number) ?? MOCK_PULL_REQUESTS[0]);
+    return structuredClone(detail);
+  }
+  return invoke<PullRequestDetail>("gh_pull_request", { number });
+}
+
+// The pull request's changed files and their diffs (`gh pr diff`).
+export async function fetchPullRequestFiles(number: number): Promise<FileDiff[]> {
+  if (!isTauri()) return structuredClone(number === 42 ? MOCK_PR_FILES : MOCK_PR_FILES.slice(0, 1));
+  return invoke<FileDiff[]>("gh_pull_request_files", { number });
+}
+
+// `gh pr checkout`: fetches, so it reports through the network status and can
+// be cancelled.
+export async function checkoutPullRequest(number: number): Promise<string> {
+  if (!isTauri()) {
+    const pr = MOCK_PULL_REQUESTS.find((p) => p.number === number);
+    return `Switched to a new branch '${pr?.head ?? number}' (preview mock)`;
+  }
+  return invokeNetwork<string>("gh_checkout_pull_request", { number });
+}
+
+// A new worktree at `path` (relative to the repo) on the pull request's
+// branch. Returns its absolute path.
+export async function checkoutPullRequestInWorktree(number: number, path: string): Promise<string> {
+  if (!isTauri()) {
+    const full = path.startsWith("/") ? path : `${MOCK_WORKSPACE.repos[0]?.path ?? ""}/${path}`;
+    const pr = MOCK_PULL_REQUESTS.find((p) => p.number === number);
+    MOCK_WORKTREES.push({ ...MOCK_LINKED_WORKTREE, path: full, branch: pr?.head ?? null });
+    return full;
+  }
+  return invokeNetwork<string>("gh_checkout_pull_request_worktree", { number, path });
+}
+
+// Comment on the pull request. Returns the new comment's URL.
+export async function commentOnPullRequest(number: number, body: string): Promise<string> {
+  if (!isTauri()) {
+    mockPrDetailOf(number).comments.push({
+      id: `IC_mock${Date.now()}`,
+      author: MOCK_GH_ACCOUNT.login ?? "you",
+      body,
+      created_at: new Date().toISOString(),
+      url: `https://github.com/example/mideal/pull/${number}#issuecomment-1`,
+    });
+    return `https://github.com/example/mideal/pull/${number}#issuecomment-1`;
+  }
+  return invoke<string>("gh_comment", { number, body });
+}
+
+export async function reviewPullRequest(number: number, verdict: ReviewVerdict, body: string): Promise<string> {
+  if (!isTauri()) {
+    const state = { approve: "APPROVED", request_changes: "CHANGES_REQUESTED", comment: "COMMENTED" }[verdict];
+    mockPrDetailOf(number).reviews.push({ author: MOCK_GH_ACCOUNT.login ?? "you", state, body, submitted_at: new Date().toISOString() });
+    return `✓ Reviewed pull request #${number} (preview mock)`;
+  }
+  return invoke<string>("gh_review", { number, verdict, body });
+}
+
+// Reply in a line comment's thread.
+export async function replyToReviewComment(number: number, commentId: number, body: string): Promise<PrReviewComment> {
+  if (!isTauri()) {
+    const detail = mockPrDetailOf(number);
+    const root = detail.review_comments.find((c) => c.id === commentId)!;
+    const reply = { ...root, id: Date.now(), author: MOCK_GH_ACCOUNT.login ?? "you", body, created_at: new Date().toISOString(), in_reply_to: commentId };
+    detail.review_comments.push(reply);
+    return reply;
+  }
+  return invoke<PrReviewComment>("gh_reply", { number, commentId, body });
+}
+
+// Comment on one line of the pull request's diff.
+export async function commentOnLine(number: number, comment: LineComment): Promise<PrReviewComment> {
+  if (!isTauri()) {
+    const made: PrReviewComment = {
+      id: Date.now(),
+      author: MOCK_GH_ACCOUNT.login ?? "you",
+      body: comment.body,
+      path: comment.path,
+      line: comment.line,
+      original_line: comment.line,
+      side: comment.side,
+      created_at: new Date().toISOString(),
+      in_reply_to: null,
+      url: `https://github.com/example/mideal/pull/${number}#discussion_r1`,
+      diff_hunk: "",
+    };
+    mockPrDetailOf(number).review_comments.push(made);
+    return made;
+  }
+  return invoke<PrReviewComment>("gh_line_comment", { number, comment });
+}
+
+// Start `gh auth login`'s browser sign-in: resolves with the one-time code as
+// soon as gh shows it. `ghLoginWait` then waits for the user to approve it.
+export async function ghLoginStart(): Promise<DeviceCode> {
+  if (!isTauri()) return { code: "ABCD-1234", url: "https://github.com/login/device" };
+  return invoke<DeviceCode>("gh_login_start", {});
+}
+
+export async function ghLoginWait(): Promise<string> {
+  if (!isTauri()) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    MOCK_GH_ACCOUNT.signed_in = true;
+    MOCK_GH_ACCOUNT.login = "you";
+    return "✓ Logged in as you (preview mock)";
+  }
+  return invoke<string>("gh_login_wait", {});
+}
+
+export async function ghLoginCancel(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("gh_login_cancel", {});
+}
+
+export async function ghLogout(login: string | null): Promise<string> {
+  if (!isTauri()) {
+    Object.assign(MOCK_GH_ACCOUNT, { signed_in: false, login: null, scopes: [] });
+    return "✓ Logged out of github.com (preview mock)";
+  }
+  return invoke<string>("gh_logout", { login });
+}
+
+// Open an https page (a pull request, a check, GitHub's sign-in page) in the
+// default browser.
+export async function openGithubUrl(url: string): Promise<void> {
+  if (!isTauri()) {
+    window.open(url, "_blank", "noopener");
+    return;
+  }
+  await invoke<void>("open_github_url", { url });
+}
+
 // ---------------------------------------------------------------------------
 // Mock data (browser-only)
 // ---------------------------------------------------------------------------
@@ -2430,6 +2599,190 @@ let mockGitflow: GitFlowConfig | null = null;
 
 // The mock repo tracks its design files with LFS.
 const MOCK_LFS: LfsStatus = { installed: true, used: true, initialized: true, patterns: ["*.psd"] };
+
+// GitHub, as gh would answer for a signed-in user in a repo with three open
+// pull requests: one approved with failing checks, one draft, one of the
+// user's own waiting on review.
+const MOCK_GH_ACCOUNT: GhAccount = { installed: true, signed_in: true, login: "you", scopes: ["repo", "read:org"], message: null };
+
+const MOCK_PULL_REQUESTS: PullRequest[] = [
+  {
+    number: 42,
+    title: "Retry the identity check when the provider times out",
+    author: "octocat",
+    is_draft: false,
+    review_decision: "APPROVED",
+    checks: "failure",
+    head: "feature/identity-retry",
+    base: "main",
+    updated_at: "2026-10-30T08:12:00Z",
+    url: "https://github.com/example/mideal/pull/42",
+    labels: [{ name: "enhancement", color: "a2eeef" }, { name: "backend", color: "5319e7" }],
+  },
+  {
+    number: 41,
+    title: "WIP: move the onboarding flow to the new form engine",
+    author: "hubot",
+    is_draft: true,
+    review_decision: null,
+    checks: "pending",
+    head: "onboarding-forms",
+    base: "main",
+    updated_at: "2026-10-29T16:40:00Z",
+    url: "https://github.com/example/mideal/pull/41",
+    labels: [],
+  },
+  {
+    number: 39,
+    title: "Fix the date format in exported reports",
+    author: "you",
+    is_draft: false,
+    review_decision: "REVIEW_REQUIRED",
+    checks: "success",
+    head: "fix/report-dates",
+    base: "main",
+    updated_at: "2026-10-28T11:05:00Z",
+    url: "https://github.com/example/mideal/pull/39",
+    labels: [{ name: "bug", color: "d73a4a" }],
+  },
+];
+
+function mockPrDetail(pr: PullRequest): PullRequestDetail {
+  return {
+    number: pr.number,
+    title: pr.title,
+    body: "",
+    state: "OPEN",
+    is_draft: pr.is_draft,
+    author: pr.author,
+    base: pr.base,
+    head: pr.head,
+    head_oid: mockOid("e"),
+    url: pr.url,
+    created_at: pr.updated_at,
+    review_decision: pr.review_decision,
+    labels: pr.labels,
+    checks: [],
+    reviews: [],
+    comments: [],
+    review_comments: [],
+    additions: 2,
+    deletions: 1,
+    changed_files: 1,
+  };
+}
+
+const MOCK_PR_DETAILS = new Map<number, PullRequestDetail>([
+  [
+    42,
+    {
+      ...mockPrDetail(MOCK_PULL_REQUESTS[0]),
+      body:
+        "The identity provider sometimes takes longer than our 5 s timeout, and the check fails outright.\n\n" +
+        "## Changes\n\n- Retry up to **3** times with backoff\n- Log each retry with the `requestId`\n\n" +
+        "Closes #37. <script>alert('escaped')</script>",
+      created_at: "2026-10-27T09:30:00Z",
+      checks: [
+        { name: "build", state: "success", url: "https://github.com/example/mideal/actions/runs/1" },
+        { name: "unit-tests", state: "failure", url: "https://github.com/example/mideal/actions/runs/2" },
+        { name: "lint", state: "skipped", url: null },
+      ],
+      reviews: [
+        { author: "hubot", state: "CHANGES_REQUESTED", body: "The backoff should be capped.", submitted_at: "2026-10-28T10:00:00Z" },
+        { author: "hubot", state: "APPROVED", body: "", submitted_at: "2026-10-29T15:00:00Z" },
+      ],
+      comments: [
+        { id: "IC_1", author: "hubot", body: "Does this also cover the **SMS** provider?", created_at: "2026-10-27T12:00:00Z", url: "https://github.com/example/mideal/pull/42#issuecomment-1" },
+        { id: "IC_2", author: "octocat", body: "Yes — both go through `IdentityClient`.", created_at: "2026-10-27T12:30:00Z", url: "https://github.com/example/mideal/pull/42#issuecomment-2" },
+      ],
+      review_comments: [
+        {
+          id: 501,
+          author: "hubot",
+          body: "Cap this at 30 s?",
+          path: "src/identity/retry.ts",
+          line: 6,
+          original_line: 6,
+          side: "RIGHT",
+          created_at: "2026-10-28T10:00:00Z",
+          in_reply_to: null,
+          url: "https://github.com/example/mideal/pull/42#discussion_r501",
+          diff_hunk: "@@ -1,6 +1,8 @@\n export async function withRetry<T>(run: () => Promise<T>): Promise<T> {\n-  return run();\n+  for (let attempt = 1; ; attempt++) {\n+    const delay = 2 ** attempt * 100;",
+        },
+        {
+          id: 502,
+          author: "octocat",
+          body: "Done in the next push.",
+          path: "src/identity/retry.ts",
+          line: 6,
+          original_line: 6,
+          side: "RIGHT",
+          created_at: "2026-10-28T11:00:00Z",
+          in_reply_to: 501,
+          url: "https://github.com/example/mideal/pull/42#discussion_r502",
+          diff_hunk: "",
+        },
+      ],
+      additions: 9,
+      deletions: 2,
+      changed_files: 2,
+    },
+  ],
+]);
+
+// The mock detail a post on #`number` lands in.
+function mockPrDetailOf(number: number): PullRequestDetail {
+  let detail = MOCK_PR_DETAILS.get(number);
+  if (!detail) {
+    detail = mockPrDetail(MOCK_PULL_REQUESTS.find((p) => p.number === number) ?? MOCK_PULL_REQUESTS[0]);
+    MOCK_PR_DETAILS.set(number, detail);
+  }
+  return detail;
+}
+
+const MOCK_PR_FILES: FileDiff[] = [
+  {
+    path: "src/identity/retry.ts",
+    old_path: null,
+    status: "Modified",
+    truncated: false,
+    hunks: [
+      {
+        header: "@@ -1,6 +1,10 @@",
+        lines: [
+          { origin: " ", old_lineno: 1, new_lineno: 1, content: "export async function withRetry<T>(run: () => Promise<T>): Promise<T> {" },
+          { origin: "-", old_lineno: 2, new_lineno: null, content: "  return run();" },
+          { origin: "+", old_lineno: null, new_lineno: 2, content: "  for (let attempt = 1; ; attempt++) {" },
+          { origin: "+", old_lineno: null, new_lineno: 3, content: "    try {" },
+          { origin: "+", old_lineno: null, new_lineno: 4, content: "      return await run();" },
+          { origin: "+", old_lineno: null, new_lineno: 5, content: "    } catch (err) {" },
+          { origin: "+", old_lineno: null, new_lineno: 6, content: "      if (attempt === 3) throw err;" },
+          { origin: "+", old_lineno: null, new_lineno: 7, content: "      await sleep(2 ** attempt * 100);" },
+          { origin: "+", old_lineno: null, new_lineno: 8, content: "    }" },
+          { origin: "+", old_lineno: null, new_lineno: 9, content: "  }" },
+          { origin: " ", old_lineno: 3, new_lineno: 10, content: "}" },
+        ],
+      },
+    ],
+  },
+  {
+    path: "src/identity/client.ts",
+    old_path: null,
+    status: "Modified",
+    truncated: false,
+    hunks: [
+      {
+        header: "@@ -10,4 +10,4 @@ export class IdentityClient {",
+        lines: [
+          { origin: " ", old_lineno: 10, new_lineno: 10, content: "  async check(id: string): Promise<Result> {" },
+          { origin: "-", old_lineno: 11, new_lineno: null, content: "    return this.http.get(`/check/${id}`);" },
+          { origin: "+", old_lineno: null, new_lineno: 11, content: "    return withRetry(() => this.http.get(`/check/${id}`));" },
+          { origin: " ", old_lineno: 12, new_lineno: 12, content: "  }" },
+        ],
+      },
+    ],
+  },
+];
 
 // One submodule, with an older commit checked out than the repo records.
 const MOCK_SUBMODULES: Submodule[] = [

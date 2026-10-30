@@ -4672,6 +4672,387 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   border-color: var(--mod-fg);
   color: var(--mod-fg);
 }
+
+/* Pull requests (gh) ----------------------------------------------------- */
+/* The sidebar section: gh's login in the header, the filter, one row each. */
+.sb-pr-account {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+.sb-pr-account .remote-icon {
+  width: 11px;
+  height: 11px;
+}
+.sb-pr-account.off {
+  font-style: italic;
+}
+.sb-pr-account + .sb-section-add {
+  margin-left: 4px;
+}
+.sb-note {
+  padding: 4px 6px 4px 22px;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.sb-note.sb-pr-error {
+  color: var(--del-fg);
+  white-space: pre-wrap;
+}
+.sb-pr-signin {
+  padding: 4px 6px 6px 22px;
+}
+.sb-pr-filters {
+  margin: 4px 6px 4px 22px;
+}
+.sb-pr-filters .seg {
+  padding: 2px 6px;
+  font-size: 11px;
+}
+.sb-pr .sb-leaf-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The checks as a dot: green passed, red failed, amber still running. */
+.sb-pr-checks,
+.pr-check-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border);
+}
+.sb-pr-checks.success,
+.pr-check-dot.success {
+  background: var(--add-fg);
+}
+.sb-pr-checks.failure,
+.pr-check-dot.failure {
+  background: var(--del-fg);
+}
+.sb-pr-checks.pending,
+.pr-check-dot.pending {
+  background: var(--mod-fg);
+}
+.sb-badge.review-approved,
+.pr-badge.review-approved {
+  border-color: var(--add-fg);
+  color: var(--add-fg);
+}
+.sb-badge.review-changes_requested,
+.pr-badge.review-changes_requested {
+  border-color: var(--del-fg);
+  color: var(--del-fg);
+}
+
+/* The pull request view. */
+#pr-view:not(.hidden) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.pr-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.pr-empty {
+  padding: 24px;
+  color: var(--text-dim);
+}
+.pr-head {
+  padding: 12px 16px 8px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pr-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.pr-title {
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.pr-number {
+  color: var(--text-dim);
+  font-size: 15px;
+}
+.pr-meta,
+.pr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.pr-meta code {
+  font-family: var(--mono);
+  background: var(--bg-elev-2);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.pr-author {
+  font-weight: 600;
+}
+.pr-branches {
+  color: var(--text-dim);
+}
+.pr-state {
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: #fff;
+  background: var(--badge-system);
+}
+.pr-state.open {
+  background: #2da44e;
+}
+.pr-state.merged {
+  background: #8250df;
+}
+.pr-state.closed {
+  background: #cf222e;
+}
+.pr-badge {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+/* A GitHub label in its own color (set as --label when it is plain hex). */
+.pr-label {
+  --label: var(--text-dim);
+  font-size: 11px;
+  padding: 0 7px;
+  border-radius: 8px;
+  border: 1px solid var(--label);
+  background: color-mix(in srgb, var(--label) 22%, transparent);
+  color: var(--text);
+}
+.pr-actions .btn .remote-icon {
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+.pr-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+.pr-tab {
+  padding: 7px 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+.pr-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.pr-diffstat {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.pr-add {
+  color: var(--add-fg);
+}
+.pr-del {
+  color: var(--del-fg);
+}
+.pr-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pr-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  padding: 8px 12px;
+}
+.pr-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.pr-card-author {
+  font-weight: 600;
+}
+.pr-card-verb,
+.pr-card-time,
+.pr-card-none {
+  color: var(--text-dim);
+}
+.pr-card-head .btn {
+  margin-left: auto;
+}
+.pr-card.pr-review.approved {
+  border-left: 3px solid var(--add-fg);
+}
+.pr-card.pr-review.changes_requested {
+  border-left: 3px solid var(--del-fg);
+}
+.pr-thread {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--sans);
+  white-space: normal;
+}
+.hunk .pr-thread {
+  margin: 4px 12px 6px 48px;
+  background: var(--bg-elev);
+}
+.pr-thread-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.pr-thread-head code,
+.pr-thread-hunk {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.pr-thread-hunk {
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--bg-elev-2);
+  overflow-x: auto;
+}
+.pr-thread-hunk .add {
+  color: var(--add-fg);
+}
+.pr-thread-hunk .del {
+  color: var(--del-fg);
+}
+.pr-thread-comment {
+  background: none;
+  border: none;
+  padding: 2px 0;
+}
+.pr-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--sans);
+}
+.hunk .pr-composer {
+  margin: 4px 12px 6px 48px;
+}
+.pr-composer-input {
+  min-height: 70px;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font: 13px var(--sans);
+}
+.pr-composer-actions,
+.pr-thread-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.pr-files-hint,
+.pr-checks-summary {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+/* A diff line in the Files tab takes a comment on click. */
+.diff-line.pr-commentable {
+  cursor: pointer;
+}
+.diff-line.pr-commentable:hover {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.pr-checks {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.pr-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.pr-check + .pr-check {
+  border-top: 1px solid var(--border);
+}
+.pr-check-name {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.pr-check-state {
+  color: var(--text-dim);
+}
+/* The GitHub sign-in dialog and its one-time code. */
+.gh-sign-in {
+  width: min(460px, 92vw);
+}
+.gh-code-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+.gh-code {
+  font-family: var(--mono);
+  font-size: 22px;
+  letter-spacing: 2px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--bg-elev-2);
+  user-select: all;
+}
+.gh-sign-in-wait {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.settings-gh-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 /* A submodule in Local Changes: what it moved between, in place of a diff. */
 .submodule-change {
   padding: 16px;

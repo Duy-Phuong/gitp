@@ -335,7 +335,7 @@ impl Repo {
 /// Turn a git remote URL into `(host, https_base)`, handling scp-style
 /// (`git@host:owner/repo.git`) and URL forms (`https://`, `ssh://`, `git://`).
 /// The base has no `.git` suffix and no trailing slash.
-fn parse_remote_url(url: &str) -> Option<(String, String)> {
+pub(crate) fn parse_remote_url(url: &str) -> Option<(String, String)> {
     let u = url.trim().strip_suffix(".git").unwrap_or(url.trim());
 
     // scp-like: [user@]host:owner/repo

@@ -56,6 +56,7 @@ import { setupChanges } from "./views/changes";
 import { setupConflict } from "./views/conflict";
 import { setupReflog } from "./views/reflog";
 import { setupActivity } from "./views/activity";
+import { setupPullRequestView } from "./views/pull-request";
 import { copyText } from "./clipboard";
 import { state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus, watchNetwork, watchPending } from "./report";
@@ -130,6 +131,14 @@ import {
 import { onWorktreeMenu } from "./worktree-actions";
 import { addRemoteAction, onRemoteFolderMenu, onRemotesMenu } from "./remote-actions";
 import { addSubmoduleAction, onSubmoduleMenu, openSubmodule } from "./submodule-actions";
+import {
+  loadPullRequests,
+  onPrMenu,
+  pullRequestCallbacks,
+  refreshPullRequests,
+  setPrFilter,
+  signInToGitHub,
+} from "./pr-actions";
 import { createFileAction, editFileAction } from "./editor-actions";
 import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
@@ -302,6 +311,11 @@ async function init(): Promise<void> {
     onAddSubmodule: addSubmoduleAction,
     createBranchAt: (name, rev) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
     onSectionMenu,
+    loadPullRequests: () => void loadPullRequests(),
+    onPrMenu,
+    onPrFilter: setPrFilter,
+    onPrRefresh: refreshPullRequests,
+    onGitHubSignIn: () => void signInToGitHub(),
   });
   applyTheme(currentTheme());
   void applyZoom(loadZoom());
@@ -446,6 +460,7 @@ async function init(): Promise<void> {
     onMenu: onReflogMenu,
     reportError: readFailed,
   });
+  ui.prView = setupPullRequestView($("#pr-view"), pullRequestCallbacks);
   ui.activityView = setupActivity($("#activity-view"), {
     fetch: fetchActivityLog,
     clear: clearActivityLog,

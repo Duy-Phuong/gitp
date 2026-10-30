@@ -21,6 +21,7 @@ import {
   applyStash,
   renameStash,
   revealPath,
+  listPullRequests,
 } from "./api";
 import { showContextMenu } from "./views/context-menu";
 import { openStashApplyModal } from "./views/stash-apply";
@@ -50,6 +51,7 @@ import {
   closeRepoTab,
   loadRepo,
   selectCommit,
+  showPullRequest,
   showReflog,
   showView,
   switchRepo,
@@ -106,6 +108,7 @@ import { addSubmoduleAction, syncSubmodulesAction, updateSubmodulesAction } from
 import { finishFlowAction, initGitflowAction, startFlowAction } from "./gitflow-actions";
 import { FLOW_KINDS, flowBranch } from "./gitflow";
 import { lfsFetchAction, lfsInstallAction, lfsPullAction, lfsTrackAction, lfsUntrackAction } from "./lfs-actions";
+import { checkoutPullRequestAction } from "./pr-actions";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { openWorkspacesAction } from "./local-workspace-actions";
 import { addRemoteAction } from "./remote-actions";
@@ -487,6 +490,7 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Unstage All Changes", run: () => void unstageAllAction() },
     ...gitflowCommands(),
     ...lfsCommands(),
+    ...pullRequestCommands(),
     ...commitCommands(),
   ];
 
@@ -610,6 +614,37 @@ function lfsUntrackStage(): QuickStage {
       },
     ],
   };
+}
+
+// GitHub pull requests, for a repository with a GitHub remote: open one, or
+// check one out.
+function pullRequestCommands(): QuickItem[] {
+  if (!state.prs.repo) return [];
+  return [
+    { kind: "command", label: "Pull Requests", next: () => pullRequestStage("Open", (n) => showPullRequest(n)) },
+    {
+      kind: "command",
+      label: "Check Out Pull Request…",
+      next: () => pullRequestStage("Check Out", (n) => void checkoutPullRequestAction(n)),
+    },
+  ];
+}
+
+// The repo's open pull requests, asked of GitHub afresh.
+async function pullRequestStage(chip: string, pick: (n: number) => void): Promise<QuickStage> {
+  let items: QuickItem[] = [];
+  let emptyNote = "No open pull requests.";
+  try {
+    items = (await listPullRequests("all")).map((pr) => ({
+      kind: "option" as const,
+      label: `#${pr.number} ${pr.title}`,
+      detail: `${pr.author} · ${pr.head}`,
+      run: () => pick(pr.number),
+    }));
+  } catch (err) {
+    emptyNote = String(err);
+  }
+  return { chip, placeholder: "pull request", emptyNote, sections: [{ title: "Pull Requests", items }] };
 }
 
 // `open_in_editor`/`reveal` succeed or fail entirely in the OS, so without a

@@ -18,6 +18,7 @@ import { setConfigTab } from "./config-panel";
 import { reloadDiffs, showView, startAutoFetch, updateLogView } from "./shell";
 import { createBranchAction, runPullMethod } from "./repo-actions";
 import { checkoutBranchAction } from "./ref-actions";
+import { githubAccountForSettings, signInToGitHub, signOutOfGitHub } from "./pr-actions";
 import { closeSettingsDialog, openSettingsDialog } from "./views/settings-dialog";
 
 // The Branch button's dropdown: pick a local branch to check out, or create a
@@ -192,6 +193,9 @@ export function setupSettingsMenu(): void {
         setConfigTab(tab);
         showView("config");
       },
+      githubAccount: githubAccountForSettings,
+      githubSignIn: signInToGitHub,
+      githubSignOut: signOutOfGitHub,
     }),
   );
 }

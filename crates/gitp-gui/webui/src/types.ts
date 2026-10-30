@@ -542,3 +542,122 @@ export interface LfsStatus {
   initialized: boolean;
   patterns: string[];
 }
+
+// --- GitHub pull requests (mirrors gitp-core's gh module) ---------------------
+
+// The `gh` account signed in to github.com. gitp holds no token: gh does.
+export interface GhAccount {
+  installed: boolean;
+  signed_in: boolean;
+  login: string | null;
+  scopes: string[];
+  // Why it is signed out, when that's more than "never signed in".
+  message: string | null;
+}
+
+export type PrFilter = "all" | "mine" | "review_requested";
+
+export interface PrLabel {
+  name: string;
+  // Hex, without the `#`.
+  color: string;
+}
+
+// A pull request as the sidebar lists it.
+export interface PullRequest {
+  number: number;
+  title: string;
+  author: string;
+  is_draft: boolean;
+  // APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED, or null.
+  review_decision: string | null;
+  // All checks in one word: success / failure / pending; null without checks.
+  checks: string | null;
+  head: string;
+  base: string;
+  updated_at: string;
+  url: string;
+  labels: PrLabel[];
+}
+
+export interface PrCheck {
+  name: string;
+  // success / failure / pending / neutral / skipped
+  state: string;
+  url: string | null;
+}
+
+export interface PrReview {
+  author: string;
+  // APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED
+  state: string;
+  body: string;
+  submitted_at: string;
+}
+
+// A comment on the pull request itself.
+export interface PrComment {
+  id: string;
+  author: string;
+  body: string;
+  created_at: string;
+  url: string;
+}
+
+// A comment on a diff line: a thread's first, or a reply in it.
+export interface PrReviewComment {
+  id: number;
+  author: string;
+  body: string;
+  path: string;
+  // Its line in the current diff; null once outdated.
+  line: number | null;
+  original_line: number | null;
+  side: "LEFT" | "RIGHT";
+  created_at: string;
+  // The thread's first comment, for a reply.
+  in_reply_to: number | null;
+  url: string;
+  diff_hunk: string;
+}
+
+export interface PullRequestDetail {
+  number: number;
+  title: string;
+  body: string;
+  // OPEN / CLOSED / MERGED
+  state: string;
+  is_draft: boolean;
+  author: string;
+  base: string;
+  head: string;
+  head_oid: string;
+  url: string;
+  created_at: string;
+  review_decision: string | null;
+  labels: PrLabel[];
+  checks: PrCheck[];
+  reviews: PrReview[];
+  comments: PrComment[];
+  review_comments: PrReviewComment[];
+  additions: number;
+  deletions: number;
+  changed_files: number;
+}
+
+export type ReviewVerdict = "approve" | "request_changes" | "comment";
+
+// A new comment on one diff line.
+export interface LineComment {
+  path: string;
+  line: number;
+  side: "LEFT" | "RIGHT";
+  commit_id: string;
+  body: string;
+}
+
+// What the GitHub sign-in dialog shows: the one-time code, and where to enter it.
+export interface DeviceCode {
+  code: string;
+  url: string;
+}
