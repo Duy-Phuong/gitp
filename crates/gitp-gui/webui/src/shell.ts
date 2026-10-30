@@ -40,7 +40,8 @@ import type { BisectMark, CommitRow, ConflictStatus, LogPage, LogScope, ReflogEn
 import { EMPTY_REFS, PAGE_SIZE, state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { markRemoteFetched, remoteFetchedAt, renderFetchAge } from "./fetch-age";
-import { loadGraphPrefs, loadWorkspace, rememberRecentRepo, saveWorkspace } from "./prefs";
+import { loadGraphPrefs, loadWorkspace, rememberRecentRepo, saveGraphPrefs, saveWorkspace, type GraphPrefs } from "./prefs";
+import { hiddenRefCount, refFilter, withHidden } from "./ref-visibility";
 import { rebuildCommitRefs, refLabelsAt } from "./commit-refs";
 import { refreshConfig } from "./config-panel";
 import { refreshActionButtons } from "./toolbar";
@@ -59,6 +60,7 @@ interface RefActions {
   onWorktreeMenu: SidebarCallbacks["onWorktreeMenu"];
   onSubmoduleOpen: SidebarCallbacks["onSubmoduleOpen"];
   onSubmoduleMenu: SidebarCallbacks["onSubmoduleMenu"];
+  onSectionMenu: SidebarCallbacks["onSectionMenu"];
 }
 
 let refActions: RefActions;
@@ -117,7 +119,10 @@ export function applyWorkspace(ws: Workspace): void {
   const active = ws.active != null ? ws.repos[ws.active] : undefined;
   const changed = (active?.path ?? "") !== state.repoPath;
   state.repoPath = active?.path ?? "";
-  if (changed) resetRepoViews();
+  if (changed) {
+    resetRepoViews();
+    state.graph = loadGraphPrefs(state.repoPath);
+  }
   rememberRecentRepo(state.repoPath);
   renderRepoTabs();
   $("#action-bar").classList.toggle("hidden", state.repos.length === 0);
@@ -225,7 +230,17 @@ let rowsScope = "";
 // What the log shows for the active repo: the All/Current toggle plus the
 // repo's graph settings.
 export function logScope(): LogScope {
-  return { all_branches: state.allBranches, pinned: loadGraphPrefs(state.repoPath).pinned };
+  const { pinned, hidden, solo } = state.graph;
+  return { all_branches: state.allBranches, pinned, hidden, solo };
+}
+
+// Adopt and remember new graph settings for the active repo, then show the
+// graph they describe.
+export function updateGraphPrefs(next: GraphPrefs): void {
+  state.graph = next;
+  saveGraphPrefs(state.repoPath, next);
+  renderSidebarNow();
+  void refreshHistory({ keepSelection: true });
 }
 
 // The commit id whose detail is currently rendered in detailView. Commits are
@@ -674,7 +689,9 @@ function sidebarSignature(repoName: string): string {
     [...state.busyRefs].sort().join(","),
     state.worktrees.map((w) => `${w.path}:${w.head}:${w.branch}:${w.is_current}:${w.locked}:${w.lock_reason}:${w.prunable}`).join(","),
     state.submodules.map((m) => `${m.path}:${m.url}:${m.recorded}:${m.checked_out}:${m.state}`).join(","),
-    loadGraphPrefs(state.repoPath).pinned ?? "",
+    state.graph.pinned ?? "",
+    state.graph.hidden.join(","),
+    state.graph.solo.join(","),
   ].join("|");
 }
 
@@ -687,6 +704,7 @@ export function renderSidebarNow(): void {
   renderFetchAge();
   renderTerminalCwd();
   refreshActionButtons();
+  renderHiddenRefs();
   const active = state.repos.find((r) => r.path === state.repoPath);
   const sig = sidebarSignature(active?.name ?? "");
   if (sig === lastSidebarSig) return;
@@ -706,7 +724,8 @@ export function renderSidebarNow(): void {
       busyRefs: state.busyRefs,
       worktrees: state.worktrees,
       submodules: state.submodules,
-      pinned: loadGraphPrefs(state.repoPath).pinned,
+      pinned: state.graph.pinned,
+      visibility: refFilter(state.graph),
     },
     {
       onSelectView: (v: SidebarView) => (v === "reflog" ? showReflog() : showView(v)),
@@ -745,8 +764,23 @@ export function renderSidebarNow(): void {
       onWorktreeMenu: (w, x, y) => refActions.onWorktreeMenu(w, x, y),
       onSubmoduleOpen: (sm) => refActions.onSubmoduleOpen(sm),
       onSubmoduleMenu: (sm, x, y) => refActions.onSubmoduleMenu(sm, x, y),
+      onToggleHidden: (refname) => updateGraphPrefs(withHidden(state.graph, [refname], !state.graph.hidden.includes(refname))),
+      onSectionMenu: (key, x, y) => refActions.onSectionMenu(key, x, y),
     },
   );
+}
+
+// "N refs hidden · Show all" above the log while Hide or Solo leaves refs out
+// of the graph.
+function renderHiddenRefs(): void {
+  const slot = $("#log-hidden-refs");
+  const n = state.repoPath ? hiddenRefCount(refFilter(state.graph), state.refs) : 0;
+  slot.classList.toggle("hidden", n === 0);
+  clear(slot);
+  if (n === 0) return;
+  const showAll = el("button", { text: "Show all" });
+  showAll.addEventListener("click", () => updateGraphPrefs({ ...state.graph, hidden: [], solo: [] }));
+  slot.append(`${n} ref${n === 1 ? "" : "s"} hidden · `, showAll);
 }
 
 // Show which directory the shell is in — the terminal follows the active repo.

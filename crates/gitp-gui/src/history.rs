@@ -317,6 +317,7 @@ mod tests {
             let scope = LogScope {
                 all_branches: true,
                 pinned: Some(pin),
+                ..LogScope::default()
             };
             let page = get_log_page_impl(&state, 0, 10, scope).unwrap();
             let lane = |s: &str| page.rows.iter().find(|r| r.summary == s).unwrap().lane;

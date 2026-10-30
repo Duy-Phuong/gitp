@@ -1784,6 +1784,28 @@ body {
 .log-search-input:focus {
   border-color: var(--accent);
 }
+/* "3 refs hidden · Show all" while Hide / Solo leaves refs out of the graph. */
+.log-hidden-refs {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.log-hidden-refs.hidden {
+  display: none;
+}
+.log-hidden-refs button {
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.log-hidden-refs button:hover {
+  text-decoration: underline;
+}
 /* "12 commits" beside the search box while a search is showing. */
 .log-search-count {
   flex: 0 0 auto;
@@ -3876,6 +3898,29 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   border-radius: 7px;
   border: 1px solid var(--border);
   color: var(--text-dim);
+}
+/* A ref Hide / Solo leaves out of the graph: dimmed. The eye that hides or
+   shows a ref appears on hover, and stays (struck through) on a hidden one. */
+.sb-leaf.sb-hidden .sb-leaf-label,
+.sb-leaf.sb-hidden .sb-ab {
+  opacity: 0.45;
+}
+.sb-eye {
+  display: none;
+  flex: none;
+  align-items: center;
+  color: var(--text-dim);
+}
+.sb-leaf:hover .sb-eye,
+.sb-eye.off {
+  display: inline-flex;
+}
+.sb-eye:hover {
+  color: var(--text);
+}
+.eye-icon {
+  width: 14px;
+  height: 14px;
 }
 /* A worktree whose folder is gone: still listed (until pruned), but dimmed. */
 .sb-leaf.sb-missing .sb-leaf-label {

@@ -10,6 +10,7 @@ import type { ChangesHandle } from "./views/changes";
 import type { ConflictHandle } from "./views/conflict";
 import type { TerminalHandle } from "./views/terminal";
 import type { ReflogHandle } from "./views/reflog";
+import type { GraphPrefs } from "./prefs";
 import type { BisectStatus, CommitRow, ConflictStatus, RebaseStatus, Refs, RepoTab, UndoState, Submodule, Worktree } from "./types";
 
 export type View = "history" | "changes" | "config" | "conflict" | "reflog";
@@ -38,6 +39,8 @@ interface State {
   bisect: BisectStatus | null;
   // History graph shows all branches (true) or just the current branch (false).
   allBranches: boolean;
+  // The active repo's graph settings: pinned branch, hidden and soloed refs.
+  graph: GraphPrefs;
   // Cmd/Shift-click multi-selection, for bulk actions — see log.ts / sidebar.ts.
   // Separate from `selectedId` (the one commit the detail pane follows).
   commitSelection: Set<string>;
@@ -70,6 +73,7 @@ export const state: State = {
   // default view. Keeping them shut is what makes the first paint cheap.
   sbCollapsed: new Set(["sec:recent", "sec:remotes", "sec:tags"]),
   allBranches: true,
+  graph: { pinned: null, hidden: [], solo: [] },
   commitSelection: new Set(),
   branchSelection: new Set(),
   branchSelectionAnchor: null,

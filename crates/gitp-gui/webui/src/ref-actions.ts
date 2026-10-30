@@ -42,7 +42,7 @@ import { openStashApplyModal } from "./views/stash-apply";
 import type { BranchRef, StashRef } from "./types";
 import { state } from "./app-state";
 import { opFailed, reportDone, setStatus } from "./report";
-import { loadGraphPrefs, saveGraphPrefs } from "./prefs";
+import { branchRefName, remoteRefName, tagRefName, withHidden, withSolo } from "./ref-visibility";
 import { copyText } from "./clipboard";
 import {
   clearCommitSelection,
@@ -55,6 +55,7 @@ import {
   renderSidebarNow,
   showReflog,
   showView,
+  updateGraphPrefs,
 } from "./shell";
 import { checkoutCommitAction, confirmThenRun, openInteractiveRebase, resetAction } from "./commit-actions";
 import { showComparison } from "./compare";
@@ -179,8 +180,10 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
   items.push({ label: "Unset Upstream", run: () => onBranch(`Unsetting upstream of ${b.name}`, () => unsetUpstream(b.name), false) });
 
   items.push({ separator: true });
-  const pinned = loadGraphPrefs(state.repoPath).pinned === b.name;
+  const pinned = state.graph.pinned === b.name;
   items.push({ label: pinned ? "Unpin" : "Pin to Left", run: () => pinBranchAction(pinned ? null : b.name) });
+  // HEAD is always walked, so the checked-out branch can't be hidden.
+  if (!b.is_head) items.push(...visibilityItems(branchRefName(b.name)));
 
   items.push({ separator: true });
   items.push({ label: "Rename…", run: () => void renameBranchAction(b) });
@@ -270,10 +273,40 @@ function resolveDragRef(ref: DragRef): DropRef | null {
 // Keep `name`'s first-parent line in the graph's leftmost lane (null unpins).
 // One branch at a time, remembered per repo.
 function pinBranchAction(name: string | null): void {
-  saveGraphPrefs(state.repoPath, { ...loadGraphPrefs(state.repoPath), pinned: name });
-  renderSidebarNow();
-  void refreshHistory({ keepSelection: true });
+  updateGraphPrefs({ ...state.graph, pinned: name });
   setStatus(name ? `Pinned ${name} to the left of the graph.` : "Unpinned.");
+}
+
+// Hide / Solo for one ref's menu (`refname` in full, e.g. refs/heads/dev).
+function visibilityItems(refname: string): MenuItem[] {
+  const hidden = state.graph.hidden.includes(refname);
+  const soloed = state.graph.solo.includes(refname);
+  return [
+    { label: hidden ? "Show in Graph" : "Hide", run: () => updateGraphPrefs(withHidden(state.graph, [refname], !hidden)) },
+    { label: soloed ? "Unsolo" : "Solo", run: () => updateGraphPrefs(withSolo(state.graph, [refname], !soloed)) },
+  ];
+}
+
+// Right-click the Branches, Remotes or Tags header: hide or show every ref in
+// it at once (the checked-out branch stays: HEAD is always walked).
+export function onSectionMenu(key: string, x: number, y: number): void {
+  const refnames =
+    key === "sec:branches"
+      ? state.refs.branches.filter((b) => !b.is_head).map((b) => branchRefName(b.name))
+      : key === "sec:remotes"
+        ? state.refs.remotes.map((r) => remoteRefName(r.name))
+        : key === "sec:tags"
+          ? state.refs.tags.map((t) => tagRefName(t.name))
+          : [];
+  if (!refnames.length) return;
+  const items: MenuItem[] = [
+    { label: "Hide All", run: () => updateGraphPrefs(withHidden(state.graph, refnames, true)) },
+    { label: "Show All", run: () => updateGraphPrefs(withHidden(state.graph, refnames, false)) },
+  ];
+  if (refnames.some((r) => state.graph.solo.includes(r))) {
+    items.push({ label: "Unsolo All", run: () => updateGraphPrefs(withSolo(state.graph, refnames, false)) });
+  }
+  showContextMenu(x, y, items);
 }
 
 export function onBranchBulkMenu(x: number, y: number): void {
@@ -449,6 +482,9 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
   });
 
   items.push({ separator: true });
+  items.push(...visibilityItems(tagRefName(name)));
+
+  items.push({ separator: true });
   items.push({ label: "Delete…", danger: true, run: () => deleteTagAction(name) });
 
   items.push({ separator: true });
@@ -509,6 +545,8 @@ export function onRemoteMenu(name: string, target: string, x: number, y: number)
   const items: MenuItem[] = [
     { label: "Checkout…", run: () => void checkoutRemoteAction(name) },
     compareWithHeadItem(name),
+    { separator: true },
+    ...visibilityItems(remoteRefName(name)),
     { separator: true },
     { label: "Copy Branch Name", run: () => void copyText(name, `Copied ${name}`) },
   ];

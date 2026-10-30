@@ -94,6 +94,7 @@ import {
   onStashMenu,
   onMoreRefsMenu,
   onRefDrop,
+  onSectionMenu,
   onTagMenu,
 } from "./ref-actions";
 import { setOnRefDrop } from "./views/ref-drag";
@@ -214,6 +215,7 @@ async function init(): Promise<void> {
     onWorktreeMenu,
     onSubmoduleOpen: openSubmodule,
     onSubmoduleMenu,
+    onSectionMenu,
   });
   applyTheme(currentTheme());
   state.allBranches = loadAllBranches(); // before wireUi so the toggle reflects it

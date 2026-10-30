@@ -18,6 +18,10 @@ export interface LogScope {
   all_branches: boolean;
   // The local branch whose first-parent line keeps the leftmost lane.
   pinned: string | null;
+  // Full ref names the all-branches walk leaves out.
+  hidden: string[];
+  // Full ref names to walk instead (plus HEAD), when any.
+  solo: string[];
 }
 
 export interface LogPage {

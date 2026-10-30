@@ -31,6 +31,24 @@ pub struct LogScope {
     /// Ignored when the branch is gone or isn't in the walk.
     #[serde(default)]
     pub pinned: Option<String>,
+    /// Full ref names (`refs/heads/x`, `refs/remotes/origin/x`) the
+    /// all-branches walk leaves out ("Hide"). Their commits still show when
+    /// another ref reaches them.
+    #[serde(default)]
+    pub hidden: Vec<String>,
+    /// Full ref names to walk from instead of every branch ("Solo"), in either
+    /// mode. HEAD is always walked as well.
+    #[serde(default)]
+    pub solo: Vec<String>,
+}
+
+impl LogScope {
+    /// Whether the two walk from the same refs, i.e. differ in layout at most.
+    fn same_walk(&self, other: &LogScope) -> bool {
+        self.all_branches == other.all_branches
+            && self.hidden == other.hidden
+            && self.solo == other.solo
+    }
 }
 
 /// Just the history toggle, with nothing pinned.
@@ -117,7 +135,7 @@ impl Repo {
     /// Missing categories (say, no remotes) are skipped; an empty repo yields
     /// an empty log.
     pub fn log(&self, options: LogOptions) -> Result<Vec<CommitRow>> {
-        let tips = self.log_tips(options.all_branches)?;
+        let tips = self.log_tips(&options.all_branches.into())?;
         let mut rows = self.walk_rows(&tips, options.max_count)?;
         crate::graph::assign_lanes(&mut rows, None);
         Ok(rows)
@@ -131,7 +149,7 @@ impl Repo {
 
     /// `log_cache` for a full `LogScope`.
     pub fn log_cache_scoped(&self, scope: &LogScope) -> Result<LogCache> {
-        let tips = self.log_tips(scope.all_branches)?;
+        let tips = self.log_tips(scope)?;
         let mut rows = self.walk_rows(&tips, None)?;
         let pinned_tip = self.pinned_tip(scope);
         crate::graph::assign_lanes(&mut rows, pinned_tip.as_deref());
@@ -167,21 +185,26 @@ impl Repo {
     }
 
     /// `refresh_log` for a full `LogScope`. A different pinned branch only
-    /// lays the lanes out again; a different walk is a full walk.
+    /// lays the lanes out again; a different walk (the toggle, hidden or
+    /// soloed refs) is a full walk, so the commits of a ref shown again are
+    /// interleaved by date rather than all put on top.
     pub fn refresh_log_scoped(&self, cache: &mut LogCache, scope: &LogScope) -> Result<LogRefresh> {
-        let tips = self.log_tips(scope.all_branches)?;
+        let tips = self.log_tips(scope)?;
         let pinned_tip = self.pinned_tip(scope);
         let relaid = pinned_tip != cache.pinned_tip;
-        if scope.all_branches == cache.scope.all_branches {
+        // The same tips walk the same commits, whatever the scope says — so
+        // hiding a tag, or a branch in Current mode, costs no walk at all.
+        if tips == cache.tips {
             cache.scope = scope.clone();
-            if tips == cache.tips {
-                if !relaid {
-                    return Ok(LogRefresh::Unchanged);
-                }
-                crate::graph::assign_lanes(&mut cache.rows, pinned_tip.as_deref());
-                cache.pinned_tip = pinned_tip;
-                return Ok(LogRefresh::Relaid);
+            if !relaid {
+                return Ok(LogRefresh::Unchanged);
             }
+            crate::graph::assign_lanes(&mut cache.rows, pinned_tip.as_deref());
+            cache.pinned_tip = pinned_tip;
+            return Ok(LogRefresh::Relaid);
+        }
+        if scope.same_walk(&cache.scope) {
+            cache.scope = scope.clone();
             if let Some(new_rows) = self.commits_since(cache, &tips)? {
                 let added = new_rows.len();
                 if added > 0 || relaid {
@@ -265,14 +288,30 @@ impl Repo {
     }
 
     /// The commits a log walk starts from: HEAD, plus every local and
-    /// remote-tracking branch tip when `all_branches` is set. Refs that don't
-    /// peel to a commit are skipped, as `Revwalk::push_glob` would.
-    fn log_tips(&self, all_branches: bool) -> Result<Vec<git2::Oid>> {
+    /// remote-tracking branch tip not hidden when `all_branches` is set — or,
+    /// with refs soloed, HEAD and those alone. Refs that don't peel to a
+    /// commit are skipped, as `Revwalk::push_glob` would.
+    fn log_tips(&self, scope: &LogScope) -> Result<Vec<git2::Oid>> {
         let mut tips = Vec::new();
-        if all_branches {
+        if !scope.solo.is_empty() {
+            for name in &scope.solo {
+                if let Ok(commit) = self
+                    .inner
+                    .find_reference(name)
+                    .and_then(|r| r.peel_to_commit())
+                {
+                    tips.push(commit.id());
+                }
+            }
+        } else if scope.all_branches {
+            let hidden: HashSet<&str> = scope.hidden.iter().map(String::as_str).collect();
             for glob in ["refs/heads/*", "refs/remotes/*"] {
                 for reference in self.inner.references_glob(glob)? {
-                    if let Ok(commit) = reference.and_then(|r| r.peel_to_commit()) {
+                    let Ok(reference) = reference else { continue };
+                    if reference.name().is_some_and(|n| hidden.contains(n)) {
+                        continue;
+                    }
+                    if let Ok(commit) = reference.peel_to_commit() {
                         tips.push(commit.id());
                     }
                 }
