@@ -49,6 +49,7 @@ import type {
   WorktreeTarget,
   Submodule,
   StashOptions,
+  StashSwitch,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -591,6 +592,20 @@ export async function checkoutRemoteBranch(name: string): Promise<string> {
     return `Switched to ${local} (preview mock)`;
   }
   return invoke<string>("checkout_remote", { name });
+}
+
+// Stash & Switch: check out a local branch, a remote branch or a commit
+// (detached) with the uncommitted work stashed across the switch and popped
+// on the other side. `stash_kept`: the pop conflicted and git kept the stash.
+export async function stashAndSwitch(kind: "branch" | "remote" | "commit", target: string): Promise<StashSwitch> {
+  if (!isTauri()) {
+    let output = `Switched to ${target} (preview mock)`;
+    if (kind === "branch") await checkoutBranch(target);
+    else if (kind === "remote") output = await checkoutRemoteBranch(target);
+    else output = await checkoutCommit(target);
+    return { output, stash_kept: false };
+  }
+  return invoke<StashSwitch>("stash_and_switch", { kind, target });
 }
 
 export async function createBranch(name: string): Promise<void> {

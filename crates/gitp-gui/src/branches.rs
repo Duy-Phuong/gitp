@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use gitp_core::{DeletedBranch, MergeMode, Repo, Undoable};
+use gitp_core::{DeletedBranch, MergeMode, Repo, StashSwitch, Undoable};
 use serde::Serialize;
 use tauri::State;
 
@@ -23,6 +23,28 @@ fn checkout_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
         || format!("Checkout {name}"),
         |repo| repo.checkout_branch(&name),
     )
+}
+
+/// Stash & Switch: check out `target` — a local branch (`kind` "branch"), a
+/// remote-tracking branch ("remote") or a commit, detached ("commit") — with
+/// the uncommitted work stashed across the switch and popped there. Clears
+/// undo rather than recording the switch: undoing it would carry the popped
+/// work back as it stands, not reverse the stash.
+fn stash_and_switch_impl(
+    state: &RepoState,
+    kind: String,
+    target: String,
+) -> Result<StashSwitch, String> {
+    with_repo_clearing_undo(state, |repo| {
+        repo.stash_and_switch(&target, |r| match kind.as_str() {
+            "branch" => r
+                .checkout_branch(&target)
+                .map(|()| format!("Switched to {target}")),
+            "remote" => r.checkout_remote(&target),
+            "commit" => r.checkout_commit(&target),
+            _ => Err(gitp_core::Error::Message(format!("unknown checkout kind {kind}"))),
+        })
+    })
 }
 
 /// Check out a remote-tracking branch (creating a local tracking branch if
@@ -322,6 +344,15 @@ pub(crate) fn checkout_branch(name: String, state: State<RepoState>) -> Result<(
 #[tauri::command(async)]
 pub(crate) fn checkout_remote(name: String, state: State<RepoState>) -> Result<String, String> {
     checkout_remote_impl(&state, name)
+}
+
+#[tauri::command(async)]
+pub(crate) fn stash_and_switch(
+    kind: String,
+    target: String,
+    state: State<RepoState>,
+) -> Result<StashSwitch, String> {
+    stash_and_switch_impl(&state, kind, target)
 }
 
 #[tauri::command(async)]

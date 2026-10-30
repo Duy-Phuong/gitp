@@ -34,6 +34,7 @@ import {
   renameStash,
   saveStashPatch,
   squashMessage,
+  stashAndSwitch,
 } from "./api";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { openDeleteBranchModal, openDeleteTagModal } from "./views/delete-branch";
@@ -73,28 +74,27 @@ import { worktreeName } from "./views/sidebar";
 import { allRefsAt } from "./commit-refs";
 import { pushTargets } from "./push-targets";
 import { dropActions, isAncestorInRows, type DragRef, type DropRef } from "./ref-drop";
+import { askSwitchWithChanges, reportStashSwitch } from "./stash-switch";
 
 // Double-click a branch: check it out, then reload history + sidebar from the new
-// HEAD. Warns first if the working tree has uncommitted changes.
+// HEAD. With uncommitted changes, asks first: Stash & Switch, or carry them.
 export async function checkoutBranchAction(b: BranchRef): Promise<void> {
   if (b.is_head) return;
-  if (state.localChanges > 0) {
-    const n = state.localChanges;
-    const ok = await confirmDialog(
-      `You have ${n} uncommitted change${n === 1 ? "" : "s"}.\n\n` +
-        `Switch to "${b.name}"? Conflicting changes will block the checkout.`,
-    );
-    if (!ok) {
-      setStatus("Checkout cancelled.");
-      return;
-    }
+  const how = state.localChanges > 0 ? await askSwitchWithChanges(`"${b.name}"`) : "switch";
+  if (how === "cancel") {
+    setStatus("Checkout cancelled.");
+    return;
   }
-  setStatus(`Checking out ${b.name}…`);
+  setStatus(how === "stash" ? `Stashing changes and checking out ${b.name}…` : `Checking out ${b.name}…`);
   try {
-    await withBusyRef(b.name, () => checkoutBranch(b.name));
+    const stashed =
+      how === "stash"
+        ? await withBusyRef(b.name, () => stashAndSwitch("branch", b.name))
+        : await withBusyRef(b.name, () => checkoutBranch(b.name)).then(() => null);
     showView("history");
     await Promise.all([refreshHistory(), loadSidebar()]);
-    reportDone(`Checked out ${b.name}`);
+    if (stashed) reportStashSwitch(b.name, stashed);
+    else reportDone(`Checked out ${b.name}`);
   } catch (err) {
     // Conflicting local changes ("would be overwritten by checkout") come back
     // as multi-line git output — show the full reason, not just a status line.
@@ -644,21 +644,22 @@ export function onRemoteMenu(name: string, target: string, x: number, y: number)
 }
 
 // Check out a remote branch, creating/switching to a local tracking branch.
-// Warns first if the working tree has uncommitted changes (like branch checkout).
+// Asks first about uncommitted changes, like branch checkout.
 export async function checkoutRemoteAction(name: string): Promise<void> {
-  if (state.localChanges > 0) {
-    const n = state.localChanges;
-    const ok = await confirmDialog(
-      `You have ${n} uncommitted change${n === 1 ? "" : "s"}.\n\n` +
-        `Check out "${name}"? Conflicting changes will block it.`,
-    );
-    if (!ok) {
-      setStatus("Checkout cancelled.");
+  const how = state.localChanges > 0 ? await askSwitchWithChanges(`"${name}"`) : "switch";
+  if (how === "cancel") {
+    setStatus("Checkout cancelled.");
+    return;
+  }
+  setStatus(how === "stash" ? `Stashing changes and checking out ${name}…` : `Checking out ${name}…`);
+  try {
+    if (how === "stash") {
+      const r = await withBusyRef(name, () => stashAndSwitch("remote", name));
+      showView("history");
+      await Promise.all([refreshHistory(), loadSidebar()]);
+      reportStashSwitch(name, r);
       return;
     }
-  }
-  setStatus(`Checking out ${name}…`);
-  try {
     const out = (await withBusyRef(name, () => checkoutRemoteBranch(name))).trim();
     showView("history");
     await Promise.all([refreshHistory(), loadSidebar()]);

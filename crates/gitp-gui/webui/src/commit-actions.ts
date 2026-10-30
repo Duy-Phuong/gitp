@@ -20,6 +20,7 @@ import {
   revertCommit,
   revertCommitHunk,
   saveCommitsPatch,
+  stashAndSwitch,
 } from "./api";
 import { $ } from "./dom";
 import { logRowTop, renderLog } from "./views/log";
@@ -33,6 +34,7 @@ import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
 import { combinedDiffEnds, showComparison } from "./compare";
 import { refLabelsAt } from "./commit-refs";
+import { askSwitchWithChanges, reportStashSwitch } from "./stash-switch";
 import {
   bisectStep,
   clearCommitSelection,
@@ -495,21 +497,27 @@ export async function confirmThenRun(
   await runCommitOp(label, op);
 }
 
-// Detached checkout — warns first if the working tree has uncommitted changes,
-// mirroring the branch checkout flow.
+// Detached checkout — with uncommitted changes, asks first (Stash & Switch, or
+// carry them), mirroring the branch checkout flow.
 export async function checkoutCommitAction(rev: string, short: string): Promise<void> {
-  if (state.localChanges > 0) {
-    const n = state.localChanges;
-    const ok = await confirmDialog(
-      `You have ${n} uncommitted change${n === 1 ? "" : "s"}.\n\n` +
-        `Check out ${short} (detached HEAD)? Conflicting changes will block it.`,
-    );
-    if (!ok) {
-      setStatus("Checkout cancelled.");
-      return;
-    }
+  const how = state.localChanges > 0 ? await askSwitchWithChanges(`${short} (detached HEAD)`) : "switch";
+  if (how === "cancel") {
+    setStatus("Checkout cancelled.");
+    return;
   }
-  await runCommitOp(`Checking out ${short}`, () => checkoutCommit(rev), rev);
+  if (how === "switch") {
+    await runCommitOp(`Checking out ${short}`, () => checkoutCommit(rev), rev);
+    return;
+  }
+  setStatus(`Stashing changes and checking out ${short}…`);
+  try {
+    const r = await stashAndSwitch("commit", rev);
+    showView("history");
+    await Promise.all([landOnCommit(rev), loadSidebar()]);
+    reportStashSwitch(short, r);
+  } catch (err) {
+    opFailed(`Couldn't check out ${short}`, err);
+  }
 }
 
 export async function resetAction(rev: string, short: string, mode: ResetMode): Promise<void> {

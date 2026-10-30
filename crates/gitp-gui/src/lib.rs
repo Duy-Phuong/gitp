@@ -119,6 +119,7 @@ pub fn run() {
             staging::commit_changes,
             branches::checkout_branch,
             branches::checkout_remote,
+            branches::stash_and_switch,
             branches::create_branch,
             commits::checkout_commit,
             branches::create_branch_at,
