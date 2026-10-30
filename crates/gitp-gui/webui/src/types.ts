@@ -12,9 +12,23 @@ export interface CommitRow {
   color: number;
 }
 
+// What the log covers and how it is laid out (gitp-core's LogScope): the
+// All/Current toggle plus the repo's graph settings.
+export interface LogScope {
+  all_branches: boolean;
+  // The local branch whose first-parent line keeps the leftmost lane.
+  pinned: string | null;
+  // Full ref names the all-branches walk leaves out.
+  hidden: string[];
+  // Full ref names to walk instead (plus HEAD), when any.
+  solo: string[];
+}
+
 export interface LogPage {
   rows: CommitRow[];
   total: number;
+  // HEAD's commit, where the graph's WIP row hangs; null on an unborn branch.
+  head: string | null;
 }
 
 export type ChangeKind =
@@ -143,6 +157,8 @@ export interface TagRef {
 export interface StashRef {
   index: number;
   message: string;
+  // The commit the stash was taken on, where the graph draws it ("" if unknown).
+  base: string;
 }
 
 // What the Stash dialog asks `git stash push` for: an entry name (empty for

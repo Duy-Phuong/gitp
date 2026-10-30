@@ -33,16 +33,26 @@ import {
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el, $ } from "./dom";
-import { logRowHeight, renderLog, setBisectMarks } from "./views/log";
+import { logRowTop, renderLog, setBisectMarks, setStashNodes, setWipRow } from "./views/log";
 import { bisectBannerText } from "./bisect-text";
 import { closeCommitMenu } from "./views/commit-menu";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { renderSidebar, type SidebarView, type SidebarCallbacks } from "./views/sidebar";
-import type { BisectMark, CommitRow, ConflictStatus, LogPage, ReflogEntry, StashRef, Workspace } from "./types";
+import type { BisectMark, CommitRow, ConflictStatus, LogPage, LogScope, ReflogEntry, StashRef, Workspace } from "./types";
 import { EMPTY_REFS, PAGE_SIZE, state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { markRemoteFetched, remoteFetchedAt, renderFetchAge } from "./fetch-age";
-import { loadFavoriteRepos, loadWorkspace, rememberRecentRepo, saveWorkspace, toggleFavoriteRepo } from "./prefs";
+import {
+  loadFavoriteRepos,
+  loadGraphPrefs,
+  loadWorkspace,
+  rememberRecentRepo,
+  saveGraphPrefs,
+  saveWorkspace,
+  toggleFavoriteRepo,
+  type GraphPrefs,
+} from "./prefs";
+import { hiddenRefCount, refFilter, withHidden } from "./ref-visibility";
 import { rebuildCommitRefs, refLabelsAt } from "./commit-refs";
 import { refreshConfig } from "./config-panel";
 import { refreshActionButtons } from "./toolbar";
@@ -66,6 +76,7 @@ interface RefActions {
   onSubmoduleMenu: SidebarCallbacks["onSubmoduleMenu"];
   // The detached-HEAD banner's "Create Branch Here…".
   createBranchAt: (name: string, rev: string) => void;
+  onSectionMenu: SidebarCallbacks["onSectionMenu"];
 }
 
 let refActions: RefActions;
@@ -124,7 +135,10 @@ export function applyWorkspace(ws: Workspace): void {
   const active = ws.active != null ? ws.repos[ws.active] : undefined;
   const changed = (active?.path ?? "") !== state.repoPath;
   state.repoPath = active?.path ?? "";
-  if (changed) resetRepoViews();
+  if (changed) {
+    resetRepoViews();
+    state.graph = loadGraphPrefs(state.repoPath);
+  }
   rememberRecentRepo(state.repoPath);
   renderRepoTabs();
   $("#action-bar").classList.toggle("hidden", state.repos.length === 0);
@@ -207,6 +221,7 @@ export async function closeRepoTab(path: string): Promise<void> {
       state.rows = [];
       rowsRepoPath = "";
       state.total = 0;
+      state.headId = null;
       state.selectedId = null;
       state.refs = EMPTY_REFS;
       state.worktrees = [];
@@ -218,6 +233,7 @@ export async function closeRepoTab(path: string): Promise<void> {
       state.conflict = null;
       state.bisect = null;
       setBisectMarks(null);
+      setWipRow(0, null);
       ui.undoLabels = { undo: null, redo: null };
       renderRebaseBanner();
       renderConflictBanner();
@@ -246,6 +262,24 @@ let loadingMore = false;
 // Which repo `state.rows` was loaded from — history from a previous tab must
 // never be mistaken for the active repo's (see historyUnchanged).
 let rowsRepoPath = "";
+// …and with which scope: a different pin lays the same commits out anew.
+let rowsScope = "";
+
+// What the log shows for the active repo: the All/Current toggle plus the
+// repo's graph settings.
+export function logScope(): LogScope {
+  const { pinned, hidden, solo } = state.graph;
+  return { all_branches: state.allBranches, pinned, hidden, solo };
+}
+
+// Adopt and remember new graph settings for the active repo, then show the
+// graph they describe.
+export function updateGraphPrefs(next: GraphPrefs): void {
+  state.graph = next;
+  saveGraphPrefs(state.repoPath, next);
+  renderSidebarNow();
+  void refreshHistory({ keepSelection: true });
+}
 
 // The commit id whose detail is currently rendered in detailView. Commits are
 // immutable, so re-selecting the same id (e.g. switching back to History)
@@ -269,7 +303,9 @@ export async function refreshHistory(opts: { keepSelection?: boolean } = {}): Pr
   // Ask the backend for the same fingerprint it uses on its own log cache
   // instead: a few bytes, and it settles the question.
   const repoPath = state.repoPath;
-  const fingerprint = `${repoPath}:${await historyFingerprint()}`;
+  const scope = logScope();
+  const scopeKey = JSON.stringify(scope);
+  const fingerprint = `${repoPath}:${scopeKey}:${await historyFingerprint()}`;
   if (repoPath !== state.repoPath) return; // the tab changed under us; its own refresh takes over
   if (opts.keepSelection && fingerprint === lastHistoryFingerprint && state.rows.length) return;
   lastHistoryFingerprint = fingerprint;
@@ -278,16 +314,19 @@ export async function refreshHistory(opts: { keepSelection?: boolean } = {}): Pr
   // fetched): show row-shaped placeholders rather than a blank pane while the
   // first page comes in.
   if (!state.rows.length || rowsRepoPath !== repoPath) renderLogSkeleton($("#log-pane"));
-  const page = await fetchLogPage(0, PAGE_SIZE, state.allBranches);
+  const page = await fetchLogPage(0, PAGE_SIZE, scope);
   if (repoPath !== state.repoPath) return;
   // A passive refresh that found history unchanged: keep the rows we already
   // have — including every page loaded by scrolling — and skip the re-render.
   // `state.rows` keeps its identity, so the log's graph-layout cache stays
   // valid too (see getLayout in log.ts), making a tab switch nearly free.
-  if (opts.keepSelection && historyUnchanged(page)) return;
+  if (opts.keepSelection && historyUnchanged(page, scopeKey)) return;
   state.rows = page.rows;
   rowsRepoPath = state.repoPath;
+  rowsScope = scopeKey;
   state.total = page.total;
+  state.headId = page.head;
+  setWipRow(state.localChanges, state.headId);
   const keep = Boolean(opts.keepSelection && state.selectedId && state.rows.some((r) => r.id === state.selectedId));
   if (!keep) state.selectedId = state.rows[0]?.id ?? null;
   // Drop any multi-selected commits that no longer exist (e.g. a rebase
@@ -329,8 +368,8 @@ function renderLogSkeleton(pane: HTMLElement): void {
 // same repo, same total, same commits in the same order. Comparing only the
 // first page is enough: the log is append-only below it, so an unchanged head
 // plus an unchanged total means an unchanged log.
-function historyUnchanged(page: LogPage): boolean {
-  if (rowsRepoPath !== state.repoPath || page.total !== state.total) return false;
+function historyUnchanged(page: LogPage, scopeKey: string): boolean {
+  if (rowsRepoPath !== state.repoPath || rowsScope !== scopeKey || page.total !== state.total) return false;
   if (state.rows.length < page.rows.length) return false;
   return page.rows.every((r, i) => state.rows[i]?.id === r.id);
 }
@@ -382,7 +421,7 @@ export async function updateLogView(): Promise<void> {
   }, 300);
   let results: CommitRow[];
   try {
-    results = await searchLog(query, state.allBranches);
+    results = await searchLog(query, logScope());
   } catch (err) {
     if (seq === logViewSeq) {
       searchStatusShown = false;
@@ -396,8 +435,9 @@ export async function updateLogView(): Promise<void> {
   if (seq !== logViewSeq || logSearchQuery() !== query) return;
   await ensureAvatars(results.map((r) => r.author_email));
   if (seq !== logViewSeq) return;
-  // No onNeedMore: search returns the complete match set, not a page.
-  ui.logView = renderLog(pane, results, state.selectedId, selectCommit, undefined, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
+  // No onNeedMore: search returns the complete match set, not a page. No WIP
+  // row either: it isn't a search result.
+  ui.logView = renderLog(pane, results, state.selectedId, selectCommit, undefined, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect, false);
   if (!results.length) {
     pane.append(el("div", { class: "detail-empty", text: `No commits match “${query}”.` }));
   }
@@ -412,11 +452,12 @@ export async function loadMoreCommits(): Promise<void> {
   loadingMore = true;
   const repoPath = state.repoPath;
   try {
-    const page = await fetchLogPage(state.rows.length, PAGE_SIZE, state.allBranches);
+    const page = await fetchLogPage(state.rows.length, PAGE_SIZE, logScope());
     if (repoPath !== state.repoPath) return; // a page of the previous repo
     state.rows = state.rows.concat(page.rows);
     rowsRepoPath = state.repoPath;
     state.total = page.total;
+    state.headId = page.head;
     const host = $("#log-pane");
     const keepScroll = host.scrollTop;
     await ensureAvatars(state.rows.map((r) => r.author_email));
@@ -591,6 +632,8 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
 // Now status runs once and is shared with the Local Changes view.
 export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise<void> {
   let marksChanged = false;
+  let wipChanged = false;
+  let stashesChanged = false;
   try {
     // Worktrees, submodules and remotes are separate, cheap reads; failing one
     // only hides its section (or, for remotes, the never-fetched ones).
@@ -620,6 +663,8 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     applyConflictStatus(snap.conflict);
     state.bisect = snap.bisect;
     marksChanged = setBisectMarks(state.bisect);
+    wipChanged = setWipRow(state.localChanges, state.headId);
+    stashesChanged = setStashNodes(state.refs.stashes);
     renderBisectBanner();
     renderDetachedBanner();
     // Whatever moved a ref (an action, undo, a terminal command) added a reflog
@@ -634,7 +679,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
   // log so the branch chips appear on every commit.
   ui.detailView?.refresh();
   const chipsChanged = rebuildCommitRefs();
-  const needsRepaint = chipsChanged || marksChanged || lastPaintedRows !== state.rows || lastPaintedSelection !== state.selectedId;
+  const needsRepaint = chipsChanged || marksChanged || wipChanged || stashesChanged || lastPaintedRows !== state.rows || lastPaintedSelection !== state.selectedId;
   if (state.view === "history" && state.rows.length && needsRepaint) {
     const pane = $("#log-pane");
     const keep = pane.scrollTop;
@@ -646,6 +691,17 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     lastPaintedRows = state.rows;
     lastPaintedSelection = state.selectedId;
   }
+}
+
+// The change count moved without a workspace snapshot (Local Changes staged,
+// discarded or stashed something): bring the log's WIP row along. Repainted
+// even while Local Changes is on screen, so History is current on the way back.
+export function refreshWipRow(): void {
+  if (!setWipRow(state.localChanges, state.headId) || !state.rows.length || logSearchQuery()) return;
+  const pane = $("#log-pane");
+  const keep = pane.scrollTop;
+  ui.logView = renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
+  pane.scrollTop = keep;
 }
 
 // What the log pane was last painted from, so a refresh that changed neither
@@ -696,6 +752,9 @@ function sidebarSignature(repoName: string): string {
     state.worktrees.map((w) => `${w.path}:${w.head}:${w.branch}:${w.is_current}:${w.locked}:${w.lock_reason}:${w.prunable}`).join(","),
     state.submodules.map((m) => `${m.path}:${m.url}:${m.recorded}:${m.checked_out}:${m.state}`).join(","),
     state.remoteList.map((rm) => `${rm.name}:${rm.url}`).join(","),
+    state.graph.pinned ?? "",
+    state.graph.hidden.join(","),
+    state.graph.solo.join(","),
   ].join("|");
 }
 
@@ -708,6 +767,7 @@ export function renderSidebarNow(): void {
   renderFetchAge();
   renderTerminalCwd();
   refreshActionButtons();
+  renderHiddenRefs();
   const active = state.repos.find((r) => r.path === state.repoPath);
   const sig = sidebarSignature(active?.name ?? "");
   if (sig === lastSidebarSig) return;
@@ -728,6 +788,8 @@ export function renderSidebarNow(): void {
       worktrees: state.worktrees,
       submodules: state.submodules,
       remoteList: state.remoteList,
+      pinned: state.graph.pinned,
+      visibility: refFilter(state.graph),
     },
     {
       onSelectView: (v: SidebarView) => (v === "reflog" ? showReflog() : showView(v)),
@@ -769,8 +831,23 @@ export function renderSidebarNow(): void {
       onWorktreeMenu: (w, x, y) => refActions.onWorktreeMenu(w, x, y),
       onSubmoduleOpen: (sm) => refActions.onSubmoduleOpen(sm),
       onSubmoduleMenu: (sm, x, y) => refActions.onSubmoduleMenu(sm, x, y),
+      onToggleHidden: (refname) => updateGraphPrefs(withHidden(state.graph, [refname], !state.graph.hidden.includes(refname))),
+      onSectionMenu: (key, x, y) => refActions.onSectionMenu(key, x, y),
     },
   );
+}
+
+// "N refs hidden · Show all" above the log while Hide or Solo leaves refs out
+// of the graph.
+function renderHiddenRefs(): void {
+  const slot = $("#log-hidden-refs");
+  const n = state.repoPath ? hiddenRefCount(refFilter(state.graph), state.refs) : 0;
+  slot.classList.toggle("hidden", n === 0);
+  clear(slot);
+  if (n === 0) return;
+  const showAll = el("button", { text: "Show all" });
+  showAll.addEventListener("click", () => updateGraphPrefs({ ...state.graph, hidden: [], solo: [] }));
+  slot.append(`${n} ref${n === 1 ? "" : "s"} hidden · `, showAll);
 }
 
 // Show which directory the shell is in — the terminal follows the active repo.
@@ -819,7 +896,7 @@ export async function jumpToCommit(target: string, label: string): Promise<void>
   ui.logView = renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
   if (idx >= 0) {
     const pane = $("#log-pane");
-    pane.scrollTop = Math.max(0, idx * logRowHeight() - pane.clientHeight / 2);
+    pane.scrollTop = Math.max(0, logRowTop(idx) - pane.clientHeight / 2);
   }
   await selectCommit(target);
   ui.detailView?.focusCommit();
@@ -836,17 +913,18 @@ export async function jumpToCommit(target: string, label: string): Promise<void>
 async function loadDownTo(target: string, label: string): Promise<number> {
   const repoPath = state.repoPath;
   try {
-    const idx = await logIndexOf(target, state.allBranches);
+    const idx = await logIndexOf(target, logScope());
     if (idx == null || repoPath !== state.repoPath) return -1;
     if (idx < state.rows.length) return idx;
 
     const missing = idx + 1 - state.rows.length;
     setStatus(`Loading ${missing.toLocaleString()} more commits to reach ${label}…`);
-    const page = await fetchLogPage(state.rows.length, Math.max(missing, PAGE_SIZE), state.allBranches);
+    const page = await fetchLogPage(state.rows.length, Math.max(missing, PAGE_SIZE), logScope());
     if (repoPath !== state.repoPath) return -1;
     state.rows = state.rows.concat(page.rows);
     rowsRepoPath = state.repoPath;
     state.total = page.total;
+    state.headId = page.head;
     await ensureAvatars(state.rows.map((r) => r.author_email));
     rebuildCommitRefs();
     return state.rows.findIndex((r) => r.id === target);
@@ -859,7 +937,7 @@ async function loadDownTo(target: string, label: string): Promise<number> {
 // Click a stash: show its diff in the detail view. A stash commit's first
 // parent is the base it was taken from, so fetchCommitDetail surfaces exactly
 // the stashed changes. Switches to History, where the detail pane lives.
-async function showStashDetail(s: StashRef): Promise<void> {
+export async function showStashDetail(s: StashRef): Promise<void> {
   showView("history");
   state.selectedId = null;
   // A stash detail isn't tracked by selectCommit's cache — invalidate it so a

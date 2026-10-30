@@ -45,7 +45,7 @@ import {
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
-import { setOnMoreRefs } from "./views/log";
+import { setOnMoreRefs, setOnOpenWip, setStashHandlers } from "./views/log";
 import { setupChanges } from "./views/changes";
 import { setupConflict } from "./views/conflict";
 import { setupReflog } from "./views/reflog";
@@ -75,10 +75,12 @@ import {
   loadSidebar,
   refreshHistory,
   refreshUndoLabels,
+  refreshWipRow,
   renderSidebarNow,
   restoreWorkspace,
   setRefActions,
   showReflogDetail,
+  showStashDetail,
   showView,
   startAutoFetch,
   updateLogView,
@@ -99,8 +101,11 @@ import {
   onRemoteMenu,
   onStashMenu,
   onMoreRefsMenu,
+  onRefDrop,
+  onSectionMenu,
   onTagMenu,
 } from "./ref-actions";
+import { setOnRefDrop } from "./views/ref-drag";
 import {
   onCommitContextMenu,
   onReflogMenu,
@@ -217,6 +222,9 @@ async function init(): Promise<void> {
   // The shell draws the sidebar and the log; the menus and actions behind their
   // rows live in modules built on top of it, so they are plugged in from here.
   setOnMoreRefs(onMoreRefsMenu);
+  setOnOpenWip(() => showView("changes"));
+  setStashHandlers((s) => void showStashDetail(s), onStashMenu);
+  setOnRefDrop(onRefDrop);
   setRefActions({
     checkoutBranchAction,
     onBranchMenu,
@@ -232,6 +240,7 @@ async function init(): Promise<void> {
     onSubmoduleOpen: openSubmodule,
     onSubmoduleMenu,
     createBranchAt: (name, rev) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
+    onSectionMenu,
   });
   applyTheme(currentTheme());
   state.allBranches = loadAllBranches(); // before wireUi so the toggle reflects it
@@ -300,6 +309,7 @@ async function init(): Promise<void> {
       if (state.localChanges === count) return;
       state.localChanges = count;
       renderSidebarNow();
+      refreshWipRow();
     },
     onCommitted: () => {
       void loadSidebar();

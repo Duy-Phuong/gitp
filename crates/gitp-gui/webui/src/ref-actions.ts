@@ -18,10 +18,12 @@ import {
   deleteRemoteBranch,
   remoteBranchExists,
   fastForwardBranch,
+  fastForwardBranchTo,
   fetchAndUpdateBranch,
   fetchBranch,
   mergeBranch,
   pushBranch,
+  pushBranchTo,
   rebaseOnto,
   renameBranch,
   renameRemoteBranch,
@@ -41,6 +43,7 @@ import { openStashApplyModal } from "./views/stash-apply";
 import type { BranchRef, MergeMode, StashRef } from "./types";
 import { state, ui } from "./app-state";
 import { opFailed, reportDone, setStatus } from "./report";
+import { branchRefName, remoteRefName, tagRefName, withHidden, withSolo } from "./ref-visibility";
 import { copyText } from "./clipboard";
 import {
   clearCommitSelection,
@@ -53,6 +56,7 @@ import {
   renderSidebarNow,
   showReflog,
   showView,
+  updateGraphPrefs,
 } from "./shell";
 import {
   checkoutCommitAction,
@@ -60,6 +64,7 @@ import {
   confirmThenRun,
   newTagAction,
   openInteractiveRebase,
+  resetAction,
 } from "./commit-actions";
 import { openFormDialog } from "./views/form-dialog";
 import { showComparison } from "./compare";
@@ -67,6 +72,7 @@ import { checkoutInNewWorktreeItem, worktreeOf } from "./worktree-actions";
 import { worktreeName } from "./views/sidebar";
 import { allRefsAt } from "./commit-refs";
 import { pushTargets } from "./push-targets";
+import { dropActions, isAncestorInRows, type DragRef, type DropRef } from "./ref-drop";
 
 // Double-click a branch: check it out, then reload history + sidebar from the new
 // HEAD. Warns first if the working tree has uncommitted changes.
@@ -181,6 +187,12 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
   items.push({ label: "Unset Upstream", run: () => onBranch(`Unsetting upstream of ${b.name}`, () => unsetUpstream(b.name), false) });
 
   items.push({ separator: true });
+  const pinned = state.graph.pinned === b.name;
+  items.push({ label: pinned ? "Unpin" : "Pin to Left", run: () => pinBranchAction(pinned ? null : b.name) });
+  // HEAD is always walked, so the checked-out branch can't be hidden.
+  if (!b.is_head) items.push(...visibilityItems(branchRefName(b.name)));
+
+  items.push({ separator: true });
   items.push({ label: "Rename…", run: () => void renameBranchAction(b) });
   if (!b.is_head) items.push({ label: "Delete…", danger: true, run: () => void deleteBranchAction(b) });
 
@@ -194,6 +206,119 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
 // The remotes the branch menu offers to push to (see pushTargets).
 function branchPushTargets(b: BranchRef): string[] {
   return pushTargets(b.upstream_remote, state.remoteList.map((r) => r.name));
+}
+
+// --- Drag and drop ------------------------------------------------------------
+
+// A branch dragged onto another (in the log or the sidebar): a menu at the drop
+// point of what that can do — merge, rebase, reset, fast-forward, push. Each
+// item is the same action its right-click menu runs.
+export function onRefDrop(srcRef: DragRef, dstRef: DragRef, x: number, y: number): void {
+  const src = resolveDragRef(srcRef);
+  const dst = resolveDragRef(dstRef);
+  if (!src || !dst) return;
+  const current = state.refs.head;
+  const actions = dropActions(src, dst, current, (a, d) => isAncestorInRows(state.rows, a, d));
+  if (!actions.length) {
+    setStatus(`Nothing to do with ${src.name} on ${dst.name}.`);
+    return;
+  }
+  const items: MenuItem[] = [];
+  for (const action of actions) {
+    switch (action) {
+      case "merge":
+        items.push({
+          label: `Merge ${src.name} into ${dst.name}`,
+          run: () => void runBranchOp(`Merging ${src.name} into ${dst.name}`, () => mergeBranch(src.name), true, dst.name),
+        });
+        break;
+      case "rebase":
+        items.push({
+          label: `Rebase ${src.name} onto ${dst.name}`,
+          run: () =>
+            void confirmThenRun(
+              `Rebase ${src.name} onto ${dst.name}? This rewrites commits on ${src.name}.`,
+              `Rebasing ${src.name} onto ${dst.name}`,
+              () => rebaseOnto(dst.name),
+            ),
+        });
+        break;
+      case "interactive-rebase":
+        items.push({ label: "Interactive Rebase…", run: () => void openInteractiveRebase(dst.name, dst.name) });
+        break;
+      case "reset":
+        items.push({ heading: `Reset ${src.name} to ${dst.name}` });
+        items.push({ label: "Soft (keep changes staged)…", run: () => void resetAction(dst.target, dst.name, "Soft") });
+        items.push({ label: "Mixed (keep changes unstaged)…", run: () => void resetAction(dst.target, dst.name, "Mixed") });
+        items.push({ label: "Hard (discard changes)…", danger: true, run: () => void resetAction(dst.target, dst.name, "Hard") });
+        break;
+      case "fast-forward":
+        items.push({
+          label: `Fast-forward ${dst.name} to ${src.name}`,
+          run: () => void runBranchOp(`Fast-forwarding ${dst.name} to ${src.name}`, () => fastForwardBranchTo(dst.name, src.name), true, dst.name),
+        });
+        break;
+      case "push": {
+        const remote = state.refs.remotes.find((r) => r.name === dst.name)?.remote ?? "origin";
+        const branch = dst.name.slice(remote.length + 1);
+        items.push({
+          label: `Push ${src.name} to ${dst.name}`,
+          run: () => void runBranchOp(`Pushing ${src.name} to ${dst.name}`, () => pushBranchTo(src.name, remote, branch), false, src.name),
+        });
+        break;
+      }
+    }
+  }
+  showContextMenu(x, y, items);
+}
+
+// The branch a drag names, with the commit it points at now — or null if it
+// has gone since the row was drawn.
+function resolveDragRef(ref: DragRef): DropRef | null {
+  const target =
+    ref.kind === "local"
+      ? state.refs.branches.find((b) => b.name === ref.name)?.target
+      : state.refs.remotes.find((r) => r.name === ref.name)?.target;
+  return target ? { ...ref, target } : null;
+}
+
+// Keep `name`'s first-parent line in the graph's leftmost lane (null unpins).
+// One branch at a time, remembered per repo.
+function pinBranchAction(name: string | null): void {
+  updateGraphPrefs({ ...state.graph, pinned: name });
+  setStatus(name ? `Pinned ${name} to the left of the graph.` : "Unpinned.");
+}
+
+// Hide / Solo for one ref's menu (`refname` in full, e.g. refs/heads/dev).
+function visibilityItems(refname: string): MenuItem[] {
+  const hidden = state.graph.hidden.includes(refname);
+  const soloed = state.graph.solo.includes(refname);
+  return [
+    { label: hidden ? "Show in Graph" : "Hide", run: () => updateGraphPrefs(withHidden(state.graph, [refname], !hidden)) },
+    { label: soloed ? "Unsolo" : "Solo", run: () => updateGraphPrefs(withSolo(state.graph, [refname], !soloed)) },
+  ];
+}
+
+// Right-click the Branches, Remotes or Tags header: hide or show every ref in
+// it at once (the checked-out branch stays: HEAD is always walked).
+export function onSectionMenu(key: string, x: number, y: number): void {
+  const refnames =
+    key === "sec:branches"
+      ? state.refs.branches.filter((b) => !b.is_head).map((b) => branchRefName(b.name))
+      : key === "sec:remotes"
+        ? state.refs.remotes.map((r) => remoteRefName(r.name))
+        : key === "sec:tags"
+          ? state.refs.tags.map((t) => tagRefName(t.name))
+          : [];
+  if (!refnames.length) return;
+  const items: MenuItem[] = [
+    { label: "Hide All", run: () => updateGraphPrefs(withHidden(state.graph, refnames, true)) },
+    { label: "Show All", run: () => updateGraphPrefs(withHidden(state.graph, refnames, false)) },
+  ];
+  if (refnames.some((r) => state.graph.solo.includes(r))) {
+    items.push({ label: "Unsolo All", run: () => updateGraphPrefs(withSolo(state.graph, refnames, false)) });
+  }
+  showContextMenu(x, y, items);
 }
 
 export function onBranchBulkMenu(x: number, y: number): void {
@@ -416,6 +541,9 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
   }
 
   items.push({ separator: true });
+  items.push(...visibilityItems(tagRefName(name)));
+
+  items.push({ separator: true });
   items.push({ label: "Delete…", danger: true, run: () => deleteTagAction(name) });
 
   items.push({ separator: true });
@@ -506,6 +634,8 @@ export function onRemoteMenu(name: string, target: string, x: number, y: number)
     { label: "Checkout…", run: () => void checkoutRemoteAction(name) },
     compareWithHeadItem(name),
     compareWithWorkdirItem(name),
+    { separator: true },
+    ...visibilityItems(remoteRefName(name)),
     { separator: true },
     { label: "Copy Branch Name", run: () => void copyText(name, `Copied ${name}`) },
   ];

@@ -56,6 +56,9 @@ pub struct StashRef {
     /// Stack position: 0 is the most recent (`stash@{0}`).
     pub index: usize,
     pub message: String,
+    /// Full hex id of the commit the stash was taken on (the stash commit's
+    /// first parent), where the graph draws it. Empty if it can't be read.
+    pub base: String,
 }
 
 /// Everything the sidebar's ref tree needs, in one shot.
@@ -261,6 +264,11 @@ fn read_stashes(repo: &git2::Repository) -> Vec<StashRef> {
             reflog.get(i).map(|entry| StashRef {
                 index: i,
                 message: entry.message().unwrap_or("").to_string(),
+                base: repo
+                    .find_commit(entry.id_new())
+                    .and_then(|c| c.parent_id(0))
+                    .map(|id| id.to_string())
+                    .unwrap_or_default(),
             })
         })
         .collect()

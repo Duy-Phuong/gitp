@@ -157,6 +157,80 @@ fn squash_merge_stages_the_changes_and_prepares_a_message() {
 }
 
 #[test]
+fn fast_forward_branch_to_advances_another_branch_only_when_it_is_behind() {
+    let fx = FixtureRepo::init();
+    let c1 = fx.commit_file("a.txt", "one\n", "c1");
+    let c1 = fx.repo.find_commit(c1).unwrap();
+    fx.repo.branch("behind", &c1, false).unwrap();
+    fx.repo.branch("diverged", &c1, false).unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.checkout_branch("diverged").unwrap();
+    fx.commit_file("d.txt", "d\n", "on diverged");
+    repo.checkout_branch("master").unwrap();
+    let c2 = fx.commit_file("a.txt", "two\n", "c2");
+
+    // Not checked out: moved by a local fetch, the working tree untouched.
+    repo.fast_forward_branch_to("behind", "master").unwrap();
+    assert_eq!(repo.resolve_commit("behind").unwrap(), c2.to_string());
+
+    // A branch with commits of its own can't be fast-forwarded.
+    assert!(repo.fast_forward_branch_to("diverged", "master").is_err());
+    assert_ne!(repo.resolve_commit("diverged").unwrap(), c2.to_string());
+
+    // The checked-out branch goes by `merge --ff-only`.
+    repo.checkout_branch("behind").unwrap();
+    let c3 = fx.commit_file("a.txt", "three\n", "c3");
+    repo.checkout_branch("master").unwrap();
+    repo.fast_forward_branch_to("master", "behind").unwrap();
+    assert_eq!(repo.resolve_commit("HEAD").unwrap(), c3.to_string());
+    assert!(
+        repo.fast_forward_branch_to("-x", "master").is_err(),
+        "flag-like names refused"
+    );
+}
+
+#[test]
+fn push_branch_to_pushes_under_the_remote_branch_name() {
+    use std::process::Command;
+    let fx = FixtureRepo::init();
+    let c1 = fx.commit_file("a.txt", "one\n", "c1");
+    let remote_dir = tempfile::tempdir().unwrap();
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    git(remote_dir.path(), &["init", "--bare", "-q"]);
+    git(
+        fx.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            remote_dir.path().to_str().unwrap(),
+        ],
+    );
+
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.push_branch_to("master", "origin", "review/x").unwrap();
+
+    let heads = git(fx.path(), &["ls-remote", "--heads", "origin"]);
+    assert!(
+        heads.contains(&format!("{c1}\trefs/heads/review/x")),
+        "{heads}"
+    );
+    assert!(repo.push_branch_to("master", "-origin", "x").is_err());
+}
+
+#[test]
 fn delete_remote_branch_removes_it_from_the_remote() {
     use std::process::Command;
     let fx = FixtureRepo::init();

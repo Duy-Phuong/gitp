@@ -6,7 +6,7 @@ mod common;
 use std::collections::{HashMap, HashSet};
 
 use common::FixtureRepo;
-use gitp_core::{LogCache, LogOptions, LogRefresh, Repo};
+use gitp_core::{LogCache, LogOptions, LogRefresh, LogScope, Repo};
 
 /// The refreshed cache must hold exactly the commits a fresh full walk finds,
 /// once each, in a valid topological order (every commit above its parents).
@@ -287,4 +287,112 @@ fn lanes_are_reassigned_across_the_whole_log() {
         lane_of(b),
         "the two tips sit in different lanes"
     );
+}
+
+#[test]
+fn pinning_a_branch_relays_lanes_without_a_walk() {
+    let fx = FixtureRepo::init();
+    let a = fx.commit_raw("a", &[], 100);
+    let f = fx.commit_raw("f", &[a], 200);
+    let b = fx.commit_raw("b", &[a], 300);
+    set_branch(&fx, "feature", f);
+    fx.point_head_at(b);
+    let repo = Repo::open(fx.path()).unwrap();
+    let mut cache = repo.log_cache(true).unwrap();
+    let lane_of = |cache: &LogCache, oid: git2::Oid| {
+        let id = oid.to_string();
+        cache.rows.iter().find(|r| r.id == id).unwrap().lane
+    };
+    assert_eq!(lane_of(&cache, b), 0, "the newest tip leads unpinned");
+
+    let pinned = LogScope {
+        all_branches: true,
+        pinned: Some("feature".into()),
+        ..LogScope::default()
+    };
+    assert_eq!(
+        repo.refresh_log_scoped(&mut cache, &pinned).unwrap(),
+        LogRefresh::Relaid
+    );
+    assert_eq!(lane_of(&cache, f), 0);
+    assert_eq!(lane_of(&cache, a), 0, "down feature's first parents");
+    assert_ne!(lane_of(&cache, b), 0);
+    assert_eq!(cache.scope(), &pinned);
+
+    // Unpinning lays the plain graph out again.
+    assert_eq!(
+        repo.refresh_log_scoped(&mut cache, &true.into()).unwrap(),
+        LogRefresh::Relaid
+    );
+    assert_eq!(lane_of(&cache, b), 0);
+}
+
+#[test]
+fn hidden_refs_are_left_out_of_the_walk() {
+    // HEAD on `a`; feature off it and a remote branch further on.
+    let fx = FixtureRepo::init();
+    let a = fx.commit_raw("a", &[], 100);
+    let f = fx.commit_raw("f", &[a], 200);
+    let r = fx.commit_raw("r", &[a], 300);
+    set_branch(&fx, "feature", f);
+    fx.repo
+        .reference("refs/remotes/origin/main", r, true, "test")
+        .unwrap();
+    fx.point_head_at(a);
+    let repo = Repo::open(fx.path()).unwrap();
+    let ids =
+        |cache: &LogCache| -> HashSet<String> { cache.rows.iter().map(|r| r.id.clone()).collect() };
+    let all: LogScope = true.into();
+
+    let hidden = LogScope {
+        hidden: vec!["refs/heads/feature".into()],
+        ..all.clone()
+    };
+    let cache = repo.log_cache_scoped(&hidden).unwrap();
+    assert!(
+        !ids(&cache).contains(&f.to_string()),
+        "feature's own commit is gone"
+    );
+    assert!(
+        ids(&cache).contains(&r.to_string()),
+        "the remote branch still shows"
+    );
+
+    // Hiding the checked-out branch can't hide HEAD.
+    let head_hidden = LogScope {
+        hidden: vec!["refs/heads/master".into(), "refs/heads/main".into()],
+        ..all.clone()
+    };
+    assert!(ids(&repo.log_cache_scoped(&head_hidden).unwrap()).contains(&a.to_string()));
+
+    // Solo walks the soloed refs and HEAD only — in Current mode too.
+    let solo = LogScope {
+        solo: vec!["refs/remotes/origin/main".into()],
+        ..LogScope::default()
+    };
+    let cache = repo.log_cache_scoped(&solo).unwrap();
+    assert_eq!(
+        ids(&cache),
+        [a, r].iter().map(|o| o.to_string()).collect::<HashSet<_>>()
+    );
+
+    // Hiding a tag doesn't change where the walk starts: nothing to redo.
+    let mut cache = repo.log_cache_scoped(&all).unwrap();
+    let tag_hidden = LogScope {
+        hidden: vec!["refs/tags/v1".into()],
+        ..all.clone()
+    };
+    assert_eq!(
+        repo.refresh_log_scoped(&mut cache, &tag_hidden).unwrap(),
+        LogRefresh::Unchanged
+    );
+    assert_eq!(cache.scope(), &tag_hidden);
+
+    // Showing a hidden ref again walks afresh, so its commits interleave.
+    let mut cache = repo.log_cache_scoped(&hidden).unwrap();
+    assert_eq!(
+        repo.refresh_log_scoped(&mut cache, &all).unwrap(),
+        LogRefresh::Full
+    );
+    assert_matches_full_walk(&repo, &cache, true);
 }

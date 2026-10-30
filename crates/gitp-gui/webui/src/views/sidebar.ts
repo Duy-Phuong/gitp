@@ -4,7 +4,9 @@
 // Rendered as a pure function of state + callbacks; main.ts owns the state
 // (filter text, which sections/folders are collapsed) and re-renders on change.
 
-import { chevronIcon, clear, el } from "../dom";
+import { chevronIcon, clear, el, svg } from "../dom";
+import { branchRefName, refShown, remoteRefName, tagRefName, type RefFilter } from "../ref-visibility";
+import { refDragHandle } from "./ref-drag";
 import type { BranchRef, Refs, RemoteInfo, StashRef, Submodule, Worktree } from "../types";
 
 export type SidebarView = "history" | "changes" | "reflog";
@@ -36,6 +38,10 @@ export interface SidebarState {
   // The configured remotes, listed in Remotes even before any branch of
   // theirs has been fetched.
   remoteList: RemoteInfo[];
+  // The branch pinned to the left of the graph, badged in the list.
+  pinned: string | null;
+  // The refs hidden from or soloed in the graph: their rows are dimmed.
+  visibility: RefFilter;
 }
 
 export interface SidebarCallbacks {
@@ -75,6 +81,11 @@ export interface SidebarCallbacks {
   onSubmoduleOpen: (sm: Submodule) => void;
   // Right-click a submodule: open its actions menu at the cursor.
   onSubmoduleMenu: (sm: Submodule, x: number, y: number) => void;
+  // The eye on a branch, remote or tag row: hide it from the graph, or show it
+  // again (`refname` in full, e.g. refs/heads/dev).
+  onToggleHidden: (refname: string) => void;
+  // Right-click the Branches, Remotes or Tags header: Hide All / Show All.
+  onSectionMenu: (key: string, x: number, y: number) => void;
 }
 
 export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCallbacks): void {
@@ -152,6 +163,10 @@ function sectionHeader(
     el("span", { class: "sb-section-title", text: title }),
   ]);
   row.addEventListener("click", () => cb.onToggle(key));
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    cb.onSectionMenu(key, e.clientX, e.clientY);
+  });
   return { row, collapsed };
 }
 
@@ -178,6 +193,7 @@ function branchLeaf(
   label: string,
   indented: boolean,
   busy: boolean,
+  pinned: boolean,
   cb: SidebarCallbacks,
   selectable?: { order: string[]; s: SidebarState },
 ): HTMLElement {
@@ -185,10 +201,11 @@ function branchLeaf(
   const row = el("div", {
     class: `sb-leaf${b.is_head ? " head" : ""}${indented ? " indent" : ""}${multiSelected ? " multi-selected" : ""}${busy ? " busy" : ""}`,
     title: selectable
-      ? `${b.name}\nClick: jump to tip · Cmd/Shift-click: multi-select · Double-click: checkout · Right-click: actions`
-      : `${b.name}\nClick: jump to tip · Double-click: checkout · Right-click: actions`,
+      ? `${b.name}\nClick: jump to tip · Cmd/Shift-click: multi-select · Double-click: checkout · Drag onto a branch: actions · Right-click: actions`
+      : `${b.name}\nClick: jump to tip · Double-click: checkout · Drag onto a branch: actions · Right-click: actions`,
   });
   row.append(el("span", { class: "sb-leaf-label", text: label }));
+  if (pinned) row.append(el("span", { class: "sb-badge", text: "pinned", title: "Pinned to the left of the graph" }));
   if (busy) {
     // The spinner takes the ahead/behind slot: those counts are exactly what
     // the running operation is about to change, so showing stale ones beside a
@@ -235,6 +252,7 @@ function branchLeaf(
     window.clearTimeout(clickTimer);
     cb.onBranchCheckout(b);
   });
+  refDragHandle(row, { kind: "local", name: b.name });
   row.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     window.clearTimeout(clickTimer);
@@ -259,6 +277,38 @@ function leaf(label: string, indented: boolean, title = label, busy = false): HT
 // The in-progress marker for a ref row. Same look as the status bar's spinner.
 function spinner(): HTMLElement {
   return el("span", { class: "sb-spinner", "aria-label": "in progress" });
+}
+
+// Hide / Solo on a ref row: dimmed when the graph leaves it out, a "solo" badge
+// when soloed, and an eye on hover that hides it or shows it again. The
+// checked-out branch gets no eye: HEAD is always in the graph.
+function withVisibility(row: HTMLElement, refname: string, s: SidebarState, cb: SidebarCallbacks, isHead = false): HTMLElement {
+  if (!refShown(s.visibility, refname, isHead)) row.classList.add("sb-hidden");
+  if (s.visibility.solo.has(refname)) row.append(el("span", { class: "sb-badge", text: "solo" }));
+  if (isHead) return row;
+  const hidden = s.visibility.hidden.has(refname);
+  const eye = el("span", { class: `sb-eye${hidden ? " off" : ""}`, title: hidden ? "Show in the graph" : "Hide from the graph" });
+  eye.append(eyeIcon(hidden));
+  eye.addEventListener("click", (e) => {
+    e.stopPropagation();
+    cb.onToggleHidden(refname);
+  });
+  // Not the row's own gestures: a jump, a checkout, or the start of a drag.
+  for (const type of ["dblclick", "mousedown"]) eye.addEventListener(type, (e) => e.stopPropagation());
+  row.append(eye);
+  return row;
+}
+
+// An eye, struck through when `off`.
+function eyeIcon(off: boolean): SVGElement {
+  const s = svg("svg", { viewBox: "0 0 16 16", class: "eye-icon" });
+  const line = { fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linecap": "round" };
+  s.append(
+    svg("path", { d: "M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z", ...line }),
+    svg("circle", { cx: 8, cy: 8, r: 2, ...line }),
+  );
+  if (off) s.append(svg("path", { d: "M2.5 13.5l11-11", ...line }));
+  return s;
 }
 
 // A tag: click jumps to the commit it points at, right-click opens its menu.
@@ -290,8 +340,9 @@ function remoteLeaf(
   busy: boolean,
   cb: SidebarCallbacks,
 ): HTMLElement {
-  const row = leaf(label, true, `${full}\nClick: jump to tip · Right-click: actions`, busy);
+  const row = leaf(label, true, `${full}\nClick: jump to tip · Drag onto a branch: actions · Right-click: actions`, busy);
   if (target) row.addEventListener("click", () => cb.onRefJump(target, full));
+  refDragHandle(row, { kind: "remote", name: full });
   row.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     cb.onRemoteMenu(full, target, e.clientX, e.clientY);
@@ -325,7 +376,10 @@ function buildRecent(
   const { row, collapsed } = sectionHeader("sec:recent", "Recent", s, cb);
   tree.append(row);
   if (collapsed) return;
-  for (const b of recent) tree.append(branchLeaf(b, b.name, true, s.busyRefs.has(b.name), cb));
+  for (const b of recent) {
+    const row = branchLeaf(b, b.name, true, s.busyRefs.has(b.name), s.pinned === b.name, cb);
+    tree.append(withVisibility(row, branchRefName(b.name), s, cb, b.is_head));
+  }
 }
 
 function buildBranches(
@@ -374,12 +428,15 @@ function buildBranches(
     tree.append(folderRow(fkey, folder, fcollapsed, cb));
     if (!fcollapsed) {
       for (const b of shown) {
-        tree.append(branchLeaf(b, splitRef(b.name).label, true, s.busyRefs.has(b.name), cb, selectable));
+        const row = branchLeaf(b, splitRef(b.name).label, true, s.busyRefs.has(b.name), s.pinned === b.name, cb, selectable);
+        tree.append(withVisibility(row, branchRefName(b.name), s, cb, b.is_head));
       }
     }
   }
   for (const b of loose) {
-    if (match(b.name)) tree.append(branchLeaf(b, b.name, false, s.busyRefs.has(b.name), cb, selectable));
+    if (!match(b.name)) continue;
+    const row = branchLeaf(b, b.name, false, s.busyRefs.has(b.name), s.pinned === b.name, cb, selectable);
+    tree.append(withVisibility(row, branchRefName(b.name), s, cb, b.is_head));
   }
 }
 
@@ -430,7 +487,7 @@ function buildRemotes(
     tree.append(folder);
     if (!rcollapsed) {
       for (const r of shown) {
-        tree.append(remoteLeaf(r.label, r.full, r.target, s.busyRefs.has(r.full), cb));
+        tree.append(withVisibility(remoteLeaf(r.label, r.full, r.target, s.busyRefs.has(r.full), cb), remoteRefName(r.full), s, cb));
       }
     }
   }
@@ -475,11 +532,11 @@ function buildTags(
     const fcollapsed = s.collapsed.has(fkey) && !filtering;
     tree.append(folderRow(fkey, folder, fcollapsed, cb));
     if (!fcollapsed) {
-      for (const t of folders.get(folder)!) tree.append(tagLeaf(t.label, t.target, cb, t.full, t.message));
+      for (const t of folders.get(folder)!) tree.append(withVisibility(tagLeaf(t.label, t.target, cb, t.full, t.message), tagRefName(t.full), s, cb));
     }
   }
   // Unfoldered tags after the groups, matching how branches are laid out.
-  for (const t of loose) tree.append(tagLeaf(t.label, t.target, cb, t.full, t.message));
+  for (const t of loose) tree.append(withVisibility(tagLeaf(t.label, t.target, cb, t.full, t.message), tagRefName(t.full), s, cb));
 }
 
 function buildStashes(

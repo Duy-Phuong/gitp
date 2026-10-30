@@ -119,6 +119,31 @@ export function saveRefColumnWidth(width: number): void {
   localStorage.setItem(REF_COLUMN_KEY, String(Math.round(width)));
 }
 
+// Per-repo graph settings, keyed by repo path: the branch pinned to the left,
+// and the refs hidden from or soloed in the graph (full ref names; see
+// ref-visibility.ts).
+const GRAPH_PREFS_KEY = "gitp-graph:";
+
+export interface GraphPrefs {
+  pinned: string | null;
+  hidden: string[];
+  solo: string[];
+}
+
+export function loadGraphPrefs(repo: string): GraphPrefs {
+  const names = (v: unknown) => (Array.isArray(v) ? v.filter((n): n is string => typeof n === "string") : []);
+  try {
+    const raw = JSON.parse(localStorage.getItem(GRAPH_PREFS_KEY + repo) ?? "{}") as Partial<GraphPrefs>;
+    return { pinned: typeof raw.pinned === "string" ? raw.pinned : null, hidden: names(raw.hidden), solo: names(raw.solo) };
+  } catch {
+    return { pinned: null, hidden: [], solo: [] };
+  }
+}
+
+export function saveGraphPrefs(repo: string, prefs: GraphPrefs): void {
+  localStorage.setItem(GRAPH_PREFS_KEY + repo, JSON.stringify(prefs));
+}
+
 // The history toggle, persisted across restarts. Defaults to all branches.
 export function loadAllBranches(): boolean {
   return localStorage.getItem(ALL_BRANCHES_KEY) !== "current";

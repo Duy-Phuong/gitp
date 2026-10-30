@@ -52,7 +52,7 @@ pub use error::{Error, Result};
 pub use external_tool::DiffToolTarget;
 pub use file_content::{FileContent, FileSide, PREVIEW_MAX_BYTES};
 pub use filelog::FileCommit;
-pub use log::{CommitRow, LogCache, LogOptions, LogRefresh};
+pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope};
 pub use progress::{NetworkHooks, Progress, ProgressFn};
 pub use rebase::{RebaseAction, RebaseCommit, RebaseStatus, RebaseStep};
 pub use reflog::ReflogEntry;

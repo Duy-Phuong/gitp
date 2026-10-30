@@ -26,6 +26,7 @@ import type {
   DiffToolTarget,
   LogPage,
   MergeMode,
+  LogScope,
   PullMode,
   RebaseCommit,
   RebaseStatus,
@@ -205,29 +206,29 @@ export async function historyFingerprint(): Promise<string> {
 export async function fetchLogPage(
   offset: number,
   limit: number,
-  allBranches: boolean,
+  scope: LogScope,
 ): Promise<LogPage> {
   if (!isTauri()) {
-    return { rows: MOCK_LOG.slice(offset, offset + limit), total: MOCK_LOG.length };
+    return { rows: MOCK_LOG.slice(offset, offset + limit), total: MOCK_LOG.length, head: MOCK_LOG[0].id };
   }
-  return invoke<LogPage>("get_log_page", { offset, limit, allBranches });
+  return invoke<LogPage>("get_log_page", { offset, limit, scope });
 }
 
 // Where `rev` sits in the full log, or null when it isn't in it. The frontend
 // only holds the pages it has scrolled through, so this is how a sidebar click
 // finds out how far down a tag or an older branch actually is.
-export async function logIndexOf(rev: string, allBranches: boolean): Promise<number | null> {
+export async function logIndexOf(rev: string, scope: LogScope): Promise<number | null> {
   if (!isTauri()) return null;
-  return invoke<number | null>("log_index_of", { rev, allBranches });
+  return invoke<number | null>("log_index_of", { rev, scope });
 }
 
 // Commits matching a search query, in log order — GitKraken-style commit search
 // over the full loaded graph. Words match the message, author or id; author:,
 // path:, content: (-S:), after: and before: narrow it (see LogSearch in gitp-core).
-export async function searchLog(query: string, allBranches: boolean): Promise<CommitRow[]> {
+export async function searchLog(query: string, scope: LogScope): Promise<CommitRow[]> {
   if (!query.trim()) return [];
   if (!isTauri()) return mockSearch(query);
-  return invoke<CommitRow[]>("search_log", { query, allBranches });
+  return invoke<CommitRow[]>("search_log", { query, scope });
 }
 
 // Preview-mode stand-in for LogSearch: bare words (ANDed), author:, after: and
@@ -741,6 +742,13 @@ export async function pushBranch(name: string, remote?: string): Promise<string>
   return invokeNetwork<string>("push_branch", { name, remote: remote ?? null });
 }
 
+// Push local branch `name` to `remoteBranch` on `remote`, whatever its name
+// there — a branch dropped on a remote branch in the graph.
+export async function pushBranchTo(name: string, remote: string, remoteBranch: string): Promise<string> {
+  if (!isTauri()) return `Pushed ${name} to ${remote}/${remoteBranch} (preview mock)`;
+  return invokeNetwork<string>("push_branch_to", { name, remote, remoteBranch });
+}
+
 export async function fetchBranch(name: string): Promise<string> {
   if (!isTauri()) return `Fetched updates for ${name} (preview mock)`;
   return invokeNetwork<string>("fetch_branch", { name });
@@ -822,6 +830,13 @@ export async function fetchAndUpdateBranch(name: string): Promise<string> {
 export async function fastForwardBranch(name: string): Promise<string> {
   if (!isTauri()) return `Fast-forwarded ${name} (preview mock)`;
   return invoke<string>("fast_forward_branch", { name });
+}
+
+// Fast-forward local branch `name` to `to` (a branch or remote branch); git
+// refuses it unless `name` is behind `to`.
+export async function fastForwardBranchTo(name: string, to: string): Promise<string> {
+  if (!isTauri()) return `Fast-forwarded ${name} to ${to} (preview mock)`;
+  return invoke<string>("fast_forward_branch_to", { name, to });
 }
 
 export async function setUpstream(branch: string, upstream: string): Promise<string> {
@@ -957,7 +972,7 @@ export async function pushForce(): Promise<string> {
 export async function stash(opts: StashOptions): Promise<string> {
   if (!isTauri()) {
     const message = opts.message ? `On develop: ${opts.message}` : "WIP on develop (preview mock)";
-    MOCK_REFS.stashes.unshift({ index: 0, message });
+    MOCK_REFS.stashes.unshift({ index: 0, message, base: MOCK_LOG[0].id });
     MOCK_REFS.stashes.forEach((s, i) => (s.index = i));
     return `Saved ${opts.staged ? "index state" : "working directory"} (preview mock)`;
   }
@@ -1081,7 +1096,7 @@ export async function stashFiles(paths: string[]): Promise<string> {
       mockMove(MOCK_STATUS.unstaged, [], p);
       mockMove(MOCK_STATUS.staged, [], p);
     }
-    MOCK_REFS.stashes.unshift({ index: 0, message: `WIP: ${paths.length} file(s) (preview mock)` });
+    MOCK_REFS.stashes.unshift({ index: 0, message: `WIP: ${paths.length} file(s) (preview mock)`, base: MOCK_LOG[0].id });
     MOCK_REFS.stashes.forEach((s, i) => (s.index = i));
     return `Stashed ${paths.length} file(s) (preview mock)`;
   }
@@ -1533,8 +1548,8 @@ export const MOCK_REFS: Refs = {
     { name: "v3.33.0", target: mockOid("g"), message: "Release v3.33.0\n\nMock annotation shown in preview mode." },
   ],
   stashes: [
-    { index: 0, message: "config 3.31.2" },
-    { index: 1, message: "config 3.31 for mock" },
+    { index: 0, message: "config 3.31.2", base: mockOid("d") },
+    { index: 1, message: "config 3.31 for mock", base: mockOid("b") },
   ],
   recent: [
     "feature/dashboard",

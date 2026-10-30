@@ -5,7 +5,7 @@ import { searchLog } from "./api";
 // Preview mode (no Tauri) searches the mock log, so the search box still
 // behaves under plain `vite dev`.
 describe("searchLog in preview mode", () => {
-  const summaries = async (query: string) => (await searchLog(query, true)).map((r) => r.summary);
+  const summaries = async (query: string) => (await searchLog(query, { all_branches: true, pinned: null, hidden: [], solo: [] })).map((r) => r.summary);
 
   it("ANDs bare words, and keeps quoted phrases whole", async () => {
     expect(await summaries("config fix")).toEqual(["fix: config loader precedence"]);
@@ -24,6 +24,6 @@ describe("searchLog in preview mode", () => {
   });
 
   it("returns nothing for a blank query", async () => {
-    expect(await searchLog("   ", true)).toEqual([]);
+    expect(await searchLog("   ", { all_branches: true, pinned: null, hidden: [], solo: [] })).toEqual([]);
   });
 });
