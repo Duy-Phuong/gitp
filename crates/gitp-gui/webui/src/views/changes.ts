@@ -32,6 +32,7 @@ import { imageMime, loadOnce, renderImageDiff, type ImageLoad } from "./image-di
 import { renderFileTree } from "./tree";
 import { pathDragHandle } from "./path-drag";
 import { describeSubmoduleChange, parseSubmoduleDiff } from "../submodule-diff";
+import { lfsPointerPanel, parseLfsPointerDiff } from "../lfs-pointer";
 
 export type Panel = "unstaged" | "staged";
 
@@ -499,9 +500,11 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     // A submodule's "diff" is the commit it records; there are no lines to
     // stage piecemeal, only the whole entry (from the file list).
     const submodule = selectedDiff ? parseSubmoduleDiff(selectedDiff) : null;
-    const hasDiff = selectedDiff != null && selectedDiff.hunks.length > 0 && !submodule;
-    const mime = submodule ? null : imageMime(selected.path);
-    const truncated = selectedDiff?.truncated === true && !submodule;
+    // Likewise an LFS pointer: its lines are an id and a size, not content.
+    const pointer = selectedDiff && !submodule ? parseLfsPointerDiff(selectedDiff) : null;
+    const hasDiff = selectedDiff != null && selectedDiff.hunks.length > 0 && !submodule && !pointer;
+    const mime = submodule || pointer ? null : imageMime(selected.path);
+    const truncated = selectedDiff?.truncated === true && !submodule && !pointer;
     // A deleted file has nothing on disk to edit, and a submodule is a folder.
     const status = (selected.panel === "staged" ? stagedDisplay() : unstaged).find((f) => f.path === selected!.path)?.status;
     pane.append(diffToolbar(hasDiff, !submodule && status !== "Deleted"));
@@ -525,6 +528,8 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
           ...notes.map((text) => el("div", { class: "submodule-change-note", text })),
         ]),
       );
+    } else if (pointer) {
+      body.append(lfsPointerPanel(selected.path, pointer));
     } else if (hasDiff || truncated) {
       if (truncated) {
         body.append(

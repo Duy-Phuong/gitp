@@ -17,7 +17,9 @@ mod compare;
 mod config;
 mod conflict;
 mod editor;
+mod gitflow;
 mod history;
+mod lfs;
 mod local_workspaces;
 mod os;
 mod rebase;
@@ -149,6 +151,10 @@ pub fn run() {
             branches::remote_branch_exists,
             branches::merge_branch,
             branches::squash_message,
+            gitflow::gitflow_config,
+            gitflow::gitflow_init,
+            gitflow::gitflow_start,
+            gitflow::gitflow_finish,
             remote::push_branch,
             remote::push_branch_to,
             remote::fetch_branch,
@@ -257,6 +263,12 @@ pub fn run() {
             submodules::add_submodule,
             submodules::set_submodule_url,
             submodules::remove_submodule,
+            lfs::lfs_status,
+            lfs::lfs_track,
+            lfs::lfs_untrack,
+            lfs::lfs_install,
+            lfs::lfs_fetch,
+            lfs::lfs_pull,
         ])
         .run(tauri::generate_context!())
         .expect("error while running gitp");

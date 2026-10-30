@@ -40,6 +40,7 @@ import { hunkWordDiffs, type Seg } from "../worddiff";
 import { showContextMenu, type MenuItem } from "./context-menu";
 import { imageMime, loadOnce, renderImageDiff, type ImageLoad } from "./image-diff";
 import { renderFileTree } from "./tree";
+import { lfsPointerPanel, parseLfsPointerDiff } from "../lfs-pointer";
 
 // Which pane of the commit detail is showing. Exported so the host can persist
 // the user's choice — see initialTab / onTabChange below.
@@ -392,6 +393,11 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const file = detail!.files[selectedFile];
     if (fileMode === "blame") return renderBlameView(view, file);
     if (fileMode === "history") return renderHistoryView(view, file);
+    const pointer = parseLfsPointerDiff(file);
+    if (pointer) {
+      view.append(lfsPointerPanel(file.path, pointer));
+      return;
+    }
     const shown = displayedDiff(selectedFile);
     if (shown === undefined) return renderRecontexted(view, file);
     view.classList.toggle("wrap-lines", loadDiffWrap());

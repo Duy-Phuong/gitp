@@ -6,14 +6,47 @@
 //! git command, and a repo switch runs several in a row. So prefer a
 //! Homebrew git, else the real binary behind the shim, else plain `git`.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 /// A `Command` for the resolved git binary. Every git spawn goes through here.
 pub(crate) fn git_command() -> Command {
-    static GIT: OnceLock<PathBuf> = OnceLock::new();
-    Command::new(GIT.get_or_init(resolve))
+    static GIT: OnceLock<(PathBuf, Option<OsString>)> = OnceLock::new();
+    let (git, path) = GIT.get_or_init(|| {
+        let git = resolve();
+        let path = search_path(&git);
+        (git, path)
+    });
+    let mut cmd = Command::new(git);
+    if let Some(path) = path {
+        cmd.env("PATH", path);
+    }
+    cmd
+}
+
+/// PATH with git's own folder and Homebrew's added at the end, or `None` when
+/// they are all on it already. git finds the helpers that live outside its
+/// exec-path through PATH — `git-lfs` above all, which Homebrew installs there
+/// — and launchd's bare PATH has none of them, so from Finder every `git lfs`,
+/// and the LFS filter a checkout runs, would fail as "not a git command".
+fn search_path(git: &Path) -> Option<OsString> {
+    let current = std::env::var_os("PATH").unwrap_or_default();
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(&current).collect();
+    let extra = git
+        .parent()
+        .filter(|d| d.is_absolute())
+        .into_iter()
+        .chain([Path::new("/opt/homebrew/bin"), Path::new("/usr/local/bin")]);
+    let mut added = false;
+    for dir in extra {
+        if dir.is_dir() && !dirs.iter().any(|d| d == dir) {
+            dirs.push(dir.to_path_buf());
+            added = true;
+        }
+    }
+    added.then(|| std::env::join_paths(dirs).ok()).flatten()
 }
 
 fn resolve() -> PathBuf {

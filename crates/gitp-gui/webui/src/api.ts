@@ -54,6 +54,9 @@ import type {
   Submodule,
   StashOptions,
   StashSwitch,
+  FlowKind,
+  GitFlowConfig,
+  LfsStatus,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -874,6 +877,39 @@ export async function squashMessage(): Promise<string | null> {
   return invoke<string | null>("squash_message", {});
 }
 
+// --- Git Flow ---------------------------------------------------------------
+
+// The repo's Git Flow settings, or null before it is initialised.
+export async function gitflowConfig(): Promise<GitFlowConfig | null> {
+  if (!isTauri()) return mockGitflow && { ...mockGitflow };
+  return invoke<GitFlowConfig | null>("gitflow_config", {});
+}
+
+// Store the settings (in git-flow's `gitflow.*` keys) and create develop if
+// it doesn't exist.
+export async function gitflowInit(config: GitFlowConfig): Promise<string> {
+  if (!isTauri()) {
+    mockGitflow = { ...config };
+    return `Git Flow initialized: production ${config.production}, develop ${config.develop}. (preview mock)`;
+  }
+  return invoke<string>("gitflow_init", { config });
+}
+
+// Create the feature / release / hotfix branch `name` (prefix added by the
+// backend) from develop, or production for a hotfix, and check it out.
+export async function gitflowStart(kind: FlowKind, name: string): Promise<string> {
+  if (!isTauri()) return `Switched to a new branch '${name}' (${kind}, preview mock)`;
+  return invoke<string>("gitflow_start", { kind, name });
+}
+
+// Merge the flow branch where it belongs (tagging a release or hotfix with
+// `tagMessage`), then delete it. Stops on a conflict with the merge left in
+// progress, saying what is left to do.
+export async function gitflowFinish(branch: string, tagMessage: string | null): Promise<string> {
+  if (!isTauri()) return `Finished ${branch} (preview mock)`;
+  return invoke<string>("gitflow_finish", { branch, tagMessage });
+}
+
 // `remote`: where to push; by default the remote the branch tracks, else origin.
 export async function pushBranch(name: string, remote?: string): Promise<string> {
   if (!isTauri()) return `Pushed ${name} to ${remote ?? "origin"} (preview mock)`;
@@ -1666,6 +1702,53 @@ export async function removeSubmodule(path: string): Promise<string> {
   return invoke<string>("remove_submodule", { path });
 }
 
+// --- Git LFS ----------------------------------------------------------------
+
+// Whether git-lfs is installed, and whether (and how) this repo uses it.
+export async function lfsStatus(): Promise<LfsStatus> {
+  if (!isTauri()) return { ...MOCK_LFS, patterns: [...MOCK_LFS.patterns] };
+  return invoke<LfsStatus>("lfs_status", {});
+}
+
+// `git lfs track` / `untrack`: edit .gitattributes, left for the user to commit.
+export async function lfsTrack(pattern: string): Promise<string> {
+  if (!isTauri()) {
+    MOCK_LFS.patterns.push(pattern);
+    MOCK_LFS.used = true;
+    return `Tracking "${pattern}" (preview mock)`;
+  }
+  return invoke<string>("lfs_track", { pattern });
+}
+
+export async function lfsUntrack(pattern: string): Promise<string> {
+  if (!isTauri()) {
+    MOCK_LFS.patterns = MOCK_LFS.patterns.filter((p) => p !== pattern);
+    MOCK_LFS.used = MOCK_LFS.patterns.length > 0;
+    return `Untracking "${pattern}" (preview mock)`;
+  }
+  return invoke<string>("lfs_untrack", { pattern });
+}
+
+// `git lfs install --local`: the LFS filters and hooks for this repo.
+export async function lfsInstall(): Promise<string> {
+  if (!isTauri()) {
+    MOCK_LFS.initialized = true;
+    return "Updated Git hooks.\nGit LFS initialized. (preview mock)";
+  }
+  return invoke<string>("lfs_install", {});
+}
+
+// `git lfs fetch` / `pull`: network operations, with progress and Cancel.
+export async function lfsFetch(): Promise<string> {
+  if (!isTauri()) return "fetch: 2 objects found, done. (preview mock)";
+  return invokeNetwork<string>("lfs_fetch", {});
+}
+
+export async function lfsPull(): Promise<string> {
+  if (!isTauri()) return "Downloading LFS objects: 100% (2/2), done. (preview mock)";
+  return invokeNetwork<string>("lfs_pull", {});
+}
+
 // ---------------------------------------------------------------------------
 // Mock data (browser-only)
 // ---------------------------------------------------------------------------
@@ -2341,6 +2424,12 @@ const MOCK_WORKTREES: Worktree[] = [
   { ...MOCK_LINKED_WORKTREE, path: "/Users/you/Documents/mideal", head: mockOid("g"), branch: "develop/3.33.0", is_main: true },
   { ...MOCK_LINKED_WORKTREE },
 ];
+
+// Git Flow isn't set up in the mock repo until Initialize runs.
+let mockGitflow: GitFlowConfig | null = null;
+
+// The mock repo tracks its design files with LFS.
+const MOCK_LFS: LfsStatus = { installed: true, used: true, initialized: true, patterns: ["*.psd"] };
 
 // One submodule, with an older commit checked out than the repo records.
 const MOCK_SUBMODULES: Submodule[] = [

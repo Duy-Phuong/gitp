@@ -517,3 +517,28 @@ export interface Submodule {
   checked_out: string | null;
   state: SubmoduleState;
 }
+
+// A repository's Git Flow settings (mirrors gitp-core's GitFlowConfig), stored
+// under git-flow's own `gitflow.*` config keys.
+export interface GitFlowConfig {
+  production: string;
+  develop: string;
+  feature: string;
+  release: string;
+  hotfix: string;
+  // May be empty.
+  version_tag: string;
+}
+
+export type FlowKind = "Feature" | "Release" | "Hotfix";
+
+// Git LFS for the status bar indicator (mirrors gitp-core's LfsStatus).
+export interface LfsStatus {
+  // `git lfs` runs.
+  installed: boolean;
+  // `.gitattributes` tracks some paths with LFS.
+  used: boolean;
+  // The LFS filters are configured (`git lfs install`).
+  initialized: boolean;
+  patterns: string[];
+}

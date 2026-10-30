@@ -103,6 +103,9 @@ import {
 import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
 import { addSubmoduleAction, syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
+import { finishFlowAction, initGitflowAction, startFlowAction } from "./gitflow-actions";
+import { FLOW_KINDS, flowBranch } from "./gitflow";
+import { lfsFetchAction, lfsInstallAction, lfsPullAction, lfsTrackAction, lfsUntrackAction } from "./lfs-actions";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { openWorkspacesAction } from "./local-workspace-actions";
 import { addRemoteAction } from "./remote-actions";
@@ -482,6 +485,8 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Apply Patch…", run: () => void applyPatchAction() },
     { kind: "command", label: "Stage All Changes", run: () => void stageAllAction() },
     { kind: "command", label: "Unstage All Changes", run: () => void unstageAllAction() },
+    ...gitflowCommands(),
+    ...lfsCommands(),
     ...commitCommands(),
   ];
 
@@ -537,6 +542,74 @@ function repoCommands(): QuickItem[] {
   if (canCancelNetwork()) items.push({ kind: "command", label: "Cancel Fetch / Pull / Push / Clone", run: cancelNetworkAction });
   items.sort((a, b) => a.label.localeCompare(b.label));
   return items;
+}
+
+// Git Flow: Initialize until it is set up; then Start, Finish and Settings.
+function gitflowCommands(): QuickItem[] {
+  if (!state.gitflow) return [{ kind: "command", label: "Git Flow: Initialize…", run: initGitflowAction }];
+  return [
+    ...FLOW_KINDS.map((kind) => ({
+      kind: "command" as const,
+      label: `Git Flow: Start ${kind}…`,
+      run: () => promptFor(`${kind} name`, (name) => void startFlowAction(kind, name)),
+    })),
+    { kind: "command", label: "Git Flow: Finish…", next: flowFinishStage },
+    { kind: "command", label: "Git Flow: Settings…", run: initGitflowAction },
+  ];
+}
+
+function flowFinishStage(): QuickStage {
+  return {
+    chip: "Finish",
+    placeholder: "branch",
+    emptyNote: "No feature, release or hotfix branches to finish.",
+    sections: [
+      {
+        title: "Git Flow Branches",
+        items: state.refs.branches
+          .filter((b) => flowBranch(state.gitflow, b.name))
+          .map((b) => ({ kind: "branch" as const, label: b.name, run: () => void finishFlowAction(b.name) })),
+      },
+    ],
+  };
+}
+
+// Git LFS. Track and Initialize are offered in any repository — they are how
+// one starts using LFS; the rest only where it is in use.
+function lfsCommands(): QuickItem[] {
+  const items: QuickItem[] = [
+    {
+      kind: "command",
+      label: "LFS: Track Pattern…",
+      run: () => promptFor("Pattern, e.g. *.psd", (p) => void lfsTrackAction(p)),
+    },
+    { kind: "command", label: "LFS: Initialize", run: () => void lfsInstallAction() },
+  ];
+  if (state.lfs?.used) {
+    items.push(
+      { kind: "command", label: "LFS: Untrack Pattern…", next: lfsUntrackStage },
+      { kind: "command", label: "LFS: Fetch", run: () => void lfsFetchAction() },
+      { kind: "command", label: "LFS: Pull", run: () => void lfsPullAction() },
+    );
+  }
+  return items;
+}
+
+function lfsUntrackStage(): QuickStage {
+  return {
+    chip: "Untrack",
+    placeholder: "pattern",
+    sections: [
+      {
+        title: "LFS Patterns",
+        items: (state.lfs?.patterns ?? []).map((p) => ({
+          kind: "option" as const,
+          label: p,
+          run: () => void lfsUntrackAction(p),
+        })),
+      },
+    ],
+  };
 }
 
 // `open_in_editor`/`reveal` succeed or fail entirely in the OS, so without a
