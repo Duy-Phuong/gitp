@@ -59,11 +59,13 @@ import { opFailed, readFailed, reportDone, setStatus, watchNetwork, watchPending
 import { setupFetchAgeIndicator } from "./fetch-age";
 import {
   applyTheme,
+  applyZoom,
   currentTheme,
   loadAllBranches,
   loadAutoFetchMinutes,
   loadDetailTab,
   loadPushAfterCommit,
+  loadZoom,
   saveAllBranches,
   saveDetailTab,
   savePushAfterCommit,
@@ -252,6 +254,7 @@ async function init(): Promise<void> {
     onSectionMenu,
   });
   applyTheme(currentTheme());
+  void applyZoom(loadZoom());
   state.allBranches = loadAllBranches(); // before wireUi so the toggle reflects it
   wireUi();
   ui.detailView = setupDetail($("#detail-pane"), {

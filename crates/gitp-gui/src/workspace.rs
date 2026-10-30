@@ -115,6 +115,27 @@ fn close_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, Str
     Ok(guard.view())
 }
 
+/// Move the tab for `path` to position `to` (clamped to the last), keeping the
+/// same repo active — the tab bar's drag to reorder. `to` indexes the list with
+/// the tab already taken out. The frontend saves the new order with the rest
+/// of the workspace, so it is also the order tabs reopen in.
+fn move_repo_impl(state: &RepoState, path: String, to: usize) -> Result<WorkspaceView, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let from = guard
+        .sessions
+        .iter()
+        .position(|s| s.path == path)
+        .ok_or("repository is not open")?;
+    // `active` is an index, so it has to follow its repo to the new position.
+    let active = guard.active.map(|a| guard.sessions[a].path.clone());
+    let session = guard.sessions.remove(from);
+    let to = to.min(guard.sessions.len());
+    guard.sessions.insert(to, session);
+    let active = active.and_then(|p| guard.sessions.iter().position(|s| s.path == p));
+    guard.set_active(active);
+    Ok(guard.view())
+}
+
 /// Everything the frontend refreshes after any action, in one round trip.
 ///
 /// These five used to be five separate commands, each taking the global lock
@@ -201,6 +222,15 @@ pub(crate) fn close_repo(path: String, state: State<RepoState>) -> Result<Worksp
 }
 
 #[tauri::command(async)]
+pub(crate) fn move_repo(
+    path: String,
+    to: usize,
+    state: State<RepoState>,
+) -> Result<WorkspaceView, String> {
+    move_repo_impl(&state, path, to)
+}
+
+#[tauri::command(async)]
 pub(crate) fn workspace_snapshot(state: State<RepoState>) -> Result<WorkspaceSnapshot, String> {
     workspace_snapshot_impl(&state)
 }
@@ -208,8 +238,8 @@ pub(crate) fn workspace_snapshot(state: State<RepoState>) -> Result<WorkspaceSna
 #[cfg(test)]
 mod tests {
     use super::{
-        activate_repo_impl, close_repo_impl, init_repository_impl, list_repos_impl, open_repo_impl,
-        workspace_snapshot_impl,
+        activate_repo_impl, close_repo_impl, init_repository_impl, list_repos_impl, move_repo_impl,
+        open_repo_impl, workspace_snapshot_impl,
     };
     use crate::history::{get_commit_detail_impl, get_log_page_impl};
     use crate::state::RepoState;
@@ -313,5 +343,40 @@ mod tests {
         assert!(ws.repos.is_empty());
         assert_eq!(ws.active, None);
         assert!(list_repos_impl(&state).unwrap().repos.is_empty());
+    }
+
+    #[test]
+    fn moving_a_tab_reorders_the_workspace_and_keeps_the_active_repo() {
+        let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+        let paths: Vec<String> = dirs
+            .iter()
+            .map(|d| {
+                make_repo(d.path(), &["c1"]);
+                d.path().to_str().unwrap().to_string()
+            })
+            .collect();
+        let state = RepoState::default();
+        for p in &paths {
+            open_repo_impl(&state, p.clone()).expect("open");
+        }
+        let order = |ws: &crate::state::WorkspaceView| {
+            ws.repos.iter().map(|r| r.path.clone()).collect::<Vec<_>>()
+        };
+        let tabs = |ix: [usize; 3]| ix.map(|i| paths[i].clone());
+
+        // The active (last opened) tab dragged to the front stays active.
+        let ws = move_repo_impl(&state, paths[2].clone(), 0).expect("move C");
+        assert_eq!(order(&ws), tabs([2, 0, 1]));
+        assert_eq!(ws.active, Some(0));
+
+        // Another tab moved past it, with a position beyond the end clamped.
+        let ws = move_repo_impl(&state, paths[2].clone(), 99).expect("move C to the end");
+        assert_eq!(order(&ws), tabs([0, 1, 2]));
+        assert_eq!(ws.active, Some(2));
+        let ws = move_repo_impl(&state, paths[0].clone(), 2).expect("move A");
+        assert_eq!(order(&ws), tabs([1, 2, 0]));
+        assert_eq!(ws.active, Some(1), "C is still the active repo");
+
+        assert!(move_repo_impl(&state, "/not/open".into(), 0).is_err());
     }
 }

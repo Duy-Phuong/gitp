@@ -158,6 +158,12 @@ export async function closeRepo(path: string): Promise<Workspace> {
   return invoke<Workspace>("close_repo", { path });
 }
 
+// Move the tab for `path` to position `to` (an index into the tabs without it).
+export async function moveRepo(path: string, to: number): Promise<Workspace> {
+  if (!isTauri()) return mockMoveTab(path, to);
+  return invoke<Workspace>("move_repo", { path, to });
+}
+
 // Show a native folder picker. Returns the chosen directory, or null if the
 // user cancelled (or if running outside the Tauri shell, where no picker exists).
 export async function browseForRepo(): Promise<string | null> {
@@ -1554,6 +1560,17 @@ function mockClose(path: string): Workspace {
     MOCK_WORKSPACE.repos.splice(i, 1);
     const a = MOCK_WORKSPACE.active ?? 0;
     MOCK_WORKSPACE.active = MOCK_WORKSPACE.repos.length === 0 ? null : Math.min(i < a ? a - 1 : a, MOCK_WORKSPACE.repos.length - 1);
+  }
+  return { ...MOCK_WORKSPACE };
+}
+
+function mockMoveTab(path: string, to: number): Workspace {
+  const i = MOCK_WORKSPACE.repos.findIndex((r) => r.path === path);
+  if (i !== -1) {
+    const active = MOCK_WORKSPACE.repos[MOCK_WORKSPACE.active ?? -1];
+    const [tab] = MOCK_WORKSPACE.repos.splice(i, 1);
+    MOCK_WORKSPACE.repos.splice(Math.min(to, MOCK_WORKSPACE.repos.length), 0, tab);
+    if (active) MOCK_WORKSPACE.active = MOCK_WORKSPACE.repos.indexOf(active);
   }
   return { ...MOCK_WORKSPACE };
 }

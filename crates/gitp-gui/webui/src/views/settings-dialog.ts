@@ -8,17 +8,20 @@
 
 import { el } from "../dom";
 import {
+  applyZoom,
   AUTO_FETCH_MINUTES,
   currentTheme,
   loadAutoFetchMinutes,
   loadDetailTab,
   loadPullDefault,
+  loadZoom,
   PULL_DEFAULT_LABEL,
   PULL_DEFAULTS,
   saveDetailTab,
   savePullDefault,
   type PullDefault,
   type ThemeChoice,
+  ZOOM_LEVELS,
 } from "../prefs";
 import type { DetailTab } from "./detail";
 
@@ -73,7 +76,13 @@ export function openSettingsDialog(actions: SettingsActions): void {
   closeSettingsDialog();
 
   const sections: Section[] = [
-    { title: "Appearance", render: () => [row("Theme", themeCards(actions), "block")] },
+    {
+      title: "Appearance",
+      render: () => [
+        row("Theme", themeCards(actions), "block"),
+        row("Zoom", zoomSelect(), "inline", "Cmd/Ctrl + = and − step through these levels; Cmd/Ctrl + 0 goes back to 100%."),
+      ],
+    },
     {
       title: "Pull",
       render: () => [
@@ -204,6 +213,14 @@ function pullSelect(): HTMLElement {
   for (const mode of PULL_DEFAULTS) select.append(el("option", { value: mode, text: PULL_DEFAULT_LABEL[mode] }));
   select.value = loadPullDefault();
   select.addEventListener("change", () => savePullDefault(select.value as PullDefault));
+  return select;
+}
+
+function zoomSelect(): HTMLElement {
+  const select = el("select", { class: "settings-select" });
+  for (const z of ZOOM_LEVELS) select.append(el("option", { value: String(z), text: `${Math.round(z * 100)}%` }));
+  select.value = String(loadZoom());
+  select.addEventListener("change", () => void applyZoom(Number(select.value)));
   return select;
 }
 
