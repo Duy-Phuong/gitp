@@ -114,6 +114,20 @@ describe("branchReach", () => {
     expect(state.rows.filter((r) => on(r.id)).map((r) => r.id)).toEqual(["base"]);
   });
 
+  it("answers a remote branch's rows in any order", () => {
+    // The walk goes only as far down as asked: a deep row first, then one
+    // above it, must give what a full walk would.
+    state.rows = [commit("x", ["a"]), commit("a", ["b"]), commit("y", ["c"]), commit("b", ["c"]), commit("c", [])];
+    state.refs = { ...EMPTY_REFS, remotes: [{ remote: "origin", name: "origin/a", target: "a" }] };
+    rebuildCommitRefs();
+    const on = branchReach({ kind: "remote", name: "origin/a" })!;
+    expect(on("c")).toBe(true);
+    expect(on("x")).toBe(false);
+    expect(on("y")).toBe(false);
+    expect(on("b")).toBe(true);
+    expect(on("a")).toBe(true);
+  });
+
   it("never fades a commit outside the loaded log", () => {
     loadGraph();
     expect(branchReach({ kind: "local", name: "feature" })!("elsewhere")).toBe(true);
