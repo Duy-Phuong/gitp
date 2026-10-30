@@ -30,6 +30,7 @@ import {
 } from "./line-selection";
 import { imageMime, loadOnce, renderImageDiff, type ImageLoad } from "./image-diff";
 import { renderFileTree } from "./tree";
+import { pathDragHandle } from "./path-drag";
 import { describeSubmoduleChange, parseSubmoduleDiff } from "../submodule-diff";
 
 export type Panel = "unstaged" | "staged";
@@ -1058,6 +1059,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
           render();
         },
       });
+    }
+    // Any file row can be dragged onto the terminal to type its path.
+    for (const row of tree.querySelectorAll<HTMLElement>(".tree-file")) {
+      pathDragHandle(row, row.getAttribute("title") ?? "");
     }
     // Conflicted rows get a "Resolve" link to the conflict view in place of
     // staging (see isActionable); the badge class marks them in CSS.

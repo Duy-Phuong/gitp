@@ -354,6 +354,27 @@ export async function onRepoChanged(cb: (ev: RepoChanged) => void): Promise<void
   await listen<RepoChanged>("repo-changed", (event) => cb(event.payload));
 }
 
+// Files dragged onto the window from Finder: `over` while they hover, `drop`
+// with their absolute paths, `leave` if they're taken away. The desktop
+// webview takes file drops itself, so no HTML5 drop event (which wouldn't
+// carry a path anyway) fires. The position is in CSS pixels: on macOS wry
+// reports it in points, despite the "physical" in the type. There's nothing
+// to drag in from in preview mode.
+export type FileDragEvent =
+  | { type: "over"; x: number; y: number }
+  | { type: "drop"; paths: string[]; x: number; y: number }
+  | { type: "leave" };
+
+export async function onFileDragDrop(cb: (ev: FileDragEvent) => void): Promise<void> {
+  if (!isTauri()) return;
+  const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+  await getCurrentWebview().onDragDropEvent(({ payload: p }) => {
+    if (p.type === "leave") cb({ type: "leave" });
+    else if (p.type === "drop") cb({ type: "drop", paths: p.paths, x: p.position.x, y: p.position.y });
+    else cb({ type: "over", x: p.position.x, y: p.position.y });
+  });
+}
+
 // Staging trees: paths + statuses only (no hunks), so refreshing after each
 // stage/unstage stays fast even with many changed files. The selected file's
 // hunks come from fetchFileDiff.

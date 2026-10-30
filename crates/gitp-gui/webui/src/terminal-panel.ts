@@ -1,5 +1,5 @@
-// The embedded terminal panel: showing / hiding it, its tabs, and refreshing
-// after a command.
+// The embedded terminal panel: showing / hiding it, its tabs, refreshing after
+// a command, and typing in the paths of files dropped on it.
 //
 // Each repo has its own strip of shell tabs. Switching repos swaps the strip,
 // but the other repo's shells keep running — a build or a dev server started
@@ -9,7 +9,9 @@ import { $, clear, el } from "./dom";
 import { setupTerminal, type TerminalHandle } from "./views/terminal";
 import { state, ui, type TerminalPanel } from "./app-state";
 import { loadChanges, loadSidebar, refreshHistory, renderTerminalCwd } from "./shell";
-import { tabNumber } from "./terminal-text";
+import { shellQuote, tabNumber } from "./terminal-text";
+import { onFileDragDrop } from "./api";
+import { pathDropTarget, setOnPathDrop } from "./views/path-drag";
 
 interface TermTab {
   num: number;
@@ -172,10 +174,38 @@ const panel: TerminalPanel = {
   },
 };
 
+// Type `paths` at the active tab's cursor, quoted, with a trailing space for
+// whatever comes next — as dropping a file on Terminal.app does.
+function insertPaths(paths: string[]): void {
+  const tab = activeTab();
+  if (!tab || !paths.length) return;
+  tab.handle.paste(paths.map(shellQuote).join(" ") + " ");
+  tab.handle.focus();
+}
+
+// Whether the point is over the visible terminal.
+function overTerminal(x: number, y: number): boolean {
+  if (!panelOpen()) return false;
+  const r = $("#terminal-host").getBoundingClientRect();
+  return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+}
+
 export function setupTerminalPanel(): void {
   ui.terminal = panel;
   shown = state.repoPath;
   renderTabs();
+
+  // A file row from Local Changes: its path relative to the repo, made
+  // absolute so it holds wherever the shell has `cd`'d to.
+  const host = $("#terminal-host");
+  pathDropTarget(host);
+  setOnPathDrop((path) => insertPaths([`${state.repoPath}/${path}`]));
+  // Files from Finder.
+  void onFileDragDrop((ev) => {
+    const over = ev.type !== "leave" && overTerminal(ev.x, ev.y);
+    host.classList.toggle("path-drop-over", ev.type === "over" && over);
+    if (ev.type === "drop" && over) insertPaths(ev.paths);
+  });
 }
 
 // Start the shell in the still-hidden panel as soon as a repo is open. A shell
