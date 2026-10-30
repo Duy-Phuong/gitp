@@ -69,7 +69,7 @@ import {
 } from "./commit-actions";
 import { openFormDialog } from "./views/form-dialog";
 import { showComparison } from "./compare";
-import { checkoutInNewWorktreeItem, worktreeOf } from "./worktree-actions";
+import { checkoutInNewWorktreeItem, newWorktreeAtAction, worktreeOf } from "./worktree-actions";
 import { worktreeName } from "./views/sidebar";
 import { allRefsAt } from "./commit-refs";
 import { pushTargets } from "./push-targets";
@@ -551,6 +551,7 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
     },
   });
   items.push({ label: "New Tag…", run: () => newTagAction(target, short) });
+  items.push({ label: "New Worktree here…", run: () => newWorktreeAtAction(target, name) });
   // Only a lightweight tag: re-annotating would replace the original tagger
   // and date along with the message.
   if (state.refs.tags.find((t) => t.name === name)?.message === null) {

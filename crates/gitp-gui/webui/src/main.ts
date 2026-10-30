@@ -127,7 +127,7 @@ import {
   resumeCherryPickPlan,
   runNextCherryPick,
 } from "./commit-actions";
-import { onWorktreeMenu } from "./worktree-actions";
+import { onWorktreeDrop, onWorktreeMenu } from "./worktree-actions";
 import { addRemoteAction, onRemoteFolderMenu, onRemotesMenu } from "./remote-actions";
 import { addSubmoduleAction, onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { createFileAction, editFileAction } from "./editor-actions";
@@ -297,6 +297,7 @@ async function init(): Promise<void> {
     onTagMenu,
     onCommitContextMenu,
     onWorktreeMenu,
+    onWorktreeDrop,
     onSubmoduleOpen: openSubmodule,
     onSubmoduleMenu,
     onAddSubmodule: addSubmoduleAction,

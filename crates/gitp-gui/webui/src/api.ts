@@ -49,8 +49,11 @@ import type {
   Workspace,
   WorkspaceProgress,
   WorkspaceSnapshot,
+  StaleWorktree,
   Worktree,
+  WorktreeSummary,
   WorktreeTarget,
+  WorktreeUnsavedWork,
   Submodule,
   StashOptions,
   StashSwitch,
@@ -1587,6 +1590,28 @@ export async function listWorktrees(): Promise<Worktree[]> {
   return invoke<Worktree[]>("list_worktrees", {});
 }
 
+// Each worktree's changed-file count and ahead/behind (one `git status` per
+// worktree, off the backend lock). A worktree whose folder is gone is left out.
+export async function worktreeSummaries(): Promise<WorktreeSummary[]> {
+  if (!isTauri()) {
+    return MOCK_WORKTREES.filter((w) => !w.prunable).map((w) =>
+      w.is_main ? { path: w.path, changed: 0, ahead: 0, behind: 2 } : { path: w.path, changed: 3, ahead: 1, behind: 0 },
+    );
+  }
+  return invoke<WorktreeSummary[]>("worktree_summaries", {});
+}
+
+// What removing the worktree at `path` would lose: uncommitted files and
+// commits only its branch has.
+export async function worktreeUnsavedWork(path: string): Promise<WorktreeUnsavedWork> {
+  if (!isTauri()) {
+    return MOCK_WORKTREES.find((w) => w.path === path)?.is_main === false
+      ? { changed: ["src/dashboard.ts", "src/widgets/chart.ts", "notes.md"], untracked: 1, unpushed: 1 }
+      : { changed: [], untracked: 0, unpushed: 0 };
+  }
+  return invoke<WorktreeUnsavedWork>("worktree_unsaved_work", { path });
+}
+
 // `git worktree add`; a relative `path` resolves against the repo's folder.
 // Returns the new worktree's absolute path.
 export async function addWorktree(path: string, target: WorktreeTarget): Promise<string> {
@@ -1610,6 +1635,20 @@ export async function removeWorktree(path: string, force: boolean): Promise<stri
     return "";
   }
   return invoke<string>("remove_worktree", { path, force });
+}
+
+// `git worktree move`; a relative `to` resolves against the repo's folder.
+// Refused for the main worktree and a locked one. Returns the new absolute path.
+export async function moveWorktree(path: string, to: string): Promise<string> {
+  if (!isTauri()) {
+    const w = MOCK_WORKTREES.find((x) => x.path === path);
+    if (!w || w.is_main) throw "The main worktree is the repository's own folder and can't be moved.";
+    if (w.locked) throw `${path} is locked. Unlock it before moving it.`;
+    const parent = path.split("/").slice(0, -1).join("/");
+    w.path = to.startsWith("/") ? to : `${parent}/${to.split("/").filter((p) => p && p !== "..").join("/")}`;
+    return w.path;
+  }
+  return invoke<string>("move_worktree", { path, to });
 }
 
 export async function lockWorktree(path: string, reason: string): Promise<string> {
@@ -1638,6 +1677,17 @@ export async function pruneWorktrees(): Promise<string> {
     return gone.map((w) => `Removing worktrees/${w.path.split("/").pop()}: gitdir file points to non-existent location`).join("\n");
   }
   return invoke<string>("prune_worktrees", {});
+}
+
+// What pruneWorktrees would forget (`git worktree prune --dry-run -v`).
+export async function staleWorktrees(): Promise<StaleWorktree[]> {
+  if (!isTauri()) {
+    return MOCK_WORKTREES.filter((w) => w.prunable).map((w) => ({
+      name: w.path.split("/").pop() ?? w.path,
+      reason: "gitdir file points to non-existent location",
+    }));
+  }
+  return invoke<StaleWorktree[]>("stale_worktrees", {});
 }
 
 // --- Submodules -------------------------------------------------------------
