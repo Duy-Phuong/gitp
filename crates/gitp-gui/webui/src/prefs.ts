@@ -4,6 +4,7 @@ import { isTauri } from "./api";
 import { $ } from "./dom";
 import type { DetailTab } from "./views/detail";
 import type { PullMode } from "./types";
+import { DEFAULT_LOG_COLUMNS, normalizeLogColumns, type LogColumns } from "./log-columns";
 import { state, ui } from "./app-state";
 
 // --- Persisted preferences (localStorage) ----------------------------------
@@ -142,6 +143,36 @@ export function loadGraphPrefs(repo: string): GraphPrefs {
 
 export function saveGraphPrefs(repo: string, prefs: GraphPrefs): void {
   localStorage.setItem(GRAPH_PREFS_KEY + repo, JSON.stringify(prefs));
+}
+
+// Per-repo log columns (which of Author, Date and SHA show, and their order),
+// keyed by repo path like the graph settings. Kept apart from GraphPrefs:
+// those describe which commits the log walks, and changing them reloads it;
+// a column change only redraws the rows on screen.
+const LOG_COLUMNS_KEY = "gitp-log-columns:";
+
+export function loadLogColumns(repo: string): LogColumns {
+  try {
+    return normalizeLogColumns(JSON.parse(localStorage.getItem(LOG_COLUMNS_KEY + repo) ?? "{}"));
+  } catch {
+    return DEFAULT_LOG_COLUMNS;
+  }
+}
+
+export function saveLogColumns(repo: string, cols: LogColumns): void {
+  localStorage.setItem(LOG_COLUMNS_KEY + repo, JSON.stringify(cols));
+}
+
+// Hovering a branch fades the commits that aren't on it (Settings → History).
+// On by default, as in GitKraken.
+const BRANCH_HOVER_KEY = "gitp-branch-hover-fade";
+
+export function loadBranchHoverFade(): boolean {
+  return localStorage.getItem(BRANCH_HOVER_KEY) !== "0";
+}
+
+export function saveBranchHoverFade(on: boolean): void {
+  localStorage.setItem(BRANCH_HOVER_KEY, on ? "1" : "0");
 }
 
 // The history toggle, persisted across restarts. Defaults to all branches.

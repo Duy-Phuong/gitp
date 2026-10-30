@@ -33,7 +33,7 @@ import {
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el, $ } from "./dom";
-import { logRowTop, renderLog, setBisectMarks, setStashNodes, setWipRow } from "./views/log";
+import { logRowTop, renderLog, setBisectMarks, setLogColumnsRepo, setStashNodes, setWipRow } from "./views/log";
 import { bisectBannerText } from "./bisect-text";
 import { closeCommitMenu } from "./views/commit-menu";
 import { showContextMenu, showPrompt } from "./views/context-menu";
@@ -139,6 +139,7 @@ export function applyWorkspace(ws: Workspace): void {
   if (changed) {
     resetRepoViews();
     state.graph = loadGraphPrefs(state.repoPath);
+    setLogColumnsRepo(state.repoPath);
   }
   rememberRecentRepo(state.repoPath);
   renderRepoTabs();

@@ -33,6 +33,13 @@ export function refDragHandle(elem: HTMLElement, ref: DragRef): void {
   });
 }
 
+// The branch an event happened on (a badge or sidebar row made a handle
+// above, or anything inside one), for the branch hover fade.
+export function refUnder(target: EventTarget | null): DragRef | null {
+  const hit = target instanceof Element ? target.closest("[data-drop-ref]") : null;
+  return (hit && refOf.get(hit)) ?? null;
+}
+
 const same = (a: DragRef, b: DragRef) => a.kind === b.kind && a.name === b.name;
 
 // The droppable ref under the pointer, if any.
