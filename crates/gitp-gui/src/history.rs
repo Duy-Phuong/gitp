@@ -131,9 +131,16 @@ fn get_commit_file_diff_impl(
     path: String,
     old_path: Option<String>,
     context_lines: u32,
+    full: bool,
 ) -> Result<Option<FileDiff>, String> {
     with_repo(state, |repo| {
-        repo.commit_file_diff(&rev, &path, old_path.as_deref(), context_lines)
+        repo.commit_file_diff(
+            &rev,
+            &path,
+            old_path.as_deref(),
+            context_lines,
+            crate::staging::diff_cap(full),
+        )
     })
 }
 
@@ -214,9 +221,10 @@ pub(crate) fn get_commit_file_diff(
     path: String,
     old_path: Option<String>,
     context_lines: u32,
+    full: bool,
     state: State<RepoState>,
 ) -> Result<Option<FileDiff>, String> {
-    get_commit_file_diff_impl(&state, rev, path, old_path, context_lines)
+    get_commit_file_diff_impl(&state, rev, path, old_path, context_lines, full)
 }
 
 #[tauri::command(async)]

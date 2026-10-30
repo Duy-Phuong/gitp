@@ -65,7 +65,19 @@ pub struct FileDiff {
     pub old_path: Option<String>,
     pub status: ChangeKind,
     pub hunks: Vec<DiffHunk>,
+    /// Whether `hunks` stops short of the whole diff because it passed the
+    /// line cap it was collected with (see [`MAX_DIFF_LINES`]). Only whole
+    /// hunks are kept, so a hunk's index here is still its index in the
+    /// complete diff.
+    pub truncated: bool,
 }
+
+/// The most diff lines a file is given by default, over all of its hunks. A
+/// generated file — a lockfile, a minified bundle, a fixture — can run to
+/// hundreds of thousands of lines, every one of which would be serialized,
+/// sent over IPC and laid out in the webview; past this many the hunks stop
+/// and the file is marked `truncated` for the viewer to ask for the rest.
+pub const MAX_DIFF_LINES: usize = 5_000;
 
 /// Full detail for one commit: metadata plus its file diffs.
 #[derive(Debug, Clone, Serialize)]
@@ -95,7 +107,10 @@ impl Repo {
         let author = commit.author();
 
         let mut opts = git2::DiffOptions::new();
-        let files = collect_files(&self.commit_diff(&commit, opts.patience(true))?)?;
+        let files = collect_files(
+            &self.commit_diff(&commit, opts.patience(true))?,
+            Some(MAX_DIFF_LINES),
+        )?;
 
         Ok(CommitDetail {
             id: commit.id().to_string(),
@@ -112,14 +127,16 @@ impl Repo {
     /// One file of the commit named by `rev`, diffed with `context_lines` of
     /// unchanged context around each change — the diff pane's show more / show
     /// less / full file. `old_path` is a rename's source path: both sides must
-    /// be in the diff for the pair to be detected as a rename. `None` when the
-    /// commit doesn't touch `path`.
+    /// be in the diff for the pair to be detected as a rename. `max_lines`
+    /// caps the hunks as [`MAX_DIFF_LINES`] does for the whole commit; `None`
+    /// returns them all. `None` when the commit doesn't touch `path`.
     pub fn commit_file_diff(
         &self,
         rev: &str,
         path: &str,
         old_path: Option<&str>,
         context_lines: u32,
+        max_lines: Option<usize>,
     ) -> Result<Option<FileDiff>> {
         let commit = self.inner.revparse_single(rev)?.peel_to_commit()?;
         let mut opts = git2::DiffOptions::new();
@@ -131,7 +148,7 @@ impl Repo {
         if let Some(old) = old_path {
             opts.pathspec(old);
         }
-        let files = collect_files(&self.commit_diff(&commit, &mut opts)?)?;
+        let files = collect_files(&self.commit_diff(&commit, &mut opts)?, max_lines)?;
         Ok(files.into_iter().find(|f| f.path == path))
     }
 
@@ -155,8 +172,10 @@ impl Repo {
     }
 }
 
-/// Walk a diff's deltas, hunks and lines into owned `FileDiff`s.
-pub(crate) fn collect_files(diff: &git2::Diff) -> Result<Vec<FileDiff>> {
+/// Walk a diff's deltas, hunks and lines into owned `FileDiff`s. Each file
+/// keeps whole hunks while their lines total at most `max_lines`; the first
+/// hunk that would go over ends the file's hunks and marks it `truncated`.
+pub(crate) fn collect_files(diff: &git2::Diff, max_lines: Option<usize>) -> Result<Vec<FileDiff>> {
     let mut files: Vec<FileDiff> = Vec::new();
 
     for (idx, delta) in diff.deltas().enumerate() {
@@ -174,13 +193,20 @@ pub(crate) fn collect_files(diff: &git2::Diff) -> Result<Vec<FileDiff>> {
             old_path,
             status: delta.status().into(),
             hunks: Vec::new(),
+            truncated: false,
         };
+        let mut budget = max_lines.unwrap_or(usize::MAX);
 
         // `Patch` yields the hunks and lines for this one delta. It is `None` for
         // binary files (no textual patch), which we simply leave hunk-less.
         if let Some(patch) = git2::Patch::from_diff(diff, idx)? {
             for h in 0..patch.num_hunks() {
                 let (hunk, line_count) = patch.hunk(h)?;
+                if line_count > budget {
+                    file.truncated = true;
+                    break;
+                }
+                budget -= line_count;
                 let mut lines = Vec::with_capacity(line_count);
                 for l in 0..line_count {
                     let line = patch.line_in_hunk(h, l)?;

@@ -41,7 +41,9 @@ pub use commit_ops::ResetMode;
 pub use compare::{CompareEnd, Comparison};
 pub use config::{ConfigEntry, ConfigScope};
 pub use conflict_ops::{ConflictSides, ConflictStatus};
-pub use diff::{ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff, DEFAULT_CONTEXT_LINES};
+pub use diff::{
+    ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff, DEFAULT_CONTEXT_LINES, MAX_DIFF_LINES,
+};
 pub use error::{Error, Result};
 pub use filelog::FileCommit;
 pub use log::{CommitRow, LogCache, LogOptions, LogRefresh};

@@ -7,7 +7,7 @@
 
 use serde::Serialize;
 
-use crate::diff::{collect_files, FileDiff};
+use crate::diff::{collect_files, FileDiff, MAX_DIFF_LINES};
 use crate::error::{Error, Result};
 use crate::repo::Repo;
 
@@ -42,7 +42,10 @@ impl Repo {
     pub fn compare(&self, base: &str, head: &str, three_dot: bool) -> Result<Comparison> {
         let ends = self.compare_ends(base, head)?;
         let mut opts = git2::DiffOptions::new();
-        let files = collect_files(&self.compare_diff(&ends, three_dot, opts.patience(true))?)?;
+        let files = collect_files(
+            &self.compare_diff(&ends, three_dot, opts.patience(true))?,
+            Some(MAX_DIFF_LINES),
+        )?;
         let (ahead, behind) = self
             .inner
             .graph_ahead_behind(ends.head.id(), ends.base.id())?;
@@ -60,6 +63,7 @@ impl Repo {
     /// One file of a comparison re-diffed with `context_lines` of context —
     /// the compare counterpart of [`Repo::commit_file_diff`], with the same
     /// `old_path` pairing for renames. `None` when the file didn't change.
+    #[allow(clippy::too_many_arguments)]
     pub fn compare_file_diff(
         &self,
         base: &str,
@@ -68,6 +72,7 @@ impl Repo {
         path: &str,
         old_path: Option<&str>,
         context_lines: u32,
+        max_lines: Option<usize>,
     ) -> Result<Option<FileDiff>> {
         let ends = self.compare_ends(base, head)?;
         let mut opts = git2::DiffOptions::new();
@@ -78,7 +83,7 @@ impl Repo {
         if let Some(old) = old_path {
             opts.pathspec(old);
         }
-        let files = collect_files(&self.compare_diff(&ends, three_dot, &mut opts)?)?;
+        let files = collect_files(&self.compare_diff(&ends, three_dot, &mut opts)?, max_lines)?;
         Ok(files.into_iter().find(|f| f.path == path))
     }
 

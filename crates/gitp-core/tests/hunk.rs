@@ -25,7 +25,7 @@ fn stage_hunk_stages_only_that_block() {
     let repo = Repo::open(fx.path()).unwrap();
 
     assert_eq!(
-        repo.file_diff("f.txt", false, DEFAULT_CONTEXT_LINES)
+        repo.file_diff("f.txt", false, DEFAULT_CONTEXT_LINES, None)
             .unwrap()
             .unwrap()
             .hunks
@@ -39,11 +39,11 @@ fn stage_hunk_stages_only_that_block() {
 
     // One hunk staged, one still unstaged.
     let staged = repo
-        .file_diff("f.txt", true, DEFAULT_CONTEXT_LINES)
+        .file_diff("f.txt", true, DEFAULT_CONTEXT_LINES, None)
         .unwrap()
         .expect("something staged");
     let unstaged = repo
-        .file_diff("f.txt", false, DEFAULT_CONTEXT_LINES)
+        .file_diff("f.txt", false, DEFAULT_CONTEXT_LINES, None)
         .unwrap()
         .expect("something still unstaged");
     assert_eq!(staged.hunks.len(), 1, "exactly one hunk staged");
@@ -70,7 +70,7 @@ fn unstage_hunk_moves_one_block_back_to_the_working_tree() {
     let repo = Repo::open(fx.path()).unwrap();
     repo.stage_all().unwrap();
     assert_eq!(
-        repo.file_diff("f.txt", true, DEFAULT_CONTEXT_LINES)
+        repo.file_diff("f.txt", true, DEFAULT_CONTEXT_LINES, None)
             .unwrap()
             .unwrap()
             .hunks
@@ -83,7 +83,7 @@ fn unstage_hunk_moves_one_block_back_to_the_working_tree() {
         .unwrap();
 
     assert_eq!(
-        repo.file_diff("f.txt", true, DEFAULT_CONTEXT_LINES)
+        repo.file_diff("f.txt", true, DEFAULT_CONTEXT_LINES, None)
             .unwrap()
             .unwrap()
             .hunks
@@ -92,7 +92,7 @@ fn unstage_hunk_moves_one_block_back_to_the_working_tree() {
         "one hunk left staged"
     );
     assert_eq!(
-        repo.file_diff("f.txt", false, DEFAULT_CONTEXT_LINES)
+        repo.file_diff("f.txt", false, DEFAULT_CONTEXT_LINES, None)
             .unwrap()
             .unwrap()
             .hunks
@@ -119,7 +119,7 @@ fn discard_hunk_reverts_only_that_block_in_the_working_tree() {
     assert!(content.contains("LINE 11 CHANGED"), "bottom edit preserved");
     // Only the bottom hunk remains as an unstaged change.
     assert_eq!(
-        repo.file_diff("f.txt", false, DEFAULT_CONTEXT_LINES)
+        repo.file_diff("f.txt", false, DEFAULT_CONTEXT_LINES, None)
             .unwrap()
             .unwrap()
             .hunks
@@ -140,7 +140,7 @@ fn wider_context_merges_nearby_hunks_and_stages_them_together() {
     // Lines 2 and 11 are 8 unchanged lines apart: 3 lines of context keeps them
     // apart, 6 lines on each side closes the gap into one block.
     assert_eq!(
-        repo.file_diff("f.txt", false, 6)
+        repo.file_diff("f.txt", false, 6, None)
             .unwrap()
             .unwrap()
             .hunks
@@ -151,7 +151,7 @@ fn wider_context_merges_nearby_hunks_and_stages_them_together() {
     repo.stage_hunk("f.txt", 0, 6).unwrap();
 
     assert!(
-        repo.file_diff("f.txt", false, DEFAULT_CONTEXT_LINES)
+        repo.file_diff("f.txt", false, DEFAULT_CONTEXT_LINES, None)
             .unwrap()
             .is_none(),
         "both edits staged"
@@ -163,7 +163,7 @@ fn zero_context_shows_bare_changes_and_still_stages_one_block() {
     let fx = two_hunk_repo();
     let repo = Repo::open(fx.path()).unwrap();
 
-    let diff = repo.file_diff("f.txt", false, 0).unwrap().unwrap();
+    let diff = repo.file_diff("f.txt", false, 0, None).unwrap().unwrap();
     assert_eq!(diff.hunks.len(), 2);
     assert!(
         diff.hunks
@@ -176,7 +176,7 @@ fn zero_context_shows_bare_changes_and_still_stages_one_block() {
     repo.stage_hunk("f.txt", 0, 0).unwrap();
 
     let staged = repo
-        .file_diff("f.txt", true, DEFAULT_CONTEXT_LINES)
+        .file_diff("f.txt", true, DEFAULT_CONTEXT_LINES, None)
         .unwrap()
         .unwrap();
     let staged_text: String = staged.hunks[0]
@@ -194,7 +194,10 @@ fn full_file_context_is_one_block_with_every_line() {
     let fx = two_hunk_repo();
     let repo = Repo::open(fx.path()).unwrap();
 
-    let diff = repo.file_diff("f.txt", false, u32::MAX).unwrap().unwrap();
+    let diff = repo
+        .file_diff("f.txt", false, u32::MAX, None)
+        .unwrap()
+        .unwrap();
     assert_eq!(diff.hunks.len(), 1);
     // 10 unchanged lines + 2 removed + 2 added.
     assert_eq!(diff.hunks[0].lines.len(), 14);
@@ -212,7 +215,7 @@ fn stage_hunk_on_a_glob_like_path_leaves_the_lookalike_file_alone() {
     let repo = Repo::open(fx.path()).unwrap();
 
     let diff = repo
-        .file_diff("a[1].txt", false, DEFAULT_CONTEXT_LINES)
+        .file_diff("a[1].txt", false, DEFAULT_CONTEXT_LINES, None)
         .unwrap()
         .expect("a[1].txt has a diff");
     assert_eq!(diff.path, "a[1].txt");

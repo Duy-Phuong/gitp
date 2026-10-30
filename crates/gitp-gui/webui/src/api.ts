@@ -250,17 +250,22 @@ export const DEFAULT_CONTEXT_LINES = 3;
 // "Full file": more context than any file has lines, so the whole file comes
 // back as one block. Kept well under 2^31 — libgit2 doubles it internally.
 export const FULL_FILE_CONTEXT = 1_000_000_000;
+// The most diff lines a file comes back with unless `full` is asked for;
+// mirrors gitp-core's MAX_DIFF_LINES, for the truncation notice.
+export const MAX_DIFF_LINES = 5_000;
 
 // One file of a commit re-diffed with `contextLines` of context — the diff
 // pane's show more / show less / full file. `oldPath` keeps a rename paired.
+// `full` lifts the line cap for a file that came back `truncated`.
 export async function fetchCommitFileDiff(
   rev: string,
   path: string,
   oldPath: string | null,
   contextLines: number,
+  full = false,
 ): Promise<FileDiff | null> {
   if (!isTauri()) return mockDetail(rev).files.find((f) => f.path === path) ?? null;
-  return invoke<FileDiff | null>("get_commit_file_diff", { rev, path, oldPath, contextLines });
+  return invoke<FileDiff | null>("get_commit_file_diff", { rev, path, oldPath, contextLines, full });
 }
 
 export async function fetchRefs(): Promise<Refs> {
@@ -325,18 +330,20 @@ export async function fetchStatusSummary(): Promise<StatusLists> {
   return invoke<StatusLists>("get_status_summary", {});
 }
 
-// The full diff (with hunks) for one file, in the staged (HEAD→index) or
+// The diff (with hunks) for one file, in the staged (HEAD→index) or
 // unstaged (index→worktree) direction. Null when the path has no such change.
+// `full` lifts the line cap for a file that came back `truncated`.
 export async function fetchFileDiff(
   path: string,
   staged: boolean,
   contextLines: number,
+  full = false,
 ): Promise<FileDiff | null> {
   if (!isTauri()) {
     const list = staged ? MOCK_STATUS.staged : MOCK_STATUS.unstaged;
     return list.find((f) => f.path === path) ?? null;
   }
-  return invoke<FileDiff | null>("get_file_diff", { path, staged, contextLines });
+  return invoke<FileDiff | null>("get_file_diff", { path, staged, contextLines, full });
 }
 
 export async function stage(path: string): Promise<void> {
@@ -1579,6 +1586,7 @@ export async function fetchCompareFileDiff(
   cmp: Comparison,
   file: FileDiff,
   contextLines: number,
+  full = false,
 ): Promise<FileDiff | null> {
   if (!isTauri()) return cmp.files.find((f) => f.path === file.path) ?? null;
   return invoke<FileDiff | null>("get_compare_file_diff", {
@@ -1588,6 +1596,7 @@ export async function fetchCompareFileDiff(
     path: file.path,
     oldPath: file.old_path,
     contextLines,
+    full,
   });
 }
 
