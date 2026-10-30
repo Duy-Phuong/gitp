@@ -259,6 +259,19 @@ fn fast_forward_branch_impl(state: &RepoState, name: String) -> Result<String, S
     })
 }
 
+/// Fast-forward `name` to `to` (a branch dropped on another in the graph).
+/// Recorded like `fast_forward_branch`, as a HEAD move when it is the current
+/// branch that advances.
+fn fast_forward_branch_to_impl(
+    state: &RepoState,
+    name: String,
+    to: String,
+) -> Result<String, String> {
+    with_recorded_head_move(state, "Fast-forward", false, |repo| {
+        repo.fast_forward_branch_to(&name, &to)
+    })
+}
+
 /// Local branches whose upstream was deleted (see `Repo::gone_branches`) — the
 /// candidates Quick Launch's Clean up offers to remove.
 fn gone_branches_impl(state: &RepoState) -> Result<Vec<String>, String> {
@@ -373,6 +386,15 @@ pub(crate) fn merge_branch(name: String, state: State<RepoState>) -> Result<Stri
 #[tauri::command(async)]
 pub(crate) fn fast_forward_branch(name: String, state: State<RepoState>) -> Result<String, String> {
     fast_forward_branch_impl(&state, name)
+}
+
+#[tauri::command(async)]
+pub(crate) fn fast_forward_branch_to(
+    name: String,
+    to: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    fast_forward_branch_to_impl(&state, name, to)
 }
 
 #[tauri::command(async)]

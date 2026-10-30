@@ -44,6 +44,22 @@ fn push_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
     with_repo_networked(state, "push", |repo| repo.push_branch(&name), |_| {})
 }
 
+/// Push local branch `name` to `remote_branch` on `remote` (a branch dropped
+/// on a remote branch in the graph). No local change to the log.
+fn push_branch_to_impl(
+    state: &RepoState,
+    name: String,
+    remote: String,
+    remote_branch: String,
+) -> Result<String, String> {
+    with_repo_networked(
+        state,
+        "push",
+        |repo| repo.push_branch_to(&name, &remote, &remote_branch),
+        |_| {},
+    )
+}
+
 /// Fetch `name`'s remote. Updates remote-tracking refs only, so the local log
 /// (which walks from HEAD) is unchanged.
 fn fetch_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
@@ -120,6 +136,16 @@ pub(crate) fn push_force(state: State<RepoState>) -> Result<String, String> {
 #[tauri::command(async)]
 pub(crate) fn push_branch(name: String, state: State<RepoState>) -> Result<String, String> {
     push_branch_impl(&state, name)
+}
+
+#[tauri::command(async)]
+pub(crate) fn push_branch_to(
+    name: String,
+    remote: String,
+    remote_branch: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    push_branch_to_impl(&state, name, remote, remote_branch)
 }
 
 #[tauri::command(async)]

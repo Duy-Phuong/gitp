@@ -18,10 +18,12 @@ import {
   deleteRemoteBranch,
   remoteBranchExists,
   fastForwardBranch,
+  fastForwardBranchTo,
   fetchAndUpdateBranch,
   fetchBranch,
   mergeBranch,
   pushBranch,
+  pushBranchTo,
   rebaseOnto,
   renameBranch,
   renameRemoteBranch,
@@ -53,11 +55,12 @@ import {
   showReflog,
   showView,
 } from "./shell";
-import { checkoutCommitAction, confirmThenRun, openInteractiveRebase } from "./commit-actions";
+import { checkoutCommitAction, confirmThenRun, openInteractiveRebase, resetAction } from "./commit-actions";
 import { showComparison } from "./compare";
 import { checkoutInNewWorktreeItem, worktreeOf } from "./worktree-actions";
 import { worktreeName } from "./views/sidebar";
 import { allRefsAt } from "./commit-refs";
+import { dropActions, isAncestorInRows, type DragRef, type DropRef } from "./ref-drop";
 
 // Double-click a branch: check it out, then reload history + sidebar from the new
 // HEAD. Warns first if the working tree has uncommitted changes.
@@ -183,6 +186,80 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
   items.push({ label: "Copy Branch Name", run: () => void copyText(b.name, `Copied ${b.name}`) });
 
   showContextMenu(x, y, items);
+}
+
+// --- Drag and drop ------------------------------------------------------------
+
+// A branch dragged onto another (in the log or the sidebar): a menu at the drop
+// point of what that can do — merge, rebase, reset, fast-forward, push. Each
+// item is the same action its right-click menu runs.
+export function onRefDrop(srcRef: DragRef, dstRef: DragRef, x: number, y: number): void {
+  const src = resolveDragRef(srcRef);
+  const dst = resolveDragRef(dstRef);
+  if (!src || !dst) return;
+  const current = state.refs.head;
+  const actions = dropActions(src, dst, current, (a, d) => isAncestorInRows(state.rows, a, d));
+  if (!actions.length) {
+    setStatus(`Nothing to do with ${src.name} on ${dst.name}.`);
+    return;
+  }
+  const items: MenuItem[] = [];
+  for (const action of actions) {
+    switch (action) {
+      case "merge":
+        items.push({
+          label: `Merge ${src.name} into ${dst.name}`,
+          run: () => void runBranchOp(`Merging ${src.name} into ${dst.name}`, () => mergeBranch(src.name), true, dst.name),
+        });
+        break;
+      case "rebase":
+        items.push({
+          label: `Rebase ${src.name} onto ${dst.name}`,
+          run: () =>
+            void confirmThenRun(
+              `Rebase ${src.name} onto ${dst.name}? This rewrites commits on ${src.name}.`,
+              `Rebasing ${src.name} onto ${dst.name}`,
+              () => rebaseOnto(dst.name),
+            ),
+        });
+        break;
+      case "interactive-rebase":
+        items.push({ label: "Interactive Rebase…", run: () => void openInteractiveRebase(dst.name, dst.name) });
+        break;
+      case "reset":
+        items.push({ heading: `Reset ${src.name} to ${dst.name}` });
+        items.push({ label: "Soft (keep changes staged)…", run: () => void resetAction(dst.target, dst.name, "Soft") });
+        items.push({ label: "Mixed (keep changes unstaged)…", run: () => void resetAction(dst.target, dst.name, "Mixed") });
+        items.push({ label: "Hard (discard changes)…", danger: true, run: () => void resetAction(dst.target, dst.name, "Hard") });
+        break;
+      case "fast-forward":
+        items.push({
+          label: `Fast-forward ${dst.name} to ${src.name}`,
+          run: () => void runBranchOp(`Fast-forwarding ${dst.name} to ${src.name}`, () => fastForwardBranchTo(dst.name, src.name), true, dst.name),
+        });
+        break;
+      case "push": {
+        const remote = state.refs.remotes.find((r) => r.name === dst.name)?.remote ?? "origin";
+        const branch = dst.name.slice(remote.length + 1);
+        items.push({
+          label: `Push ${src.name} to ${dst.name}`,
+          run: () => void runBranchOp(`Pushing ${src.name} to ${dst.name}`, () => pushBranchTo(src.name, remote, branch), false, src.name),
+        });
+        break;
+      }
+    }
+  }
+  showContextMenu(x, y, items);
+}
+
+// The branch a drag names, with the commit it points at now — or null if it
+// has gone since the row was drawn.
+function resolveDragRef(ref: DragRef): DropRef | null {
+  const target =
+    ref.kind === "local"
+      ? state.refs.branches.find((b) => b.name === ref.name)?.target
+      : state.refs.remotes.find((r) => r.name === ref.name)?.target;
+  return target ? { ...ref, target } : null;
 }
 
 export function onBranchBulkMenu(x: number, y: number): void {

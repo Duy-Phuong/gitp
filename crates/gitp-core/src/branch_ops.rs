@@ -137,6 +137,14 @@ impl Repo {
         self.run_git_network(&["push", "origin", ref_arg(name)?])
     }
 
+    /// Push local branch `name` to branch `remote_branch` on `remote`, which
+    /// may have a different name (`git push <remote> <name>:refs/heads/<b>`).
+    /// A plain push, so git refuses one that isn't a fast-forward there.
+    pub fn push_branch_to(&self, name: &str, remote: &str, remote_branch: &str) -> Result<String> {
+        let refspec = format!("{}:refs/heads/{}", ref_arg(name)?, ref_arg(remote_branch)?);
+        self.run_git_network(&["push", ref_arg(remote)?, &refspec])
+    }
+
     /// Fetch updates for `name`'s remote (its configured remote, or all remotes
     /// if it tracks none), updating the remote-tracking refs so the branch's
     /// ahead/behind counts reflect new upstream commits. Doesn't touch the
@@ -238,15 +246,24 @@ impl Repo {
         let name = ref_arg(name)?;
         let upstream =
             self.run_git(&["rev-parse", "--abbrev-ref", &format!("{name}@{{upstream}}")])?;
+        self.fast_forward_branch_to(name, &upstream)
+    }
+
+    /// Fast-forward local branch `name` to `to` (a branch or remote-tracking
+    /// branch), the same way `fast_forward_branch` advances to the upstream:
+    /// refused unless `name` is an ancestor of `to`.
+    pub fn fast_forward_branch_to(&self, name: &str, to: &str) -> Result<String> {
+        let name = ref_arg(name)?;
+        let to = ref_arg(to)?;
         let current = self
             .inner
             .head()
             .ok()
             .and_then(|h| h.shorthand().map(str::to_string));
         if current.as_deref() == Some(name) {
-            self.run_git(&["merge", "--ff-only", &upstream])
+            self.run_git(&["merge", "--ff-only", to])
         } else {
-            self.run_git(&["fetch", ".", &format!("{upstream}:{name}")])
+            self.run_git(&["fetch", ".", &format!("{to}:{name}")])
         }
     }
 }

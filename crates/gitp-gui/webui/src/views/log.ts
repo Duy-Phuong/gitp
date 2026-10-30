@@ -9,6 +9,7 @@ import { clear, el, githubIcon, laptopIcon, svg, tagIcon } from "../dom";
 import { edgePath, fitLaneWidth, GRAPH_METRICS, type GraphMetrics, layoutGraph } from "../graph";
 import { loadRefColumnWidth, REF_COLUMN_DEFAULT, saveRefColumnWidth } from "../prefs";
 import { relativeTime } from "../timeago";
+import { refDragHandle } from "./ref-drag";
 import type { BisectStatus, CommitRow, StashRef } from "../types";
 
 // A ref pointing at a commit, shown as a colored chip on hover.
@@ -276,6 +277,9 @@ function tipBadge(t: TipRef): HTMLElement {
   chip.append(el("span", { class: "commit-ref-name", text: t.head ? `✓ ${t.name}` : t.name }));
   if (t.local) chip.append(laptopIcon());
   for (let k = 0; k < t.remotes.length; k++) chip.append(githubIcon());
+  // A merged badge drags as its local branch, or else its (first) remote one.
+  if (t.local) refDragHandle(chip, { kind: "local", name: t.name });
+  else if (t.remotes.length) refDragHandle(chip, { kind: "remote", name: t.remotes[0] });
   return chip;
 }
 
@@ -600,6 +604,7 @@ export function renderLog(
           if (r.kind === "tag") chip.append(tagIcon());
           else if (r.kind === "remote") chip.append(githubIcon());
           chip.append(el("span", { class: "commit-ref-name", text: r.kind === "head" ? `✓ ${r.name}` : r.name }));
+          if (r.kind !== "tag") refDragHandle(chip, { kind: r.kind === "remote" ? "remote" : "local", name: r.name });
           box.append(chip);
         }
         if (refs.total > MAX_REF_CHIPS) box.append(moreBadge(row.id, refs.total - MAX_REF_CHIPS));

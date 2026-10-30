@@ -93,8 +93,10 @@ import {
   onRemoteMenu,
   onStashMenu,
   onMoreRefsMenu,
+  onRefDrop,
   onTagMenu,
 } from "./ref-actions";
+import { setOnRefDrop } from "./views/ref-drag";
 import { onCommitContextMenu, onReflogMenu, runNextCherryPick } from "./commit-actions";
 import { onWorktreeMenu } from "./worktree-actions";
 import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
@@ -200,6 +202,7 @@ async function init(): Promise<void> {
   setOnMoreRefs(onMoreRefsMenu);
   setOnOpenWip(() => showView("changes"));
   setStashHandlers((s) => void showStashDetail(s), onStashMenu);
+  setOnRefDrop(onRefDrop);
   setRefActions({
     checkoutBranchAction,
     onBranchMenu,

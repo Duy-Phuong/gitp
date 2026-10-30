@@ -1965,6 +1965,35 @@ body {
 .commit-ref.more {
   cursor: pointer;
 }
+
+/* Dragging a branch onto another (badge in the log, row in the sidebar): a
+   label follows the pointer and the branch under it is ringed in the accent. */
+.ref-drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px var(--shadow-color);
+}
+body.ref-dragging,
+body.ref-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+.ref-drag-source {
+  opacity: 0.55;
+}
+.ref-drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: var(--accent-soft) !important;
+}
 .commit-ref.more:hover {
   color: var(--text);
 }

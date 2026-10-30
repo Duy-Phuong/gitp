@@ -669,6 +669,13 @@ export async function pushBranch(name: string): Promise<string> {
   return invokeNetwork<string>("push_branch", { name });
 }
 
+// Push local branch `name` to `remoteBranch` on `remote`, whatever its name
+// there — a branch dropped on a remote branch in the graph.
+export async function pushBranchTo(name: string, remote: string, remoteBranch: string): Promise<string> {
+  if (!isTauri()) return `Pushed ${name} to ${remote}/${remoteBranch} (preview mock)`;
+  return invokeNetwork<string>("push_branch_to", { name, remote, remoteBranch });
+}
+
 export async function fetchBranch(name: string): Promise<string> {
   if (!isTauri()) return `Fetched updates for ${name} (preview mock)`;
   return invokeNetwork<string>("fetch_branch", { name });
@@ -702,6 +709,13 @@ export async function fetchAndUpdateBranch(name: string): Promise<string> {
 export async function fastForwardBranch(name: string): Promise<string> {
   if (!isTauri()) return `Fast-forwarded ${name} (preview mock)`;
   return invoke<string>("fast_forward_branch", { name });
+}
+
+// Fast-forward local branch `name` to `to` (a branch or remote branch); git
+// refuses it unless `name` is behind `to`.
+export async function fastForwardBranchTo(name: string, to: string): Promise<string> {
+  if (!isTauri()) return `Fast-forwarded ${name} to ${to} (preview mock)`;
+  return invoke<string>("fast_forward_branch_to", { name, to });
 }
 
 export async function setUpstream(branch: string, upstream: string): Promise<string> {

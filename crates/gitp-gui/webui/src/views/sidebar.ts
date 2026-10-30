@@ -5,6 +5,7 @@
 // (filter text, which sections/folders are collapsed) and re-renders on change.
 
 import { chevronIcon, clear, el } from "../dom";
+import { refDragHandle } from "./ref-drag";
 import type { BranchRef, Refs, StashRef, Submodule, Worktree } from "../types";
 
 export type SidebarView = "history" | "changes" | "reflog";
@@ -176,8 +177,8 @@ function branchLeaf(
   const row = el("div", {
     class: `sb-leaf${b.is_head ? " head" : ""}${indented ? " indent" : ""}${multiSelected ? " multi-selected" : ""}${busy ? " busy" : ""}`,
     title: selectable
-      ? `${b.name}\nClick: jump to tip · Cmd/Shift-click: multi-select · Double-click: checkout · Right-click: actions`
-      : `${b.name}\nClick: jump to tip · Double-click: checkout · Right-click: actions`,
+      ? `${b.name}\nClick: jump to tip · Cmd/Shift-click: multi-select · Double-click: checkout · Drag onto a branch: actions · Right-click: actions`
+      : `${b.name}\nClick: jump to tip · Double-click: checkout · Drag onto a branch: actions · Right-click: actions`,
   });
   row.append(el("span", { class: "sb-leaf-label", text: label }));
   if (busy) {
@@ -226,6 +227,7 @@ function branchLeaf(
     window.clearTimeout(clickTimer);
     cb.onBranchCheckout(b);
   });
+  refDragHandle(row, { kind: "local", name: b.name });
   row.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     window.clearTimeout(clickTimer);
@@ -278,8 +280,9 @@ function remoteLeaf(
   busy: boolean,
   cb: SidebarCallbacks,
 ): HTMLElement {
-  const row = leaf(label, true, `${full}\nClick: jump to tip · Right-click: actions`, busy);
+  const row = leaf(label, true, `${full}\nClick: jump to tip · Drag onto a branch: actions · Right-click: actions`, busy);
   if (target) row.addEventListener("click", () => cb.onRefJump(target, full));
+  refDragHandle(row, { kind: "remote", name: full });
   row.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     cb.onRemoteMenu(full, target, e.clientX, e.clientY);

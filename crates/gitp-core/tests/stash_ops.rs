@@ -41,7 +41,10 @@ fn a_stash_knows_the_commit_it_was_taken_on() {
     fx.commit_file("b.txt", "b\n", "c2");
 
     let stashes = repo.refs().unwrap().stashes;
-    assert_eq!(stashes[0].base, head, "the graph hangs the stash off this commit");
+    assert_eq!(
+        stashes[0].base, head,
+        "the graph hangs the stash off this commit"
+    );
 }
 
 #[test]
