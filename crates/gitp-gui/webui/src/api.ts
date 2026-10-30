@@ -39,6 +39,7 @@ import type {
   RepoChanged,
   ResetMode,
   SigningConfig,
+  Identity,
   StatusLists,
   TagDetail,
   TextFile,
@@ -1365,6 +1366,26 @@ export async function unsetConfig(scope: ConfigScope, name: string): Promise<voi
     return;
   }
   await invoke<void>("unset_config", { scope, name });
+}
+
+// The identity git commits as outside any repo (global config, else system),
+// read without an open repo — the first-run "Default" profile starts from it.
+export async function fetchGlobalIdentity(): Promise<Identity> {
+  if (!isTauri()) return { name: "Ada Lovelace", email: "ada@example.com", signing_key: "" };
+  return invoke<Identity>("get_global_identity", {});
+}
+
+// Write a profile's identity into ~/.gitconfig (no repo needed).
+export async function setGlobalIdentity(identity: Identity): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("set_global_identity", { identity });
+}
+
+// Write a profile's identity into the active repo's local config; true when it
+// wasn't already there.
+export async function applyLocalIdentity(identity: Identity): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("apply_local_identity", { identity });
 }
 
 // The path each DotfileKind resolves to, purely for display — the backend

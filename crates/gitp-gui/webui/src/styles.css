@@ -491,6 +491,74 @@ body {
   align-items: center;
   padding: 6px 9px;
 }
+/* Profile button: the active profile's initials in a circle, the size of the
+   gear beside it. */
+#profile-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+#profile-menu {
+  min-width: 200px;
+}
+/* Manage Profiles: one row per profile, the active one tinted. */
+.profiles-modal {
+  width: min(560px, 92vw);
+}
+.profiles-modal .modal-actions {
+  margin-top: 12px;
+}
+.profiles-list {
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.profiles-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.profiles-row:last-child {
+  border-bottom: none;
+}
+.profiles-row.active {
+  background: var(--accent-soft);
+}
+.profile-badge {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.profiles-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.profiles-name {
+  font-size: 13px;
+}
+.profiles-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* A column with a real gap, rather than rows stacked flush against each other.
    Menu items had no separation at all — only their own padding — so in the
    branch menu, where long names wrap to two lines, an item's own line spacing

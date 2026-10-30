@@ -131,6 +131,7 @@ import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { openInDiffTool, openInMergeTool } from "./external-tools";
 import { setupLogKeyboardNav, setupShortcuts } from "./keyboard";
 import { setupBranchMenu, setupPullMenu, setupSettingsMenu } from "./topbar-menus";
+import { setupProfileMenu } from "./profile-menu";
 import { showComparison } from "./compare";
 
 function wireUi(): void {
@@ -180,6 +181,7 @@ function wireUi(): void {
   setupPaneResizer();
   setupSidebarResizer();
   setupSettingsMenu();
+  void setupProfileMenu();
   setupExternalChangeRefresh();
   setupLogKeyboardNav();
   setupFetchAgeIndicator();

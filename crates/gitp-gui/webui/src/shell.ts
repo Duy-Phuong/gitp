@@ -57,6 +57,7 @@ import { rebuildCommitRefs, refLabelsAt } from "./commit-refs";
 import { refreshConfig } from "./config-panel";
 import { refreshActionButtons } from "./toolbar";
 import { cancelComparison, compareSelectedCommits, showComparison } from "./compare";
+import { applyProfileIdentityHere } from "./profile-menu";
 
 // What a ref or commit row does when it's right-clicked (or, for a branch,
 // double-clicked) — set once by main.ts at startup; see the module comment.
@@ -139,6 +140,7 @@ export function applyWorkspace(ws: Workspace): void {
   if (changed) {
     resetRepoViews();
     state.graph = loadGraphPrefs(state.repoPath);
+    applyProfileIdentityHere();
   }
   rememberRecentRepo(state.repoPath);
   renderRepoTabs();
