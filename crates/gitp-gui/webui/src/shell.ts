@@ -552,6 +552,15 @@ export async function selectCommit(id: string): Promise<void> {
   }
 }
 
+// The repo's text encoding changed (Settings → Git): the diffs on screen were
+// decoded with the old one, so the commit's and the selected change's are
+// fetched again.
+export function reloadDiffs(): void {
+  shownDetailId = null;
+  if (state.view === "history" && state.selectedId) void selectCommit(state.selectedId);
+  void ui.changesView?.recheckDiff();
+}
+
 // Drop a commit multi-selection and repaint the log without it, keeping the
 // scroll position.
 export async function clearCommitSelection(): Promise<void> {

@@ -13,6 +13,7 @@ mod config;
 mod conflict_ops;
 mod create;
 mod diff;
+mod encoding;
 mod error;
 mod external_tool;
 mod file_content;
@@ -56,6 +57,7 @@ pub use create::{clone_repo, init_repo, CloneOptions};
 pub use diff::{
     ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff, DEFAULT_CONTEXT_LINES, MAX_DIFF_LINES,
 };
+pub use encoding::{TextEncoding, ENCODING_KEY};
 pub use error::{Error, Result};
 pub use external_tool::DiffToolTarget;
 pub use file_content::{FileContent, FileSide, PREVIEW_MAX_BYTES};

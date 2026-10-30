@@ -140,21 +140,29 @@ impl Repo {
                 .flat_map(|o| o.iter())
                 .any(|b| has_nul(b));
 
-        let to_text = |o: Option<Vec<u8>>| o.map(|b| String::from_utf8_lossy(&b).into_owned());
+        let enc = self.text_encoding();
+        let to_text = |o: Option<Vec<u8>>| o.map(|b| enc.decode_lossy(&b).into_owned());
         Ok(ConflictSides {
             ours: to_text(ours),
             theirs: to_text(theirs),
             base: to_text(base),
-            working: String::from_utf8_lossy(&working).into_owned(),
+            working: enc.decode_lossy(&working).into_owned(),
             binary,
             edited,
         })
     }
 
-    /// Write the resolved `content` for `path` and stage it (`git add`), which
-    /// marks the conflict resolved.
+    /// Write the resolved `content` for `path`, in the repo's encoding, and
+    /// stage it (`git add`), which marks the conflict resolved.
     pub fn resolve_conflict(&self, path: &str, content: &str) -> Result<()> {
-        std::fs::write(self.workdir_path()?.join(path), content)
+        let enc = self.text_encoding();
+        let bytes = enc.encode(content).ok_or_else(|| {
+            Error::Message(format!(
+                "the result has characters that {} can't represent, so it wasn't saved",
+                enc.name()
+            ))
+        })?;
+        std::fs::write(self.workdir_path()?.join(path), bytes)
             .map_err(|e| crate::error::Error::Message(format!("can't write {path}: {e}")))?;
         self.run_git(&["add", "--", &literal_pathspec(path)])
             .map(|_| ())

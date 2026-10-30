@@ -10,12 +10,16 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { isTauri } from "../api";
+import { fontStack, loadTerminalFont } from "../prefs";
 
 export interface TerminalHandle {
   fit: () => void;
   // Re-read the palette after the user switches theme — xterm holds its colours
   // as JS values, so a CSS variable change alone doesn't reach it.
   syncTheme: () => void;
+  // Re-read the font (Settings → Editor & Diff), for the same reason. The
+  // caller fits the terminal afterwards: its cells changed size.
+  syncFont: () => void;
   focus: () => void;
   clear: () => void;
   // Type `text` at the cursor as a paste would (bracketed, if the shell asked
@@ -68,6 +72,12 @@ function cssVar(name: string, fallback: string): string {
   return v || fallback;
 }
 
+// The family xterm draws with: the chosen one, then the app's monospace stack
+// resolved to its value (a canvas can't follow var()).
+function terminalFontFamily(font: string): string {
+  return fontStack(font, cssVar("--mono", "ui-monospace, SFMono-Regular, Menlo, monospace"));
+}
+
 function terminalTheme(): ITheme {
   const dark = isDark();
   return {
@@ -87,9 +97,10 @@ function terminalTheme(): ITheme {
 let nextId = 1;
 
 export function setupTerminal(host: HTMLElement, opts: TerminalOptions): TerminalHandle {
+  const font = loadTerminalFont();
   const term = new Terminal({
-    fontFamily: cssVar("--mono", "ui-monospace, SFMono-Regular, Menlo, monospace"),
-    fontSize: 12,
+    fontFamily: terminalFontFamily(font.font),
+    fontSize: font.size,
     lineHeight: 1.2,
     theme: terminalTheme(),
     cursorBlink: true,
@@ -101,9 +112,14 @@ export function setupTerminal(host: HTMLElement, opts: TerminalOptions): Termina
   term.open(host);
   fitAddon.fit();
 
-  const base: Pick<TerminalHandle, "syncTheme" | "focus" | "clear"> = {
+  const base: Pick<TerminalHandle, "syncTheme" | "syncFont" | "focus" | "clear"> = {
     syncTheme: () => {
       term.options.theme = terminalTheme();
+    },
+    syncFont: () => {
+      const f = loadTerminalFont();
+      term.options.fontFamily = terminalFontFamily(f.font);
+      term.options.fontSize = f.size;
     },
     focus: () => term.focus(),
     clear: () => term.clear(),
