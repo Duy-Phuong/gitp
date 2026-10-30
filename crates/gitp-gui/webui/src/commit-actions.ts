@@ -16,13 +16,14 @@ import {
   resetTo,
   restoreFilesFromCommit,
   revertCommit,
+  revertCommitHunk,
 } from "./api";
 import { $ } from "./dom";
 import { logRowHeight, renderLog } from "./views/log";
 import { showCommitMenu } from "./views/commit-menu";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { openRebaseModal, type RebaseOptions } from "./views/rebase";
-import type { CommitRow, RebaseAction, RebaseStep, ReflogEntry, ResetMode } from "./types";
+import type { CommitRow, FileDiff, RebaseAction, RebaseStep, ReflogEntry, ResetMode } from "./types";
 import { state, ui } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
@@ -236,6 +237,19 @@ export async function restoreFilesAction(rev: string, paths: string[]): Promise<
     reportDone(`Restored ${what} from ${short} — staged in Local Changes.`);
   } catch (err) {
     opFailed("Restore failed", err);
+  }
+}
+
+// A diff block's "Revert": undo just that block of commit `rev` in the working
+// tree, for Local Changes to commit. Undo takes it back.
+export async function revertHunkAction(rev: string, file: FileDiff, hunkIndex: number, contextLines: number): Promise<void> {
+  setStatus(`Reverting a block of ${file.path}…`);
+  try {
+    await revertCommitHunk(rev, file, hunkIndex, contextLines);
+    await loadSidebar(); // the Local Changes count and the Undo button
+    reportDone(`Reverted a block of ${file.path} from ${rev.slice(0, 7)} — the change is in Local Changes.`);
+  } catch (err) {
+    opFailed("Revert Hunk failed", err);
   }
 }
 

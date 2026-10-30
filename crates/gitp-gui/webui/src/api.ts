@@ -922,6 +922,30 @@ export async function restoreFilesFromCommit(rev: string, paths: string[]): Prom
   await invoke<void>("restore_files_from_commit", { rev, paths });
 }
 
+// Undo block `hunkIndex` of commit `rev`'s diff of `file` (at `contextLines`,
+// as drawn) in the working tree. Fails when the file has moved on there.
+export async function revertCommitHunk(
+  rev: string,
+  file: FileDiff,
+  hunkIndex: number,
+  contextLines: number,
+): Promise<void> {
+  if (!isTauri()) {
+    if (!MOCK_STATUS.unstaged.some((f) => f.path === file.path)) {
+      MOCK_STATUS.unstaged.push({ path: file.path, old_path: null, status: "Modified", hunks: [] });
+    }
+    mockRecord(`Revert block of ${file.path}`);
+    return;
+  }
+  await invoke<void>("revert_commit_hunk", {
+    rev,
+    path: file.path,
+    oldPath: file.old_path,
+    hunkIndex,
+    contextLines,
+  });
+}
+
 // Stash only `paths` away (`git stash push -u -- <paths>`).
 export async function stashFiles(paths: string[]): Promise<string> {
   if (!isTauri()) {

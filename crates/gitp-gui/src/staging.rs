@@ -170,6 +170,22 @@ pub(crate) fn restore_files_from_commit_impl(
     })
 }
 
+/// Undo one block of commit `rev`'s change to `path` in the working tree,
+/// recorded like a discard of that file so Undo restores it exactly.
+fn revert_commit_hunk_impl(
+    state: &RepoState,
+    rev: String,
+    path: String,
+    old_path: Option<String>,
+    hunk_index: usize,
+    context_lines: u32,
+) -> Result<(), String> {
+    let paths = [path.clone()];
+    with_recorded_files(state, format!("Revert block of {path}"), &paths, |repo| {
+        repo.revert_commit_hunk(&rev, &path, old_path.as_deref(), hunk_index, context_lines)
+    })
+}
+
 /// Write a patch of `paths` (staged or working-tree direction) to `dest`.
 fn save_files_patch_impl(
     state: &RepoState,
@@ -328,6 +344,18 @@ pub(crate) fn restore_files_from_commit(
     state: State<RepoState>,
 ) -> Result<(), String> {
     restore_files_from_commit_impl(&state, rev, paths)
+}
+
+#[tauri::command(async)]
+pub(crate) fn revert_commit_hunk(
+    rev: String,
+    path: String,
+    old_path: Option<String>,
+    hunk_index: usize,
+    context_lines: u32,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    revert_commit_hunk_impl(&state, rev, path, old_path, hunk_index, context_lines)
 }
 
 #[tauri::command(async)]

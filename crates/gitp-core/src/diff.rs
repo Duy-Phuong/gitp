@@ -137,7 +137,7 @@ impl Repo {
 
     /// `commit` against its first parent (or the empty tree for a root commit),
     /// with renames detected so ChangeKind::Renamed is reported.
-    fn commit_diff(
+    pub(crate) fn commit_diff(
         &self,
         commit: &git2::Commit,
         opts: &mut git2::DiffOptions,

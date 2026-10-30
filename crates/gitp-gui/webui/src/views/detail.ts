@@ -50,6 +50,9 @@ export interface DetailCallbacks {
   onCloseCompare: () => void;
   // Put `paths` back to how they are in commit `id` (staged in Local Changes).
   restoreFiles: (id: string, paths: string[]) => void;
+  // Undo block `hunkIndex` of commit `id`'s diff of `file`, as drawn at
+  // `contextLines`, in the working tree.
+  revertHunk: (id: string, file: FileDiff, hunkIndex: number, contextLines: number) => void;
   // Verify the commit's signature (null when unsigned). Can be slow — it runs
   // gpg / ssh-keygen — so the Commit tab fills its badge in when this lands.
   fetchSignature: (id: string) => Promise<CommitSignature | null>;
@@ -342,6 +345,29 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const shown = displayedDiff(selectedFile);
     if (shown === undefined) return renderRecontexted(view, file);
     view.append(splitView ? renderSplitDiff(shown) : renderUnifiedDiff(shown));
+    // A comparison's blocks belong to no one commit to revert.
+    if (!compare) attachRevertButtons(view, file);
+  }
+
+  // A "Revert" button on each block's header, revealed on hover like Local
+  // Changes' staging controls. The block index is the one drawn, so it goes
+  // with the context it was drawn at.
+  function attachRevertButtons(view: HTMLElement, file: FileDiff): void {
+    const id = detail!.id;
+    const ctx = contextLines;
+    for (const hunkEl of view.querySelectorAll<HTMLElement>(".hunk[data-hunk]")) {
+      const index = Number(hunkEl.dataset.hunk);
+      const btn = el("button", {
+        class: "hunk-btn danger",
+        text: "Revert",
+        title: "Undo this block of the commit in your working directory",
+      });
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        cb.revertHunk(id, file, index, ctx);
+      });
+      hunkEl.querySelector(".hunk-header")?.append(el("div", { class: "hunk-actions" }, [btn]));
+    }
   }
 
   // The file as it should be drawn at the current context: the commit's own
