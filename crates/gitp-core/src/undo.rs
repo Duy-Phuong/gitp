@@ -37,6 +37,10 @@ pub struct FileBlob {
     pub path: String,
     pub before: Option<Vec<u8>>,
     pub after: Option<Vec<u8>>,
+    /// Each side's permission bits (see [`Repo::workfile_mode`]), so a deleted
+    /// script comes back executable. `None` leaves the mode as it falls.
+    pub before_mode: Option<u32>,
+    pub after_mode: Option<u32>,
 }
 
 /// How undo/redo moves the branch tip of a [`Undoable::HeadMoved`] — the
@@ -292,6 +296,22 @@ impl Repo {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(Error::Message(format!("can't read {path}: {e}"))),
+        }
+    }
+
+    /// The permission bits of the working-tree file `path`, or `None` if it
+    /// doesn't exist (or off Unix) — kept beside its bytes around a discard.
+    pub fn workfile_mode(&self, path: &str) -> Option<u32> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let full = self.workdir_path().ok()?.join(path);
+            Some(fs::metadata(full).ok()?.permissions().mode() & 0o7777)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            None
         }
     }
 
@@ -915,9 +935,9 @@ impl Repo {
     fn restore_blobs(&self, files: &[FileBlob], side: Side) -> Result<()> {
         let workdir = self.workdir_path()?;
         for f in files {
-            let content = match side {
-                Side::Before => &f.before,
-                Side::After => &f.after,
+            let (content, mode) = match side {
+                Side::Before => (&f.before, f.before_mode),
+                Side::After => (&f.after, f.after_mode),
             };
             let full = workdir.join(&f.path);
             match content {
@@ -929,6 +949,13 @@ impl Repo {
                     }
                     fs::write(&full, bytes)
                         .map_err(|e| Error::Message(format!("can't restore {}: {e}", f.path)))?;
+                    #[cfg(unix)]
+                    if let Some(mode) = mode {
+                        use std::os::unix::fs::PermissionsExt;
+                        fs::set_permissions(&full, fs::Permissions::from_mode(mode)).map_err(
+                            |e| Error::Message(format!("can't restore {}: {e}", f.path)),
+                        )?;
+                    }
                 }
                 None => {
                     if full.exists() {

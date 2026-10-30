@@ -103,6 +103,12 @@ impl TerminalState {
         // one event per 32 KiB rather than per 4 KiB.
         let sessions = self.0.clone();
         Ok(std::thread::spawn(move || {
+            // Whether `id` still names this session: once it's killed or
+            // replaced (the id reused) its output belongs to no tab, and under
+            // that id it would land in the replacement's.
+            let current = |map: &HashMap<u32, Arc<Session>>| {
+                map.get(&id).is_some_and(|s| Arc::as_ptr(s) == this.as_ptr())
+            };
             let mut buf = [0u8; 32 * 1024];
             let mut pending = Vec::new();
             loop {
@@ -110,7 +116,11 @@ impl TerminalState {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
                         let chunk = decode_chunk(&mut pending, &buf[..n]);
-                        if !chunk.is_empty() && !on_output(chunk) {
+                        // A gone session is still read to the end, just not
+                        // shown: a shell with output pending on the PTY can't
+                        // finish exiting until it's read, and `end` would hang.
+                        let shown = sessions.lock().is_ok_and(|map| current(&map));
+                        if shown && !chunk.is_empty() && !on_output(chunk) {
                             break;
                         }
                     }
@@ -120,7 +130,7 @@ impl TerminalState {
             // its own. Take it out (only if it is still this session — the id
             // may have been reused) and reap it.
             let exited = match sessions.lock() {
-                Ok(mut map) if map.get(&id).is_some_and(|s| Arc::as_ptr(s) == this.as_ptr()) => map.remove(&id),
+                Ok(mut map) if current(&map) => map.remove(&id),
                 _ => None,
             };
             if let Some(gone) = exited {
@@ -161,7 +171,9 @@ impl TerminalState {
 
 /// Start session `id` running the user's shell in `cwd`. Returns the shell's
 /// name (`zsh`), which the frontend titles the tab with.
-#[tauri::command]
+// `(async)`: spawning over a live id ends the old shell first, which waits out
+// its SIGHUP grace period, like `terminal_kill`.
+#[tauri::command(async)]
 pub fn terminal_spawn(
     app: AppHandle,
     state: State<TerminalState>,
@@ -323,6 +335,37 @@ mod tests {
             seen[from as usize].push_str(&data);
         }
         assert!(!seen[1].contains("<exited>"));
+    }
+
+    #[test]
+    fn a_replaced_session_stops_writing_into_its_successor() {
+        let terms = TerminalState::default();
+        let (tx, rx) = channel();
+        // A shell that shrugs off SIGHUP goes on printing through the grace
+        // period before it's killed, while its replacement is already live.
+        let mut old = CommandBuilder::new("/bin/sh");
+        old.args(["-c", "trap '' HUP; while :; do echo old-out; sleep 0.01; done"]);
+        let out = tx.clone();
+        let old = terms.spawn(1, old, 80, 24, move |_| out.send(Instant::now()).is_ok(), || {}).unwrap();
+        rx.recv_timeout(Duration::from_secs(10)).expect("no output from the first session");
+
+        // Same id again, as a reloaded webview numbers its tabs from 1.
+        let swapping = Instant::now();
+        terms.spawn(1, CommandBuilder::new("/bin/sh"), 80, 24, |_| true, || {}).unwrap();
+        let swapped = Instant::now();
+        assert!(joins_soon(&old), "the replaced session's reader thread is still running");
+        // Output read just before the swap may still land; nothing after.
+        let late = rx
+            .try_iter()
+            .filter(|sent| *sent > swapping + Duration::from_millis(100))
+            .count();
+        assert_eq!(
+            late,
+            0,
+            "the replaced session went on emitting under the reused id ({:?} swap)",
+            swapped - swapping
+        );
+        terms.kill(1).unwrap();
     }
 }
 

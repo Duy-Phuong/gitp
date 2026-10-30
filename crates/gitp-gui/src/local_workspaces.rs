@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use gitp_core::{NetworkHooks, Progress, ProgressFn, PullMode, Repo};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::state::{invalidate_status, throttled, to_message, NetworkOps, RepoState, Session};
 use crate::undo::clear_undo;
@@ -62,7 +62,14 @@ fn open_at(path: &str) -> Result<Repo, String> {
     if !dir.join(".git").exists() {
         return Err(format!("not a git repository: {path}"));
     }
-    Repo::open(dir).map_err(to_message)
+    let repo = Repo::open(dir).map_err(to_message)?;
+    // An empty or broken `.git` passes the check above, and discovery walks
+    // past it to the enclosing repository.
+    let here = std::fs::canonicalize(repo.workdir()).map_err(to_message)?;
+    if here != std::fs::canonicalize(dir).map_err(to_message)? {
+        return Err(format!("not a git repository: {path}"));
+    }
+    Ok(repo)
 }
 
 /// Branch, ahead/behind and the number of changed paths of the repo at `path`;
@@ -182,8 +189,16 @@ fn run_on_path<T>(
     let out = f(&repo);
     ops.0.end(&cancel);
     // Even a failed pull may have moved HEAD (a merge stopped on conflicts).
+    // The tab is matched by its resolved working tree: the workspace and the
+    // tab may spell the same folder differently (/tmp vs /private/tmp, a
+    // trailing slash).
+    let here = std::fs::canonicalize(repo.workdir()).ok();
     let mut guard = state.0.lock().map_err(to_message)?;
-    if let Some(session) = guard.sessions.iter_mut().find(|s| s.path == path) {
+    if let Some(session) = guard
+        .sessions
+        .iter_mut()
+        .find(|s| here.is_some() && std::fs::canonicalize(s.repo.workdir()).ok() == here)
+    {
         after(session);
     }
     out.map_err(to_message)
@@ -243,9 +258,21 @@ fn row_progress(app: AppHandle, path: String) -> ProgressFn {
 
 // --- Tauri commands --------------------------------------------------------
 
-#[tauri::command(async)]
-pub(crate) fn workspace_repo_summary(path: String) -> Result<RepoSummary, String> {
-    workspace_repo_summary_impl(&path)
+/// Run `f` on tokio's blocking pool and await it. A plain `(async)` command
+/// runs on one of the few async workers, and a Workspaces batch (several
+/// fetches or pulls plus the summary loaders, each blocking on git and the
+/// network) can occupy all of them, stalling every other command meanwhile.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(to_message)?
+}
+
+#[tauri::command]
+pub(crate) async fn workspace_repo_summary(path: String) -> Result<RepoSummary, String> {
+    blocking(move || workspace_repo_summary_impl(&path)).await
 }
 
 #[tauri::command(async)]
@@ -258,27 +285,28 @@ pub(crate) fn workspace_with_worktrees(known: Vec<String>, paths: Vec<String>) -
     workspace_with_worktrees_impl(&known, &paths)
 }
 
-#[tauri::command(async)]
-pub(crate) fn workspace_fetch(
-    path: String,
-    app: AppHandle,
-    state: State<RepoState>,
-    ops: State<WorkspaceOps>,
-) -> Result<String, String> {
-    let progress = row_progress(app, path.clone());
-    workspace_fetch_impl(&state, &ops, &path, Some(progress))
+#[tauri::command]
+pub(crate) async fn workspace_fetch(path: String, app: AppHandle) -> Result<String, String> {
+    blocking(move || {
+        let progress = row_progress(app.clone(), path.clone());
+        let (state, ops) = (app.state::<RepoState>(), app.state::<WorkspaceOps>());
+        workspace_fetch_impl(&state, &ops, &path, Some(progress))
+    })
+    .await
 }
 
-#[tauri::command(async)]
-pub(crate) fn workspace_pull(
+#[tauri::command]
+pub(crate) async fn workspace_pull(
     path: String,
     mode: PullMode,
     app: AppHandle,
-    state: State<RepoState>,
-    ops: State<WorkspaceOps>,
 ) -> Result<String, String> {
-    let progress = row_progress(app, path.clone());
-    workspace_pull_impl(&state, &ops, &path, mode, Some(progress))
+    blocking(move || {
+        let progress = row_progress(app.clone(), path.clone());
+        let (state, ops) = (app.state::<RepoState>(), app.state::<WorkspaceOps>());
+        workspace_pull_impl(&state, &ops, &path, mode, Some(progress))
+    })
+    .await
 }
 
 #[tauri::command(async)]
@@ -405,6 +433,26 @@ mod tests {
     }
 
     #[test]
+    fn a_bulk_pull_finds_the_tab_under_another_spelling_of_its_path() {
+        let (_root, repo, _other) = repo_behind_its_remote();
+        let state = RepoState::default();
+        let ops = WorkspaceOps::default();
+        open_repo_impl(&state, path_of(&repo)).unwrap();
+        state.0.lock().unwrap().sessions[0].undo = Some(gitp_core::Undoable::HeadMoved {
+            label: "Commit".into(),
+            before: "a".into(),
+            after: "b".into(),
+            mode: gitp_core::HeadMoveMode::Soft,
+            backup: None,
+        });
+
+        let spelled = format!("{}/", path_of(&repo));
+        workspace_pull_impl(&state, &ops, &spelled, PullMode::FastForward, None).expect("pull");
+
+        assert!(state.0.lock().unwrap().sessions[0].undo.is_none());
+    }
+
+    #[test]
     fn a_failure_is_reported_for_that_repo_only() {
         let root = tempfile::tempdir().unwrap();
         let state = RepoState::default();
@@ -418,6 +466,23 @@ mod tests {
         let err = workspace_fetch_impl(&state, &ops, &gone, None).unwrap_err();
         assert!(err.contains("folder not found"), "{err}");
         assert!(workspace_repo_summary_impl(&gone).unwrap().missing);
+    }
+
+    #[test]
+    fn a_broken_git_folder_inside_a_repo_does_not_reach_the_parent() {
+        let (_root, repo, _other) = repo_behind_its_remote();
+        let inner = repo.join("a");
+        std::fs::create_dir_all(inner.join(".git")).unwrap();
+        let state = RepoState::default();
+        let ops = WorkspaceOps::default();
+        let before = head(&repo);
+
+        let path = path_of(&inner);
+        assert!(workspace_repo_summary_impl(&path).is_err());
+        let err = workspace_pull_impl(&state, &ops, &path, PullMode::FastForward, None)
+            .unwrap_err();
+        assert!(err.contains("not a git repository"), "{err}");
+        assert_eq!(head(&repo), before, "the parent repo was pulled");
     }
 
     #[test]
