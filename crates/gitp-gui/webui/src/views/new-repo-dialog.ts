@@ -179,8 +179,9 @@ function openShell(
 
   onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") closeNewRepoDialog();
-    // Enter in a field submits; on a button it's that button's own click.
-    else if (e.key === "Enter" && !(e.target instanceof HTMLButtonElement)) run();
+    // Enter in a field submits; on a button (or the Options toggle) it's that
+    // control's own click.
+    else if (e.key === "Enter" && !(e.target instanceof HTMLElement && e.target.matches("button, summary"))) run();
   };
   document.addEventListener("keydown", onKey, true);
   return { body };
