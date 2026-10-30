@@ -90,6 +90,13 @@ interface RefActions {
   // The detached-HEAD banner's "Create Branch Here…".
   createBranchAt: (name: string, rev: string) => void;
   onSectionMenu: SidebarCallbacks["onSectionMenu"];
+  // The Pull Requests section: (re)load it for the active repo, and its rows'
+  // and header's actions.
+  loadPullRequests: () => void;
+  onPrMenu: SidebarCallbacks["onPrMenu"];
+  onPrFilter: SidebarCallbacks["onPrFilter"];
+  onPrRefresh: SidebarCallbacks["onPrRefresh"];
+  onGitHubSignIn: SidebarCallbacks["onGitHubSignIn"];
 }
 
 let refActions: RefActions;
@@ -172,6 +179,9 @@ function resetRepoViews(): void {
   ui.conflictView?.reset();
   ui.reflogView?.reset();
   ui.activityView?.reset();
+  ui.prView?.reset();
+  // The account is gh's, the same in every repo; the rest is this repo's.
+  state.prs = { ...state.prs, repoPath: "", repo: null, list: null, loading: false, error: null, open: null };
   ui.pendingCherryPicks = [];
   ui.pickPlanRepo = "";
   conflictPrefill = null;
@@ -658,6 +668,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   $("#config-view").classList.toggle("hidden", view !== "config");
   $("#conflict-view").classList.toggle("hidden", view !== "conflict");
   $("#activity-view").classList.toggle("hidden", view !== "activity");
+  $("#pr-view").classList.toggle("hidden", view !== "pr");
   // The Reflog lists in the log's place and shares History's detail pane.
   $("#log-col").classList.toggle("hidden", view === "reflog");
   $("#reflog-col").classList.toggle("hidden", view !== "reflog");
@@ -748,6 +759,9 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     // Whatever moved a ref (an action, undo, a terminal command) added a reflog
     // entry the open Reflog should list.
     if (state.view === "reflog") void ui.reflogView?.reload();
+    // Pull requests come from GitHub, so only once per repo, not on every
+    // refresh; the section's own button reloads them.
+    if (state.prs.repoPath !== state.repoPath) refActions.loadPullRequests();
   } catch (err) {
     state.refs = EMPTY_REFS;
     readFailed("Failed to load refs", err);
@@ -868,7 +882,22 @@ function sidebarSignature(repoName: string): string {
     state.graph.pinned ?? "",
     state.graph.hidden.join(","),
     state.graph.solo.join(","),
+    prsSignature(),
   ].join("|");
+}
+
+function prsSignature(): string {
+  const p = state.prs;
+  const a = p.account;
+  return [
+    p.repo,
+    a ? `${a.installed}:${a.signed_in}:${a.login}:${a.message}` : "",
+    p.filter,
+    p.loading,
+    p.error,
+    p.open,
+    p.list?.map((pr) => `${pr.number}:${pr.updated_at}:${pr.title}:${pr.checks}:${pr.review_decision}:${pr.is_draft}`).join(","),
+  ].join(";");
 }
 
 let lastSidebarSig: string | null = null;
@@ -905,6 +934,7 @@ export function renderSidebarNow(): void {
       remoteList: state.remoteList,
       pinned: state.graph.pinned,
       visibility: refFilter(state.graph),
+      prs: state.prs,
     },
     {
       onSelectView: (v: SidebarView) => (v === "reflog" ? showReflog() : showView(v)),
@@ -949,8 +979,20 @@ export function renderSidebarNow(): void {
       onToggleHidden: (refname) => updateGraphPrefs(withHidden(state.graph, [refname], !state.graph.hidden.includes(refname))),
       onSectionMenu: (key, x, y) => refActions.onSectionMenu(key, x, y),
       onAddSubmodule: () => refActions.onAddSubmodule(),
+      onPrOpen: (pr) => showPullRequest(pr.number),
+      onPrMenu: (pr, x, y) => refActions.onPrMenu(pr, x, y),
+      onPrFilter: (filter) => refActions.onPrFilter(filter),
+      onPrRefresh: () => refActions.onPrRefresh(),
+      onGitHubSignIn: () => refActions.onGitHubSignIn(),
     },
   );
+}
+
+// Open pull request `number` in the pull request view.
+export function showPullRequest(number: number): void {
+  state.prs.open = number;
+  ui.prView?.show(number);
+  showView("pr");
 }
 
 // "N refs hidden · Show all" above the log while Hide or Solo leaves refs out

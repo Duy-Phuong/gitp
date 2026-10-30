@@ -17,6 +17,7 @@ mod compare;
 mod config;
 mod conflict;
 mod editor;
+mod gh;
 mod gitflow;
 mod history;
 mod lfs;
@@ -63,6 +64,7 @@ pub fn run() {
         .manage(RepoState::default())
         .manage(TerminalState::default())
         .manage(local_workspaces::WorkspaceOps::default())
+        .manage(gh::GhLoginState::default())
         .setup(|app| {
             // Repository watchers push changes on disk to the frontend (see
             // `watch`); they need the app handle to emit, which exists only now.
@@ -174,6 +176,22 @@ pub fn run() {
             branches::set_upstream,
             branches::unset_upstream,
             remote::create_pull_request,
+            gh::gh_account,
+            gh::gh_repo,
+            gh::gh_pull_requests,
+            gh::gh_pull_request,
+            gh::gh_pull_request_files,
+            gh::gh_checkout_pull_request,
+            gh::gh_checkout_pull_request_worktree,
+            gh::gh_comment,
+            gh::gh_review,
+            gh::gh_reply,
+            gh::gh_line_comment,
+            gh::gh_login_start,
+            gh::gh_login_wait,
+            gh::gh_login_cancel,
+            gh::gh_logout,
+            gh::open_github_url,
             remote::cancel_network_op,
             remote::clone_repository,
             local_workspaces::workspace_repo_summary,

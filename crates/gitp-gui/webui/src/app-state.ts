@@ -11,6 +11,8 @@ import type { ConflictHandle } from "./views/conflict";
 import type { ReflogHandle } from "./views/reflog";
 import type { GraphPrefs } from "./prefs";
 import type { ActivityHandle } from "./views/activity";
+import type { PullRequestHandle } from "./views/pull-request";
+import type { PrSectionState } from "./views/sidebar";
 import type {
   BisectStatus,
   CommitRow,
@@ -27,7 +29,7 @@ import type {
   LfsStatus,
 } from "./types";
 
-export type View = "history" | "changes" | "config" | "conflict" | "reflog" | "activity";
+export type View = "history" | "changes" | "config" | "conflict" | "reflog" | "activity" | "pr";
 
 export const EMPTY_REFS: Refs = { head: null, branches: [], remotes: [], tags: [], stashes: [], recent: [] };
 
@@ -78,6 +80,8 @@ interface State {
   // The repo's configured remotes, refreshed with the sidebar — including ones
   // never fetched, which have no remote branches in `refs` to show them by.
   remoteList: RemoteInfo[];
+  // The sidebar's Pull Requests section (see pr-actions.ts).
+  prs: PrSectionState;
 }
 
 export const state: State = {
@@ -108,6 +112,7 @@ export const state: State = {
   gitflow: null,
   lfs: null,
   remoteList: [],
+  prs: { repoPath: "", repo: null, account: null, filter: "all", list: null, loading: false, error: null, open: null },
   rebase: null,
   conflict: null,
   bisect: null,
@@ -136,6 +141,7 @@ export const ui = {
   conflictView: null as ConflictHandle | null,
   reflogView: null as ReflogHandle | null,
   activityView: null as ActivityHandle | null,
+  prView: null as PullRequestHandle | null,
   // The live log's handle, from the most recent renderLog — the log view owns
   // keyboard movement through the rows it has on screen (see LogHandle).
   logView: null as LogHandle | null,
