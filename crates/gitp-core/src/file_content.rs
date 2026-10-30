@@ -81,7 +81,9 @@ impl Repo {
                 .components()
                 .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
         {
-            return Err(Error::Message(format!("not a path inside the repository: {path}")));
+            return Err(Error::Message(format!(
+                "not a path inside the repository: {path}"
+            )));
         }
         let full = self.workdir_path()?.join(rel);
         let meta = match fs::symlink_metadata(&full) {
@@ -100,7 +102,8 @@ impl Repo {
                 base64: None,
             }));
         }
-        let bytes = fs::read(&full).map_err(|e| Error::Message(format!("can't read {path}: {e}")))?;
+        let bytes =
+            fs::read(&full).map_err(|e| Error::Message(format!("can't read {path}: {e}")))?;
         Ok(Some(encode(&bytes)))
     }
 }

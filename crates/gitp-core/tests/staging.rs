@@ -292,7 +292,10 @@ fn file_diff_can_ignore_whitespace_while_hunk_ops_use_the_real_diff() {
         .file_diff_with("a.txt", false, DEFAULT_CONTEXT_LINES, true)
         .unwrap()
         .unwrap();
-    assert!(no_ws.hunks.is_empty(), "a whitespace-only change has no blocks");
+    assert!(
+        no_ws.hunks.is_empty(),
+        "a whitespace-only change has no blocks"
+    );
 
     // Staging block 0 still stages the real (whitespace) change.
     repo.stage_hunk("a.txt", 0, DEFAULT_CONTEXT_LINES).unwrap();

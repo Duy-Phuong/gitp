@@ -152,7 +152,9 @@ fn get_file_content_impl(
     side: FileSide,
     path: String,
 ) -> Result<Option<FileContent>, String> {
-    with_repo(state, |repo| repo.file_content(&side, &path, PREVIEW_MAX_BYTES))
+    with_repo(state, |repo| {
+        repo.file_content(&side, &path, PREVIEW_MAX_BYTES)
+    })
 }
 
 fn get_refs_impl(state: &RepoState) -> Result<Refs, String> {
@@ -235,7 +237,14 @@ pub(crate) fn get_commit_file_diff(
     ignore_whitespace: bool,
     state: State<RepoState>,
 ) -> Result<Option<FileDiff>, String> {
-    get_commit_file_diff_impl(&state, rev, path, old_path, context_lines, ignore_whitespace)
+    get_commit_file_diff_impl(
+        &state,
+        rev,
+        path,
+        old_path,
+        context_lines,
+        ignore_whitespace,
+    )
 }
 
 #[tauri::command(async)]
