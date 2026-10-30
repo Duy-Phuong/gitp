@@ -9,6 +9,7 @@
 import {
   activateRepo,
   closeRepo,
+  moveRepo,
   confirmDialog,
   fetchAll,
   fetchCommitDetail,
@@ -37,6 +38,7 @@ import { logRowTop, renderLog, setBisectMarks, setLogColumnsRepo, setStashNodes,
 import { bisectBannerText } from "./bisect-text";
 import { closeCommitMenu } from "./views/commit-menu";
 import { showContextMenu, showPrompt } from "./views/context-menu";
+import { tabDragHandle } from "./views/tab-drag";
 import { renderSidebar, type SidebarView, type SidebarCallbacks } from "./views/sidebar";
 import type { BisectMark, CommitRow, ConflictStatus, LogPage, LogScope, ReflogEntry, StashRef, Workspace } from "./types";
 import { EMPTY_REFS, PAGE_SIZE, state, ui, type View } from "./app-state";
@@ -45,9 +47,11 @@ import { markRemoteFetched, remoteFetchedAt, renderFetchAge } from "./fetch-age"
 import {
   loadFavoriteRepos,
   loadGraphPrefs,
+  loadTabAliases,
   loadWorkspace,
   rememberRecentRepo,
   saveGraphPrefs,
+  saveTabAlias,
   saveWorkspace,
   toggleFavoriteRepo,
   type GraphPrefs,
@@ -57,6 +61,7 @@ import { rebuildCommitRefs, refLabelsAt } from "./commit-refs";
 import { refreshConfig } from "./config-panel";
 import { refreshActionButtons } from "./toolbar";
 import { cancelComparison, compareSelectedCommits, showComparison } from "./compare";
+import { cycledTabIndex } from "./tab-order";
 
 // What a ref or commit row does when it's right-clicked (or, for a branch,
 // double-clicked) — set once by main.ts at startup; see the module comment.
@@ -169,20 +174,28 @@ function renderRepoTabs(): void {
   host.classList.toggle("hidden", state.repos.length === 0);
   clear(host);
   const favorites = loadFavoriteRepos();
+  const aliases = loadTabAliases();
   for (const repo of state.repos) {
     const active = repo.path === state.repoPath;
+    const alias = aliases[repo.path];
     const tab = el("div", { class: `repo-tab${active ? " active" : ""}`, title: repo.path }, [
-      repo.name,
+      alias ?? repo.name,
     ]);
     if (favorites.includes(repo.path)) {
       tab.prepend(el("span", { class: "repo-tab-star", title: "Favorite", "aria-label": "Favorite" }, ["★"]));
     }
     tab.addEventListener("click", () => void switchRepo(repo.path));
+    tabDragHandle(tab, (to) => void moveRepoTab(repo.path, to));
     tab.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       const starred = favorites.includes(repo.path);
       showContextMenu(e.clientX, e.clientY, [
         { label: starred ? "Remove from Favorites" : "Add to Favorites", run: () => toggleFavorite(repo.path) },
+        {
+          label: "Rename Tab…",
+          prompt: { placeholder: "Tab name", value: alias ?? repo.name, onSubmit: (name) => renameTab(repo.path, name) },
+        },
+        ...(alias ? [{ label: "Reset Name", run: () => renameTab(repo.path, null) }] : []),
         { separator: true },
         { label: "Close", run: () => void closeRepoTab(repo.path) },
       ]);
@@ -203,6 +216,32 @@ export function toggleFavorite(path: string): void {
   renderRepoTabs();
   const name = state.repos.find((r) => r.path === path)?.name ?? path;
   setStatus(starred ? `Added ${name} to Favorites.` : `Removed ${name} from Favorites.`);
+}
+
+// Show `name` on the tab for `path` instead of its folder, or (null, or the
+// folder name itself) go back to the folder name.
+function renameTab(path: string, name: string | null): void {
+  const folder = state.repos.find((r) => r.path === path)?.name;
+  saveTabAlias(path, name === folder ? null : name);
+  renderRepoTabs();
+}
+
+// Drop the tab for `path` at position `to` (see droppedTabIndex). The new order
+// is saved with the workspace, so tabs reopen in it.
+async function moveRepoTab(path: string, to: number): Promise<void> {
+  try {
+    applyWorkspace(await moveRepo(path, to));
+  } catch (err) {
+    readFailed("Failed to move tab", err);
+  }
+}
+
+// Ctrl+Tab / Ctrl+Shift+Tab: the next or previous tab, wrapping around.
+export function cycleRepoTab(step: 1 | -1): void {
+  const n = state.repos.length;
+  if (n < 2) return;
+  const i = state.repos.findIndex((r) => r.path === state.repoPath);
+  void switchRepo(state.repos[cycledTabIndex(n, Math.max(i, 0), step)].path);
 }
 
 export async function switchRepo(path: string): Promise<void> {

@@ -1,12 +1,12 @@
-// Keyboard shortcuts: walking the commit log, Undo / Redo, Quick Launch, and
-// switching to a favorite repository.
+// Keyboard shortcuts: walking the commit log, Undo / Redo, Quick Launch,
+// switching to a favorite repository or the next tab, and zoom.
 
 import { $ } from "./dom";
 import { state, ui } from "./app-state";
-import { leaveComparison, selectCommit } from "./shell";
+import { cycleRepoTab, leaveComparison, selectCommit } from "./shell";
 import { redoAction, undoAction } from "./repo-actions";
 import { openQuickLaunch, openRecentRepo } from "./quick-launch-commands";
-import { loadFavoriteRepos } from "./prefs";
+import { applyZoom, loadFavoriteRepos, loadZoom, steppedZoom } from "./prefs";
 import { setStatus } from "./report";
 
 // --- Keyboard navigation in the commit log --------------------------------
@@ -100,7 +100,11 @@ function focusDetailPane(): void {
   target.focus();
 }
 
-// The global shortcuts: Undo / Redo, Quick Launch, and the favorites.
+// Cmd+Shift+] / [ only mean "next / previous tab" on a Mac.
+const IS_MAC = navigator.userAgent.includes("Mac");
+
+// The global shortcuts: Undo / Redo, Quick Launch, the favorites, tab cycling
+// and zoom.
 export function setupShortcuts(): void {
   // Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y = redo. Ignored while
   // typing so the native text-editing undo (commit message, conflict editor)
@@ -144,5 +148,35 @@ export function setupShortcuts(): void {
     const path = loadFavoriteRepos()[n - 1];
     if (path) void openRecentRepo(path);
     else setStatus(`No favorite #${n} — star a repository from its tab's menu or Quick Launch.`);
+  });
+  // Ctrl+Tab / Ctrl+Shift+Tab cycle the repo tabs in tab-bar order — Ctrl on
+  // every platform, since the OS keeps Cmd+Tab — plus Cmd+Shift+] / [ on
+  // macOS, as in browsers. Not in the terminal (Tab belongs to the shell) or
+  // under a dialog.
+  document.addEventListener("keydown", (e) => {
+    const ctrlTab = e.ctrlKey && !e.metaKey && !e.altKey && e.key === "Tab";
+    const bracket =
+      IS_MAC && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey && (e.code === "BracketRight" || e.code === "BracketLeft");
+    if (!ctrlTab && !bracket) return;
+    const t = e.target instanceof HTMLElement ? e.target : null;
+    if (t?.closest("#terminal-host")) return;
+    if (document.querySelector(".modal-overlay, .ql-overlay")) return;
+    e.preventDefault();
+    cycleRepoTab((ctrlTab ? !e.shiftKey : e.code === "BracketRight") ? 1 : -1);
+  });
+  // Cmd/Ctrl + = / − / 0 zoom the whole window in, out, or back to 100%,
+  // through the preset levels. Live while typing, like Cmd+K, but not in the
+  // terminal, where Ctrl+- is the shell's.
+  document.addEventListener("keydown", (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+    // "+" is Shift+= on most layouts; "_" its Shift+−.
+    const step = e.key === "=" || e.key === "+" ? 1 : e.key === "-" || e.key === "_" ? -1 : e.key === "0" ? 0 : null;
+    if (step === null) return;
+    const t = e.target instanceof HTMLElement ? e.target : null;
+    if (t?.closest("#terminal-host")) return;
+    e.preventDefault();
+    const zoom = step === 0 ? 1 : steppedZoom(loadZoom(), step);
+    void applyZoom(zoom);
+    setStatus(`Zoom ${Math.round(zoom * 100)}%`);
   });
 }

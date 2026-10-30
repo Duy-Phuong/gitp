@@ -1454,6 +1454,23 @@ textarea.rename-input {
   border-color: var(--border);
   color: var(--text);
 }
+/* Dragging a tab to reorder it (views/tab-drag.ts): the tab being moved
+   fades, and a bar in the gap beside the tab under the pointer marks where it
+   will land. */
+.repo-tab-dragging {
+  opacity: 0.5;
+}
+.repo-tab.drop-before {
+  box-shadow: -2px 0 0 var(--accent);
+}
+.repo-tab.drop-after {
+  box-shadow: 2px 0 0 var(--accent);
+}
+body.tab-dragging,
+body.tab-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
 .repo-tab-star {
   margin-right: -4px;
   color: var(--accent);

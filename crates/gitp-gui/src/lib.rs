@@ -90,6 +90,7 @@ pub fn run() {
             workspace::list_repos,
             workspace::activate_repo,
             workspace::close_repo,
+            workspace::move_repo,
             history::get_log_page,
             history::search_log,
             history::log_index_of,

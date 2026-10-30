@@ -6,6 +6,7 @@ import type { DetailTab } from "./views/detail";
 import type { PullMode } from "./types";
 import { DEFAULT_LOG_COLUMNS, normalizeLogColumns, type LogColumns } from "./log-columns";
 import { state, ui } from "./app-state";
+import { readFailed } from "./report";
 
 // --- Persisted preferences (localStorage) ----------------------------------
 
@@ -252,6 +253,38 @@ export function withFavoriteToggled(favorites: string[], path: string): string[]
   return favorites.includes(path) ? favorites.filter((p) => p !== path) : [...favorites, path];
 }
 
+// Names given to repo tabs (right-click → Rename Tab…), keyed by repo path.
+// The tab shows the name instead of its folder; its tooltip keeps the path.
+const TAB_ALIASES_KEY = "gitp-tab-aliases";
+
+export function loadTabAliases(): Record<string, string> {
+  return parseTabAliases(localStorage.getItem(TAB_ALIASES_KEY));
+}
+
+// Name the tab for `path`, or with null (or a blank name) go back to the
+// folder name.
+export function saveTabAlias(path: string, alias: string | null): void {
+  localStorage.setItem(TAB_ALIASES_KEY, JSON.stringify(withTabAlias(loadTabAliases(), path, alias)));
+}
+
+export function parseTabAliases(raw: string | null): Record<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(raw ?? "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter((e): e is [string, string] => typeof e[1] === "string"));
+  } catch {
+    return {};
+  }
+}
+
+export function withTabAlias(aliases: Record<string, string>, path: string, alias: string | null): Record<string, string> {
+  const next = { ...aliases };
+  const name = alias?.trim();
+  if (name) next[path] = name;
+  else delete next[path];
+  return next;
+}
+
 export function loadWorkspace(): { paths: string[]; active: string } | null {
   try {
     const raw = localStorage.getItem(REPOS_KEY);
@@ -294,4 +327,43 @@ export function applyTheme(choice: ThemeChoice): void {
   // xterm keeps its palette as JS values, so the CSS change alone leaves the
   // terminal on the old theme until it's told.
   ui.terminal?.syncTheme();
+}
+
+// --- Zoom -------------------------------------------------------------------
+
+// The steps Cmd/Ctrl + = and Cmd/Ctrl + − walk through, as scale factors.
+export const ZOOM_LEVELS = [0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.5, 1.75, 2];
+
+const ZOOM_KEY = "gitp-zoom";
+
+export function loadZoom(): number {
+  const v = Number(localStorage.getItem(ZOOM_KEY));
+  return ZOOM_LEVELS.includes(v) ? v : 1;
+}
+
+// The level after `zoom` going up (1) or down (-1), staying put at the ends.
+export function steppedZoom(zoom: number, step: 1 | -1): number {
+  if (step > 0) return ZOOM_LEVELS.find((z) => z > zoom) ?? ZOOM_LEVELS[ZOOM_LEVELS.length - 1];
+  return [...ZOOM_LEVELS].reverse().find((z) => z < zoom) ?? ZOOM_LEVELS[0];
+}
+
+// Apply and persist a zoom level for the whole window. The desktop app zooms
+// the webview itself, like a browser's Cmd +; the browser preview can't reach
+// that, so CSS zoom stands in for it there.
+export async function applyZoom(zoom: number): Promise<void> {
+  localStorage.setItem(ZOOM_KEY, String(zoom));
+  try {
+    if (isTauri()) {
+      const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+      await getCurrentWebview().setZoom(zoom);
+    } else {
+      document.documentElement.style.zoom = zoom === 1 ? "" : String(zoom);
+    }
+  } catch (err) {
+    readFailed("Couldn't zoom", err);
+    return;
+  }
+  // The terminal's rows and columns come from the pixel size it measured;
+  // after a zoom they no longer fill the panel until it measures again.
+  requestAnimationFrame(() => ui.terminal?.fit());
 }
