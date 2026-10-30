@@ -1,4 +1,5 @@
-// The dialogs that make a repository that isn't open yet: Init Repository.
+// The dialogs that make a repository that isn't open yet: Init Repository and
+// Clone Repository.
 //
 // Each only collects what the user wants and hands it to `onSubmit`; the
 // git work, its progress and its errors belong to the caller, like every
@@ -46,6 +47,61 @@ export function openInitDialog(defaultPath: string, onSubmit: (req: InitRequest)
     el("label", { class: "fetch-check new-repo-check" }, [readme, el("span", { text: "Create README.md" })]),
   );
   requestAnimationFrame(() => path.focus());
+}
+
+export interface CloneRequest {
+  url: string;
+  /// The new repository's folder: the chosen parent plus the folder name.
+  dest: string;
+}
+
+/// The folder name a clone of `url` gets by default — git's own choice: the
+/// last path segment, without `.git`. Works for scp-style `host:owner/repo`
+/// too. Empty when the URL has nothing usable yet.
+export function repoNameFromUrl(url: string): string {
+  const trimmed = url.trim().replace(/[/\\]+$/, "").replace(/\.git$/i, "");
+  return trimmed.split(/[/\\:]/).pop() ?? "";
+}
+
+/// `defaultParent`: the folder the clone goes in, to start with.
+export function openCloneDialog(defaultParent: string, onSubmit: (req: CloneRequest) => void): void {
+  const url = textInput("https://github.com/owner/repo.git");
+  const parent = textInput("/path/to/parent-folder", defaultParent);
+  const name = textInput("folder name");
+  const target = el("div", { class: "new-repo-target" });
+  const joined = () => {
+    const base = parent.value.trim().replace(/\/+$/, "");
+    return name.value.trim() ? `${base}/${name.value.trim()}` : "";
+  };
+  const showTarget = () => (target.textContent = joined() ? `Clones into ${joined()}` : "");
+  // The name follows the URL until it's edited by hand.
+  let nameEdited = false;
+  url.addEventListener("input", () => {
+    if (!nameEdited) name.value = repoNameFromUrl(url.value);
+    showTarget();
+  });
+  name.addEventListener("input", () => {
+    nameEdited = name.value.trim() !== "";
+    showTarget();
+  });
+  parent.addEventListener("input", showTarget);
+
+  const modal = openShell("Clone a Repository", "Copy a remote repository to this computer.", "Clone", (fail) => {
+    const u = url.value.trim();
+    if (!u) return fail("Enter the URL of the repository to clone.");
+    // git would read it as an option; the backend refuses it too.
+    if (u.startsWith("-")) return fail("That isn't a repository URL.");
+    if (!parent.value.trim()) return fail("Choose the folder to clone into.");
+    if (!name.value.trim()) return fail("Enter a name for the new folder.");
+    onSubmit({ url: u, dest: joined() });
+  });
+  modal.body.append(
+    field("URL", url),
+    field("Where to clone", parent, browseButton(parent, "Folder to Clone Into", showTarget)),
+    field("Folder name", name),
+    target,
+  );
+  requestAnimationFrame(() => url.focus());
 }
 
 // --- shared layout ----------------------------------------------------------
@@ -115,8 +171,8 @@ function field(label: string, ...controls: HTMLElement[]): HTMLElement {
   ]);
 }
 
-// Browse… fills `input` from the native folder picker.
-function browseButton(input: HTMLInputElement, title: string): HTMLElement {
+// Browse… fills `input` from the native folder picker, then calls `onPick`.
+function browseButton(input: HTMLInputElement, title: string, onPick?: () => void): HTMLElement {
   const btn = el("button", { class: "btn ghost", type: "button", text: "Browse…" });
   if (!isTauri()) {
     btn.setAttribute("disabled", "");
@@ -125,7 +181,9 @@ function browseButton(input: HTMLInputElement, title: string): HTMLElement {
   btn.addEventListener("click", async (e) => {
     e.preventDefault();
     const picked = await browseForFolder(title);
-    if (picked) input.value = picked;
+    if (!picked) return;
+    input.value = picked;
+    onPick?.();
   });
   return btn;
 }

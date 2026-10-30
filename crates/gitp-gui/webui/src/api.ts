@@ -161,6 +161,15 @@ export async function browseForFolder(title: string): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+// `git clone` `url` into `dest`, a new folder. A network operation: progress
+// and Cancel as for a fetch, credentials asked for in a dialog. Returns git's
+// output; open `dest` with openRepo afterwards. In preview mode it simply
+// succeeds.
+export async function cloneRepository(url: string, dest: string): Promise<string> {
+  if (!isTauri()) return `Cloning into '${dest}'... (preview mock)`;
+  return invokeNetwork<string>("clone_repository", { url, dest });
+}
+
 // `git init` a new repository at `path` (created if missing), writing a
 // `.gitignore` with `gitignore` and a README.md when asked. Open it afterwards
 // with openRepo. In preview mode it simply succeeds.

@@ -1,4 +1,5 @@
-//! Making a repository that doesn't exist yet: `git init` into a folder.
+//! Making a repository that doesn't exist yet: `git init` into a folder, or
+//! `git clone` one from a remote.
 //!
 //! Free functions rather than `Repo` methods — there is no repository to open
 //! until they've run.
@@ -7,6 +8,8 @@ use std::path::Path;
 
 use crate::error::{Error, Result};
 use crate::git_bin::git_command;
+use crate::progress::{run_progress, NetworkHooks};
+use crate::remote::ref_arg;
 
 /// `git init` the folder at `path` (created if missing, parents too), then
 /// write a `.gitignore` with `gitignore` and a `README.md` headed with the
@@ -58,4 +61,47 @@ pub fn init_repo(path: &Path, gitignore: Option<&str>, readme: bool) -> Result<(
         write("README.md", &format!("# {title}\n"))?;
     }
     Ok(())
+}
+
+/// `git clone` `url` into `dest`, a folder that doesn't exist yet (or is
+/// empty) inside one that does. Runs like a fetch: progress and Cancel through
+/// `hooks`, and its askpass for credentials. Returns git's output.
+///
+/// A cancelled clone leaves nothing behind: git deletes the half-made folder
+/// on the SIGTERM Cancel sends.
+pub fn clone_repo(url: &str, dest: &Path, hooks: &NetworkHooks) -> Result<String> {
+    // After `--` git couldn't read it as an option anyway; refusing it here
+    // says so, rather than leaving git to fail on a "repository" called
+    // `--upload-pack=…`.
+    let url = ref_arg(url.trim())?;
+    if url.is_empty() {
+        return Err(Error::Message("no repository URL given".into()));
+    }
+    let parent = dest
+        .parent()
+        .filter(|_| dest.is_absolute())
+        .ok_or_else(|| Error::Message(format!("{} is not an absolute path", dest.display())))?;
+    if !parent.is_dir() {
+        return Err(Error::Message(format!(
+            "{} is not an existing folder",
+            parent.display()
+        )));
+    }
+    let dest = dest
+        .to_str()
+        .ok_or_else(|| Error::Message(format!("unsupported path: {}", dest.display())))?;
+    run_progress(
+        parent,
+        &["clone", "--progress", "--", url, dest],
+        hooks,
+        own_askpass(),
+    )
+}
+
+/// Whether the user's global config sets `core.askPass`, which ours must not
+/// override (there's no repository config to look in yet).
+fn own_askpass() -> bool {
+    git2::Config::open_default()
+        .and_then(|c| c.get_string("core.askPass"))
+        .is_ok_and(|v| !v.is_empty())
 }

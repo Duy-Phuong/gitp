@@ -77,7 +77,7 @@ import {
 import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
 import { syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
-import { initRepoAction } from "./new-repo-actions";
+import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 
 // --- Quick Launch -----------------------------------------------------------
 
@@ -145,6 +145,7 @@ async function openRecentRepo(path: string): Promise<void> {
 function openOnlyCommands(): QuickItem[] {
   return [
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
+    { kind: "command", label: "Clone Repository…", run: cloneRepoAction },
     { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Terminal", run: toggleTerminal },
   ];
@@ -342,6 +343,7 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Show Reflog", run: () => showReflog() },
     { kind: "command", label: "Switch Repository", next: () => repoStage() },
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
+    { kind: "command", label: "Clone Repository…", run: cloneRepoAction },
     { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Close Repository", run: () => void closeRepoTab(state.repoPath) },
     { kind: "command", label: "Terminal", run: toggleTerminal },
@@ -454,7 +456,7 @@ function repoCommands(): QuickItem[] {
   }
   if (ui.undoLabels.undo) items.push({ kind: "command", label: `Undo ${ui.undoLabels.undo}`, run: () => void undoAction() });
   if (ui.undoLabels.redo) items.push({ kind: "command", label: `Redo ${ui.undoLabels.redo}`, run: () => void redoAction() });
-  if (canCancelNetwork()) items.push({ kind: "command", label: "Cancel Fetch / Pull / Push", run: cancelNetworkAction });
+  if (canCancelNetwork()) items.push({ kind: "command", label: "Cancel Fetch / Pull / Push / Clone", run: cancelNetworkAction });
   items.sort((a, b) => a.label.localeCompare(b.label));
   return items;
 }

@@ -1,5 +1,5 @@
 //! Live progress and cancellation for the network git commands (fetch, pull,
-//! push).
+//! push, clone).
 //!
 //! Without a TTY git prints nothing until it's done, so a slow push is a
 //! spinner and a guess. Run with `--progress`, git writes its meters to stderr
@@ -92,83 +92,11 @@ impl Repo {
     /// right after the first word (`git submodule update --progress`): `args`
     /// already carry it.
     pub(crate) fn run_git_progress(&self, args: &[&str]) -> Result<String> {
-        if self.cancelled() {
-            return Err(Error::Cancelled);
-        }
         let workdir = self
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-
-        let mut cmd = git_command();
-        cmd.current_dir(workdir)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if let Some(askpass) = &self.net.askpass {
-            if !self.has_own_askpass() {
-                use_askpass(&mut cmd, askpass);
-            }
-        }
-        // Its own process group, so Cancel can stop everything git started —
-        // the remote helper, ssh, and an askpass dialog still waiting for an
-        // answer — not just git itself (see `kill`).
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
-
-        // Both pipes are drained on their own threads — reading one while git
-        // blocks writing the other would deadlock. Stderr is split into lines
-        // as it arrives and handed back here, where the hooks run.
-        let mut stdout = child.stdout.take().expect("stdout is piped");
-        let stdout_reader = thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = stdout.read_to_end(&mut buf);
-            buf
-        });
-        let stderr = child.stderr.take().expect("stderr is piped");
-        let (tx, rx) = mpsc::channel();
-        thread::spawn(move || split_lines(stderr, |line| tx.send(line).is_ok()));
-
-        let mut messages = String::new();
-        loop {
-            match rx.recv_timeout(CANCEL_POLL) {
-                Ok(line) => match parse_progress(&line) {
-                    Some(p) => {
-                        if let Some(cb) = &self.net.on_progress {
-                            cb(&p);
-                        }
-                    }
-                    None if is_meter_chatter(&line) => {}
-                    None => {
-                        messages.push_str(&line);
-                        messages.push('\n');
-                    }
-                },
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => break,
-            }
-            if self.cancelled() {
-                return Err(kill(child));
-            }
-        }
-
-        let status = child
-            .wait()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
-        let stdout = stdout_reader.join().unwrap_or_default();
-        let mut combined = String::from_utf8_lossy(&stdout).into_owned();
-        combined.push_str(&messages);
-        let combined = combined.trim().to_string();
-        if status.success() {
-            Ok(combined)
-        } else {
-            Err(Error::Message(combined))
-        }
+        run_progress(workdir, args, &self.net, self.has_own_askpass())
     }
 
     /// Mark the end of an operation's network part and the start of a local
@@ -202,11 +130,99 @@ impl Repo {
     }
 
     fn cancelled(&self) -> bool {
-        self.net
-            .cancel
-            .as_ref()
-            .is_some_and(|c| c.load(Ordering::SeqCst))
+        cancelled(&self.net)
     }
+}
+
+/// Run `git <args>` in `dir` with the progress / cancel / askpass `hooks` (see
+/// [`Repo::run_git_progress`]). Free of any `Repo` so a clone, which has none
+/// yet, runs the same way. `own_askpass`: the user configured `core.askPass`,
+/// which ours must not override.
+pub(crate) fn run_progress(
+    dir: &Path,
+    args: &[&str],
+    hooks: &NetworkHooks,
+    own_askpass: bool,
+) -> Result<String> {
+    if cancelled(hooks) {
+        return Err(Error::Cancelled);
+    }
+    let mut cmd = git_command();
+    cmd.current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(askpass) = &hooks.askpass {
+        if !own_askpass {
+            use_askpass(&mut cmd, askpass);
+        }
+    }
+    // Its own process group, so Cancel can stop everything git started —
+    // the remote helper, ssh, and an askpass dialog still waiting for an
+    // answer — not just git itself (see `kill`).
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+
+    // Both pipes are drained on their own threads — reading one while git
+    // blocks writing the other would deadlock. Stderr is split into lines
+    // as it arrives and handed back here, where the hooks run.
+    let mut stdout = child.stdout.take().expect("stdout is piped");
+    let stdout_reader = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+    let stderr = child.stderr.take().expect("stderr is piped");
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || split_lines(stderr, |line| tx.send(line).is_ok()));
+
+    let mut messages = String::new();
+    loop {
+        match rx.recv_timeout(CANCEL_POLL) {
+            Ok(line) => match parse_progress(&line) {
+                Some(p) => {
+                    if let Some(cb) = &hooks.on_progress {
+                        cb(&p);
+                    }
+                }
+                None if is_meter_chatter(&line) => {}
+                None => {
+                    messages.push_str(&line);
+                    messages.push('\n');
+                }
+            },
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+        if cancelled(hooks) {
+            return Err(kill(child));
+        }
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let mut combined = String::from_utf8_lossy(&stdout).into_owned();
+    combined.push_str(&messages);
+    let combined = combined.trim().to_string();
+    if status.success() {
+        Ok(combined)
+    } else {
+        Err(Error::Message(combined))
+    }
+}
+
+fn cancelled(hooks: &NetworkHooks) -> bool {
+    hooks
+        .cancel
+        .as_ref()
+        .is_some_and(|c| c.load(Ordering::SeqCst))
 }
 
 /// Point git (`GIT_ASKPASS`) and ssh (`SSH_ASKPASS`) at `askpass`. ssh only

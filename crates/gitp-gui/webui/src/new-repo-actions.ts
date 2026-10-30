@@ -1,12 +1,12 @@
-// Making a repository that isn't open yet — Init Repository — and opening the
-// result as a tab.
+// Making a repository that isn't open yet — Init Repository, Clone Repository —
+// and opening the result as a tab.
 
-import { initRepository } from "./api";
+import { cloneRepository, initRepository } from "./api";
 import { state } from "./app-state";
 import { opFailed, reportDone, setStatus } from "./report";
 import { loadRepo } from "./shell";
 import { warmTerminal } from "./terminal-panel";
-import { openInitDialog } from "./views/new-repo-dialog";
+import { openCloneDialog, openInitDialog } from "./views/new-repo-dialog";
 
 // New repositories usually go next to the ones already in use, so the dialogs
 // start in the active repo's parent folder.
@@ -34,6 +34,24 @@ async function runInit(path: string, gitignore: string | null, readme: boolean):
     return;
   }
   await openCreated(path, `Initialized an empty repository in ${path}.`);
+}
+
+export function cloneRepoAction(): void {
+  setStatus("Clone a repository…");
+  openCloneDialog(besideActiveRepo(), (req) => void runClone(req.url, req.dest));
+}
+
+// The status ends in "…" and the call goes through invokeNetwork, so while git
+// runs the status bar shows its progress and offers Cancel, as for a fetch.
+async function runClone(url: string, dest: string): Promise<void> {
+  setStatus(`Cloning ${url}…`);
+  try {
+    await cloneRepository(url, dest);
+  } catch (err) {
+    opFailed("Clone failed", err);
+    return;
+  }
+  await openCreated(dest, `Cloned ${url} into ${dest}.`);
 }
 
 // Open the repository just made as a tab. loadRepo reports its own failure, so

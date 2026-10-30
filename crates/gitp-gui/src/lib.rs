@@ -149,6 +149,7 @@ pub fn run() {
             branches::unset_upstream,
             remote::create_pull_request,
             remote::cancel_network_op,
+            remote::clone_repository,
             rebase::get_rebase_todo,
             rebase::interactive_rebase,
             rebase::rebase_status,

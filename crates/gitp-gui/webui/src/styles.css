@@ -3102,8 +3102,15 @@ body {
   border: 1px solid var(--border);
   border-radius: 6px;
 }
-.new-repo-check {
+.new-repo-check,
+.new-repo-target {
   margin-left: 120px;
+}
+.new-repo-target {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  word-break: break-all;
 }
 .new-repo-error {
   color: var(--danger, #ff7b72);
