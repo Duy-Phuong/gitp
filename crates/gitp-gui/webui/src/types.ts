@@ -60,6 +60,10 @@ export interface FileDiff {
   old_path: string | null;
   status: ChangeKind;
   hunks: DiffHunk[];
+  // Set when `hunks` stops short of the whole diff because the file passed
+  // the backend's line cap (MAX_DIFF_LINES). Whole hunks only, so the hunk
+  // indexes still match the complete diff. Absent on preview-mode mocks.
+  truncated?: boolean;
 }
 
 export interface StatusLists {

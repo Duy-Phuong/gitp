@@ -2345,6 +2345,17 @@ body.ref-dragging * {
   padding: 40px;
   text-align: center;
 }
+/* A diff the backend cut short at its line cap, with the way to get the rest. */
+.diff-truncated {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  color: var(--text-dim);
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
 /* Refs pointing at this commit. */
 .detail-refs {
   display: flex;

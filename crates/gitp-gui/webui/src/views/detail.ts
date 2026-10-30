@@ -18,7 +18,7 @@
 // differ — so the diff renderer, context controls and Blame / History (as of
 // the head side) all work unchanged.
 
-import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT } from "../api";
+import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT, MAX_DIFF_LINES } from "../api";
 import { clear, copyToClipboard, el, statusBadge, svg } from "../dom";
 import { loadDiffWrap, loadIgnoreWhitespace, saveDiffWrap, saveIgnoreWhitespace } from "../prefs";
 import type {
@@ -57,14 +57,22 @@ export interface DetailCallbacks {
   fetchFileHistory: (id: string, path: string) => Promise<FileCommit[]>;
   // Re-diff one of the commit's files with `contextLines` of context, and
   // optionally ignoring whitespace (the commit detail's own diffs use the
-  // default context and show every change).
-  fetchFileDiff: (id: string, file: FileDiff, contextLines: number, ignoreWhitespace: boolean) => Promise<FileDiff | null>;
+  // default context and show every change). `full` lifts the backend's line
+  // cap once the user asks for a truncated file's whole diff.
+  fetchFileDiff: (
+    id: string,
+    file: FileDiff,
+    contextLines: number,
+    ignoreWhitespace: boolean,
+    full: boolean,
+  ) => Promise<FileDiff | null>;
   // The same for one of a comparison's files.
   fetchCompareFileDiff: (
     cmp: Comparison,
     file: FileDiff,
     contextLines: number,
     ignoreWhitespace: boolean,
+    full: boolean,
   ) => Promise<FileDiff | null>;
   // The compare header: re-run the comparison with these ends and mode (Swap,
   // the two-dot / three-dot toggle), or close it.
@@ -125,6 +133,9 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   let fileMode: FileMode = "diff";
   let splitView = false;
   let contextLines = DEFAULT_CONTEXT_LINES;
+  // Whether the user asked for a truncated file's whole diff; back to the cap
+  // on the next commit, since one giant file is no reason to load them all.
+  let fullDiff = false;
   let currentHunk = 0;
   let tree: { id: string; paths: string[] } | null = null;
   let blame: Cached<BlameLine[]> | null = null;
@@ -156,6 +167,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     if (isNewCommit) {
       selectedFile = 0;
       currentHunk = 0;
+      fullDiff = false;
       tree = null;
       collapsed.clear();
       multi = new Set();
@@ -379,11 +391,20 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const shown = displayedDiff(selectedFile);
     if (shown === undefined) return renderRecontexted(view, file);
     view.classList.toggle("wrap-lines", loadDiffWrap());
+    if (shown.truncated) {
+      view.append(
+        truncatedNotice(() => {
+          fullDiff = true;
+          render();
+        }),
+      );
+    }
     const diff = splitView ? renderSplitDiff(shown) : renderUnifiedDiff(shown);
     const mime = imageMime(file.path);
     if (mime) diff.querySelector(".file-head")?.after(renderImageDiff(mime, ...imageLoads(file)));
     view.append(diff);
-    if (shown.hunks.length === 0 && file.hunks.length > 0) {
+    // A truncated diff can have no blocks too (its first is over the cap).
+    if (shown.hunks.length === 0 && file.hunks.length > 0 && !shown.truncated) {
       view.append(el("div", { class: "detail-empty", text: "Only whitespace changed — Ignore whitespace is on." }));
     }
     // A comparison's blocks belong to no one commit to revert, and with
@@ -440,13 +461,13 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   // otherwise, or `undefined` while that re-diff hasn't been fetched yet.
   function displayedDiff(idx: number): FileDiff | undefined {
     const file = detail!.files[idx];
-    if (contextLines === DEFAULT_CONTEXT_LINES && !loadIgnoreWhitespace()) return file;
+    if (contextLines === DEFAULT_CONTEXT_LINES && !loadIgnoreWhitespace() && !fullDiff) return file;
     if (recontexted?.key !== contextKey(file)) return undefined;
     return recontexted.data ?? file;
   }
 
   function contextKey(file: FileDiff): string {
-    return `${viewKey()}:${file.path}:${contextLines}:${loadIgnoreWhitespace() ? "-w" : ""}`;
+    return `${viewKey()}:${file.path}:${contextLines}:${loadIgnoreWhitespace() ? "-w" : ""}:${fullDiff ? "full" : "capped"}`;
   }
 
   function renderRecontexted(view: HTMLElement, file: FileDiff): void {
@@ -458,8 +479,8 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const stillViewing = () => detail !== null && contextKey(detail.files[selectedFile]) === key;
     const ws = loadIgnoreWhitespace();
     const fetched = compare
-      ? cb.fetchCompareFileDiff(compare, file, contextLines, ws)
-      : cb.fetchFileDiff(detail!.id, file, contextLines, ws);
+      ? cb.fetchCompareFileDiff(compare, file, contextLines, ws, fullDiff)
+      : cb.fetchFileDiff(detail!.id, file, contextLines, ws, fullDiff);
     fetched
       .then((data) => {
         recontexted = { key, data };
@@ -966,6 +987,19 @@ function hunkHeader(hunk: FileDiff["hunks"][number]): HTMLElement {
   });
   header.append(copy);
   return header;
+}
+
+// The bar above a diff the backend cut short at its line cap, with the way to
+// get the rest. Shared with the Local Changes view.
+export function truncatedNotice(onShowAll: () => void): HTMLElement {
+  const btn = el("button", { class: "btn ghost small", text: "Show full diff" });
+  btn.addEventListener("click", onShowAll);
+  return el("div", { class: "diff-truncated" }, [
+    el("span", {
+      text: `This diff has more than ${MAX_DIFF_LINES.toLocaleString()} lines, so only the first blocks are shown.`,
+    }),
+    btn,
+  ]);
 }
 
 export function renderFile(file: FileDiff): HTMLElement {

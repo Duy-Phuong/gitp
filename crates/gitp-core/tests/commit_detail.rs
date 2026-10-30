@@ -71,13 +71,13 @@ fn commit_file_diff_follows_the_requested_context() {
     let rev = c.to_string();
 
     let default = repo
-        .commit_file_diff(&rev, "f.txt", None, 3)
+        .commit_file_diff(&rev, "f.txt", None, 3, None)
         .unwrap()
         .unwrap();
     assert_eq!(default.hunks.len(), 2);
 
     let full = repo
-        .commit_file_diff(&rev, "f.txt", None, u32::MAX)
+        .commit_file_diff(&rev, "f.txt", None, u32::MAX, None)
         .unwrap()
         .unwrap();
     assert_eq!(full.hunks.len(), 1);
@@ -85,7 +85,7 @@ fn commit_file_diff_follows_the_requested_context() {
     assert_eq!(added_lines(&full), vec!["LINE 2", "LINE 11"]);
 
     assert!(repo
-        .commit_file_diff(&rev, "missing.txt", None, 3)
+        .commit_file_diff(&rev, "missing.txt", None, 3, None)
         .unwrap()
         .is_none());
 }
@@ -114,7 +114,7 @@ fn commit_file_diff_keeps_a_rename_paired() {
     let repo = Repo::open(fixture.path()).unwrap();
 
     let file = repo
-        .commit_file_diff("HEAD", "new.txt", Some("old.txt"), 3)
+        .commit_file_diff("HEAD", "new.txt", Some("old.txt"), 3, None)
         .unwrap()
         .unwrap();
     assert_eq!(file.status, ChangeKind::Renamed);
@@ -132,14 +132,45 @@ fn commit_file_diff_can_ignore_whitespace() {
     let rev = c.to_string();
 
     let all = repo
-        .commit_file_diff_with(&rev, "f.txt", None, 3, false)
+        .commit_file_diff_with(&rev, "f.txt", None, 3, false, None)
         .unwrap()
         .unwrap();
     assert_eq!(added_lines(&all), vec!["\tx();", "KEEP"]);
 
     let no_ws = repo
-        .commit_file_diff_with(&rev, "f.txt", None, 3, true)
+        .commit_file_diff_with(&rev, "f.txt", None, 3, true, None)
         .unwrap()
         .unwrap();
     assert_eq!(added_lines(&no_ws), vec!["KEEP"], "the re-indent is hidden");
+}
+
+#[test]
+fn a_huge_file_is_truncated_by_default_and_whole_on_request() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("small.txt", "one\n", "c1");
+    let big: String = (0..gitp_core::MAX_DIFF_LINES + 10)
+        .map(|i| format!("line {i}\n"))
+        .collect();
+    let oid = fx.commit_file("big.txt", &big, "c2");
+    let repo = Repo::open(fx.path()).unwrap();
+
+    // The commit's own diff keeps only the hunks that fit under the cap — for
+    // one hunk bigger than the cap, that is none — and says so.
+    let detail = repo.commit_detail(&oid.to_string()).unwrap();
+    let big_file = detail.files.iter().find(|f| f.path == "big.txt").unwrap();
+    assert!(big_file.truncated);
+    assert!(big_file.hunks.is_empty());
+
+    // Asking for the file without a cap returns everything.
+    let full = repo
+        .commit_file_diff(&oid.to_string(), "big.txt", None, 3, None)
+        .unwrap()
+        .unwrap();
+    assert!(!full.truncated);
+    assert_eq!(full.hunks.len(), 1);
+    assert_eq!(full.hunks[0].lines.len(), gitp_core::MAX_DIFF_LINES + 10);
+
+    // A small file is untouched either way.
+    let small = detail.files.iter().find(|f| f.path == "small.txt");
+    assert!(small.is_none() || !small.unwrap().truncated);
 }

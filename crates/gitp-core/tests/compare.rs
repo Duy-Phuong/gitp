@@ -170,11 +170,11 @@ fn two_dot_and_three_dot_differ_on_diverged_branches() {
 
     // The single-file re-diff follows the same mode.
     let m_two = repo
-        .compare_file_diff("main", "feature", false, "m.txt", None, 3)
+        .compare_file_diff("main", "feature", false, "m.txt", None, 3, None)
         .unwrap();
     assert_eq!(m_two.map(|d| d.status), Some(ChangeKind::Deleted));
     let m_three = repo
-        .compare_file_diff("main", "feature", true, "m.txt", None, 3)
+        .compare_file_diff("main", "feature", true, "m.txt", None, 3, None)
         .unwrap();
     assert!(
         m_three.is_none(),
@@ -207,18 +207,18 @@ fn file_diff_follows_the_context_and_keeps_a_rename_paired() {
     let (a, b) = (c1.to_string(), c2.to_string());
 
     let default = repo
-        .compare_file_diff(&a, &b, false, "f.txt", None, 3)
+        .compare_file_diff(&a, &b, false, "f.txt", None, 3, None)
         .unwrap()
         .unwrap();
     assert_eq!(default.hunks.len(), 2);
     let full = repo
-        .compare_file_diff(&a, &b, false, "f.txt", None, u32::MAX / 2)
+        .compare_file_diff(&a, &b, false, "f.txt", None, u32::MAX / 2, None)
         .unwrap()
         .unwrap();
     assert_eq!(full.hunks.len(), 1, "the whole file as one block");
 
     let moved = repo
-        .compare_file_diff(&a, &b, false, "moved.txt", Some("old.txt"), 3)
+        .compare_file_diff(&a, &b, false, "moved.txt", Some("old.txt"), 3, None)
         .unwrap()
         .unwrap();
     assert_eq!(moved.status, ChangeKind::Renamed);
@@ -234,7 +234,7 @@ fn an_unknown_revision_is_an_error() {
     assert!(repo.compare("main", "no-such-ref", false).is_err());
     assert!(repo.compare("no-such-ref", "main", true).is_err());
     assert!(repo
-        .compare_file_diff("main", "no-such-ref", false, "a.txt", None, 3)
+        .compare_file_diff("main", "no-such-ref", false, "a.txt", None, 3, None)
         .is_err());
 }
 
@@ -265,7 +265,7 @@ fn compare_file_diff_can_ignore_whitespace() {
 
     let added = |ws: bool| -> Vec<String> {
         let file = repo
-            .compare_file_diff_with(&a, &b, false, "f.txt", None, 3, ws)
+            .compare_file_diff_with(&a, &b, false, "f.txt", None, 3, ws, None)
             .unwrap()
             .unwrap();
         file.hunks
@@ -308,7 +308,7 @@ fn the_empty_tree_as_base_shows_everything_as_added() {
     assert_eq!(cmp.base.id, "");
 
     let file = repo
-        .compare_file_diff(EMPTY_REV, &c2.to_string(), false, "b.txt", None, 3)
+        .compare_file_diff(EMPTY_REV, &c2.to_string(), false, "b.txt", None, 3, None)
         .unwrap();
     assert_eq!(file.map(|d| d.status), Some(ChangeKind::Added));
     assert!(
@@ -370,7 +370,7 @@ fn compares_a_revision_with_the_working_directory() {
     assert!(has_line(&back, "a.txt", '-', "three") && has_line(&back, "a.txt", '+', "one"));
 
     let file = repo
-        .compare_file_diff(&c1, WORKDIR_REV, false, "a.txt", None, 0)
+        .compare_file_diff(&c1, WORKDIR_REV, false, "a.txt", None, 0, None)
         .unwrap()
         .unwrap();
     assert_eq!(file.hunks.len(), 1);

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use serde::Serialize;
 
-use crate::diff::{collect_files, ChangeKind, FileDiff};
+use crate::diff::{collect_files, ChangeKind, FileDiff, MAX_DIFF_LINES};
 use crate::error::Result;
 use crate::repo::Repo;
 
@@ -45,7 +45,7 @@ impl Repo {
             .inner
             .diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts))?;
         diff.find_similar(Some(&mut git2::DiffFindOptions::new()))?;
-        collect_files(&diff)
+        collect_files(&diff, Some(MAX_DIFF_LINES))
     }
 
     /// The staging area: staged changes (HEAD → index) and unstaged changes
@@ -80,8 +80,8 @@ impl Repo {
         unstaged.find_similar(Some(&mut git2::DiffFindOptions::new()))?;
 
         Ok(StatusLists {
-            staged: collect_files(&staged)?,
-            unstaged: collect_files(&unstaged)?,
+            staged: collect_files(&staged, Some(MAX_DIFF_LINES))?,
+            unstaged: collect_files(&unstaged, Some(MAX_DIFF_LINES))?,
         })
     }
 
@@ -140,6 +140,7 @@ impl Repo {
                     old_path: None,
                     status: ChangeKind::Untracked,
                     hunks: Vec::new(),
+                    truncated: false,
                 });
                 continue;
             }
@@ -153,6 +154,7 @@ impl Repo {
                     old_path: None,
                     status: ChangeKind::Conflicted,
                     hunks: Vec::new(),
+                    truncated: false,
                 });
                 continue;
             }
@@ -163,6 +165,7 @@ impl Repo {
                     old_path: old_path.clone(),
                     status,
                     hunks: Vec::new(),
+                    truncated: false,
                 });
             }
             if let Some(status) = kind_from_code(y) {
@@ -171,6 +174,7 @@ impl Repo {
                     old_path,
                     status,
                     hunks: Vec::new(),
+                    truncated: false,
                 });
             }
         }
@@ -188,8 +192,9 @@ impl Repo {
         path: &str,
         staged: bool,
         context_lines: u32,
+        max_lines: Option<usize>,
     ) -> Result<Option<FileDiff>> {
-        self.file_diff_with(path, staged, context_lines, false)
+        self.file_diff_with(path, staged, context_lines, false, max_lines)
     }
 
     /// [`Repo::file_diff`], optionally ignoring whitespace (`git diff -w`). For
@@ -201,9 +206,10 @@ impl Repo {
         staged: bool,
         context_lines: u32,
         ignore_whitespace: bool,
+        max_lines: Option<usize>,
     ) -> Result<Option<FileDiff>> {
         let diff = self.staging_diff(path, staged, context_lines, ignore_whitespace)?;
-        let mut files = collect_files(&diff)?;
+        let mut files = collect_files(&diff, max_lines)?;
         let idx = files.iter().position(|f| f.path == path);
         Ok(match idx {
             Some(i) => Some(files.remove(i)),

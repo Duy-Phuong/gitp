@@ -139,6 +139,7 @@ fn get_commit_file_diff_impl(
     old_path: Option<String>,
     context_lines: u32,
     ignore_whitespace: bool,
+    full: bool,
 ) -> Result<Option<FileDiff>, String> {
     with_repo(state, |repo| {
         repo.commit_file_diff_with(
@@ -147,6 +148,7 @@ fn get_commit_file_diff_impl(
             old_path.as_deref(),
             context_lines,
             ignore_whitespace,
+            crate::staging::diff_cap(full),
         )
     })
 }
@@ -242,6 +244,7 @@ pub(crate) fn get_commit_file_diff(
     old_path: Option<String>,
     context_lines: u32,
     ignore_whitespace: bool,
+    full: bool,
     state: State<RepoState>,
 ) -> Result<Option<FileDiff>, String> {
     get_commit_file_diff_impl(
@@ -251,6 +254,7 @@ pub(crate) fn get_commit_file_diff(
         old_path,
         context_lines,
         ignore_whitespace,
+        full,
     )
 }
 

@@ -30,10 +30,23 @@ fn get_file_diff_impl(
     staged: bool,
     context_lines: u32,
     ignore_whitespace: bool,
+    full: bool,
 ) -> Result<Option<FileDiff>, String> {
     with_repo(state, |repo| {
-        repo.file_diff_with(&path, staged, context_lines, ignore_whitespace)
+        repo.file_diff_with(
+            &path,
+            staged,
+            context_lines,
+            ignore_whitespace,
+            diff_cap(full),
+        )
     })
+}
+
+/// The line cap for a diff the viewer asked for: none once it has asked to
+/// see the whole thing, `MAX_DIFF_LINES` otherwise.
+pub(crate) fn diff_cap(full: bool) -> Option<usize> {
+    (!full).then_some(gitp_core::MAX_DIFF_LINES)
 }
 
 pub(crate) fn stage_impl(state: &RepoState, path: String) -> Result<(), String> {
@@ -249,9 +262,10 @@ pub(crate) fn get_file_diff(
     staged: bool,
     context_lines: u32,
     ignore_whitespace: bool,
+    full: bool,
     state: State<RepoState>,
 ) -> Result<Option<FileDiff>, String> {
-    get_file_diff_impl(&state, path, staged, context_lines, ignore_whitespace)
+    get_file_diff_impl(&state, path, staged, context_lines, ignore_whitespace, full)
 }
 
 #[tauri::command(async)]
