@@ -4666,9 +4666,18 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   color: var(--text-dim);
   text-decoration: line-through;
 }
-/* A submodule that needs attention: another commit checked out, or edits. */
+/* Removing a worktree with unsaved work: the files and commits it names, one
+   per line, scrolling when there are many. */
+.wt-unsaved .modal-sub {
+  white-space: pre-wrap;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+/* A submodule that needs attention: another commit checked out, or edits;
+   a worktree with uncommitted changes. */
 .sb-badge.sm-modified,
-.sb-badge.sm-dirty {
+.sb-badge.sm-dirty,
+.sb-badge.wt-changes {
   border-color: var(--mod-fg);
   color: var(--mod-fg);
 }

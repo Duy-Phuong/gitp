@@ -29,6 +29,7 @@ import {
   bisectMark,
   bisectReset,
   listWorktrees,
+  worktreeSummaries,
   listSubmodules,
   listRemotes,
   gitflowConfig,
@@ -81,6 +82,7 @@ interface RefActions {
   onTagMenu: SidebarCallbacks["onTagMenu"];
   onCommitContextMenu: (row: CommitRow, x: number, y: number) => void;
   onWorktreeMenu: SidebarCallbacks["onWorktreeMenu"];
+  onWorktreeDrop: SidebarCallbacks["onWorktreeDrop"];
   onSubmoduleOpen: SidebarCallbacks["onSubmoduleOpen"];
   onSubmoduleMenu: SidebarCallbacks["onSubmoduleMenu"];
   onAddSubmodule: SidebarCallbacks["onAddSubmodule"];
@@ -274,6 +276,7 @@ export async function closeRepoTab(path: string): Promise<void> {
       state.selectedId = null;
       state.refs = EMPTY_REFS;
       state.worktrees = [];
+      state.worktreeSummaries = [];
       state.submodules = [];
       state.gitflow = null;
       state.lfs = null;
@@ -716,6 +719,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     if (opts.abortIfBusy && operationInFlight()) return;
     state.refs = snap.refs;
     state.worktrees = worktrees;
+    refreshWorktreeSummaries();
     state.submodules = submodules;
     state.remoteList = remoteList;
     state.gitflow = gitflow;
@@ -758,6 +762,27 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     lastPaintedRows = state.rows;
     lastPaintedSelection = state.selectedId;
   }
+}
+
+// Each worktree's changed-file count and ahead/behind for its sidebar row:
+// a `git status` per worktree, so fetched after the sidebar's own refresh
+// rather than holding it up, and painted when it lands. Only with a linked
+// worktree — the main one alone already shows its changes in Local Changes.
+let summariesSeq = 0;
+function refreshWorktreeSummaries(): void {
+  const seq = ++summariesSeq;
+  if (state.worktrees.length < 2) {
+    state.worktreeSummaries = [];
+    return;
+  }
+  worktreeSummaries()
+    .then((list) => {
+      // A newer refresh (or a tab switch) has asked again since.
+      if (seq !== summariesSeq) return;
+      state.worktreeSummaries = list;
+      renderSidebarNow();
+    })
+    .catch(() => {}); // rows without counts
 }
 
 // The change count moved without a workspace snapshot (Local Changes staged,
@@ -817,6 +842,7 @@ function sidebarSignature(repoName: string): string {
     state.branchSelectionAnchor ?? "",
     [...state.busyRefs].sort().join(","),
     state.worktrees.map((w) => `${w.path}:${w.head}:${w.branch}:${w.is_current}:${w.locked}:${w.lock_reason}:${w.prunable}`).join(","),
+    state.worktreeSummaries.map((w) => `${w.path}:${w.changed}:${w.ahead}:${w.behind}`).join(","),
     state.submodules.map((m) => `${m.path}:${m.url}:${m.recorded}:${m.checked_out}:${m.state}`).join(","),
     state.remoteList.map((rm) => `${rm.name}:${rm.url}`).join(","),
     state.graph.pinned ?? "",
@@ -854,6 +880,7 @@ export function renderSidebarNow(): void {
       branchSelectionAnchor: state.branchSelectionAnchor,
       busyRefs: state.busyRefs,
       worktrees: state.worktrees,
+      worktreeSummaries: state.worktreeSummaries,
       submodules: state.submodules,
       remoteList: state.remoteList,
       pinned: state.graph.pinned,
@@ -896,6 +923,7 @@ export function renderSidebarNow(): void {
       onTagMenu: (name, target, x, y) => refActions.onTagMenu(name, target, x, y),
       onWorktreeOpen: (w) => void loadRepo(w.path),
       onWorktreeMenu: (w, x, y) => refActions.onWorktreeMenu(w, x, y),
+      onWorktreeDrop: (src) => refActions.onWorktreeDrop(src),
       onSubmoduleOpen: (sm) => refActions.onSubmoduleOpen(sm),
       onSubmoduleMenu: (sm, x, y) => refActions.onSubmoduleMenu(sm, x, y),
       onToggleHidden: (refname) => updateGraphPrefs(withHidden(state.graph, [refname], !state.graph.hidden.includes(refname))),

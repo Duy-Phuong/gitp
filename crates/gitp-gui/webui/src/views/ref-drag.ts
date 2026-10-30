@@ -1,5 +1,6 @@
 // Drag a branch onto another — a badge in the log or a row in the sidebar — to
-// get a menu of what that can do (see ref-drop.ts).
+// get a menu of what that can do (see ref-drop.ts), or onto a drop zone that
+// isn't a branch (the Worktrees section header) for what that zone does.
 //
 // Driven by mouse events rather than HTML5 drag-and-drop: the desktop webview
 // claims native drag-and-drop for dropping files on the window, and a mouse
@@ -15,6 +16,9 @@ const DRAG_THRESHOLD = 5;
 
 // The ref behind every element that takes part, read back at drop time.
 const refOf = new WeakMap<Element, DragRef>();
+
+// What dropping on each drop zone does.
+const zoneOf = new WeakMap<Element, (src: DragRef) => void>();
 
 let onDrop: ((src: DragRef, dst: DragRef, x: number, y: number) => void) | null = null;
 
@@ -33,6 +37,12 @@ export function refDragHandle(elem: HTMLElement, ref: DragRef): void {
   });
 }
 
+// Make `elem` a place a branch can be dropped (but not dragged from).
+export function refDropZone(elem: HTMLElement, onDropHere: (src: DragRef) => void): void {
+  zoneOf.set(elem, onDropHere);
+  elem.dataset.dropRef = "";
+}
+
 // The branch an event happened on (a badge or sidebar row made a handle
 // above, or anything inside one), for the branch hover fade.
 export function refUnder(target: EventTarget | null): DragRef | null {
@@ -45,7 +55,7 @@ const same = (a: DragRef, b: DragRef) => a.kind === b.kind && a.name === b.name;
 // The droppable ref under the pointer, if any.
 function dropTargetAt(x: number, y: number): HTMLElement | null {
   const hit = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-drop-ref]");
-  return hit && refOf.has(hit) ? hit : null;
+  return hit && (refOf.has(hit) || zoneOf.has(hit)) ? hit : null;
 }
 
 function startPress(source: HTMLElement, ref: DragRef, down: MouseEvent): void {
@@ -76,7 +86,8 @@ function startPress(source: HTMLElement, ref: DragRef, down: MouseEvent): void {
     ghost.style.left = `${e.clientX + 12}px`;
     ghost.style.top = `${e.clientY + 8}px`;
     const target = dropTargetAt(e.clientX, e.clientY);
-    setOver(target && !same(refOf.get(target)!, ref) ? target : null);
+    const onItself = target !== null && refOf.has(target) && same(refOf.get(target)!, ref);
+    setOver(onItself ? null : target);
   };
 
   // Take the drag off screen.
@@ -103,7 +114,10 @@ function startPress(source: HTMLElement, ref: DragRef, down: MouseEvent): void {
     };
     window.addEventListener("click", swallow, { capture: true, once: true });
     window.setTimeout(() => window.removeEventListener("click", swallow, true), 0);
-    if (target) onDrop?.(ref, refOf.get(target)!, e.clientX, e.clientY);
+    if (!target) return;
+    const zone = zoneOf.get(target);
+    if (zone) zone(ref);
+    else onDrop?.(ref, refOf.get(target)!, e.clientX, e.clientY);
   };
 
   // Esc drops nothing.

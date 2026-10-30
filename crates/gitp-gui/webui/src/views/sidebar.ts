@@ -6,8 +6,9 @@
 
 import { chevronIcon, clear, el, svg } from "../dom";
 import { branchRefName, refShown, remoteRefName, tagRefName, type RefFilter } from "../ref-visibility";
-import { refDragHandle } from "./ref-drag";
-import type { BranchRef, Refs, RemoteInfo, StashRef, Submodule, Worktree } from "../types";
+import { refDragHandle, refDropZone } from "./ref-drag";
+import type { DragRef } from "../ref-drop";
+import type { BranchRef, Refs, RemoteInfo, StashRef, Submodule, Worktree, WorktreeSummary } from "../types";
 
 export type SidebarView = "history" | "changes" | "reflog" | "activity";
 
@@ -30,9 +31,12 @@ export interface SidebarState {
   // a slow fetch is visibly in progress where the user started it rather than
   // only in the status bar.
   busyRefs: Set<string>;
-  // The repo's worktrees, main first. The section shows only when there's a
-  // linked one beside the main worktree.
+  // The repo's worktrees, main first. The section always shows, so a branch
+  // can be dragged onto it to add one.
   worktrees: Worktree[];
+  // Each worktree's changed-file count and ahead/behind, by path; arrives
+  // after the rest of the sidebar (empty until then, and with one worktree).
+  worktreeSummaries: WorktreeSummary[];
   // The repo's submodules. The section always shows, for its "+" (Add).
   submodules: Submodule[];
   // The configured remotes, listed in Remotes even before any branch of
@@ -75,6 +79,8 @@ export interface SidebarCallbacks {
   onWorktreeOpen: (w: Worktree) => void;
   // Right-click a worktree: open its actions menu at the cursor.
   onWorktreeMenu: (w: Worktree, x: number, y: number) => void;
+  // A branch dropped on the Worktrees header: add a worktree for it.
+  onWorktreeDrop: (src: DragRef) => void;
   // Double-click a submodule: open it as a repo tab.
   onSubmoduleOpen: (sm: Submodule) => void;
   // Right-click a submodule: open its actions menu at the cursor.
@@ -575,26 +581,29 @@ export function siblingWorktreePath(mainPath: string, branch: string): string {
   return `../${repo}-${branch.replace(/\//g, "-")}`;
 }
 
-// Linked worktrees, each by folder name with what it has checked out. Hidden
-// when the main worktree is the only one, which is nearly every repo.
+// The worktrees, each by folder name with what it has checked out. The header
+// takes a dropped branch, to add a worktree for it.
 function buildWorktrees(
   tree: HTMLElement,
   s: SidebarState,
   cb: SidebarCallbacks,
   match: (t: string) => boolean,
 ): void {
-  if (s.worktrees.length < 2) return;
   const { row, collapsed } = sectionHeader("sec:worktrees", "Worktrees", s, cb);
+  row.title = "Drop a branch here: add a worktree for it";
+  refDropZone(row, cb.onWorktreeDrop);
   tree.append(row);
   if (collapsed) return;
+  const summaries = new Map(s.worktreeSummaries.map((x) => [x.path, x]));
   for (const w of s.worktrees) {
-    if (match(worktreeName(w)) || match(w.branch ?? "")) tree.append(worktreeLeaf(w, cb));
+    if (match(worktreeName(w)) || match(w.branch ?? "")) tree.append(worktreeLeaf(w, summaries.get(w.path), cb));
   }
 }
 
 // A worktree: click jumps to its commit, double-click opens it as a tab,
 // right-click opens its menu. The current one is accented like HEAD's branch.
-function worktreeLeaf(w: Worktree, cb: SidebarCallbacks): HTMLElement {
+// `sum`: its changed-file count and ahead/behind, once known.
+function worktreeLeaf(w: Worktree, sum: WorktreeSummary | undefined, cb: SidebarCallbacks): HTMLElement {
   const checkedOut = w.branch ?? (w.head ? `detached ${w.head.slice(0, 7)}` : "");
   const notes = [
     w.is_main ? "main worktree" : null,
@@ -608,7 +617,15 @@ function worktreeLeaf(w: Worktree, cb: SidebarCallbacks): HTMLElement {
   row.append(el("span", { class: "sb-leaf-label", text: worktreeName(w) }));
   if (w.locked) row.append(el("span", { class: "sb-badge", text: "locked" }));
   if (w.prunable) row.append(el("span", { class: "sb-badge", text: "missing" }));
+  if (sum?.changed) {
+    const title = `${sum.changed} uncommitted change${sum.changed === 1 ? "" : "s"}`;
+    row.append(el("span", { class: "sb-badge wt-changes", text: `✎ ${sum.changed}`, title }));
+  }
   if (checkedOut) row.append(el("span", { class: "sb-ab", text: checkedOut }));
+  const ab: string[] = [];
+  if (sum?.behind) ab.push(`${sum.behind}↓`);
+  if (sum?.ahead) ab.push(`${sum.ahead}↑`);
+  if (ab.length) row.append(el("span", { class: "sb-ab", text: ab.join(" "), title: "Behind / ahead of its upstream" }));
 
   let clickTimer: number | undefined;
   row.addEventListener("click", () => {

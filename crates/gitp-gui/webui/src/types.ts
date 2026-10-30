@@ -488,6 +488,31 @@ export interface Worktree {
   prunable: boolean;
 }
 
+// A worktree's state at a glance, for its sidebar row (mirrors gitp-core's
+// WorktreeSummary). ahead / behind are against its branch's upstream, 0
+// without one.
+export interface WorktreeSummary {
+  path: string;
+  changed: number;
+  ahead: number;
+  behind: number;
+}
+
+// What removing a worktree would lose or strand (mirrors gitp-core's
+// WorktreeUnsavedWork). `unpushed`: commits only its branch has — ahead of the
+// upstream, or on no remote branch; on a detached HEAD, on no branch at all.
+export interface WorktreeUnsavedWork {
+  changed: string[];
+  untracked: number;
+  unpushed: number;
+}
+
+// A worktree entry Prune would forget (mirrors gitp-core's StaleWorktree).
+export interface StaleWorktree {
+  name: string;
+  reason: string;
+}
+
 // The optional parts of a clone (mirrors gitp-core's CloneOptions).
 export interface CloneOptions {
   branch: string | null;

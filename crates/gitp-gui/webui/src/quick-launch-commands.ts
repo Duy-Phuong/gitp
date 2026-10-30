@@ -481,7 +481,7 @@ function repoCommands(): QuickItem[] {
     },
     { kind: "command", label: "Add Worktree…", next: () => addWorktreeStage() },
     { kind: "command", label: "Add Remote…", run: addRemoteAction },
-    { kind: "command", label: "Prune Worktrees", run: () => void pruneWorktreesAction() },
+    { kind: "command", label: "Prune Worktrees…", run: () => void pruneWorktreesAction() },
     { kind: "command", label: "Apply Patch…", run: () => void applyPatchAction() },
     { kind: "command", label: "Stage All Changes", run: () => void stageAllAction() },
     { kind: "command", label: "Unstage All Changes", run: () => void unstageAllAction() },

@@ -35,6 +35,7 @@ import { copyText } from "./clipboard";
 import { combinedDiffEnds, showComparison } from "./compare";
 import { refLabelsAt } from "./commit-refs";
 import { askSwitchWithChanges, reportStashSwitch } from "./stash-switch";
+import { newWorktreeAtAction } from "./worktree-actions";
 import {
   bisectStep,
   clearCommitSelection,
@@ -405,6 +406,7 @@ export function onCommitContextMenu(row: CommitRow, x: number, y: number): void 
     checkoutCommit: () => void checkoutCommitAction(rev, short),
     newBranch: (name) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
     newTag: () => newTagAction(rev, short),
+    newWorktree: () => newWorktreeAtAction(rev, short),
     cherryPick: () => void runCommitOp(`Cherry-picking ${short}`, () => cherryPick(rev)),
     revert: () => void runCommitOp(`Reverting ${short}`, () => revertCommit(rev)),
     reset: (mode) => void resetAction(rev, short, mode),

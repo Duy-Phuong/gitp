@@ -22,6 +22,7 @@ import type {
   UndoState,
   Submodule,
   Worktree,
+  WorktreeSummary,
   GitFlowConfig,
   LfsStatus,
 } from "./types";
@@ -65,6 +66,9 @@ interface State {
   busyRefs: Set<string>;
   // The repo's worktrees (main first), refreshed with the sidebar.
   worktrees: Worktree[];
+  // Each worktree's changed-file count and ahead/behind, fetched after the
+  // rest of the sidebar (see refreshWorktreeSummaries).
+  worktreeSummaries: WorktreeSummary[];
   // The repo's submodules, refreshed with the sidebar.
   submodules: Submodule[];
   // The repo's Git Flow settings (null: not initialised) and Git LFS status
@@ -99,6 +103,7 @@ export const state: State = {
   branchSelectionAnchor: null,
   busyRefs: new Set(),
   worktrees: [],
+  worktreeSummaries: [],
   submodules: [],
   gitflow: null,
   lfs: null,
