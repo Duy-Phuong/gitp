@@ -49,6 +49,14 @@ export function dropActions(
   return actions;
 }
 
+// The confirmation a "push" drop needs, or null when it needs none: dropping a
+// local branch on a remote branch of another name pushes to that branch, which
+// is easy to do by missing the intended badge — so it's asked first.
+export function pushDropQuestion(src: string, remote: string, branch: string): string | null {
+  if (branch === src) return null;
+  return `Push ${src} to ${branch} on ${remote}? The branch names differ, so this updates ${remote}'s ${branch}.`;
+}
+
 // Whether `ancestor` is reachable from `descendant` over the loaded rows.
 // The rows are topologically ordered (children before parents), so one pass
 // from the descendant down to the ancestor settles it; a commit that isn't

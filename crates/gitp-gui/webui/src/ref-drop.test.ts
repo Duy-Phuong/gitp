@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dropActions, isAncestorInRows, type DropRef } from "./ref-drop";
+import { dropActions, isAncestorInRows, pushDropQuestion, type DropRef } from "./ref-drop";
 import type { CommitRow } from "./types";
 
 const row = (id: string, parents: string[]): CommitRow => ({
@@ -71,5 +71,17 @@ describe("dropActions", () => {
   it("offers nothing for a branch dropped on itself or on the same commit", () => {
     expect(dropActions(local("main", "b"), local("main", "b"), "main", ancestry)).toEqual([]);
     expect(dropActions(local("main", "b"), local("twin", "b"), "main", ancestry)).toEqual([]);
+  });
+});
+
+describe("pushDropQuestion", () => {
+  it("asks before pushing to a remote branch of another name, naming the remote and branch", () => {
+    expect(pushDropQuestion("feature", "origin", "main")).toBe(
+      "Push feature to main on origin? The branch names differ, so this updates origin's main.",
+    );
+  });
+
+  it("pushes to the branch of the same name without asking", () => {
+    expect(pushDropQuestion("feature", "origin", "feature")).toBeNull();
   });
 });

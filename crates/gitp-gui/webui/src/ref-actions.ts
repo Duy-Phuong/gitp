@@ -73,7 +73,7 @@ import { checkoutInNewWorktreeItem, worktreeOf } from "./worktree-actions";
 import { worktreeName } from "./views/sidebar";
 import { allRefsAt } from "./commit-refs";
 import { pushTargets } from "./push-targets";
-import { dropActions, isAncestorInRows, type DragRef, type DropRef } from "./ref-drop";
+import { dropActions, isAncestorInRows, pushDropQuestion, type DragRef, type DropRef } from "./ref-drop";
 import { finishFlowItem, gitflowMenuItem } from "./gitflow-actions";
 import { addRemoteAction } from "./remote-actions";
 import { askSwitchWithChanges, reportStashSwitch } from "./stash-switch";
@@ -268,9 +268,17 @@ export function onRefDrop(srcRef: DragRef, dstRef: DragRef, x: number, y: number
       case "push": {
         const remote = state.refs.remotes.find((r) => r.name === dst.name)?.remote ?? "origin";
         const branch = dst.name.slice(remote.length + 1);
+        const question = pushDropQuestion(src.name, remote, branch);
         items.push({
           label: `Push ${src.name} to ${dst.name}`,
-          run: () => void runBranchOp(`Pushing ${src.name} to ${dst.name}`, () => pushBranchTo(src.name, remote, branch), false, src.name),
+          run: () =>
+            void (async () => {
+              if (question && !(await confirmDialog(question))) {
+                setStatus("Push cancelled.");
+                return;
+              }
+              await runBranchOp(`Pushing ${src.name} to ${dst.name}`, () => pushBranchTo(src.name, remote, branch), false, src.name);
+            })(),
         });
         break;
       }
