@@ -6,7 +6,14 @@
 // app, so starting again on the other profile's keys is what reliably applies
 // every one of them and reopens that profile's tabs.
 
-import { applyLocalIdentity, closeRepo, confirmDialog, fetchGlobalIdentity, setGlobalIdentity } from "./api";
+import {
+  applyLocalIdentity,
+  closeRepo,
+  confirmDialog,
+  fetchGlobalIdentity,
+  restoreLocalIdentity,
+  setGlobalIdentity,
+} from "./api";
 import { clear, el, $ } from "./dom";
 import { state, ui } from "./app-state";
 import { opFailed, readFailed, reportDone } from "./report";
@@ -15,11 +22,14 @@ import {
   activeProfile,
   deleteProfile,
   ensureStore,
+  forgetIdentityWrite,
   loadStore,
   profileIdentity,
   profileInitials,
   profileSwitchPrompt,
   putProfile,
+  recordIdentityWrite,
+  staleIdentityWrites,
   switchProfile,
   type Profile,
   type ProfileStore,
@@ -106,6 +116,14 @@ async function switchToProfile(target: Profile): Promise<void> {
     readFailed("Can't switch profile now", "A git operation is still running.");
     return;
   }
+  // Repos the profile being left wrote its identity into get their own back
+  // before the target takes over; one that can't stops the switch, which is
+  // said. A switch that stops from here on puts the current profile's identity
+  // back into the open repo (applyProfileIdentityHere).
+  if (!(await restoreIdentities(target))) {
+    applyProfileIdentityHere();
+    return;
+  }
 
   // The settings are swapped first: a swap that fails (storage full) has
   // changed nothing, and the window carries on as it was. Only then is a
@@ -117,6 +135,7 @@ async function switchToProfile(target: Profile): Promise<void> {
     switchProfile(localStorage, target.id);
   } catch (err) {
     opFailed(`Couldn't switch to “${target.name}”: saving the settings failed`, err);
+    applyProfileIdentityHere();
     return;
   }
   const identity = profileIdentity(target);
@@ -126,6 +145,7 @@ async function switchToProfile(target: Profile): Promise<void> {
     } catch (err) {
       switchProfile(localStorage, from);
       opFailed(`Couldn't switch to “${target.name}”: writing ~/.gitconfig failed`, err);
+      applyProfileIdentityHere();
       return;
     }
   }
@@ -140,27 +160,55 @@ async function switchToProfile(target: Profile): Promise<void> {
   location.reload();
 }
 
+// Give the repos a local-scope profile wrote its identity into their own back,
+// all but those `active` keeps writing to (see staleIdentityWrites); `only`
+// limits it to one repo. False when one couldn't be: that is reported, and
+// the note kept so it is tried again.
+async function restoreIdentities(active: Profile, only?: string): Promise<boolean> {
+  let ok = true;
+  for (const [path, w] of staleIdentityWrites(localStorage, active)) {
+    if (only !== undefined && path !== only) continue;
+    try {
+      await restoreLocalIdentity(path, w.wrote, w.previous);
+      forgetIdentityWrite(localStorage, path);
+    } catch (err) {
+      ok = false;
+      opFailed(`Couldn't give ${path} back its own commit identity`, err);
+    }
+  }
+  return ok;
+}
+
 // Make the open repo commit as the active profile, when that profile applies
-// its identity per repo. Called whenever the active repo changes.
+// its identity per repo — or give it back its own, when another profile wrote
+// there and this one doesn't. Called whenever the active repo changes.
 export function applyProfileIdentityHere(): void {
   const store = currentStore();
-  if (!store || !state.repoPath) return;
+  const path = state.repoPath;
+  if (!store || !path) return;
   const p = activeProfile(store);
-  const identity = profileIdentity(p);
-  if (!identity || p.scope !== "local") return;
-  applyLocalIdentity(identity).then(
-    (changed) => {
-      if (changed) reportDone(`Commits in this repo now use ${identity.name} <${identity.email}> (profile “${p.name}”).`);
-    },
-    (err) => opFailed(`Couldn't set this repo's identity for profile “${p.name}”`, err),
-  );
+  void restoreIdentities(p, path).then(() => {
+    const identity = profileIdentity(p);
+    // The backend writes the active repo, which must still be this one.
+    if (!identity || p.scope !== "local" || state.repoPath !== path) return;
+    applyLocalIdentity(identity).then(
+      (previous) => {
+        if (!previous) return;
+        recordIdentityWrite(localStorage, path, p.id, identity, previous);
+        reportDone(`Commits in this repo now use ${identity.name} <${identity.email}> (profile “${p.name}”).`);
+      },
+      (err) => opFailed(`Couldn't set this repo's identity for profile “${p.name}”`, err),
+    );
+  });
 }
 
 async function saveProfile(profile: Profile): Promise<void> {
   putProfile(localStorage, profile);
   renderProfileButton();
-  // An edit to the active profile takes effect now, not at the next switch.
+  // An edit to the active profile takes effect now, not at the next switch —
+  // including repos it no longer writes to once it stops writing per repo.
   if (profile.id !== currentStore()?.active) return;
+  await restoreIdentities(profile);
   const identity = profileIdentity(profile);
   if (!identity) return;
   if (profile.scope === "local") {
@@ -177,7 +225,8 @@ async function saveProfile(profile: Profile): Promise<void> {
 
 async function removeProfile(profile: Profile): Promise<void> {
   const ok = await confirmDialog(
-    `Delete the profile “${profile.name}”? Its saved settings and open tabs are deleted with it. Git config is not changed.`,
+    `Delete the profile “${profile.name}”? Its saved settings and open tabs are deleted with it. ` +
+      "Git config is not changed: repos it set an identity in got their own back when you switched away from it.",
     "Delete Profile",
   );
   if (!ok) return;

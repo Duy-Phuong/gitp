@@ -66,7 +66,7 @@ pub use file_content::{FileContent, FileSide, PREVIEW_MAX_BYTES};
 pub use file_edit::{TextFile, EDIT_MAX_BYTES};
 pub use filelog::FileCommit;
 pub use gitflow::{FlowKind, GitFlowConfig};
-pub use identity::{global_identity, set_global_identity, Identity};
+pub use identity::{global_identity, restore_local_identity, set_global_identity, Identity};
 pub use lfs::LfsStatus;
 pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope};
 pub use pick_plan::{PickAction, PickPlanOutcome, PickStep};

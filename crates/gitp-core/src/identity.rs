@@ -6,7 +6,7 @@
 //! writing it there — into the user's global config or into one repository's
 //! local config — rather than by passing an author to each command.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -51,17 +51,43 @@ fn global_config_path() -> Result<PathBuf> {
 
 impl Repo {
     /// Write `id` into this repository's local config, so commits here use it
-    /// whatever the global config says. Returns whether anything changed — a
+    /// whatever the global config says. Returns what the local config held
+    /// before when it changed anything, for [`restore_local_identity`] — a
     /// repo that already has it is left untouched (no rewrite of
-    /// `.git/config` each time its tab is opened).
-    pub fn apply_local_identity(&self, id: &Identity) -> Result<bool> {
+    /// `.git/config` each time its tab is opened) and gives `None`.
+    pub fn apply_local_identity(&self, id: &Identity) -> Result<Option<Identity>> {
         let mut local = self.inner.config()?.open_level(git2::ConfigLevel::Local)?;
-        if read_identity(&local)? == *id {
-            return Ok(false);
+        let previous = read_identity(&local)?;
+        if previous == *id {
+            return Ok(None);
         }
         write_identity(&mut local, id)?;
-        Ok(true)
+        Ok(Some(previous))
     }
+}
+
+/// Undo [`Repo::apply_local_identity`] in the repository at `path`, which
+/// needn't be open: each key that still holds what was `wrote` goes back to
+/// `previous`, or is unset where the repo had none. A key changed since is
+/// someone's own choice and stays; a repository that is gone has nothing left
+/// to restore.
+pub fn restore_local_identity(path: &Path, wrote: &Identity, previous: &Identity) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let repo = git2::Repository::open(path)?;
+    let mut local = repo.config()?.open_level(git2::ConfigLevel::Local)?;
+    let now = read_identity(&local)?;
+    for (key, now, wrote, previous) in [
+        (NAME, &now.name, &wrote.name, &previous.name),
+        (EMAIL, &now.email, &wrote.email, &previous.email),
+        (SIGNING_KEY, &now.signing_key, &wrote.signing_key, &previous.signing_key),
+    ] {
+        if now == wrote {
+            set_or_unset(&mut local, key, previous)?;
+        }
+    }
+    Ok(())
 }
 
 fn read_identity(cfg: &git2::Config) -> Result<Identity> {
@@ -80,13 +106,18 @@ fn read_identity(cfg: &git2::Config) -> Result<Identity> {
 fn write_identity(cfg: &mut git2::Config, id: &Identity) -> Result<()> {
     cfg.set_str(NAME, &id.name)?;
     cfg.set_str(EMAIL, &id.email)?;
-    if id.signing_key.is_empty() {
-        match cfg.remove(SIGNING_KEY) {
+    set_or_unset(cfg, SIGNING_KEY, &id.signing_key)
+}
+
+/// Set `key` to `value`, or remove it for an empty one.
+fn set_or_unset(cfg: &mut git2::Config, key: &str, value: &str) -> Result<()> {
+    if value.is_empty() {
+        match cfg.remove(key) {
             Err(e) if e.code() != git2::ErrorCode::NotFound => return Err(e.into()),
             _ => {}
         }
     } else {
-        cfg.set_str(SIGNING_KEY, &id.signing_key)?;
+        cfg.set_str(key, value)?;
     }
     Ok(())
 }

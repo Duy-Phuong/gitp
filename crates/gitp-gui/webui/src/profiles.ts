@@ -39,11 +39,14 @@ export type KeyValueStorage = Pick<Storage, "length" | "key" | "getItem" | "setI
 const STORE_KEY = "gitp-profiles";
 // A profile's settings while another profile is active.
 const SNAPSHOT_PREFIX = "gitp-profile-data:";
+// The repos a local-scope profile wrote its identity into (IdentityWrite):
+// about the repos rather than any one profile, so never swapped out.
+const IDENTITY_WRITES_KEY = "gitp-identity-writes";
 
 export const DEFAULT_PROFILE_ID = "default";
 
 function isStoreKey(key: string): boolean {
-  return key === STORE_KEY || key.startsWith(SNAPSHOT_PREFIX);
+  return key === STORE_KEY || key === IDENTITY_WRITES_KEY || key.startsWith(SNAPSHOT_PREFIX);
 }
 
 export function loadStore(storage: KeyValueStorage): ProfileStore | null {
@@ -180,6 +183,53 @@ export function profileSwitchPrompt(
     );
   }
   return { confirm: lines.join("\n\n") };
+}
+
+// A local-scope profile's identity written into one repo's .git/config, and
+// what that config held before. Local config beats global, so without this the
+// repo would go on committing as that profile after a switch to another — and
+// an identity the repo had of its own would be gone.
+export interface IdentityWrite {
+  profile: string;
+  wrote: Identity;
+  previous: Identity;
+}
+
+export function loadIdentityWrites(storage: KeyValueStorage): Record<string, IdentityWrite> {
+  try {
+    const raw = JSON.parse(storage.getItem(IDENTITY_WRITES_KEY) ?? "{}") as unknown;
+    return raw && typeof raw === "object" ? (raw as Record<string, IdentityWrite>) : {};
+  } catch {
+    return {};
+  }
+}
+
+// Note that `profile` wrote `wrote` into `path` over `previous`. A repo noted
+// already keeps the `previous` it was first noted with: that is its own
+// identity, a later one only a profile's.
+export function recordIdentityWrite(
+  storage: KeyValueStorage,
+  path: string,
+  profile: string,
+  wrote: Identity,
+  previous: Identity,
+): void {
+  const writes = loadIdentityWrites(storage);
+  writes[path] = { profile, wrote, previous: writes[path]?.previous ?? previous };
+  storage.setItem(IDENTITY_WRITES_KEY, JSON.stringify(writes));
+}
+
+export function forgetIdentityWrite(storage: KeyValueStorage, path: string): void {
+  const writes = loadIdentityWrites(storage);
+  delete writes[path];
+  storage.setItem(IDENTITY_WRITES_KEY, JSON.stringify(writes));
+}
+
+// The repos to give their own identity back to while `active` is the profile:
+// every one noted, but those `active` wrote itself while it still writes one.
+export function staleIdentityWrites(storage: KeyValueStorage, active: Profile): [string, IdentityWrite][] {
+  const keeps = active.scope === "local" && profileIdentity(active) !== null;
+  return Object.entries(loadIdentityWrites(storage)).filter(([, w]) => !(keeps && w.profile === active.id));
 }
 
 // "Ada Lovelace" → "AL", "work" → "WO": the top bar's profile badge.
