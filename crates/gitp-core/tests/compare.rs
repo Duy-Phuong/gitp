@@ -254,3 +254,27 @@ fn three_dot_needs_a_common_ancestor() {
     let err = repo.compare("main", "orphan", true).unwrap_err();
     assert!(err.to_string().contains("common ancestor"), "{err}");
 }
+
+#[test]
+fn compare_file_diff_can_ignore_whitespace() {
+    let f = FixtureRepo::init();
+    let c1 = commit_tree(&f, "main", &[("f.txt", "a b\nc\n")], &[], "c1");
+    let c2 = commit_tree(&f, "main", &[("f.txt", "a  b\nC\n")], &[c1], "c2");
+    let repo = Repo::open(f.path()).unwrap();
+    let (a, b) = (c1.to_string(), c2.to_string());
+
+    let added = |ws: bool| -> Vec<String> {
+        let file = repo
+            .compare_file_diff_with(&a, &b, false, "f.txt", None, 3, ws)
+            .unwrap()
+            .unwrap();
+        file.hunks
+            .iter()
+            .flat_map(|h| &h.lines)
+            .filter(|l| l.origin == '+')
+            .map(|l| l.content.clone())
+            .collect()
+    };
+    assert_eq!(added(false), vec!["a  b", "C"]);
+    assert_eq!(added(true), vec!["C"]);
+}

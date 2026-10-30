@@ -252,15 +252,17 @@ export const DEFAULT_CONTEXT_LINES = 3;
 export const FULL_FILE_CONTEXT = 1_000_000_000;
 
 // One file of a commit re-diffed with `contextLines` of context — the diff
-// pane's show more / show less / full file. `oldPath` keeps a rename paired.
+// pane's show more / show less / full file — and optionally ignoring
+// whitespace (`git diff -w`). `oldPath` keeps a rename paired.
 export async function fetchCommitFileDiff(
   rev: string,
   path: string,
   oldPath: string | null,
   contextLines: number,
+  ignoreWhitespace: boolean,
 ): Promise<FileDiff | null> {
   if (!isTauri()) return mockDetail(rev).files.find((f) => f.path === path) ?? null;
-  return invoke<FileDiff | null>("get_commit_file_diff", { rev, path, oldPath, contextLines });
+  return invoke<FileDiff | null>("get_commit_file_diff", { rev, path, oldPath, contextLines, ignoreWhitespace });
 }
 
 export async function fetchRefs(): Promise<Refs> {
@@ -327,16 +329,19 @@ export async function fetchStatusSummary(): Promise<StatusLists> {
 
 // The full diff (with hunks) for one file, in the staged (HEAD→index) or
 // unstaged (index→worktree) direction. Null when the path has no such change.
+// A whitespace-ignoring diff is for reading only — its blocks aren't the
+// file's real changes, so never stage or discard by them.
 export async function fetchFileDiff(
   path: string,
   staged: boolean,
   contextLines: number,
+  ignoreWhitespace: boolean,
 ): Promise<FileDiff | null> {
   if (!isTauri()) {
     const list = staged ? MOCK_STATUS.staged : MOCK_STATUS.unstaged;
     return list.find((f) => f.path === path) ?? null;
   }
-  return invoke<FileDiff | null>("get_file_diff", { path, staged, contextLines });
+  return invoke<FileDiff | null>("get_file_diff", { path, staged, contextLines, ignoreWhitespace });
 }
 
 export async function stage(path: string): Promise<void> {
@@ -1579,6 +1584,7 @@ export async function fetchCompareFileDiff(
   cmp: Comparison,
   file: FileDiff,
   contextLines: number,
+  ignoreWhitespace: boolean,
 ): Promise<FileDiff | null> {
   if (!isTauri()) return cmp.files.find((f) => f.path === file.path) ?? null;
   return invoke<FileDiff | null>("get_compare_file_diff", {
@@ -1588,6 +1594,7 @@ export async function fetchCompareFileDiff(
     path: file.path,
     oldPath: file.old_path,
     contextLines,
+    ignoreWhitespace,
   });
 }
 

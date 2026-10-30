@@ -4,9 +4,11 @@
 // In the Changes tab the selected file has its own toolbar: switch between
 // Diff / Blame / History, step through changes with the arrows, and toggle a
 // unified or split (side-by-side) diff, and show fewer / more / all unchanged
-// lines around each change. A single stateful controller owns the pane: active
-// tab, selected file, view mode, split flag, context size, current hunk, and the
-// lazily-loaded tree / blame / history / re-contexted diff (each cached).
+// lines around each change, wrap long lines, and ignore whitespace. A single
+// stateful controller owns the pane: active tab, selected file, view mode,
+// split flag, context size, current hunk, and the lazily-loaded tree / blame /
+// history / re-contexted diff (each cached). Wrap and ignore-whitespace are
+// persisted preferences shared with Local Changes (see prefs.ts).
 //
 // The same pane also shows a comparison of two revisions (showCompare): a
 // compare header in place of the tabs, over the Changes view of the files that
@@ -15,6 +17,7 @@
 
 import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT } from "../api";
 import { clear, copyToClipboard, el, statusBadge, svg } from "../dom";
+import { loadDiffWrap, loadIgnoreWhitespace, saveDiffWrap, saveIgnoreWhitespace } from "../prefs";
 import type { BlameLine, CommitDetail, CommitSignature, CompareEnd, Comparison, FileCommit, FileDiff, SignatureStatus } from "../types";
 import { hunkWordDiffs, type Seg } from "../worddiff";
 import { renderFileTree } from "./tree";
@@ -35,11 +38,17 @@ export interface DetailCallbacks {
   // Fetch per-line blame / commit history for a file at a commit.
   fetchBlame: (id: string, path: string) => Promise<BlameLine[]>;
   fetchFileHistory: (id: string, path: string) => Promise<FileCommit[]>;
-  // Re-diff one of the commit's files with `contextLines` of context (the
-  // commit detail's own diffs use the default).
-  fetchFileDiff: (id: string, file: FileDiff, contextLines: number) => Promise<FileDiff | null>;
+  // Re-diff one of the commit's files with `contextLines` of context, and
+  // optionally ignoring whitespace (the commit detail's own diffs use the
+  // default context and show every change).
+  fetchFileDiff: (id: string, file: FileDiff, contextLines: number, ignoreWhitespace: boolean) => Promise<FileDiff | null>;
   // The same for one of a comparison's files.
-  fetchCompareFileDiff: (cmp: Comparison, file: FileDiff, contextLines: number) => Promise<FileDiff | null>;
+  fetchCompareFileDiff: (
+    cmp: Comparison,
+    file: FileDiff,
+    contextLines: number,
+    ignoreWhitespace: boolean,
+  ) => Promise<FileDiff | null>;
   // The compare header: re-run the comparison with these ends and mode (Swap,
   // the two-dot / three-dot toggle), or close it.
   onCompare: (base: string, head: string, threeDot: boolean) => void;
@@ -94,7 +103,8 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   let tree: { id: string; paths: string[] } | null = null;
   let blame: Cached<BlameLine[]> | null = null;
   let history: Cached<FileCommit[]> | null = null;
-  // The selected file re-diffed at a non-default context; key adds the context.
+  // The selected file re-diffed at a non-default context or ignoring
+  // whitespace; key adds both.
   let recontexted: Cached<FileDiff | null> | null = null;
   // The re-diff currently being fetched, so repeated render()s while it's in
   // flight don't each start another request.
@@ -308,6 +318,11 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
       iconBtn(["M12 5v14", "M6 13l6 6 6-6"], "Next change", !diffMode, () => gotoChange(1)),
       sep(),
       ...contextControls(contextLines, !diffMode, setContext),
+      sep(),
+      ...diffToggles(splitView, !diffMode, (what) => {
+        if (what === "ws") currentHunk = 0;
+        render();
+      }),
     );
 
     const toggle = el("div", { class: "tb-group" }, [
@@ -324,21 +339,25 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     if (fileMode === "history") return renderHistoryView(view, file);
     const shown = displayedDiff(selectedFile);
     if (shown === undefined) return renderRecontexted(view, file);
+    view.classList.toggle("wrap-lines", loadDiffWrap());
     view.append(splitView ? renderSplitDiff(shown) : renderUnifiedDiff(shown));
+    if (shown.hunks.length === 0 && file.hunks.length > 0) {
+      view.append(el("div", { class: "detail-empty", text: "Only whitespace changed — Ignore whitespace is on." }));
+    }
   }
 
-  // The file as it should be drawn at the current context: the commit's own
-  // diff at the default, the cached re-diff otherwise, or `undefined` while
-  // that re-diff hasn't been fetched yet.
+  // The file as it should be drawn at the current context and whitespace
+  // setting: the commit's own diff at the default, the cached re-diff
+  // otherwise, or `undefined` while that re-diff hasn't been fetched yet.
   function displayedDiff(idx: number): FileDiff | undefined {
     const file = detail!.files[idx];
-    if (contextLines === DEFAULT_CONTEXT_LINES) return file;
+    if (contextLines === DEFAULT_CONTEXT_LINES && !loadIgnoreWhitespace()) return file;
     if (recontexted?.key !== contextKey(file)) return undefined;
     return recontexted.data ?? file;
   }
 
   function contextKey(file: FileDiff): string {
-    return `${viewKey()}:${file.path}:${contextLines}`;
+    return `${viewKey()}:${file.path}:${contextLines}:${loadIgnoreWhitespace() ? "-w" : ""}`;
   }
 
   function renderRecontexted(view: HTMLElement, file: FileDiff): void {
@@ -348,9 +367,10 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     recontextInFlight = key;
     // Only repaint if the user is still looking at this file and context.
     const stillViewing = () => detail !== null && contextKey(detail.files[selectedFile]) === key;
+    const ws = loadIgnoreWhitespace();
     const fetched = compare
-      ? cb.fetchCompareFileDiff(compare, file, contextLines)
-      : cb.fetchFileDiff(detail!.id, file, contextLines);
+      ? cb.fetchCompareFileDiff(compare, file, contextLines, ws)
+      : cb.fetchFileDiff(detail!.id, file, contextLines, ws);
     fetched
       .then((data) => {
         recontexted = { key, data };
@@ -725,6 +745,44 @@ export function contextControls(ctx: number, disabled: boolean, onChange: (next:
       disabled,
       () => onChange(full ? DEFAULT_CONTEXT_LINES : FULL_FILE_CONTEXT),
       full && !disabled,
+    ),
+  ];
+}
+
+const WRAP_ICON = ["M4 6h16", "M4 12h13a3 3 0 0 1 0 6h-3", "M16 16l-2 2 2 2", "M4 18h6"];
+const IGNORE_WS_ICON = ["M4 10v4h16v-4", "M4 5l16 14"];
+
+// Wrap long lines and Ignore whitespace — persisted preferences (prefs.ts),
+// shared with the Local Changes diff. Wrapping is CSS only (`.wrap-lines` on
+// the diff's container); ignoring whitespace needs a re-diff, so `onChange`
+// says which one flipped. The split view always wraps, so Wrap is off there.
+export function diffToggles(
+  split: boolean,
+  disabled: boolean,
+  onChange: (what: "wrap" | "ws") => void,
+): HTMLElement[] {
+  const wrap = loadDiffWrap();
+  const ws = loadIgnoreWhitespace();
+  return [
+    iconBtn(
+      WRAP_ICON,
+      split ? "Wrap long lines (the split view always wraps)" : "Wrap long lines",
+      disabled || split,
+      () => {
+        saveDiffWrap(!wrap);
+        onChange("wrap");
+      },
+      wrap && !split && !disabled,
+    ),
+    iconBtn(
+      IGNORE_WS_ICON,
+      "Ignore whitespace changes (git diff -w)",
+      disabled,
+      () => {
+        saveIgnoreWhitespace(!ws);
+        onChange("ws");
+      },
+      ws && !disabled,
     ),
   ];
 }

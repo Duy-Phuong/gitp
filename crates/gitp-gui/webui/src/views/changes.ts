@@ -7,7 +7,8 @@ import { DEFAULT_CONTEXT_LINES } from "../api";
 import { autoGrowTextarea, clear, copyToClipboard, el } from "../dom";
 import type { ChangeKind, CommitDetail, FileDiff, SigningConfig, StatusLists } from "../types";
 import { type MenuItem, showContextMenu } from "./context-menu";
-import { contextControls, renderFile, renderSplitDiff } from "./detail";
+import { contextControls, diffToggles, renderFile, renderSplitDiff } from "./detail";
+import { loadDiffWrap, loadIgnoreWhitespace } from "../prefs";
 import {
   changedLines,
   dragOver,
@@ -27,8 +28,14 @@ export interface ChangesCallbacks {
   // Staging trees: paths + statuses only, no hunks (cheap to refresh).
   fetchStatus: () => Promise<StatusLists>;
   // The selected file's full diff (with hunks), fetched on demand with
-  // `contextLines` of unchanged context around each change.
-  fetchFileDiff: (path: string, staged: boolean, contextLines: number) => Promise<FileDiff | null>;
+  // `contextLines` of unchanged context around each change, optionally
+  // ignoring whitespace (for reading only — see selectedDiffWs).
+  fetchFileDiff: (
+    path: string,
+    staged: boolean,
+    contextLines: number,
+    ignoreWhitespace: boolean,
+  ) => Promise<FileDiff | null>;
   stage: (path: string) => Promise<void>;
   unstage: (path: string) => Promise<void>;
   stageAll: () => Promise<void>;
@@ -127,6 +134,13 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let selectedDiffSummary: FileDiff | null = null;
   // The context size selectedDiff was fetched with (what its blocks are cut at).
   let selectedDiffContext = DEFAULT_CONTEXT_LINES;
+  // Whether selectedDiff ignores whitespace. Its blocks and lines then aren't
+  // the file's real changes — block N of a `-w` diff can be a different block
+  // than the backend's block N, and a whitespace-only edit inside a shown
+  // block isn't in it at all — so staging or discarding by them would act on
+  // the wrong text. Block / line operations are disabled while it's set; whole
+  // files can still be staged or discarded from the list.
+  let selectedDiffWs = false;
   // Whether the current selection's diff fetch has completed — distinguishes
   // "still loading" from "loaded but no textual diff" (binary / Git LFS file).
   let diffLoaded = false;
@@ -229,20 +243,23 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       selectedDiff &&
       summary &&
       sameSummary(summary, selectedDiffSummary) &&
-      selectedDiffContext === contextLines
+      selectedDiffContext === contextLines &&
+      selectedDiffWs === loadIgnoreWhitespace()
     ) {
       return; // status for this file is unchanged — the hunks we have are still current
     }
     const token = ++diffToken;
     const ctx = contextLines;
+    const ws = loadIgnoreWhitespace();
     selectedDiff = null;
     diffLoaded = false;
-    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", ctx);
+    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", ctx, ws);
     if (token !== diffToken) return; // selection moved on; drop this result
     selectedDiff = file;
     diffLoaded = true;
     selectedDiffSummary = summary;
     selectedDiffContext = ctx;
+    selectedDiffWs = ws;
     if (diffHost) renderDiffInto(diffHost);
   }
 
@@ -253,7 +270,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     if (!sel || !diffLoaded || !selectedDiff || busy) return;
     if (sel.panel === "staged" && amendOnly(sel.path)) return;
     const token = ++diffToken;
-    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", selectedDiffContext);
+    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", selectedDiffContext, selectedDiffWs);
     if (token !== diffToken) return; // selection moved on; drop this result
     // Unchanged: keep the very same object, so the line selection survives and
     // nothing is repainted.
@@ -420,7 +437,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     const submodule = selectedDiff ? parseSubmoduleDiff(selectedDiff) : null;
     const hasDiff = selectedDiff != null && selectedDiff.hunks.length > 0 && !submodule;
     pane.append(diffToolbar(hasDiff));
-    const body = el("div", { class: "staging-diff-body" });
+    const body = el("div", { class: `staging-diff-body${loadDiffWrap() ? " wrap-lines" : ""}` });
     // The selected-lines action bar, under the diff (not scrolled with it).
     const bar = el("div", { class: "line-actions hidden" });
     if (submodule) {
@@ -442,15 +459,27 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       );
     } else if (hasDiff) {
       body.append(splitView ? renderSplitDiff(selectedDiff!) : renderFile(selectedDiff!));
-      attachHunkMenus(body);
-      // Amend-only files (shown while amending) aren't in the index — their
-      // blocks can't be staged/unstaged, so skip the per-hunk controls.
-      if (!amendOnly(selected.path)) {
-        attachHunkControls(body);
-        attachLineSelection(body, bar);
+      if (selectedDiffWs) {
+        // Not the real blocks (see selectedDiffWs): show the controls, disabled.
+        attachHunkControls(body, WS_BLOCKED);
+      } else {
+        attachHunkMenus(body);
+        // Amend-only files (shown while amending) aren't in the index — their
+        // blocks can't be staged/unstaged, so skip the per-hunk controls.
+        if (!amendOnly(selected.path)) {
+          attachHunkControls(body);
+          attachLineSelection(body, bar);
+        }
       }
     } else if (!diffLoaded) {
       body.append(el("div", { class: "detail-empty", text: "Loading changes…" }));
+    } else if (selectedDiffWs) {
+      body.append(
+        el("div", {
+          class: "detail-empty",
+          text: "Nothing to show with Ignore whitespace on — only whitespace changed, or it's a binary file.",
+        }),
+      );
     } else {
       // Loaded, but no textual diff — a binary or Git-LFS-tracked file. It still
       // appears in the list and can be staged/committed like any change.
@@ -461,8 +490,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     pane.append(body, bar);
   }
 
-  // Unified / Split toggle (when there's a diff to show) plus an always-present
-  // Edit File shortcut, above the diff.
+  // Unified / Split toggle and context controls (when there's a diff to show),
+  // the Wrap / Ignore whitespace toggles — always, so a file whose changes are
+  // all whitespace can still be switched back — and an Edit File shortcut.
   function diffToolbar(hasDiff: boolean): HTMLElement {
     const mk = (label: string, on: boolean, set: boolean) => {
       const b = el("button", { class: `btn ghost small${on ? " active" : ""}`, text: label });
@@ -484,20 +514,24 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       if (diffHost) renderDiffInto(diffHost);
       void loadSelectedDiff();
     });
+    const toggles = diffToggles(splitView, false, (what) => {
+      if (diffHost) renderDiffInto(diffHost);
+      if (what === "ws") void loadSelectedDiff();
+    });
     return el("div", { class: "diff-toolbar" }, [
-      el(
-        "div",
-        { class: "diff-toolbar-group" },
-        hasDiff ? [mk("Unified", !splitView, false), mk("Split", splitView, true), ...context] : [],
-      ),
+      el("div", { class: "diff-toolbar-group" }, [
+        ...(hasDiff ? [mk("Unified", !splitView, false), mk("Split", splitView, true), ...context] : []),
+        ...toggles,
+      ]),
       editBtn,
     ]);
   }
 
   // Per-block action buttons on each hunk header, revealed on hover: Stage /
   // Discard for unstaged blocks, Unstage for staged ones. The same operations
-  // are also on the block's right-click menu (attachHunkMenus).
-  function attachHunkControls(body: HTMLElement): void {
+  // are also on the block's right-click menu (attachHunkMenus). With `blocked`
+  // the buttons are drawn disabled, with that as their tooltip.
+  function attachHunkControls(body: HTMLElement, blocked: string | null = null): void {
     const sel = selected;
     if (!sel) return;
     const ctx = selectedDiffContext;
@@ -508,6 +542,11 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       const actions = el("div", { class: "hunk-actions" });
       const btn = (label: string, danger: boolean, onClick: () => void) => {
         const b = el("button", { class: `hunk-btn${danger ? " danger" : ""}`, text: label });
+        if (blocked) {
+          (b as HTMLButtonElement).disabled = true;
+          b.title = blocked;
+          return b;
+        }
         b.addEventListener("click", (e) => {
           e.stopPropagation();
           onClick();
@@ -1122,6 +1161,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   render();
   return { reload, isBusy: () => busy, applyStatus, recheckDiff, prefillMessage, clearPrefill, reset };
 }
+
+// Why block / line staging is off while whitespace is ignored (selectedDiffWs).
+const WS_BLOCKED =
+  "Turn off Ignore whitespace to stage or discard single blocks or lines — the blocks shown leave out whitespace changes, so they aren't the file's real changes.";
 
 // Whether two fetched diffs show exactly the same thing: same file, same
 // hunks, same lines with the same numbers.

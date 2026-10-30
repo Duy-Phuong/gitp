@@ -28,6 +28,28 @@ export function saveDetailTab(tab: DetailTab): void {
   localStorage.setItem(DETAIL_TAB_KEY, tab);
 }
 
+// The diff toolbars' Wrap lines and Ignore whitespace toggles. One setting
+// each, shared by the commit detail and Local Changes: a reader who wants long
+// lines wrapped wants it in both places.
+const DIFF_WRAP_KEY = "gitp-diff-wrap";
+const DIFF_IGNORE_WS_KEY = "gitp-diff-ignore-whitespace";
+
+export function loadDiffWrap(): boolean {
+  return localStorage.getItem(DIFF_WRAP_KEY) === "1";
+}
+
+export function saveDiffWrap(on: boolean): void {
+  localStorage.setItem(DIFF_WRAP_KEY, on ? "1" : "0");
+}
+
+export function loadIgnoreWhitespace(): boolean {
+  return localStorage.getItem(DIFF_IGNORE_WS_KEY) === "1";
+}
+
+export function saveIgnoreWhitespace(on: boolean): void {
+  localStorage.setItem(DIFF_IGNORE_WS_KEY, on ? "1" : "0");
+}
+
 // What the plain Pull button runs. "FetchAll" isn't a real pull (no merge) but
 // is offered alongside the pull strategies, GitKraken-style.
 export type PullDefault = "FetchAll" | PullMode;

@@ -217,8 +217,8 @@ async function init(): Promise<void> {
     fetchTree: fetchCommitTree,
     fetchBlame,
     fetchFileHistory,
-    fetchFileDiff: (id, file, contextLines) =>
-      fetchCommitFileDiff(id, file.path, file.old_path, contextLines),
+    fetchFileDiff: (id, file, contextLines, ignoreWhitespace) =>
+      fetchCommitFileDiff(id, file.path, file.old_path, contextLines, ignoreWhitespace),
     fetchCompareFileDiff,
     onCompare: (base, head, threeDot) => void showComparison(base, head, threeDot),
     onCloseCompare: () => void leaveComparison(),

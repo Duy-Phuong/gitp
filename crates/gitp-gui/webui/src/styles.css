@@ -2596,6 +2596,13 @@ body {
   border-color: var(--danger, #ff7b72);
   color: var(--danger, #ff7b72);
 }
+/* Block staging is off while whitespace is ignored; the tooltip says why. */
+.hunk-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  border-color: var(--border);
+  color: var(--text-dim);
+}
 .diff-line {
   font-family: var(--mono);
   font-size: 12px;
@@ -2606,6 +2613,18 @@ body {
    indentation/alignment stays intact and nothing is silently clipped. */
 .hunk {
   overflow-x: auto;
+}
+/* The Wrap lines toggle: wrap instead, with a hanging indent so continuation
+   rows start under the code rather than under the line-number gutters (two
+   40px gutters plus the 2ch "+ " marker). */
+.wrap-lines .diff-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding-left: calc(12px + 80px + 2ch);
+  text-indent: calc(-80px - 2ch);
+}
+.wrap-lines .diff-line > * {
+  text-indent: 0;
 }
 .diff-line.add {
   background: var(--add-bg);
