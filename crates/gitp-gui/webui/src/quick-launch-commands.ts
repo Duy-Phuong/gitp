@@ -97,6 +97,7 @@ import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeO
 import { syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { addRemoteAction } from "./remote-actions";
+import { createFileAction, editFileStage } from "./editor-actions";
 
 // --- Quick Launch -----------------------------------------------------------
 
@@ -292,6 +293,7 @@ function repoCommands(): QuickItem[] {
       label: "Create Branch…",
       run: () => promptFor("New branch name", (name) => void createBranchAction(name)),
     },
+    { kind: "command", label: "Create File…", run: createFileAction },
     {
       kind: "command",
       label: "Create Pull Request…",
@@ -317,6 +319,7 @@ function repoCommands(): QuickItem[] {
           deleteBranchAction(b);
         }, true),
     },
+    { kind: "command", label: "Edit File…", next: editFileStage },
     {
       kind: "command",
       label: "Fast-forward",

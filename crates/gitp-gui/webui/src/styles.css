@@ -1285,6 +1285,102 @@ textarea.rename-input {
   color: var(--text);
 }
 
+/* In-app file editor ------------------------------------------------------ */
+.file-editor {
+  width: min(1100px, 94vw);
+  height: 86vh;
+  max-height: 86vh;
+  gap: 10px;
+}
+.file-editor .hidden {
+  display: none;
+}
+.file-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.file-editor-path {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-editor-dirty {
+  color: var(--accent);
+  font-size: 12px;
+}
+.file-editor-badge {
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.file-editor-badge.warn {
+  color: var(--mod-fg);
+  border-color: var(--mod-fg);
+}
+.file-editor-head .spacer {
+  flex: 1;
+}
+.file-editor-text,
+.file-editor-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 10px 12px;
+  overflow: auto;
+}
+.file-editor-text {
+  resize: none;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  tab-size: 4;
+  white-space: pre;
+}
+.file-editor-text:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.file-editor-ask {
+  width: min(440px, 92vw);
+}
+.markdown-preview {
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.markdown-preview > :first-child {
+  margin-top: 0;
+}
+.markdown-preview code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg-elev-2);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.markdown-preview pre {
+  background: var(--bg-elev-2);
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow-x: auto;
+}
+.markdown-preview pre code {
+  background: none;
+  padding: 0;
+}
+.markdown-link {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 /* Apply-stash popup ------------------------------------------------------- */
 .stash-apply-modal {
   width: 420px;

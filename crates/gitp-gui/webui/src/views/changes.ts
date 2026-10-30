@@ -74,6 +74,12 @@ export interface ChangesCallbacks {
   revealPath: (path: string) => Promise<void>;
   // Open the file in the OS default application (e.g. the user's editor).
   openInEditor: (path: string) => Promise<void>;
+  // The in-app editor (views/file-editor.ts): edit a working-tree file, or
+  // ask for a path and create one.
+  editInApp: (path: string) => void;
+  createFile: () => void;
+  // Delete a working-tree file (undoable, like a discard).
+  deleteFile: (path: string) => Promise<void>;
   // Open the file's staged / unstaged change in `git difftool`.
   openInDiffTool: (target: DiffToolTarget, paths: string[]) => void;
   // Absolute path of the active repo's working directory (for Copy Absolute
@@ -477,7 +483,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     const submodule = selectedDiff ? parseSubmoduleDiff(selectedDiff) : null;
     const hasDiff = selectedDiff != null && selectedDiff.hunks.length > 0 && !submodule;
     const mime = submodule ? null : imageMime(selected.path);
-    pane.append(diffToolbar(hasDiff));
+    // A deleted file has nothing on disk to edit, and a submodule is a folder.
+    const status = (selected.panel === "staged" ? stagedDisplay() : unstaged).find((f) => f.path === selected!.path)?.status;
+    pane.append(diffToolbar(hasDiff, !submodule && status !== "Deleted"));
     const body = el("div", { class: `staging-diff-body${loadDiffWrap() ? " wrap-lines" : ""}` });
     // The selected-lines action bar, under the diff (not scrolled with it).
     const bar = el("div", { class: "line-actions hidden" });
@@ -564,8 +572,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
 
   // Unified / Split toggle and context controls (when there's a diff to show),
   // the Wrap / Ignore whitespace toggles — always, so a file whose changes are
-  // all whitespace can still be switched back — and an Edit File shortcut.
-  function diffToolbar(hasDiff: boolean): HTMLElement {
+  // all whitespace can still be switched back — and Edit File shortcuts: in
+  // gitp (when `canEdit`) and in the OS app.
+  function diffToolbar(hasDiff: boolean, canEdit: boolean): HTMLElement {
     const mk = (label: string, on: boolean, set: boolean) => {
       const b = el("button", { class: `btn ghost small${on ? " active" : ""}`, text: label });
       b.addEventListener("click", () => {
@@ -581,6 +590,8 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       title: "Edit File",
     });
     editBtn.addEventListener("click", () => void cb.openInEditor(selected!.path));
+    const inAppBtn = el("button", { class: "btn ghost small", text: "Edit", title: "Edit in gitp" });
+    inAppBtn.addEventListener("click", () => cb.editInApp(selected!.path));
     const context = contextControls(contextLines, !hasDiff, (next) => {
       contextLines = next;
       if (diffHost) renderDiffInto(diffHost);
@@ -595,7 +606,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         ...(hasDiff ? [mk("Unified", !splitView, false), mk("Split", splitView, true), ...context] : []),
         ...toggles,
       ]),
-      editBtn,
+      el("div", { class: "diff-toolbar-group" }, [...(canEdit ? [inAppBtn] : []), editBtn]),
     ]);
   }
 
@@ -832,6 +843,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         { label: "Resolve Conflicts…", run: () => cb.openConflicts?.() },
         { separator: true },
         { label: "Edit File", run: () => void cb.openInEditor(path) },
+        { label: "Edit in gitp", run: () => cb.editInApp(path) },
         { label: "Show in Finder", run: () => void cb.revealPath(path) },
       ];
       showContextMenu(e.clientX, e.clientY, items);
@@ -868,6 +880,11 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         ? [{ label: `Ignore ${n} Files`, run: () => void ignoreAction(paths.map(ignorePattern)) }]
         : ignoreRules(paths[0]).map((r) => ({ label: r.label, run: () => void ignoreAction([r.rule]) }));
 
+    // The in-app editor and Delete act on the file on disk, which a deleted
+    // one no longer has.
+    const onDisk = statusOf.get(path) !== "Deleted";
+    const editInApp: MenuItem[] = onDisk ? [{ label: "Edit in gitp", run: () => cb.editInApp(path) }] : [];
+
     const copy = (abs: boolean) => {
       const root = cb.repoRoot();
       const text = paths.map((p) => (abs && root ? `${root}/${p}` : p)).join("\n");
@@ -887,6 +904,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         ? [
             { label: label("Stage"), run: () => stageEach(paths) },
             { label: `${label("Discard")}…`, danger: true, run: () => void discardFilesAction(paths) },
+            ...(onDisk && !many
+              ? [{ label: "Delete File…", danger: true, run: () => void deleteFileAction(path) }]
+              : []),
             { separator: true },
             {
               label: `${label("Stash")}…`,
@@ -895,6 +915,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
             { label: "Save as Patch…", run: patch },
             { separator: true },
             { label: "Edit File", run: () => void cb.openInEditor(path) },
+            ...editInApp,
             ...diffTool,
             { label: "Show in Finder", run: () => void cb.revealPath(path) },
             { label: "Copy Relative Path", run: () => copy(false) },
@@ -909,6 +930,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
             { label: "Save as Patch…", run: patch },
             { separator: true },
             { label: "Edit File", run: () => void cb.openInEditor(path) },
+            ...editInApp,
             ...diffTool,
             { label: "Show in Finder", run: () => void cb.revealPath(path) },
             { label: "Copy Relative Path", run: () => copy(false) },
@@ -980,6 +1002,17 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     await run(() => cb.discardFiles(paths));
   }
 
+  async function deleteFileAction(path: string): Promise<void> {
+    const ok = await cb.confirm(
+      `Delete ${path} from the working tree?\n\nUndo brings it back, until the next action that can be undone.`,
+    );
+    if (!ok) {
+      cb.setStatus("Delete cancelled.");
+      return;
+    }
+    await run(() => cb.deleteFile(path), () => cb.setStatus(`Deleted ${path}.`), "Delete failed");
+  }
+
   async function ignoreAction(rules: string[]): Promise<void> {
     await run(async () => {
       const added = await cb.addToGitignore(rules);
@@ -1022,10 +1055,21 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     allBtn.addEventListener("click", () =>
       which === "unstaged" ? stageAllAction() : unstageAllAction(),
     );
+    if (which === "unstaged") {
+      const newBtn = el("button", { class: "btn ghost small icon-btn", text: "+", title: "Create File…" });
+      newBtn.addEventListener("click", () => cb.createFile());
+      head.append(newBtn);
+    }
     head.append(allBtn);
     box.append(head);
 
     const tree = el("div", { class: "stage-tree" });
+    // Right-click between the rows (a file row shows its own menu first).
+    tree.addEventListener("contextmenu", (e) => {
+      if (e.defaultPrevented) return;
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, [{ label: "Create File…", run: () => cb.createFile() }]);
+    });
     const status = new Map(files.map((f) => [f.path, f.status]));
     if (files.length === 0) {
       tree.append(el("div", { class: "stage-empty", text: `No ${which} changes` }));
