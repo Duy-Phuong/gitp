@@ -2,6 +2,7 @@
 // menus and the operations behind them.
 
 import {
+  annotateTag,
   checkoutBranch,
   checkoutRemoteBranch,
   deleteRemoteTag,
@@ -12,7 +13,6 @@ import {
   confirmDialog,
   createBranchAt,
   createPullRequest,
-  createTagAt,
   deleteBranch,
   deleteBranches,
   deleteRemoteBranch,
@@ -31,14 +31,15 @@ import {
   dropStash,
   renameStash,
   saveStashPatch,
+  squashMessage,
 } from "./api";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { openDeleteBranchModal, openDeleteTagModal } from "./views/delete-branch";
 import { openRenameBranchModal } from "./views/rename-branch";
 import { openTagDetailsModal } from "./views/tag-details";
 import { openStashApplyModal } from "./views/stash-apply";
-import type { BranchRef, StashRef } from "./types";
-import { state } from "./app-state";
+import type { BranchRef, MergeMode, StashRef } from "./types";
+import { state, ui } from "./app-state";
 import { opFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
 import {
@@ -53,11 +54,19 @@ import {
   showReflog,
   showView,
 } from "./shell";
-import { checkoutCommitAction, compareWithWorkdirAction, confirmThenRun, openInteractiveRebase } from "./commit-actions";
+import {
+  checkoutCommitAction,
+  compareWithWorkdirAction,
+  confirmThenRun,
+  newTagAction,
+  openInteractiveRebase,
+} from "./commit-actions";
+import { openFormDialog } from "./views/form-dialog";
 import { showComparison } from "./compare";
 import { checkoutInNewWorktreeItem, worktreeOf } from "./worktree-actions";
 import { worktreeName } from "./views/sidebar";
 import { allRefsAt } from "./commit-refs";
+import { pushTargets } from "./push-targets";
 
 // Double-click a branch: check it out, then reload history + sidebar from the new
 // HEAD. Warns first if the working tree has uncommitted changes.
@@ -121,20 +130,11 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
       onSubmit: (name) => onBranch(`Creating ${name}`, () => createBranchAt(name, b.target), true),
     },
   });
-  items.push({
-    label: "New Tag here…",
-    prompt: {
-      placeholder: "New tag name",
-      onSubmit: (name) => onBranch(`Tagging ${b.name} as ${name}`, () => createTagAt(name, b.target), false),
-    },
-  });
+  items.push({ label: "New Tag here…", run: () => newTagAction(b.target, b.name) });
 
   if (!b.is_head && current) {
     items.push({ separator: true });
-    items.push({
-      label: `Merge into ${current}`,
-      run: () => onBranch(`Merging ${b.name} into ${current}`, () => mergeBranch(b.name), true),
-    });
+    items.push(mergeMenuItem(b.name, current, b.name));
     items.push({
       label: `Rebase ${current} onto ${b.name}`,
       run: () =>
@@ -156,14 +156,19 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
     label: "Fetch and Update (fast-forward)",
     run: () => onBranch(`Fetching and updating ${b.name}`, () => fetchAndUpdateBranch(b.name), true),
   });
-  items.push({ label: "Push to origin", run: () => onBranch(`Pushing ${b.name}`, () => pushBranch(b.name), false) });
+  for (const remote of branchPushTargets(b)) {
+    items.push({
+      label: `Push to ${remote}`,
+      run: () => onBranch(`Pushing ${b.name} to ${remote}`, () => pushBranch(b.name, remote), false),
+    });
+  }
   if (b.behind > 0) {
     items.push({
       label: "Fast-forward to upstream",
       run: () => onBranch(`Fast-forwarding ${b.name}`, () => fastForwardBranch(b.name), true),
     });
   }
-  items.push({ label: "Create Pull Request on origin", run: () => void createPullRequestAction(b) });
+  items.push({ label: `Create Pull Request on ${branchPushTargets(b)[0]}`, run: () => void createPullRequestAction(b) });
 
   items.push({ separator: true });
   items.push({
@@ -184,6 +189,11 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
   items.push({ label: "Copy Branch Name", run: () => void copyText(b.name, `Copied ${b.name}`) });
 
   showContextMenu(x, y, items);
+}
+
+// The remotes the branch menu offers to push to (see pushTargets).
+function branchPushTargets(b: BranchRef): string[] {
+  return pushTargets(b.upstream_remote, state.remoteList.map((r) => r.name));
 }
 
 export function onBranchBulkMenu(x: number, y: number): void {
@@ -234,6 +244,58 @@ async function deleteSelectedBranchesAction(names: string[]): Promise<void> {
   if (failed.length) parts.push(`Not fully merged, skipped: ${failed.join(", ")}.`);
   if (names.length > targets.length) parts.push("Skipped the current branch.");
   reportDone(parts.join(" "));
+}
+
+// --- Merge ------------------------------------------------------------------
+
+// git's default merge and its three common variants, in menu order.
+export const MERGE_MODES: { mode: MergeMode; label: string }[] = [
+  { mode: "Default", label: "Merge" },
+  { mode: "NoFastForward", label: "Merge (no fast-forward)" },
+  { mode: "FastForwardOnly", label: "Fast-forward only" },
+  { mode: "Squash", label: "Squash merge" },
+];
+
+// "Merge into '<current>' ▸" for a branch or tag menu: the modes, in place.
+function mergeMenuItem(name: string, current: string, ref: string): MenuItem {
+  return {
+    label: `Merge into '${current}'`,
+    submenu: [
+      { heading: `Merge ${name} into ${current}` },
+      ...MERGE_MODES.map(({ mode, label }) => ({ label, run: () => void mergeAction(name, mode, ref) })),
+    ],
+  };
+}
+
+// Merge `name` into the current branch. A squash commits nothing: it stages
+// the combined changes, so it lands in Local Changes with the message git
+// prepared already in the commit box — conflicts included, which are resolved
+// there before that commit.
+export async function mergeAction(name: string, mode: MergeMode, ref?: string): Promise<void> {
+  const current = state.refs.head ?? "HEAD";
+  if (mode !== "Squash") {
+    await runBranchOp(`Merging ${name} into ${current}`, () => mergeBranch(name, mode), true, ref);
+    return;
+  }
+  const label = `Squash-merging ${name} into ${current}`;
+  setStatus(`${label}…`);
+  let out = "";
+  let failure: unknown = null;
+  try {
+    out = (await withBusyRef(ref, () => mergeBranch(name, mode))).trim();
+  } catch (err) {
+    failure = err;
+  }
+  // No message means nothing was squashed ("Already up to date").
+  const message = await squashMessage().catch(() => null);
+  if (message) {
+    const [subject, ...body] = message.split("\n");
+    ui.changesView?.prefillMessage(subject, body.join("\n").replace(/^\s+/, ""));
+    showView("changes");
+  }
+  await loadSidebar();
+  if (failure) opFailed(`${label} failed`, failure);
+  else reportDone(message ? `Squashed ${name} — review and commit it in Local Changes.` : out || `${label} done.`);
 }
 
 // Right-click a stash: apply (with a delete-after checkbox), rename, save the
@@ -321,11 +383,7 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
 
   if (current) {
     items.push({ separator: true });
-    items.push({
-      label: `Merge into '${current}'…`,
-      run: () =>
-        void runBranchOp(`Merging ${name} into ${current}`, () => mergeBranch(name), true, name),
-    });
+    items.push(mergeMenuItem(name, current, name));
     items.push({
       label: `Rebase on '${name}'…`,
       run: () =>
@@ -350,14 +408,12 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
         void runBranchOp(`Creating ${branch}`, () => createBranchAt(branch, target), true, name),
     },
   });
-  items.push({
-    label: "New Tag…",
-    prompt: {
-      placeholder: "New tag name",
-      onSubmit: (tag) =>
-        void runTagOp(`Tagging ${short} as ${tag}`, () => createTagAt(tag, target)),
-    },
-  });
+  items.push({ label: "New Tag…", run: () => newTagAction(target, short) });
+  // Only a lightweight tag: re-annotating would replace the original tagger
+  // and date along with the message.
+  if (state.refs.tags.find((t) => t.name === name)?.message === null) {
+    items.push({ label: "Annotate Tag…", run: () => annotateTagAction(name) });
+  }
 
   items.push({ separator: true });
   items.push({ label: "Delete…", danger: true, run: () => deleteTagAction(name) });
@@ -366,6 +422,35 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
   items.push({ label: "Copy Tag Name", run: () => void copyText(name, `Copied ${name}`) });
 
   showContextMenu(x, y, items);
+}
+
+// Turn a lightweight tag into an annotated one: same name, same commit, now
+// with a message. A copy already pushed stays lightweight on the remote, and
+// replacing it there takes a forced push — the confirmation says so.
+function annotateTagAction(name: string): void {
+  openFormDialog(
+    {
+      title: `Annotate Tag ${name}`,
+      sub: "Recreates the tag as an annotated tag at the same commit.",
+      fields: [{ label: "Message:", placeholder: "Cmd/Ctrl+Enter to annotate", multiline: true, required: true }],
+      submitLabel: "Annotate",
+    },
+    ([message]) =>
+      void confirmThenRunTag(
+        `Recreate ${name} as an annotated tag?\n\n` +
+          "It keeps its name and commit. If it was already pushed, the remote copy stays lightweight until it's force-pushed.",
+        `Annotating ${name}`,
+        () => annotateTag(name, message),
+      ),
+  );
+}
+
+async function confirmThenRunTag(question: string, label: string, op: () => Promise<string>): Promise<void> {
+  if (!(await confirmDialog(question))) {
+    setStatus("Cancelled.");
+    return;
+  }
+  await runTagOp(label, op);
 }
 
 // A tag operation: run it, then reload the sidebar so the Tags section reflects
@@ -586,29 +671,7 @@ export function deleteBranchAction(b: BranchRef): void {
 }
 
 async function runDelete(b: BranchRef, deleteRemote: boolean): Promise<void> {
-  setStatus(`Deleting ${b.name}…`);
-  try {
-    await withBusyRef(b.name, () => deleteBranch(b.name, false));
-  } catch (err) {
-    const msg = String(err);
-    if (!/not fully merged/i.test(msg)) {
-      opFailed("Delete failed", err);
-      return;
-    }
-    const force = await confirmDialog(
-      `${b.name} is not fully merged. Force delete? Unmerged commits will be lost.`,
-    );
-    if (!force) {
-      setStatus("Delete cancelled.");
-      return;
-    }
-    try {
-      await withBusyRef(b.name, () => deleteBranch(b.name, true));
-    } catch (err2) {
-      opFailed("Delete failed", err2);
-      return;
-    }
-  }
+  if (!(await deleteLocalBranch(b.name))) return;
 
   let note = `Deleted ${b.name}`;
   if (deleteRemote) {
@@ -625,11 +688,43 @@ async function runDelete(b: BranchRef, deleteRemote: boolean): Promise<void> {
   reportDone(note);
 }
 
-// Open the branch's pull-request page in the browser (URL derived from origin).
+// Delete local branch `name` safely (-d); if git refuses because it isn't
+// merged, offer a force delete behind a second, explicit confirmation. Reports
+// a failure or a cancel itself; true once the branch is gone.
+export async function deleteLocalBranch(name: string): Promise<boolean> {
+  setStatus(`Deleting ${name}…`);
+  try {
+    await withBusyRef(name, () => deleteBranch(name, false));
+    return true;
+  } catch (err) {
+    const msg = String(err);
+    if (!/not fully merged/i.test(msg)) {
+      opFailed("Delete failed", err);
+      return false;
+    }
+    const force = await confirmDialog(
+      `${name} is not fully merged. Force delete? Unmerged commits will be lost.`,
+    );
+    if (!force) {
+      setStatus("Delete cancelled.");
+      return false;
+    }
+    try {
+      await withBusyRef(name, () => deleteBranch(name, true));
+      return true;
+    } catch (err2) {
+      opFailed("Delete failed", err2);
+      return false;
+    }
+  }
+}
+
+// Open the branch's pull-request page in the browser, on its default remote
+// (the one the menu names — see pushTargets).
 export async function createPullRequestAction(b: BranchRef): Promise<void> {
   setStatus(`Opening pull request for ${b.name}…`);
   try {
-    const url = await createPullRequest(b.name);
+    const url = await createPullRequest(b.name, branchPushTargets(b)[0]);
     reportDone(`Opened pull request page: ${url}`);
   } catch (err) {
     opFailed("Create pull request failed", err);

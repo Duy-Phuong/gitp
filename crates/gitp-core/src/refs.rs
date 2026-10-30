@@ -24,6 +24,9 @@ pub struct BranchRef {
     /// pushed / has no configured remote branch (so ahead/behind are 0 not
     /// because it's in sync, but because there's nothing to compare against).
     pub has_upstream: bool,
+    /// The remote it tracks (`branch.<name>.remote`), even before that remote
+    /// has been fetched — where a push or a pull request goes by default.
+    pub upstream_remote: Option<String>,
 }
 
 /// A remote-tracking branch, e.g. `origin/master`.
@@ -42,6 +45,9 @@ pub struct RemoteBranch {
 pub struct TagRef {
     pub name: String,
     pub target: String,
+    /// An annotated tag's message, for the tag's tooltip; `None` for a
+    /// lightweight tag, which has no object and so no message.
+    pub message: Option<String>,
 }
 
 /// One entry in the stash stack.
@@ -85,6 +91,10 @@ impl Repo {
             }
             let (ahead, behind) = ahead_behind(repo, &branch);
             let has_upstream = branch.upstream().is_ok();
+            let upstream_remote = repo
+                .branch_upstream_remote(&format!("refs/heads/{name}"))
+                .ok()
+                .and_then(|remote| remote.as_str().map(str::to_string));
             let target = branch
                 .get()
                 .target()
@@ -97,6 +107,7 @@ impl Repo {
                 behind,
                 target,
                 has_upstream,
+                upstream_remote,
             });
         }
         branches.sort_by(|a, b| a.name.cmp(&b.name));
@@ -128,14 +139,23 @@ impl Repo {
             .tag_names(None)?
             .iter()
             .flatten()
-            .map(|name| TagRef {
-                name: name.to_string(),
-                // Peel through annotated tags to the underlying commit.
-                target: repo
-                    .revparse_single(name)
-                    .and_then(|obj| obj.peel_to_commit())
-                    .map(|c| c.id().to_string())
-                    .unwrap_or_default(),
+            .map(|name| {
+                let obj = repo.revparse_single(name).ok();
+                TagRef {
+                    name: name.to_string(),
+                    // Peel through annotated tags to the underlying commit.
+                    target: obj
+                        .as_ref()
+                        .and_then(|obj| obj.peel_to_commit().ok())
+                        .map(|c| c.id().to_string())
+                        .unwrap_or_default(),
+                    // The tag object is already loaded to peel it, so its
+                    // message costs nothing more to read.
+                    message: obj
+                        .as_ref()
+                        .and_then(|obj| obj.as_tag())
+                        .map(|tag| tooltip_message(tag.message().unwrap_or_default())),
+                }
             })
             .collect();
         // Newest release first, comparing digit runs numerically: a plain
@@ -154,6 +174,24 @@ impl Repo {
             stashes: read_stashes(repo),
             recent,
         })
+    }
+}
+
+/// A tag message trimmed for a tooltip. A signed tag's message carries its
+/// signature block (~800 bytes of base64), and a repo can have thousands of
+/// signed tags, all riding along in every refs payload — so the signature is
+/// cut, and so is anything past the first 1000 characters (release notes pasted
+/// into a tag), which no tooltip shows anyway.
+fn tooltip_message(message: &str) -> String {
+    // Where git itself finds the signature: a line opening an armor block.
+    let unsigned = message
+        .match_indices("-----BEGIN ")
+        .find(|(at, _)| *at == 0 || message.as_bytes()[at - 1] == b'\n')
+        .map_or(message, |(at, _)| &message[..at]);
+    let text = unsigned.trim();
+    match text.char_indices().nth(1000) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text.to_string(),
     }
 }
 

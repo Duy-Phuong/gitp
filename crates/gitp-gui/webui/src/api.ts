@@ -25,12 +25,14 @@ import type {
   DeleteBranchesResult,
   DiffToolTarget,
   LogPage,
+  MergeMode,
   PullMode,
   RebaseCommit,
   RebaseStatus,
   RebaseStep,
   ReflogEntry,
   Refs,
+  RemoteInfo,
   RepoChanged,
   ResetMode,
   SigningConfig,
@@ -582,9 +584,20 @@ export async function createBranchAt(name: string, rev: string): Promise<string>
   return invoke<string>("create_branch_at", { name, rev });
 }
 
-export async function createTagAt(name: string, rev: string): Promise<string> {
+// A non-empty `message` makes an annotated tag; without one it's lightweight.
+export async function createTagAt(name: string, rev: string, message = ""): Promise<string> {
   if (!isTauri()) return `Tagged ${rev.slice(0, 10)} as ${name} (preview mock)`;
-  return invoke<string>("create_tag_at", { name, rev });
+  return invoke<string>("create_tag_at", { name, rev, message: message || null });
+}
+
+// Recreate lightweight tag `name` as an annotated one at the same commit.
+export async function annotateTag(name: string, message: string): Promise<string> {
+  if (!isTauri()) {
+    const tag = MOCK_REFS.tags.find((t) => t.name === name);
+    if (tag) tag.message = message;
+    return `Annotated ${name} (preview mock)`;
+  }
+  return invoke<string>("annotate_tag", { name, message });
 }
 
 export async function fetchTagDetail(name: string): Promise<TagDetail> {
@@ -711,14 +724,21 @@ export async function remoteBranchExists(name: string): Promise<string | null> {
   return invoke<string | null>("remote_branch_exists", { name });
 }
 
-export async function mergeBranch(name: string): Promise<string> {
-  if (!isTauri()) return `Merged ${name} (preview mock)`;
-  return invoke<string>("merge_branch", { name });
+export async function mergeBranch(name: string, mode: MergeMode = "Default"): Promise<string> {
+  if (!isTauri()) return `Merged ${name} (${mode}, preview mock)`;
+  return invoke<string>("merge_branch", { name, mode });
 }
 
-export async function pushBranch(name: string): Promise<string> {
-  if (!isTauri()) return `Pushed ${name} to origin (preview mock)`;
-  return invokeNetwork<string>("push_branch", { name });
+// The commit message a squash merge prepared, or null when none is pending.
+export async function squashMessage(): Promise<string | null> {
+  if (!isTauri()) return "Squashed commit of the following:\n\ncommit 1111111\n\n    feat: add widget (preview mock)";
+  return invoke<string | null>("squash_message", {});
+}
+
+// `remote`: where to push; by default the remote the branch tracks, else origin.
+export async function pushBranch(name: string, remote?: string): Promise<string> {
+  if (!isTauri()) return `Pushed ${name} to ${remote ?? "origin"} (preview mock)`;
+  return invokeNetwork<string>("push_branch", { name, remote: remote ?? null });
 }
 
 export async function fetchBranch(name: string): Promise<string> {
@@ -737,6 +757,54 @@ export async function goneBranches(): Promise<string[]> {
 export async function fetchRemote(remote: string): Promise<string> {
   if (!isTauri()) return `Fetched ${remote} (preview mock)`;
   return invokeNetwork<string>("fetch_remote", { remote });
+}
+
+// Preview mode's configured remotes: origin plus one never fetched, so the
+// sidebar shows an empty remote and the branch menu offers a choice of push.
+const MOCK_REMOTES: RemoteInfo[] = [
+  { name: "origin", url: "git@github.com:ada/gitp.git" },
+  { name: "upstream", url: "https://github.com/gitp-org/gitp.git" },
+];
+
+export async function listRemotes(): Promise<RemoteInfo[]> {
+  if (!isTauri()) return MOCK_REMOTES.map((r) => ({ ...r }));
+  return invoke<RemoteInfo[]>("list_remotes", {});
+}
+
+export async function addRemote(name: string, url: string): Promise<string> {
+  if (!isTauri()) {
+    MOCK_REMOTES.push({ name, url });
+    MOCK_REMOTES.sort((a, b) => a.name.localeCompare(b.name));
+    return "";
+  }
+  return invoke<string>("add_remote", { name, url });
+}
+
+export async function setRemoteUrl(name: string, url: string): Promise<string> {
+  if (!isTauri()) {
+    const r = MOCK_REMOTES.find((m) => m.name === name);
+    if (r) r.url = url;
+    return "";
+  }
+  return invoke<string>("set_remote_url", { name, url });
+}
+
+export async function renameRemote(old: string, name: string): Promise<string> {
+  if (!isTauri()) {
+    const r = MOCK_REMOTES.find((m) => m.name === old);
+    if (r) r.name = name;
+    return "";
+  }
+  return invoke<string>("rename_remote", { old, new: name });
+}
+
+export async function removeRemote(name: string): Promise<string> {
+  if (!isTauri()) {
+    const i = MOCK_REMOTES.findIndex((m) => m.name === name);
+    if (i !== -1) MOCK_REMOTES.splice(i, 1);
+    return "";
+  }
+  return invoke<string>("remove_remote", { name });
 }
 
 // `background`: the periodic refresh nobody asked for, which must never pop a
@@ -766,9 +834,10 @@ export async function unsetUpstream(branch: string): Promise<string> {
   return invoke<string>("unset_upstream", { branch });
 }
 
-export async function createPullRequest(branch: string): Promise<string> {
-  if (!isTauri()) return `https://example.com/compare/${branch} (preview mock)`;
-  return invoke<string>("create_pull_request", { branch });
+// `remote`: whose web UI to open it on; by default the remote the branch tracks.
+export async function createPullRequest(branch: string, remote?: string): Promise<string> {
+  if (!isTauri()) return `https://example.com/${remote ?? "origin"}/compare/${branch} (preview mock)`;
+  return invoke<string>("create_pull_request", { branch, remote: remote ?? null });
 }
 
 export async function fetchRebaseTodo(onto: string): Promise<RebaseCommit[]> {
@@ -1457,10 +1526,11 @@ export const MOCK_REFS: Refs = {
     { remote: "origin", name: "origin/develop/3.33.0", target: mockOid("f") },
     { remote: "origin", name: "origin/feature/dashboard", target: mockOid("e") },
   ],
+  // Same annotated/lightweight split as the fetchTagDetail mock.
   tags: [
-    { name: "v3.31.2", target: mockOid("b") },
-    { name: "v3.32.0", target: mockOid("d") },
-    { name: "v3.33.0", target: mockOid("g") },
+    { name: "v3.31.2", target: mockOid("b"), message: null },
+    { name: "v3.32.0", target: mockOid("d"), message: "Release v3.32.0\n\nMock annotation shown in preview mode." },
+    { name: "v3.33.0", target: mockOid("g"), message: "Release v3.33.0\n\nMock annotation shown in preview mode." },
   ],
   stashes: [
     { index: 0, message: "config 3.31.2" },

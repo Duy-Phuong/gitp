@@ -11,7 +11,6 @@ import {
   fetchCommitTree,
   fetchRemote,
   fetchFileHistory,
-  mergeBranch,
   pushBranch,
   rebaseOnto,
   revertCommit,
@@ -74,6 +73,8 @@ import {
   createPullRequestAction,
   deleteBranchAction,
   deleteStashAction,
+  MERGE_MODES,
+  mergeAction,
   renameBranchAction,
   runBranchOp,
   runStashOp,
@@ -89,12 +90,13 @@ import {
   resetAction,
   runCommitOp,
   startBisect,
-  tagAction,
+  newTagAction,
 } from "./commit-actions";
 import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
 import { syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
+import { addRemoteAction } from "./remote-actions";
 
 // --- Quick Launch -----------------------------------------------------------
 
@@ -292,20 +294,19 @@ function repoCommands(): QuickItem[] {
     },
     {
       kind: "command",
-      label: "Create Pull Request on 'origin'",
+      label: "Create Pull Request…",
       next: () => branchStage("Create Pull Request", (b) => void createPullRequestAction(b)),
     },
     {
       kind: "command",
       label: "Create Tag…",
-      run: () =>
-        promptFor("New tag name", (name) => {
-          // Tag the selected commit, or the branch tip when nothing is selected
-          // (opening the palette straight after launch, say).
-          const rev = state.selectedId ?? headTarget();
-          if (!rev) return setStatus("Nothing to tag — no commit is selected.");
-          void tagAction(name, rev, rev.slice(0, 7));
-        }),
+      run: () => {
+        // Tag the selected commit, or the branch tip when nothing is selected
+        // (opening the palette straight after launch, say).
+        const rev = state.selectedId ?? headTarget();
+        if (!rev) return setStatus("Nothing to tag — no commit is selected.");
+        newTagAction(rev, rev.slice(0, 7));
+      },
     },
     {
       kind: "command",
@@ -432,6 +433,7 @@ function repoCommands(): QuickItem[] {
         ),
     },
     { kind: "command", label: "Add Worktree…", next: () => addWorktreeStage() },
+    { kind: "command", label: "Add Remote…", run: addRemoteAction },
     { kind: "command", label: "Prune Worktrees", run: () => void pruneWorktreesAction() },
     { kind: "command", label: "Apply Patch…", run: () => void applyPatchAction() },
     { kind: "command", label: "Stage All Changes", run: () => void stageAllAction() },
@@ -444,14 +446,7 @@ function repoCommands(): QuickItem[] {
     // meaning to offer.
     return items.filter((i) => !i.label.startsWith("Rebase") && !i.label.startsWith("Merge"));
   }
-  items.push({
-    kind: "command",
-    label: `Merge into ${head}`,
-    next: () =>
-      branchStage(`Merge into ${head}`, (b) =>
-        void runBranchOp(`Merging ${b.name} into ${head}`, () => mergeBranch(b.name), true, b.name),
-      true),
-  });
+  items.push({ kind: "command", label: `Merge into ${head}…`, next: () => mergeStage(head) });
   if (state.refs.stashes.length) {
     items.push(
       { kind: "command", label: "Apply Stash…", next: () => stashStage("Apply Stash", applyStashPicked) },
@@ -717,6 +712,40 @@ function bisectCommands(): QuickItem[] {
   ];
 }
 
+// Pick the branch to merge into `head`, then how (the branch menu's modes).
+function mergeStage(head: string): QuickStage {
+  return {
+    chip: `Merge into ${head}`,
+    placeholder: "branch",
+    emptyNote: "No other local branches — this repository has only the one you're on.",
+    sections: [
+      {
+        title: "Local Branches",
+        items: state.refs.branches
+          .filter((b) => !b.is_head)
+          .map((b) => ({ kind: "branch" as const, label: b.name, next: () => mergeModeStage(b.name, head) })),
+      },
+    ],
+  };
+}
+
+function mergeModeStage(name: string, head: string): QuickStage {
+  return {
+    chip: `Merge ${name} into ${head}`,
+    placeholder: "how",
+    sections: [
+      {
+        title: "Merge",
+        items: MERGE_MODES.map(({ mode, label }) => ({
+          kind: "option" as const,
+          label,
+          run: () => void mergeAction(name, mode, name),
+        })),
+      },
+    ],
+  };
+}
+
 function resetStage(rev: string, short: string): QuickStage {
   const modes: [ResetMode, string][] = [
     ["Soft", "Soft — keep the working tree and the index"],
@@ -760,9 +789,7 @@ function pullStage(): QuickStage {
 
 function openFetchOptions(): void {
   setStatus("Choose what to fetch…");
-  // Remote *names* aren't a field of their own — derive them from the
-  // remote-tracking branches the sidebar already has.
-  const names = [...new Set(state.refs.remotes.map((r) => r.remote))].sort();
+  const names = state.remoteList.map((r) => r.name);
   openFetchDialog(names, (remote) => {
     if (remote === null) void refreshAllAction();
     else void runBranchOp(`Fetching ${remote}`, () => fetchRemote(remote), true, remote);

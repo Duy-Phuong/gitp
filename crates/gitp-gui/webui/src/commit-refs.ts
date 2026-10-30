@@ -49,7 +49,9 @@ function refsSignature(): string {
   const r = state.refs;
   return [
     r.branches.map((b) => `${b.name}:${b.target}:${b.is_head ? 1 : 0}`).join(","),
-    r.tags.map((t) => `${t.name}:${t.target}`).join(","),
+    // Annotating a tag keeps its commit, so whether it has a message is part
+    // of what the chips show.
+    r.tags.map((t) => `${t.name}:${t.target}:${t.message === null ? 0 : 1}`).join(","),
     r.remotes.map((rm) => `${rm.name}:${rm.target}`).join(","),
   ].join("|");
 }
@@ -155,7 +157,7 @@ export function rebuildCommitRefs(): boolean {
     if (ri === undefined) return;
     if (push(ri, label, 0, order++)) tipTotals[ri] += 1;
   };
-  for (const t of state.refs.tags) addTip(t.target, { name: t.name, kind: "tag" });
+  for (const t of state.refs.tags) addTip(t.target, { name: t.name, kind: "tag", message: t.message });
   for (const r of state.refs.remotes) addTip(r.target, { name: r.name, kind: "remote" });
 
   const tips = mergeTipRefs(state.refs.branches, state.refs.remotes, state.refs.tags);
@@ -207,7 +209,7 @@ export function mergeTipRefs(
     else list.push({ name: short, kind: "branch", head: false, local: false, remotes: [r.name] });
   }
   for (const t of tags) {
-    listAt(t.target).push({ name: t.name, kind: "tag", head: false, local: false, remotes: [] });
+    listAt(t.target).push({ name: t.name, kind: "tag", head: false, local: false, remotes: [], message: t.message });
   }
   const rank = (t: TipRef) => (t.head ? 0 : t.kind === "tag" ? 3 : t.local ? 1 : 2);
   for (const list of byCommit.values()) list.sort((a, b) => rank(a) - rank(b));

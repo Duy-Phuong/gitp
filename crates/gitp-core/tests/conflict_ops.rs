@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::Command;
 
 use common::FixtureRepo;
-use gitp_core::Repo;
+use gitp_core::{MergeMode, Repo};
 
 /// Run `git <args>` in `dir`, asserting success (test setup helper).
 fn git(dir: &Path, args: &[&str]) {
@@ -40,7 +40,7 @@ fn conflicted_repo() -> FixtureRepo {
     // Start the merge — it conflicts and leaves the merge in progress.
     let repo = Repo::open(dir).unwrap();
     assert!(
-        repo.merge_branch("theirs").is_err(),
+        repo.merge_branch("theirs", MergeMode::Default).is_err(),
         "merge should conflict"
     );
     fx
@@ -234,7 +234,7 @@ fn delete_modify_conflicted_repo() -> FixtureRepo {
     git(dir, &["commit", "-m", "ours delete"]);
     let repo = Repo::open(dir).unwrap();
     assert!(
-        repo.merge_branch("theirs").is_err(),
+        repo.merge_branch("theirs", MergeMode::Default).is_err(),
         "merge should conflict"
     );
     fx

@@ -116,6 +116,9 @@ export interface BranchRef {
   target: string;
   // False when the branch has no upstream (never pushed / no remote to compare).
   has_upstream: boolean;
+  // The remote it tracks (branch.<name>.remote), where a push or a pull request
+  // goes by default. Always sent by the backend; preview mocks leave it out.
+  upstream_remote?: string | null;
 }
 
 export interface RemoteBranch {
@@ -124,9 +127,17 @@ export interface RemoteBranch {
   target: string;
 }
 
+// A configured remote (mirrors gitp-core's RemoteInfo).
+export interface RemoteInfo {
+  name: string;
+  url: string | null;
+}
+
 export interface TagRef {
   name: string;
   target: string;
+  // An annotated tag's message (signature cut, capped); null for a lightweight tag.
+  message: string | null;
 }
 
 export interface StashRef {
@@ -167,6 +178,9 @@ export type ConfigScope = "Local" | "Global" | "System" | "Other";
 
 // How far a reset moves the branch (mirrors gitp-core's ResetMode).
 export type ResetMode = "Soft" | "Mixed" | "Hard";
+
+// How a merge combines the other branch (mirrors gitp-core's MergeMode).
+export type MergeMode = "Default" | "NoFastForward" | "FastForwardOnly" | "Squash";
 
 // How `pull` reconciles local and remote history (mirrors gitp-core's PullMode).
 export type PullMode = "FastForward" | "FastForwardOnly" | "Rebase";

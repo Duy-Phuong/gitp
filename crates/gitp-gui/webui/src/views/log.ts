@@ -37,11 +37,20 @@ export interface TipRef {
   local: boolean;
   /// Full names of the remote branches that point here, e.g. "origin/dev".
   remotes: string[];
+  /// An annotated tag's message, for the badge's tooltip.
+  message?: string | null;
 }
 
 export interface RefLabel {
   name: string;
   kind: "head" | "branch" | "remote" | "tag";
+  /// An annotated tag's message, for the chip's tooltip.
+  message?: string | null;
+}
+
+// A tag chip's tooltip: its name, then the annotation when it has one.
+function tagTitle(name: string, message: string | null | undefined): string {
+  return message ? `tag ${name}\n\n${message}` : `tag ${name}`;
 }
 
 // How the graph is drawn. Each app theme picks one (see graphThemeFor): the
@@ -195,7 +204,7 @@ function tipBadge(t: TipRef): HTMLElement {
   const where = [t.local ? "local" : "", ...t.remotes].filter(Boolean).join(" · ");
   const chip = el("span", {
     class: `commit-ref tip ${t.head ? "head" : t.kind}`,
-    title: t.kind === "tag" ? `tag ${t.name}` : `${t.name} (${where})`,
+    title: t.kind === "tag" ? tagTitle(t.name, t.message) : `${t.name} (${where})`,
   });
   if (t.kind === "tag") chip.append(tagIcon());
   chip.append(el("span", { class: "commit-ref-name", text: t.head ? `✓ ${t.name}` : t.name }));
@@ -468,7 +477,10 @@ export function renderLog(
       } else if (!refsColumn && refs && refs.labels.length) {
         const box = el("span", { class: "commit-refs" });
         for (const r of refs.labels.slice(0, MAX_REF_CHIPS)) {
-          const chip = el("span", { class: `commit-ref ${r.kind}`, title: r.name });
+          const chip = el("span", {
+            class: `commit-ref ${r.kind}`,
+            title: r.kind === "tag" ? tagTitle(r.name, r.message) : r.name,
+          });
           if (r.kind === "tag") chip.append(tagIcon());
           else if (r.kind === "remote") chip.append(githubIcon());
           chip.append(el("span", { class: "commit-ref-name", text: r.kind === "head" ? `✓ ${r.name}` : r.name }));

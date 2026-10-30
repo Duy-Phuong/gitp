@@ -5,8 +5,8 @@
 // Items are plain actions (`run`), separators, or name prompts: clicking a
 // prompt item swaps the menu in place for a text input + Create button, so
 // "New Branch…", "New Tag…", and "Rename…" collect a value without a dialog.
-// A `submenu` item swaps the menu for its own items plus "‹ Back", the way the
-// commit menu's Interactive Rebase ▸ does.
+// A `submenu` item swaps the menu in place for its own items plus "‹ Back",
+// the way the commit menu's "Interactive Rebase ▸" does.
 
 import { autoGrowInput, el } from "../dom";
 
@@ -80,7 +80,8 @@ export function showPrompt(x: number, y: number, prompt: NonNullable<MenuItem["p
   if (openMenu) renderPrompt(openMenu, items, prompt);
 }
 
-function renderItems(menu: HTMLElement, items: MenuItem[]): void {
+// `parent`: the items to go back to, when these are a submenu's.
+function renderItems(menu: HTMLElement, items: MenuItem[], parent?: MenuItem[]): void {
   menu.replaceChildren();
   for (const it of items) {
     if (it.separator) {
@@ -96,19 +97,21 @@ function renderItems(menu: HTMLElement, items: MenuItem[]): void {
       text: it.submenu ? `${it.label ?? ""} ▸` : (it.label ?? ""),
     });
     btn.addEventListener("click", () => {
-      if (it.prompt) {
+      if (it.submenu) {
+        renderItems(menu, it.submenu, items);
+      } else if (it.prompt) {
         renderPrompt(menu, items, it.prompt);
-      } else if (it.submenu) {
-        renderItems(menu, it.submenu);
-        const back = el("button", { class: "menu-item", text: "‹ Back" });
-        back.addEventListener("click", () => renderItems(menu, items));
-        menu.append(el("div", { class: "menu-sep" }), back);
       } else {
         closeContextMenu();
         it.run?.();
       }
     });
     menu.append(btn);
+  }
+  if (parent) {
+    const back = el("button", { class: "menu-item", text: "‹ Back" });
+    back.addEventListener("click", () => renderItems(menu, parent));
+    menu.append(el("div", { class: "menu-sep" }), back);
   }
 }
 

@@ -24,6 +24,7 @@ import { logRowHeight, renderLog } from "./views/log";
 import { showCommitMenu } from "./views/commit-menu";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { openRebaseModal, type RebaseOptions } from "./views/rebase";
+import { openFormDialog } from "./views/form-dialog";
 import type { CommitRow, FileDiff, RebaseAction, RebaseStep, ReflogEntry, ResetMode } from "./types";
 import { state, ui } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
@@ -357,7 +358,7 @@ export function onCommitContextMenu(row: CommitRow, x: number, y: number): void 
     savePatch: () => void saveCommitsPatchAction([row]),
     checkoutCommit: () => void checkoutCommitAction(rev, short),
     newBranch: (name) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
-    newTag: (name) => void tagAction(name, rev, short),
+    newTag: () => newTagAction(rev, short),
     cherryPick: () => void runCommitOp(`Cherry-picking ${short}`, () => cherryPick(rev)),
     revert: () => void runCommitOp(`Reverting ${short}`, () => revertCommit(rev)),
     reset: (mode) => void resetAction(rev, short, mode),
@@ -478,12 +479,29 @@ export async function resetAction(rev: string, short: string, mode: ResetMode): 
   );
 }
 
+// "New Tag here…" from any menu: a name and an optional annotation. Leaving
+// the message empty makes a lightweight tag, as plain `git tag` does.
+export function newTagAction(rev: string, short: string): void {
+  openFormDialog(
+    {
+      title: `New Tag at ${short}`,
+      sub: "Add a message to create an annotated tag; leave it empty for a lightweight one.",
+      fields: [
+        { label: "Name:", placeholder: "v1.0.0", required: true },
+        { label: "Message:", placeholder: "Optional (Cmd/Ctrl+Enter to create)", multiline: true },
+      ],
+      submitLabel: "Create Tag",
+    },
+    ([name, message]) => void tagAction(name, rev, short, message),
+  );
+}
+
 // Tagging doesn't move HEAD, so it only refreshes the sidebar (to show the tag)
 // and leaves the current view/scroll alone.
-export async function tagAction(name: string, rev: string, short: string): Promise<void> {
+export async function tagAction(name: string, rev: string, short: string, message = ""): Promise<void> {
   setStatus(`Tagging ${short} as ${name}…`);
   try {
-    await createTagAt(name, rev);
+    await createTagAt(name, rev, message);
     await loadSidebar();
     reportDone(`Tagged ${short} as ${name}`);
   } catch (err) {

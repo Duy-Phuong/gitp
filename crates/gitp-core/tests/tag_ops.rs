@@ -94,3 +94,71 @@ fn delete_tag_errors_on_a_tag_that_does_not_exist() {
 
     assert!(repo.delete_tag("nope").is_err());
 }
+
+#[test]
+fn create_annotated_tag_at_makes_a_tag_object_and_keeps_hash_lines() {
+    let fx = FixtureRepo::init();
+    let oid = fx.commit_file("a.txt", "one\n", "first commit");
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.create_annotated_tag_at("v1.0", &oid.to_string(), "Release 1\n\n#42 fixed")
+        .unwrap();
+
+    let d = repo.tag_detail("v1.0").unwrap();
+    assert!(d.annotated);
+    // git's default cleanup for tags would have dropped "#42 fixed" as a comment.
+    assert_eq!(d.message.as_deref(), Some("Release 1\n\n#42 fixed\n"));
+    assert_eq!(d.target, oid.to_string());
+
+    // The refs listing carries the message for the tooltip; a lightweight tag has none.
+    repo.create_tag_at("light", &oid.to_string()).unwrap();
+    let tags = repo.refs().unwrap().tags;
+    let msg = |name: &str| {
+        tags.iter()
+            .find(|t| t.name == name)
+            .unwrap()
+            .message
+            .clone()
+    };
+    assert_eq!(msg("v1.0").as_deref(), Some("Release 1\n\n#42 fixed"));
+    assert_eq!(msg("light"), None);
+}
+
+#[test]
+fn refs_tag_message_drops_a_signature_block() {
+    let fx = FixtureRepo::init();
+    let oid = fx.commit_file("a.txt", "one\n", "first commit");
+    annotate(
+        &fx,
+        "v1.0",
+        oid,
+        "Release 1\n-----BEGIN PGP SIGNATURE-----\nabc\n-----END PGP SIGNATURE-----\n",
+    );
+    let repo = Repo::open(fx.path()).unwrap();
+
+    let tags = repo.refs().unwrap().tags;
+    assert_eq!(tags[0].message.as_deref(), Some("Release 1"));
+}
+
+#[test]
+fn annotate_tag_turns_a_lightweight_tag_into_an_annotated_one_in_place() {
+    let fx = FixtureRepo::init();
+    let first = fx.commit_file("a.txt", "one\n", "first commit");
+    fx.commit_file("a.txt", "two\n", "second commit");
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.create_tag_at("v1.0", &first.to_string()).unwrap();
+
+    repo.annotate_tag("v1.0", "Release 1").unwrap();
+
+    let d = repo.tag_detail("v1.0").unwrap();
+    assert!(d.annotated);
+    assert_eq!(d.message.as_deref(), Some("Release 1\n"));
+    // Same commit as before — not HEAD, which `git tag -f <name>` alone would pick.
+    assert_eq!(d.target, first.to_string());
+
+    // Already annotated: refused rather than silently replacing the annotation.
+    assert!(repo.annotate_tag("v1.0", "again").is_err());
+    assert_eq!(
+        repo.tag_detail("v1.0").unwrap().message.as_deref(),
+        Some("Release 1\n")
+    );
+}
