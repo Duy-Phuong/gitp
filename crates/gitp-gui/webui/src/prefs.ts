@@ -94,6 +94,66 @@ export function saveAutoFetchMinutes(minutes: number): void {
   localStorage.setItem(AUTO_FETCH_KEY, String(minutes));
 }
 
+// Whether the background fetch (auto-fetch, and the one on opening History or
+// Local Changes) prunes remote-tracking branches deleted upstream. On by
+// default — every fetch pruned before this was a setting. A fetch you start
+// yourself always prunes.
+const AUTO_FETCH_PRUNE_KEY = "gitp-auto-fetch-prune";
+
+export function loadAutoFetchPrune(): boolean {
+  return localStorage.getItem(AUTO_FETCH_PRUNE_KEY) !== "0";
+}
+
+export function saveAutoFetchPrune(on: boolean): void {
+  localStorage.setItem(AUTO_FETCH_PRUNE_KEY, on ? "1" : "0");
+}
+
+// How dates read everywhere one is shown (see formatTime in timeago.ts):
+// "3h ago", "2026-10-30 14:05", or the system locale's own short form.
+export type DateFormat = "relative" | "absolute" | "locale";
+
+export const DATE_FORMATS: { format: DateFormat; label: string }[] = [
+  { format: "relative", label: "Relative (3h ago)" },
+  { format: "absolute", label: "Absolute (2026-10-30 14:05)" },
+  { format: "locale", label: "System locale" },
+];
+
+const DATE_FORMAT_KEY = "gitp-date-format";
+
+export function loadDateFormat(): DateFormat {
+  const v = localStorage.getItem(DATE_FORMAT_KEY);
+  return v === "absolute" || v === "locale" ? v : "relative";
+}
+
+export function saveDateFormat(format: DateFormat): void {
+  localStorage.setItem(DATE_FORMAT_KEY, format);
+}
+
+// Author initials in the graph's commit nodes instead of Gravatar images —
+// which also stops sending email hashes to gravatar.com.
+const AUTHOR_INITIALS_KEY = "gitp-author-initials";
+
+export function loadAuthorInitials(): boolean {
+  return localStorage.getItem(AUTHOR_INITIALS_KEY) === "1";
+}
+
+export function saveAuthorInitials(on: boolean): void {
+  localStorage.setItem(AUTHOR_INITIALS_KEY, on ? "1" : "0");
+}
+
+// The branch Init Repository starts a new repository on, prefilled in its
+// dialog. "main" rather than git's own default, which depends on the git
+// version and init.defaultBranch.
+const DEFAULT_BRANCH_KEY = "gitp-default-branch";
+
+export function loadDefaultBranch(): string {
+  return localStorage.getItem(DEFAULT_BRANCH_KEY)?.trim() || "main";
+}
+
+export function saveDefaultBranch(name: string): void {
+  localStorage.setItem(DEFAULT_BRANCH_KEY, name.trim());
+}
+
 // The commit box's "Push after commit" toggle. Off by default: pushing is a
 // network action nobody should get without asking for it.
 const PUSH_AFTER_COMMIT_KEY = "gitp-push-after-commit";
@@ -309,6 +369,11 @@ const RECENT_REPOS_KEY = "gitp-recent-repos";
 // Enough to fill Quick Launch's list without it becoming an archive.
 const MAX_RECENT_REPOS = 12;
 
+// The dark theme Toggle Theme goes back to: the last one chosen.
+const LAST_DARK_THEME_KEY = "gitp-last-dark-theme";
+
+const DARK_THEMES: ThemeChoice[] = ["dark", "gitkraken", "gitkraken-neon"];
+
 export function currentTheme(): ThemeChoice {
   const v = localStorage.getItem(THEME_KEY);
   return (THEME_CHOICES as string[]).includes(v ?? "") ? (v as ThemeChoice) : "system";
@@ -323,6 +388,7 @@ export function applyTheme(choice: ThemeChoice): void {
   } else {
     document.documentElement.dataset.theme = choice;
     localStorage.setItem(THEME_KEY, choice);
+    if (DARK_THEMES.includes(choice)) localStorage.setItem(LAST_DARK_THEME_KEY, choice);
   }
   // xterm keeps its palette as JS values, so the CSS change alone leaves the
   // terminal on the old theme until it's told.
@@ -366,4 +432,19 @@ export async function applyZoom(zoom: number): Promise<void> {
   // The terminal's rows and columns come from the pixel size it measured;
   // after a zoom they no longer fill the panel until it measures again.
   requestAnimationFrame(() => ui.terminal?.fit());
+}
+
+// Toggle Theme (Quick Launch): from whatever is showing that is dark — a dark
+// theme, or System while the OS is dark — to Light; from light back to the
+// dark theme last chosen (Dark if none was). One keystroke flips between the
+// two looks someone actually uses, without stepping through every theme.
+export function toggledTheme(): ThemeChoice {
+  const saved = localStorage.getItem(LAST_DARK_THEME_KEY);
+  const lastDark = (DARK_THEMES as string[]).includes(saved ?? "") ? (saved as ThemeChoice) : "dark";
+  return nextToggleTheme(currentTheme(), window.matchMedia("(prefers-color-scheme: dark)").matches, lastDark);
+}
+
+export function nextToggleTheme(current: ThemeChoice, osDark: boolean, lastDark: ThemeChoice): ThemeChoice {
+  const showingDark = DARK_THEMES.includes(current) || (current === "system" && osDark);
+  return showingDark ? "light" : lastDark;
 }

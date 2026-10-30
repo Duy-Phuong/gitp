@@ -10,7 +10,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::activity;
 use crate::error::{Error, Result};
+use crate::git_bin::git_command;
 use crate::remote::{literal_pathspec, ref_arg};
 use crate::repo::Repo;
 
@@ -102,6 +104,73 @@ impl Repo {
 
         fs::write(dest, &patch).map_err(|e| Error::Message(format!("can't write patch: {e}")))?;
         Ok(format!("Saved patch to {}", dest.display()))
+    }
+
+    /// Write every local change — staged, unstaged and untracked (ignored files
+    /// excepted) — to `dest` as one patch against HEAD, binary files included,
+    /// so `git apply` on a clean checkout of HEAD recreates the working tree.
+    ///
+    /// `git diff HEAD` alone leaves out untracked files, and marking them
+    /// intent-to-add would touch the user's index. Instead the working tree is
+    /// staged into a scratch copy of the index (`GIT_INDEX_FILE`) and that is
+    /// diffed against HEAD; the real index is never written. A copy rather than
+    /// a fresh index keeps its stat cache, so unchanged files aren't re-hashed.
+    pub fn save_all_changes_patch(&self, dest: &Path) -> Result<String> {
+        let scratch = self.inner.path().join("gitp-patch-index");
+        let index = self.inner.path().join("index");
+        // No index yet (nothing ever staged): git starts the scratch one empty.
+        let _ = fs::remove_file(&scratch);
+        if index.exists() {
+            fs::copy(&index, &scratch)
+                .map_err(|e| Error::Message(format!("can't copy the index: {e}")))?;
+        }
+        let patch = self
+            .run_git_on_index(&scratch, &["add", "-A"])
+            .and_then(|_| {
+                // Plain-patch output whatever the user's diff config says:
+                // no colour, external diff or textconv, and a/ b/ prefixes.
+                // On an unborn branch `--cached` diffs against the empty tree.
+                self.run_git_on_index(
+                    &scratch,
+                    &[
+                        "diff",
+                        "--cached",
+                        "--binary",
+                        "--no-color",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--src-prefix=a/",
+                        "--dst-prefix=b/",
+                    ],
+                )
+            });
+        let _ = fs::remove_file(&scratch);
+        let patch = patch?;
+        if patch.is_empty() {
+            return Err(Error::Message("there are no local changes to save".into()));
+        }
+        fs::write(dest, &patch).map_err(|e| Error::Message(format!("can't write patch: {e}")))?;
+        Ok(format!("Saved patch to {}", dest.display()))
+    }
+
+    /// [`Repo::run_git_raw`] against the index file `index` instead of the
+    /// repository's own.
+    fn run_git_on_index(&self, index: &Path, args: &[&str]) -> Result<Vec<u8>> {
+        let output = activity::output(
+            git_command()
+                .current_dir(self.workdir_path()?)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .env("GIT_INDEX_FILE", index)
+                .args(args),
+        )
+        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        if output.status.success() {
+            Ok(output.stdout)
+        } else {
+            Err(Error::Message(
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ))
+        }
     }
 
     /// Apply the patch file at `patch` (`git apply --3way`): what doesn't apply

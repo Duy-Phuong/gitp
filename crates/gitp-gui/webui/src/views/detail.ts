@@ -21,6 +21,7 @@
 import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT, MAX_DIFF_LINES } from "../api";
 import { clear, copyToClipboard, el, statusBadge, svg } from "../dom";
 import { loadDiffWrap, loadIgnoreWhitespace, saveDiffWrap, saveIgnoreWhitespace } from "../prefs";
+import { formatTime, fullTime } from "../timeago";
 import type {
   BlameLine,
   CommitDetail,
@@ -288,10 +289,9 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const body = d.message.split("\n").slice(1).join("\n").trim();
     if (body) scroll.append(el("div", { class: "detail-body", text: body }));
 
-    const when = new Date(d.author_time * 1000).toLocaleString();
     const meta = el("div", { class: "detail-meta" }, [
       el("div", { text: `${d.author_name} <${d.author_email}>` }),
-      el("div", { text: when }),
+      el("div", { text: formatTime(d.author_time), title: fullTime(d.author_time) }),
       el("div", {}, [el("span", { text: "SHA " }), el("span", { class: "sha", text: d.id })]),
     ]);
     if (d.parents.length) {
@@ -612,7 +612,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     }
     const wrap = el("div", { class: "file-history" });
     for (const c of commits) {
-      const when = new Date(c.time * 1000).toLocaleDateString();
+      const when = formatTime(c.time);
       const row = el("div", { class: "hist-row", title: c.id }, [
         el("span", { class: "hist-sha", text: c.short_id }),
         el("span", { class: "hist-summary", text: c.summary }),

@@ -11,16 +11,26 @@ import {
   applyZoom,
   AUTO_FETCH_MINUTES,
   currentTheme,
+  DATE_FORMATS,
+  loadAuthorInitials,
   loadAutoFetchMinutes,
+  loadAutoFetchPrune,
   loadBranchHoverFade,
+  loadDateFormat,
+  loadDefaultBranch,
   loadDetailTab,
   loadPullDefault,
   loadZoom,
   PULL_DEFAULT_LABEL,
   PULL_DEFAULTS,
+  saveAuthorInitials,
+  saveAutoFetchPrune,
   saveBranchHoverFade,
+  saveDateFormat,
+  saveDefaultBranch,
   saveDetailTab,
   savePullDefault,
+  type DateFormat,
   type PullDefault,
   type ThemeChoice,
   ZOOM_LEVELS,
@@ -34,6 +44,8 @@ export interface SettingsActions {
   setAllBranches: (all: boolean) => void;
   // Persist the auto-fetch interval (0 = off) and restart the timer on it.
   setAutoFetch: (minutes: number) => void;
+  // Redraw what shows dates and author avatars, after either setting changes.
+  redrawDisplay: () => void;
   // The open repo's local core.hooksPath ("" when unset), or null when no repo
   // is open; and writing it ("" unsets it).
   hooksPath: () => Promise<string | null>;
@@ -83,6 +95,28 @@ export function openSettingsDialog(actions: SettingsActions): void {
       render: () => [
         row("Theme", themeCards(actions), "block"),
         row("Zoom", zoomSelect(), "inline", "Cmd/Ctrl + = and − step through these levels; Cmd/Ctrl + 0 goes back to 100%."),
+        row(
+          "Dates",
+          dateFormatSelect(actions),
+          "inline",
+          "In the log, commit details, file history, the reflog and tags. Hover a date in the log or details for the full time.",
+        ),
+        row(
+          "Commit graph shows",
+          segToggle(
+            [
+              { value: false, label: "Avatars" },
+              { value: true, label: "Initials" },
+            ],
+            loadAuthorInitials(),
+            (on) => {
+              saveAuthorInitials(on);
+              actions.redrawDisplay();
+            },
+          ),
+          "inline",
+          "Avatars come from gravatar.com, which is sent a hash of each author's email; initials fetch nothing.",
+        ),
       ],
     },
     {
@@ -94,6 +128,19 @@ export function openSettingsDialog(actions: SettingsActions): void {
           autoFetchSelect(actions),
           "inline",
           "Fetches all remotes of the open repository in the background. Opening History or Local Changes fetches either way.",
+        ),
+        row(
+          "Prune on auto-fetch",
+          segToggle(
+            [
+              { value: true, label: "On" },
+              { value: false, label: "Off" },
+            ],
+            loadAutoFetchPrune(),
+            saveAutoFetchPrune,
+          ),
+          "inline",
+          "Background fetches drop remote-tracking branches deleted on the remote (fetch --prune). Fetch and Refresh always prune.",
         ),
       ],
     },
@@ -145,6 +192,7 @@ export function openSettingsDialog(actions: SettingsActions): void {
           "block",
           "core.hooksPath in the open repository's own config. Empty uses .git/hooks.",
         ),
+        row("Default branch", defaultBranchField(), "inline", "The branch Init Repository starts a new repository on."),
         row("Git configuration", linkButton("Open Git Config", () => actions.openConfig("git"))),
         row("Dotfiles", linkButton("Open Dotfiles", () => actions.openConfig("dotfiles"))),
       ],
@@ -248,6 +296,34 @@ function autoFetchSelect(actions: SettingsActions): HTMLElement {
   select.value = String(loadAutoFetchMinutes());
   select.addEventListener("change", () => actions.setAutoFetch(Number(select.value)));
   return select;
+}
+
+function dateFormatSelect(actions: SettingsActions): HTMLElement {
+  const select = el("select", { class: "settings-select" });
+  for (const f of DATE_FORMATS) select.append(el("option", { value: f.format, text: f.label }));
+  select.value = loadDateFormat();
+  select.addEventListener("change", () => {
+    saveDateFormat(select.value as DateFormat);
+    actions.redrawDisplay();
+  });
+  return select;
+}
+
+// Saved when it changes (Enter or leaving it); emptied, it goes back to "main".
+function defaultBranchField(): HTMLElement {
+  const input = el("input", {
+    class: "settings-select",
+    placeholder: "main",
+    spellcheck: "false",
+    autocomplete: "off",
+    "aria-label": "Default branch",
+  }) as HTMLInputElement;
+  input.value = loadDefaultBranch();
+  input.addEventListener("change", () => {
+    saveDefaultBranch(input.value);
+    input.value = loadDefaultBranch();
+  });
+  return input;
 }
 
 // The repo's hooks folder: a path field that saves when it changes (Enter or

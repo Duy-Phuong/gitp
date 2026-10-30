@@ -81,12 +81,25 @@ fn fetch_branch_impl(state: &RepoState, name: String) -> Result<String, String> 
 /// Fetch all remotes. Only updates remote-tracking refs, so the cached log
 /// (which walks from HEAD) is unchanged. A `background` fetch — the periodic
 /// refresh, not one the user asked for — never prompts for credentials.
-pub(crate) fn fetch_all_impl(state: &RepoState, background: bool) -> Result<String, String> {
+/// `prune` drops remote-tracking branches deleted upstream.
+pub(crate) fn fetch_all_impl(
+    state: &RepoState,
+    background: bool,
+    prune: bool,
+) -> Result<String, String> {
+    let fetch = |repo: &Repo| repo.fetch_all_with(prune);
     if background {
-        with_repo_networked_background(state, "fetch", Repo::fetch_all, |_| {})
+        with_repo_networked_background(state, "fetch", fetch, |_| {})
     } else {
-        with_repo_networked(state, "fetch", Repo::fetch_all, |_| {})
+        with_repo_networked(state, "fetch", fetch, |_| {})
     }
+}
+
+/// `git maintenance run --task=gc`. Nothing on the network, but a gc can take
+/// a while on a big repository, so it runs like a fetch: off the session lock,
+/// shown as running, and cancellable. Leaves the log and refs as they were.
+fn perform_maintenance_impl(state: &RepoState) -> Result<String, String> {
+    with_repo_networked(state, "maintenance", Repo::perform_maintenance, |_| {})
 }
 
 /// Fetch one named remote, for repos with more than one.
@@ -237,9 +250,15 @@ pub(crate) fn fetch_branch(name: String, state: State<RepoState>) -> Result<Stri
 #[tauri::command(async)]
 pub(crate) fn fetch_all(
     background: Option<bool>,
+    prune: Option<bool>,
     state: State<RepoState>,
 ) -> Result<String, String> {
-    fetch_all_impl(&state, background.unwrap_or(false))
+    fetch_all_impl(&state, background.unwrap_or(false), prune.unwrap_or(true))
+}
+
+#[tauri::command(async)]
+pub(crate) fn perform_maintenance(state: State<RepoState>) -> Result<String, String> {
+    perform_maintenance_impl(&state)
 }
 
 #[tauri::command(async)]

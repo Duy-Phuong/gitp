@@ -2277,6 +2277,14 @@ body.ref-dragging * {
 .log-header-cols .commit-time {
   flex: 0 0 90px;
 }
+/* A full date ("2026-10-30 14:05", or the locale's) needs more than "3h ago". */
+.commit-row.kraken .commit-time.wide,
+.log-header-cols .commit-time.wide {
+  flex-basis: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .commit-row.kraken .commit-sha,
 .log-header-cols .commit-sha {
   flex: 0 0 64px;
@@ -2384,6 +2392,16 @@ body.ref-dragging * {
 }
 .node-inner {
   stroke: var(--bg);
+}
+/* Author initials in a commit node (Settings → Appearance), white on the
+   lane colour like the avatar it replaces. */
+.node-initials {
+  fill: #fff;
+  font-family: var(--sans);
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
 }
 
 /* The "// WIP" row above the graph (uncommitted changes): a hollow, dashed

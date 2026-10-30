@@ -18,6 +18,7 @@ import type {
   ConflictSides,
   ConflictStatus,
   DotfileKind,
+  Editor,
   FileCommit,
   FileContent,
   FileDiff,
@@ -252,12 +253,18 @@ export async function cloneRepository(url: string, dest: string, options: CloneO
   return invokeNetwork<string>("clone_repository", { url, dest, options });
 }
 
-// `git init` a new repository at `path` (created if missing), writing a
-// `.gitignore` with `gitignore` and a README.md when asked. Open it afterwards
-// with openRepo. In preview mode it simply succeeds.
-export async function initRepository(path: string, gitignore: string | null, readme: boolean): Promise<void> {
+// `git init` a new repository at `path` (created if missing) on `branch`
+// (null: git's default), writing a `.gitignore` with `gitignore` and a
+// README.md when asked. Open it afterwards with openRepo. In preview mode it
+// simply succeeds.
+export async function initRepository(
+  path: string,
+  branch: string | null,
+  gitignore: string | null,
+  readme: boolean,
+): Promise<void> {
   if (!isTauri()) return;
-  return invoke<void>("init_repository", { path, gitignore, readme });
+  return invoke<void>("init_repository", { path, branch, gitignore, readme });
 }
 
 // A cheap "has history changed?" probe. Pulling a page to find out costs ~264 KB
@@ -948,9 +955,17 @@ export async function removeRemote(name: string): Promise<string> {
 
 // `background`: the periodic refresh nobody asked for, which must never pop a
 // credential dialog — it fails quietly instead.
-export async function fetchAll(opts: { background?: boolean } = {}): Promise<string> {
+// `prune` (default on) drops remote-tracking branches deleted upstream.
+export async function fetchAll(opts: { background?: boolean; prune?: boolean } = {}): Promise<string> {
   if (!isTauri()) return "Fetched all remotes (preview mock)";
-  return invokeNetwork<string>("fetch_all", { background: opts.background ?? false });
+  return invokeNetwork<string>("fetch_all", { background: opts.background ?? false, prune: opts.prune ?? true });
+}
+
+// `git maintenance run --task=gc`: runs like a fetch (Cancel, the status
+// bar's busy state) though nothing goes over the network.
+export async function performMaintenance(): Promise<string> {
+  if (!isTauri()) return "";
+  return invokeNetwork<string>("perform_maintenance");
 }
 
 export async function fetchAndUpdateBranch(name: string): Promise<string> {
@@ -1248,6 +1263,17 @@ export async function saveFilesPatch(
   return invoke<string>("save_files_patch", { paths, staged, path: dest });
 }
 
+// Prompt for a destination and write every local change — staged, unstaged and
+// untracked — there as one patch against HEAD. Returns a status string, or null
+// if the user cancelled.
+export async function saveAllChangesPatch(defaultName: string): Promise<string | null> {
+  if (!isTauri()) return "Saved patch of all changes (preview mock)";
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const dest = await save({ title: "Create Patch from All Changes", defaultPath: defaultName });
+  if (!dest) return null;
+  return invoke<string>("save_all_changes_patch", { path: dest });
+}
+
 // Prompt for a destination and write `revs` (in that order) there as one patch
 // file. Returns a status string, or null if the user cancelled.
 export async function saveCommitsPatch(revs: string[], defaultName: string): Promise<string | null> {
@@ -1300,6 +1326,23 @@ export async function revealPath(path: string): Promise<void> {
 export async function openInEditor(path: string): Promise<void> {
   if (!isTauri()) return;
   await invoke<void>("open_in_editor", { path });
+}
+
+// The editors and IDEs installed here that the repository can be opened in.
+export async function listEditors(): Promise<Editor[]> {
+  if (!isTauri()) {
+    return [
+      { id: "vscode", name: "Visual Studio Code" },
+      { id: "cursor", name: "Cursor" },
+    ];
+  }
+  return invoke<Editor[]>("list_editors");
+}
+
+// Open the active repository's folder in the editor `id` (from listEditors).
+export async function openRepoInEditor(id: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("open_repo_in_editor", { id });
 }
 
 // --- In-app file editor ------------------------------------------------------

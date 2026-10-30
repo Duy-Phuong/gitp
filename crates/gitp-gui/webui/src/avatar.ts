@@ -3,7 +3,10 @@
 // Gravatars fall back to a generated identicon (d=identicon), and a failed image
 // load falls back to the plain lane-colored dot in the graph.
 //
-// Note: this sends the email hash to gravatar.com to fetch the image.
+// Note: this sends the email hash to gravatar.com to fetch the image — unless
+// Settings shows author initials instead, when nothing is fetched at all.
+
+import { loadAuthorInitials } from "./prefs";
 
 const cache = new Map<string, string>(); // email -> avatar URL
 
@@ -15,6 +18,7 @@ async function sha256Hex(text: string): Promise<string> {
 // Resolve avatar URLs for every given email (deduped, cached) so renderLog can
 // look them up synchronously afterwards.
 export async function ensureAvatars(emails: string[]): Promise<void> {
+  if (loadAuthorInitials()) return;
   const pending = [...new Set(emails)].filter((e) => e && !cache.has(e));
   await Promise.all(
     pending.map(async (email) => {
@@ -26,4 +30,14 @@ export async function ensureAvatars(emails: string[]): Promise<void> {
 
 export function avatarUrl(email: string): string | undefined {
   return cache.get(email);
+}
+
+// Up to two initials for a graph node: the first letters of the first and last
+// words of the author's name ("Ada King Lovelace" → "AL"), or "?" for none.
+export function authorInitials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "?";
+  const first = [...words[0]][0];
+  const last = words.length > 1 ? [...words[words.length - 1]][0] : "";
+  return (first + last).toUpperCase();
 }

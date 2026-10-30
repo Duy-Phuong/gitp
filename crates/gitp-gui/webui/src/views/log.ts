@@ -4,7 +4,7 @@
 // buffer) are in the DOM, so a repo with 100k commits stays responsive. The
 // full geometry is computed once (cheap math); only rendering is windowed.
 
-import { avatarUrl } from "../avatar";
+import { authorInitials, avatarUrl } from "../avatar";
 import { clear, el, githubIcon, laptopIcon, svg, tagIcon } from "../dom";
 import { edgePath, fitLaneWidth, GRAPH_METRICS, type GraphMetrics, layoutGraph } from "../graph";
 import { ghostBranch } from "../commit-refs";
@@ -18,8 +18,17 @@ import {
   type LogColumn,
   type LogColumns,
 } from "../log-columns";
-import { loadLogColumns, loadRefColumnWidth, REF_COLUMN_DEFAULT, saveLogColumns, saveRefColumnWidth } from "../prefs";
-import { relativeTime } from "../timeago";
+import {
+  loadAuthorInitials,
+  loadDateFormat,
+  loadLogColumns,
+  loadRefColumnWidth,
+  REF_COLUMN_DEFAULT,
+  saveLogColumns,
+  saveRefColumnWidth,
+  type DateFormat,
+} from "../prefs";
+import { formatTime, fullTime } from "../timeago";
 import { showContextMenu, type MenuItem } from "./context-menu";
 import { refDragHandle } from "./ref-drag";
 import type { BisectStatus, CommitRow, StashRef } from "../types";
@@ -356,9 +365,9 @@ const COLUMN_CLASS: Record<LogColumn, string> = {
   sha: "commit-sha",
 };
 
-const COLUMN_TEXT: Record<LogColumn, (row: CommitRow) => string> = {
+const COLUMN_TEXT: Record<LogColumn, (row: CommitRow, dates: DateFormat) => string> = {
   author: (row) => row.author_name,
-  date: (row) => relativeTime(row.time),
+  date: (row, dates) => formatTime(row.time, dates),
   sha: (row) => row.short_id,
 };
 
@@ -553,6 +562,12 @@ export function renderLog(
   let { layout, emailById, laneWidth, maxLane } = getLayout(rows, host.clientWidth, theme);
   const rowH = metrics.rowHeight;
   let currentSelected = selectedId;
+  // Read once per render: Settings redraws the log when either changes. A
+  // full date needs a wider Date column than "3h ago".
+  const dateFormat = loadDateFormat();
+  const timeClass = `commit-meta commit-time${dateFormat === "relative" ? "" : " wide"}`;
+  const columnClass = (c: LogColumn) => (c === "date" ? timeClass : COLUMN_CLASS[c]);
+  const nameById = loadAuthorInitials() ? new Map(rows.map((r) => [r.id, r.author_name])) : null;
   // A local mutable copy, same pattern as `currentSelected` — updated
   // immediately so `renderWindow` reflects a click without waiting for the
   // caller to re-invoke renderLog with a fresh `multiSelected`.
@@ -609,7 +624,7 @@ export function renderLog(
     headCols.replaceChildren(el("span", { class: "commit-summary", text: "Commit message" }));
     for (const c of shown()) {
       const cell = el("span", {
-        class: COLUMN_CLASS[c],
+        class: columnClass(c),
         "data-column": c,
         title: "Drag to move · Right-click: choose columns",
       });
@@ -813,7 +828,11 @@ export function renderLog(
         rowEl.append(box);
       }
 
-      for (const c of cols) rowEl.append(el("span", { class: COLUMN_CLASS[c], text: COLUMN_TEXT[c](row) }));
+      for (const c of cols) {
+        const cell = el("span", { class: columnClass(c), text: COLUMN_TEXT[c](row, dateFormat) });
+        if (c === "date") cell.title = fullTime(row.time);
+        rowEl.append(cell);
+      }
       rowEl.addEventListener("click", (e) => {
         if (onMultiSelect && e.shiftKey) {
           // Range from the anchor (the last plain/Cmd-clicked row) to here,
@@ -955,11 +974,16 @@ export function renderLog(
       // image is missing/fails to load.
       layer.append(svg("circle", { cx: node.x, cy: node.y, r, fill: color }));
 
-      const url = theme.node === "avatar" ? avatarUrl(emailById.get(node.id) ?? "") : undefined;
+      const url = theme.node === "avatar" && !nameById ? avatarUrl(emailById.get(node.id) ?? "") : undefined;
       if (theme.node === "dot") {
         // An inner ring in the background colour, so the dot reads as a bead
         // on the line rather than a blob.
         layer.append(svg("circle", { class: "node-inner", cx: node.x, cy: node.y, r: r - 2.5, fill: "none", "stroke-width": 1.5 }));
+      } else if (nameById) {
+        // Settings → Appearance: the author's initials on the lane colour.
+        const text = svg("text", { class: "node-initials", x: node.x, y: node.y, "font-size": Math.round(r * 0.85) });
+        text.textContent = authorInitials(nameById.get(node.id) ?? "");
+        layer.append(text);
       } else if (url) {
         const img = svg("image", {
           x: node.x - r,

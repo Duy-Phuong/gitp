@@ -2,7 +2,8 @@
 
 import { browseForFolder, fetchConfig, saveConfig, unsetConfig } from "./api";
 import { clear, el, $ } from "./dom";
-import { state } from "./app-state";
+import { state, ui } from "./app-state";
+import { ensureAvatars } from "./avatar";
 import { opFailed, reportDone } from "./report";
 import {
   applyTheme,
@@ -139,6 +140,15 @@ export function setupSettingsMenu(): void {
       setAutoFetch: (minutes) => {
         saveAutoFetchMinutes(minutes);
         startAutoFetch(minutes);
+      },
+      // The log and the reflog redraw now; the details pane shows the new
+      // format from the next commit selected.
+      redrawDisplay: () => {
+        if (state.view === "reflog") void ui.reflogView?.reload();
+        // Back from initials, the loaded rows' avatars were never looked up.
+        void ensureAvatars(state.rows.map((r) => r.author_email)).then(() => {
+          if (state.view === "history") void updateLogView();
+        });
       },
       // libgit2 lists keys with the variable name lowercased.
       hooksPath: async () => {

@@ -371,6 +371,13 @@ export interface ReflogEntry {
   summary: string | null;
 }
 
+// An installed editor or IDE the repository can be opened in (mirrors
+// gitp-gui's os::Editor).
+export interface Editor {
+  id: string;
+  name: string;
+}
+
 // One git command gitp ran for the repo (the Activity view).
 export interface ActivityEntry {
   // Increasing; poll with the newest one seen to get only what's new.

@@ -3,6 +3,7 @@
 
 import { cloneRepository, initRepository } from "./api";
 import { state } from "./app-state";
+import { loadDefaultBranch } from "./prefs";
 import type { CloneOptions } from "./types";
 import { opFailed, reportDone, setStatus } from "./report";
 import { loadRepo } from "./shell";
@@ -23,13 +24,15 @@ function trimSlashes(path: string): string {
 
 export function initRepoAction(): void {
   setStatus("Initialize a repository…");
-  openInitDialog(besideActiveRepo(), (req) => void runInit(trimSlashes(req.path), req.gitignore, req.readme));
+  openInitDialog(besideActiveRepo(), loadDefaultBranch(), (req) =>
+    void runInit(trimSlashes(req.path), req.branch, req.gitignore, req.readme),
+  );
 }
 
-async function runInit(path: string, gitignore: string | null, readme: boolean): Promise<void> {
+async function runInit(path: string, branch: string | null, gitignore: string | null, readme: boolean): Promise<void> {
   setStatus(`Initializing ${path}…`);
   try {
-    await initRepository(path, gitignore, readme);
+    await initRepository(path, branch, gitignore, readme);
   } catch (err) {
     opFailed("Init failed", err);
     return;
