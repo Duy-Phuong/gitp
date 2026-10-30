@@ -321,7 +321,8 @@ mod tests {
                 label: "Commit".into(),
                 before: "a".into(),
                 after: "b".into(),
-                soft: true,
+                mode: gitp_core::HeadMoveMode::Soft,
+                backup: None,
             })
         };
         {
