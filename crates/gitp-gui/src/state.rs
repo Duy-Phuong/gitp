@@ -229,10 +229,12 @@ pub(crate) fn with_repo_clearing_undo<T>(
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
-    let out = f(&session.repo).map_err(to_message)?;
+    let out = f(&session.repo);
+    // Failed or not: a finish, a stash-and-switch or a patch can stop
+    // part-way, after the tree has already changed.
     clear_undo(session);
     invalidate_status(session);
-    Ok(out)
+    out.map_err(to_message)
 }
 
 /// Run a slow, read-only `f` (a signature check, say) on a handle of its own,
@@ -732,5 +734,33 @@ mod tests {
             "an outside unstage must not be served from cache"
         );
         assert_eq!(reset.status.unstaged.len(), 1);
+    }
+
+    #[test]
+    fn a_failed_untracked_op_still_forgets_undo_and_status() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).unwrap();
+        workspace_snapshot_impl(&state).expect("snapshot"); // fills the status cache
+        state.0.lock().unwrap().sessions[0].undo = Some(gitp_core::Undoable::HeadMoved {
+            label: "Commit".into(),
+            before: "a".into(),
+            after: "b".into(),
+            mode: gitp_core::HeadMoveMode::Soft,
+            backup: None,
+        });
+
+        // A finish, a stash-and-switch, a patch apply can each fail part-way,
+        // after changing the tree.
+        let err = super::with_repo_clearing_undo(&state, |_| -> gitp_core::Result<()> {
+            Err(gitp_core::Error::Message("stopped part-way".into()))
+        })
+        .unwrap_err();
+
+        assert_eq!(err, "stopped part-way");
+        let guard = state.0.lock().unwrap();
+        assert!(guard.sessions[0].undo.is_none());
+        assert!(guard.sessions[0].status_cache.is_none());
     }
 }
