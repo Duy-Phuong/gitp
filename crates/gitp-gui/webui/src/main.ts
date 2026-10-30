@@ -41,7 +41,7 @@ import {
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
-import { setOnMoreRefs, setOnOpenWip } from "./views/log";
+import { setOnMoreRefs, setOnOpenWip, setStashHandlers } from "./views/log";
 import { setupChanges } from "./views/changes";
 import { setupConflict } from "./views/conflict";
 import { setupReflog } from "./views/reflog";
@@ -73,6 +73,7 @@ import {
   restoreWorkspace,
   setRefActions,
   showReflogDetail,
+  showStashDetail,
   showView,
   updateLogView,
 } from "./shell";
@@ -198,6 +199,7 @@ async function init(): Promise<void> {
   // rows live in modules built on top of it, so they are plugged in from here.
   setOnMoreRefs(onMoreRefsMenu);
   setOnOpenWip(() => showView("changes"));
+  setStashHandlers((s) => void showStashDetail(s), onStashMenu);
   setRefActions({
     checkoutBranchAction,
     onBranchMenu,

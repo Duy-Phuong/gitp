@@ -34,6 +34,17 @@ fn repo_with_one_stash() -> (FixtureRepo, Repo) {
 }
 
 #[test]
+fn a_stash_knows_the_commit_it_was_taken_on() {
+    let (fx, repo) = repo_with_one_stash();
+    let head = repo.resolve_commit("HEAD").unwrap();
+    // A second commit, so the stash's base is no longer HEAD.
+    fx.commit_file("b.txt", "b\n", "c2");
+
+    let stashes = repo.refs().unwrap().stashes;
+    assert_eq!(stashes[0].base, head, "the graph hangs the stash off this commit");
+}
+
+#[test]
 fn apply_without_drop_restores_the_change_and_keeps_the_entry() {
     let (fx, repo) = repo_with_one_stash();
 

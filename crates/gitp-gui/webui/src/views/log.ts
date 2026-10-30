@@ -9,7 +9,7 @@ import { clear, el, githubIcon, laptopIcon, svg, tagIcon } from "../dom";
 import { edgePath, fitLaneWidth, GRAPH_METRICS, type GraphMetrics, layoutGraph } from "../graph";
 import { loadRefColumnWidth, REF_COLUMN_DEFAULT, saveRefColumnWidth } from "../prefs";
 import { relativeTime } from "../timeago";
-import type { BisectStatus, CommitRow } from "../types";
+import type { BisectStatus, CommitRow, StashRef } from "../types";
 
 // A ref pointing at a commit, shown as a colored chip on hover.
 // What a log row shows for refs: the nearest few labels to draw, plus how many
@@ -154,6 +154,55 @@ export function setWipRow(changes: number, head: string | null): boolean {
 // What clicking the WIP row does: open Local Changes. Set once at startup.
 export function setOnOpenWip(handler: () => void): void {
   onOpenWip = handler;
+}
+
+// Stashes, drawn on the row of the commit each was taken on: a dashed line from
+// that commit's node to a box-marked chip at the start of its message. Only
+// stashes whose base commit is loaded show; a map lookup per drawn row keeps
+// it free on a long log. Set from the workspace snapshot, like the WIP row.
+let stashesByBase = new Map<string, StashRef[]>();
+let stashSig = "";
+let stashHandlers: { open: (s: StashRef) => void; menu: (s: StashRef, x: number, y: number) => void } | null = null;
+
+// Adopt the stash stack. Returns whether it changed, so the caller knows the log
+// needs repainting.
+export function setStashNodes(stashes: StashRef[]): boolean {
+  const sig = stashes.map((s) => `${s.index}:${s.base}:${s.message}`).join("|");
+  if (sig === stashSig) return false;
+  stashSig = sig;
+  stashesByBase = new Map();
+  for (const s of stashes) {
+    if (!s.base) continue;
+    const list = stashesByBase.get(s.base);
+    if (list) list.push(s);
+    else stashesByBase.set(s.base, [s]);
+  }
+  return true;
+}
+
+// What a stash chip does: click shows its changes, right-click opens the
+// sidebar's stash menu. Set once at startup.
+export function setStashHandlers(open: (s: StashRef) => void, menu: (s: StashRef, x: number, y: number) => void): void {
+  stashHandlers = { open, menu };
+}
+
+function stashChip(s: StashRef): HTMLElement {
+  const label = `stash@{${s.index}}: ${s.message}`;
+  const chip = el("span", { class: "stash-chip", title: `${label}\nClick: show changes · Right-click: actions` }, [
+    el("span", { class: "stash-box" }),
+    el("span", { class: "stash-chip-name", text: label }),
+  ]);
+  // Not a row click or a commit menu: the row's selection stays as it was.
+  chip.addEventListener("click", (e) => {
+    e.stopPropagation();
+    stashHandlers?.open(s);
+  });
+  chip.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    stashHandlers?.menu(s, e.clientX, e.clientY);
+  });
+  return chip;
 }
 
 const BUFFER_ROWS = 8;
@@ -316,8 +365,9 @@ export function renderLog(
   // should extend from.
   multiSelected: Set<string> = new Set(),
   onMultiSelect?: (ids: Set<string>) => void,
-  // The WIP row belongs above the history, not above a list of search results.
-  showWip = true,
+  // The WIP row and the stash nodes belong to the history, not to a list of
+  // search results.
+  historyExtras = true,
 ): LogHandle {
   resizeObserver?.disconnect();
   host.onscroll = null;
@@ -350,7 +400,8 @@ export function renderLog(
   // commits down by `lead`; HEAD's row is where its dashed line ends. HEAD not
   // loaded (a detached checkout far down the log) still gets the row, in lane 0
   // with no line.
-  const wipRow = showWip ? wip : null;
+  const wipRow = historyExtras ? wip : null;
+  const stashesAt = historyExtras ? stashesByBase : new Map<string, StashRef[]>();
   const headIdx = wipRow?.head ? rows.findIndex((r) => r.id === wipRow.head) : -1;
   const lead = wipRow ? rowH : 0;
   wipLead = lead;
@@ -526,6 +577,8 @@ export function renderLog(
       const mark = bisectMarks.get(row.id);
       if (mark) rowEl.append(el("span", { class: `bisect-mark ${mark}`, text: BISECT_MARK_LABEL[mark] }));
       else if (row.id === bisectCurrent) rowEl.append(el("span", { class: "bisect-mark testing", text: "testing" }));
+      const stashes = stashesAt.get(row.id);
+      if (stashes) for (const st of stashes.slice(0, MAX_REF_CHIPS)) rowEl.append(stashChip(st));
       rowEl.append(el("span", { class: "commit-summary", text: row.summary }));
 
       // Ref chips (branch/tag/remote pointing at this commit) — placed after the
@@ -653,6 +706,14 @@ export function renderLog(
             "stroke-width": 1.5,
             opacity: 0.6,
           }),
+        );
+      }
+
+      // Stashes taken on this commit: a dashed line from its node to their
+      // chips at the start of the message.
+      if (stashesAt.has(node.id)) {
+        graphBody.append(
+          svg("line", { class: "stash-edge", x1: node.x, y1: node.y, x2: textLeft, y2: node.y, stroke: color, "stroke-width": 1.5 }),
         );
       }
 

@@ -833,7 +833,7 @@ export async function pushForce(): Promise<string> {
 
 export async function stash(): Promise<string> {
   if (!isTauri()) {
-    MOCK_REFS.stashes.unshift({ index: 0, message: "WIP on develop (preview mock)" });
+    MOCK_REFS.stashes.unshift({ index: 0, message: "WIP on develop (preview mock)", base: MOCK_LOG[0].id });
     MOCK_REFS.stashes.forEach((s, i) => (s.index = i));
     return "Saved working directory (preview mock)";
   }
@@ -913,7 +913,7 @@ export async function stashFiles(paths: string[]): Promise<string> {
       mockMove(MOCK_STATUS.unstaged, [], p);
       mockMove(MOCK_STATUS.staged, [], p);
     }
-    MOCK_REFS.stashes.unshift({ index: 0, message: `WIP: ${paths.length} file(s) (preview mock)` });
+    MOCK_REFS.stashes.unshift({ index: 0, message: `WIP: ${paths.length} file(s) (preview mock)`, base: MOCK_LOG[0].id });
     MOCK_REFS.stashes.forEach((s, i) => (s.index = i));
     return `Stashed ${paths.length} file(s) (preview mock)`;
   }
@@ -1302,8 +1302,8 @@ export const MOCK_REFS: Refs = {
     { name: "v3.33.0", target: mockOid("g") },
   ],
   stashes: [
-    { index: 0, message: "config 3.31.2" },
-    { index: 1, message: "config 3.31 for mock" },
+    { index: 0, message: "config 3.31.2", base: mockOid("d") },
+    { index: 1, message: "config 3.31 for mock", base: mockOid("b") },
   ],
   recent: [
     "feature/dashboard",

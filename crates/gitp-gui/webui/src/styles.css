@@ -2066,6 +2066,44 @@ body {
   flex: 0 0 auto;
 }
 
+/* A stash, on the row of the commit it was taken on: a dashed line from the
+   node to a chip led by a small square — the stash's own node, drawn apart
+   from the round commit nodes. */
+.stash-edge {
+  stroke-dasharray: 2 3;
+  opacity: 0.8;
+}
+.stash-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  padding: 1px 6px 1px 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px dashed color-mix(in srgb, var(--lane, var(--text-dim)) 70%, transparent);
+  border-radius: 4px;
+  background: var(--bg);
+  cursor: pointer;
+}
+.stash-chip:hover {
+  color: var(--text);
+}
+.stash-box {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--lane, var(--text-dim));
+  border-radius: 1px;
+}
+.stash-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Detail ----------------------------------------------------------------- */
 .detail-pane {
   display: flex;

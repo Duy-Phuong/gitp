@@ -32,7 +32,7 @@ import {
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el, $ } from "./dom";
-import { logRowTop, renderLog, setBisectMarks, setWipRow } from "./views/log";
+import { logRowTop, renderLog, setBisectMarks, setStashNodes, setWipRow } from "./views/log";
 import { bisectBannerText } from "./bisect-text";
 import { closeCommitMenu } from "./views/commit-menu";
 import { renderSidebar, type SidebarView, type SidebarCallbacks } from "./views/sidebar";
@@ -549,6 +549,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
 export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise<void> {
   let marksChanged = false;
   let wipChanged = false;
+  let stashesChanged = false;
   try {
     // Worktrees and submodules are separate, cheap reads; failing one only
     // hides its section.
@@ -577,6 +578,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     state.bisect = snap.bisect;
     marksChanged = setBisectMarks(state.bisect);
     wipChanged = setWipRow(state.localChanges, state.headId);
+    stashesChanged = setStashNodes(state.refs.stashes);
     renderBisectBanner();
     // Whatever moved a ref (an action, undo, a terminal command) added a reflog
     // entry the open Reflog should list.
@@ -590,7 +592,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
   // log so the branch chips appear on every commit.
   ui.detailView?.refresh();
   const chipsChanged = rebuildCommitRefs();
-  const needsRepaint = chipsChanged || marksChanged || wipChanged || lastPaintedRows !== state.rows || lastPaintedSelection !== state.selectedId;
+  const needsRepaint = chipsChanged || marksChanged || wipChanged || stashesChanged || lastPaintedRows !== state.rows || lastPaintedSelection !== state.selectedId;
   if (state.view === "history" && state.rows.length && needsRepaint) {
     const pane = $("#log-pane");
     const keep = pane.scrollTop;
@@ -821,7 +823,7 @@ async function loadDownTo(target: string, label: string): Promise<number> {
 // Click a stash: show its diff in the detail view. A stash commit's first
 // parent is the base it was taken from, so fetchCommitDetail surfaces exactly
 // the stashed changes. Switches to History, where the detail pane lives.
-async function showStashDetail(s: StashRef): Promise<void> {
+export async function showStashDetail(s: StashRef): Promise<void> {
   showView("history");
   state.selectedId = null;
   // A stash detail isn't tracked by selectCommit's cache — invalidate it so a

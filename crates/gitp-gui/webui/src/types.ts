@@ -116,6 +116,8 @@ export interface TagRef {
 export interface StashRef {
   index: number;
   message: string;
+  // The commit the stash was taken on, where the graph draws it ("" if unknown).
+  base: string;
 }
 
 export interface Refs {
