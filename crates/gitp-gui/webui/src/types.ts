@@ -487,6 +487,13 @@ export interface Worktree {
   prunable: boolean;
 }
 
+// How many files another worktree has changed (mirrors gitp-core's
+// WorktreeChanges); `path` is as the worktree list gives it.
+export interface WorktreeChanges {
+  path: string;
+  changes: number;
+}
+
 // The optional parts of a clone (mirrors gitp-core's CloneOptions).
 export interface CloneOptions {
   branch: string | null;

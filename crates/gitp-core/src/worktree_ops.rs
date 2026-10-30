@@ -36,6 +36,17 @@ pub struct Worktree {
     pub prunable: bool,
 }
 
+/// How many files another worktree of the repository has changed — what the
+/// graph's WIP row for that worktree shows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WorktreeChanges {
+    /// The worktree's path, exactly as [`Repo::worktrees`] lists it.
+    pub path: String,
+    /// Distinct changed paths, staged, unstaged or untracked — counted the way
+    /// the current worktree's own change count is.
+    pub changes: usize,
+}
+
 /// What a new worktree checks out.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -61,6 +72,45 @@ impl Repo {
             wt.is_current = canonical(Path::new(&wt.path)) == here;
         }
         Ok(list)
+    }
+
+    /// The change count of every *other* worktree whose folder still exists.
+    /// One `git status` per worktree (see `status_summary`), a few at a time
+    /// in parallel; a worktree whose status fails — a bare main repository,
+    /// a folder that vanished meanwhile — is left out rather than failing the
+    /// rest.
+    pub fn other_worktree_changes(&self) -> Result<Vec<WorktreeChanges>> {
+        // Most repos have no linked worktrees: one directory read says so
+        // without spawning git on every refresh.
+        if self.inner.worktrees().is_ok_and(|names| names.is_empty()) {
+            return Ok(Vec::new());
+        }
+        let others: Vec<Worktree> = self
+            .worktrees()?
+            .into_iter()
+            .filter(|w| !w.is_current && !w.prunable)
+            .collect();
+        // Bounded, so a repo with dozens of worktrees doesn't start dozens of
+        // `git status` runs at once.
+        const PARALLEL: usize = 4;
+        let mut out = Vec::new();
+        for chunk in others.chunks(PARALLEL) {
+            std::thread::scope(|s| {
+                let runs: Vec<_> = chunk
+                    .iter()
+                    .map(|w| s.spawn(|| change_count(Path::new(&w.path))))
+                    .collect();
+                for (w, run) in chunk.iter().zip(runs) {
+                    if let Ok(Ok(changes)) = run.join() {
+                        out.push(WorktreeChanges {
+                            path: w.path.clone(),
+                            changes,
+                        });
+                    }
+                }
+            });
+        }
+        Ok(out)
     }
 
     /// `git worktree add` at `path` (relative paths resolve against the
@@ -133,6 +183,19 @@ impl Repo {
             .find(|w| !w.is_current && w.branch.as_deref() == Some(name))
             .map(|w| w.path)
     }
+}
+
+/// Distinct changed paths in the worktree at `path`: a partially staged file
+/// is in both status lists but counts once, as in the workspace snapshot.
+fn change_count(path: &Path) -> Result<usize> {
+    let status = Repo::open(path)?.status_summary()?;
+    let paths: std::collections::HashSet<&str> = status
+        .staged
+        .iter()
+        .chain(&status.unstaged)
+        .map(|f| f.path.as_str())
+        .collect();
+    Ok(paths.len())
 }
 
 fn path_arg(path: &Path) -> Result<&str> {

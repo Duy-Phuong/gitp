@@ -50,6 +50,7 @@ import type {
   WorkspaceProgress,
   WorkspaceSnapshot,
   Worktree,
+  WorktreeChanges,
   WorktreeTarget,
   Submodule,
   StashOptions,
@@ -1585,6 +1586,20 @@ export async function listWorktrees(): Promise<Worktree[]> {
     return MOCK_WORKTREES.map((w) => ({ ...w, is_current: w.path === active }));
   }
   return invoke<Worktree[]>("list_worktrees", {});
+}
+
+// The change count of every other worktree of the active repo (one `git
+// status` each, run without the workspace lock), for the graph's WIP rows.
+export async function otherWorktreeChanges(): Promise<WorktreeChanges[]> {
+  if (!isTauri()) {
+    const active = MOCK_WORKSPACE.repos[MOCK_WORKSPACE.active ?? -1]?.path;
+    // The linked mock worktree has work in progress, so preview shows its row.
+    return MOCK_WORKTREES.filter((w) => w.path !== active && !w.prunable).map((w) => ({
+      path: w.path,
+      changes: w.is_main ? 0 : 3,
+    }));
+  }
+  return invoke<WorktreeChanges[]>("other_worktree_changes", {});
 }
 
 // `git worktree add`; a relative `path` resolves against the repo's folder.

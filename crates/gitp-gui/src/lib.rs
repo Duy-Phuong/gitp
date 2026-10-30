@@ -252,6 +252,7 @@ pub fn run() {
             staging::get_signing_config,
             staging::get_commit_template,
             worktrees::list_worktrees,
+            worktrees::other_worktree_changes,
             worktrees::add_worktree,
             worktrees::remove_worktree,
             worktrees::lock_worktree,

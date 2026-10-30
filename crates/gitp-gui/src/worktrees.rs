@@ -3,14 +3,21 @@
 
 use std::path::Path;
 
-use gitp_core::{Worktree, WorktreeTarget};
+use gitp_core::{Worktree, WorktreeChanges, WorktreeTarget};
 use tauri::State;
 
-use crate::state::{with_repo, RepoState};
+use crate::state::{with_repo, with_repo_unlocked, RepoState};
 
 /// Every worktree of the active repo, the main one first.
 fn list_worktrees_impl(state: &RepoState) -> Result<Vec<Worktree>, String> {
     with_repo(state, |repo| repo.worktrees())
+}
+
+/// The change count of each other worktree, for the graph's WIP rows. A `git
+/// status` per worktree is too slow to hold the workspace lock through, and
+/// only reads, so it runs on a handle of its own.
+fn other_worktree_changes_impl(state: &RepoState) -> Result<Vec<WorktreeChanges>, String> {
+    with_repo_unlocked(state, |repo| repo.other_worktree_changes())
 }
 
 /// Add a worktree at `path` checking out `target`; returns its absolute path
@@ -46,6 +53,13 @@ fn prune_worktrees_impl(state: &RepoState) -> Result<String, String> {
 #[tauri::command(async)]
 pub(crate) fn list_worktrees(state: State<RepoState>) -> Result<Vec<Worktree>, String> {
     list_worktrees_impl(&state)
+}
+
+#[tauri::command(async)]
+pub(crate) fn other_worktree_changes(
+    state: State<RepoState>,
+) -> Result<Vec<WorktreeChanges>, String> {
+    other_worktree_changes_impl(&state)
 }
 
 #[tauri::command(async)]
@@ -110,6 +124,16 @@ mod tests {
         let list = list_worktrees_impl(&state).unwrap();
         assert_eq!(list.len(), 2);
         assert_eq!(list[1].branch.as_deref(), Some("side"));
+
+        // The graph's WIP rows: the other worktree, by its listed path.
+        std::fs::write(Path::new(&added).join("new.txt"), "x").unwrap();
+        let changes = other_worktree_changes_impl(&state).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(
+            (changes[0].path.as_str(), changes[0].changes),
+            (list[1].path.as_str(), 1)
+        );
+        std::fs::remove_file(Path::new(&added).join("new.txt")).unwrap();
 
         remove_worktree_impl(&state, added, false).unwrap();
         assert_eq!(list_worktrees_impl(&state).unwrap().len(), 1);

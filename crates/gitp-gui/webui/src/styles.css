@@ -2451,6 +2451,19 @@ body.ref-dragging * {
 .wip-row .wip-count {
   flex: 0 0 auto;
 }
+/* Another worktree: its WIP row's badge names it, and a branch it has checked
+   out carries the same folder mark on its badge. */
+.commit-ref.worktree {
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border-color: var(--border);
+}
+.commit-ref .worktree-icon {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
 
 /* A stash, on the row of the commit it was taken on: a dashed line from the
    node to a chip led by a small square — the stash's own node, drawn apart

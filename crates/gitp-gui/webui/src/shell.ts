@@ -29,6 +29,7 @@ import {
   bisectMark,
   bisectReset,
   listWorktrees,
+  otherWorktreeChanges,
   listSubmodules,
   listRemotes,
   gitflowConfig,
@@ -36,13 +37,14 @@ import {
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el, $ } from "./dom";
-import { logRowTop, renderLog, setBisectMarks, setLogColumnsRepo, setStashNodes, setWipRow } from "./views/log";
+import { logRowTop, renderLog, setBisectMarks, setLogColumnsRepo, setOtherWipRows, setStashNodes, setWipRow, setWorktreeBranches } from "./views/log";
+import { branchesElsewhere, otherWipRows } from "./worktree-wip";
 import { bisectBannerText } from "./bisect-text";
 import { closeCommitMenu } from "./views/commit-menu";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { tabDragHandle } from "./views/tab-drag";
 import { renderSidebar, type SidebarView, type SidebarCallbacks } from "./views/sidebar";
-import type { BisectMark, CommitRow, ConflictStatus, LogPage, LogScope, ReflogEntry, StashRef, Workspace } from "./types";
+import type { BisectMark, CommitRow, ConflictStatus, LogPage, LogScope, ReflogEntry, StashRef, Workspace, WorktreeChanges } from "./types";
 import { EMPTY_REFS, PAGE_SIZE, state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { markRemoteFetched, remoteFetchedAt, renderFetchAge } from "./fetch-age";
@@ -286,6 +288,9 @@ export async function closeRepoTab(path: string): Promise<void> {
       state.bisect = null;
       setBisectMarks(null);
       setWipRow(0, null);
+      worktreeCounts = [];
+      setOtherWipRows([]);
+      setWorktreeBranches(new Map());
       ui.undoLabels = { undo: null, redo: null };
       renderRebaseBanner();
       renderConflictBanner();
@@ -698,6 +703,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
   let marksChanged = false;
   let wipChanged = false;
   let stashesChanged = false;
+  let worktreesChanged = false;
   try {
     // Worktrees, submodules and remotes are separate, cheap reads; failing one
     // only hides its section (or, for remotes, the never-fetched ones).
@@ -717,6 +723,12 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     if (opts.abortIfBusy && operationInFlight()) return;
     state.refs = snap.refs;
     state.worktrees = worktrees;
+    // The cached counts, re-joined to the new list at once, so a removed
+    // worktree's row (or another repo's, after a tab switch) doesn't wait for
+    // the fresh counts to go.
+    worktreesChanged = setWorktreeBranches(branchesElsewhere(worktrees));
+    worktreesChanged = setOtherWipRows(otherWipRows(worktrees, worktreeCounts)) || worktreesChanged;
+    void refreshWorktreeChanges();
     state.submodules = submodules;
     state.remoteList = remoteList;
     state.gitflow = gitflow;
@@ -747,7 +759,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
   // log so the branch chips appear on every commit.
   ui.detailView?.refresh();
   const chipsChanged = rebuildCommitRefs();
-  const needsRepaint = chipsChanged || marksChanged || wipChanged || stashesChanged || lastPaintedRows !== state.rows || lastPaintedSelection !== state.selectedId;
+  const needsRepaint = chipsChanged || marksChanged || wipChanged || stashesChanged || worktreesChanged || lastPaintedRows !== state.rows || lastPaintedSelection !== state.selectedId;
   if (state.view === "history" && state.rows.length && needsRepaint) {
     const pane = $("#log-pane");
     const keep = pane.scrollTop;
@@ -770,6 +782,40 @@ export function refreshWipRow(): void {
   const keep = pane.scrollTop;
   ui.logView = renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
   pane.scrollTop = keep;
+}
+
+// The other worktrees' change counts behind their WIP rows in the graph (see
+// worktree-wip.ts). A `git status` per worktree is more than the snapshot
+// should wait on, so they come after it, one fetch at a time: a refresh while
+// one runs asks for one more when it ends instead of starting another.
+let worktreeCounts: WorktreeChanges[] = [];
+let countsRunning = false;
+let countsAgain = false;
+
+async function refreshWorktreeChanges(): Promise<void> {
+  if (countsRunning) {
+    countsAgain = true;
+    return;
+  }
+  countsRunning = true;
+  try {
+    do {
+      countsAgain = false;
+      const repo = state.repoPath;
+      // Only the main worktree (nearly every repo): nothing to count.
+      const counts = state.worktrees.length > 1 ? await otherWorktreeChanges().catch(() => []) : [];
+      // A tab switched meanwhile has asked for its own counts.
+      if (repo !== state.repoPath) continue;
+      worktreeCounts = counts;
+      if (!setOtherWipRows(otherWipRows(state.worktrees, counts)) || !state.rows.length || logSearchQuery()) continue;
+      const pane = $("#log-pane");
+      const keep = pane.scrollTop;
+      ui.logView = renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
+      pane.scrollTop = keep;
+    } while (countsAgain);
+  } finally {
+    countsRunning = false;
+  }
 }
 
 // What the log pane was last painted from, so a refresh that changed neither

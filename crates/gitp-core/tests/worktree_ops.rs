@@ -267,3 +267,62 @@ fn prunes_a_worktree_whose_folder_was_deleted() {
     s.repo().prune_worktrees().unwrap();
     assert_eq!(s.repo().worktrees().unwrap().len(), 1);
 }
+
+#[test]
+fn counts_the_changes_of_every_other_worktree() {
+    let s = Setup::new();
+    // Nothing linked: nothing to count, and no git spawned to find that out.
+    assert!(s.repo().other_worktree_changes().unwrap().is_empty());
+
+    git(
+        &s.main(),
+        &["worktree", "add", "-q", "-b", "dirty", "../dirty"],
+    );
+    git(
+        &s.main(),
+        &["worktree", "add", "-q", "-b", "clean", "../clean"],
+    );
+    git(
+        &s.main(),
+        &["worktree", "add", "-q", "--detach", "../vanished"],
+    );
+    std::fs::remove_dir_all(s.sibling("vanished")).unwrap();
+    let dirty = s.sibling("dirty");
+    // One partially staged file (in both status lists, counted once), one
+    // staged new file and one untracked: three paths.
+    std::fs::write(dirty.join("a.txt"), "three\n").unwrap();
+    git(&dirty, &["add", "a.txt"]);
+    std::fs::write(dirty.join("a.txt"), "four\n").unwrap();
+    std::fs::write(dirty.join("b.txt"), "new\n").unwrap();
+    git(&dirty, &["add", "b.txt"]);
+    std::fs::write(dirty.join("c.txt"), "untracked\n").unwrap();
+    // The current worktree's own changes are not part of the summary.
+    std::fs::write(s.main().join("a.txt"), "main edit\n").unwrap();
+
+    let counts = s.repo().other_worktree_changes().unwrap();
+    let count_of = |name: &str| {
+        counts
+            .iter()
+            .find(|c| canon(&c.path) == canon(s.sibling(name)))
+            .map(|c| c.changes)
+    };
+    assert_eq!(
+        counts.len(),
+        2,
+        "the current and the vanished one are left out: {counts:?}"
+    );
+    assert_eq!(count_of("dirty"), Some(3));
+    assert_eq!(count_of("clean"), Some(0));
+
+    // Seen from the linked worktree, the main one is the other one.
+    let from_dirty = Repo::open(&dirty)
+        .unwrap()
+        .other_worktree_changes()
+        .unwrap();
+    let main = from_dirty
+        .iter()
+        .find(|c| canon(&c.path) == canon(s.main()))
+        .expect("main is listed");
+    assert_eq!(main.changes, 1);
+    assert!(from_dirty.iter().all(|c| canon(&c.path) != canon(&dirty)));
+}

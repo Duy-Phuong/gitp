@@ -83,4 +83,4 @@ pub use status::StatusLists;
 pub use submodule_ops::{Submodule, SubmoduleState};
 pub use tag_ops::TagDetail;
 pub use undo::{DeletedBranch, FileBlob, HeadMoveMode, Undoable};
-pub use worktree_ops::{Worktree, WorktreeTarget};
+pub use worktree_ops::{Worktree, WorktreeChanges, WorktreeTarget};
