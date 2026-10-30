@@ -2,6 +2,7 @@
 // Pop / Refresh, plus creating a branch, Clean up, and stage / unstage all.
 
 import {
+  applyPatchFile,
   confirmDialog,
   createBranch,
   deleteBranches,
@@ -67,6 +68,30 @@ export async function redoAction(): Promise<void> {
     opFailed("Redo failed", err);
   } finally {
     setActionsBusy(false);
+  }
+}
+
+// Quick Launch's "Apply Patch…": pick a patch file and apply it to the working
+// tree, staged — three-way where it doesn't apply cleanly, which can leave
+// conflicts to resolve.
+export async function applyPatchAction(): Promise<void> {
+  if (!state.repoPath) return;
+  try {
+    const path = await applyPatchFile();
+    if (path === null) {
+      setStatus("Apply cancelled.");
+      return;
+    }
+    await loadSidebar();
+    if (state.view === "changes") await loadChanges();
+    reportDone(`Applied ${path.split("/").pop()} — the changes are staged in Local Changes.`);
+  } catch (err) {
+    if (state.view === "changes") await loadChanges();
+    await opFailedMaybeConflict(
+      "Apply Patch failed",
+      "The patch doesn't apply to these files as they are now — it may have been made from " +
+        `other versions of them. Anything git could merge with conflicts is left to resolve.\n\n${String(err)}`,
+    );
   }
 }
 

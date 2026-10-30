@@ -37,6 +37,7 @@ import { cancelNetworkAction, canCancelNetwork, readFailed, setStatus } from "./
 import { forgetRecentRepo, loadRecentRepos, PULL_DEFAULT_LABEL, PULL_DEFAULTS } from "./prefs";
 import { bisectStep, closeRepoTab, loadRepo, selectCommit, showReflog, showView, switchRepo } from "./shell";
 import {
+  applyPatchAction,
   cleanUpAction,
   createBranchAction,
   popAction,
@@ -391,6 +392,7 @@ function repoCommands(): QuickItem[] {
     },
     { kind: "command", label: "Add Worktree…", next: () => addWorktreeStage() },
     { kind: "command", label: "Prune Worktrees", run: () => void pruneWorktreesAction() },
+    { kind: "command", label: "Apply Patch…", run: () => void applyPatchAction() },
     { kind: "command", label: "Stage All Changes", run: () => void stageAllAction() },
     { kind: "command", label: "Unstage All Changes", run: () => void unstageAllAction() },
     ...commitCommands(),

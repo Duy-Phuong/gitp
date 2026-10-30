@@ -1,7 +1,8 @@
 //! File-level local-changes operations driven by the changes-view right-click
 //! menu, each acting on a set of selected paths: discard whole files, stash
 //! selected files, save selected files as a patch, and add files to
-//! `.gitignore` (untracking committed ones so the rule takes effect).
+//! `.gitignore` (untracking committed ones so the rule takes effect). Also
+//! restoring files from a commit, and applying a patch file to them.
 //!
 //! All of these shell out through `run_git`/`run_git_raw` so git's own behavior
 //! (pathspec matching, conflict handling, messages) applies as-is.
@@ -101,6 +102,14 @@ impl Repo {
 
         fs::write(dest, &patch).map_err(|e| Error::Message(format!("can't write patch: {e}")))?;
         Ok(format!("Saved patch to {}", dest.display()))
+    }
+
+    /// Apply the patch file at `patch` (`git apply --3way`): what doesn't apply
+    /// cleanly falls back to a three-way merge where the patch names the blobs
+    /// it was made from, leaving conflicts to resolve. The result is staged.
+    pub fn apply_patch(&self, patch: &Path) -> Result<()> {
+        let patch = patch.to_string_lossy();
+        self.run_git(&["apply", "--3way", "--", &patch]).map(|_| ())
     }
 
     /// Whether `path` is untracked (present in the working tree, absent from the

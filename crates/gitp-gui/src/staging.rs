@@ -198,6 +198,12 @@ fn save_files_patch_impl(
     })
 }
 
+/// Apply the patch file at `path` (`git apply --3way`) to the working tree and
+/// index.
+fn apply_patch_impl(state: &RepoState, path: String) -> Result<(), String> {
+    with_repo_clearing_undo(state, |repo| repo.apply_patch(path.as_ref()))
+}
+
 /// Append `paths` to the repo's `.gitignore`; returns the number added.
 fn add_to_gitignore_impl(state: &RepoState, paths: Vec<String>) -> Result<usize, String> {
     with_repo_clearing_undo(state, |repo| repo.add_to_gitignore(&paths))
@@ -366,6 +372,11 @@ pub(crate) fn save_files_patch(
     state: State<RepoState>,
 ) -> Result<String, String> {
     save_files_patch_impl(&state, paths, staged, path)
+}
+
+#[tauri::command(async)]
+pub(crate) fn apply_patch(path: String, state: State<RepoState>) -> Result<(), String> {
+    apply_patch_impl(&state, path)
 }
 
 #[tauri::command(async)]

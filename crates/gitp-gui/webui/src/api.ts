@@ -974,6 +974,32 @@ export async function saveFilesPatch(
   return invoke<string>("save_files_patch", { paths, staged, path: dest });
 }
 
+// Prompt for a destination and write `revs` (in that order) there as one patch
+// file. Returns a status string, or null if the user cancelled.
+export async function saveCommitsPatch(revs: string[], defaultName: string): Promise<string | null> {
+  if (!isTauri()) return `Saved patch for ${revs.length} commit(s) (preview mock)`;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const dest = await save({ title: "Save as Patch", defaultPath: defaultName });
+  if (!dest) return null;
+  return invoke<string>("save_commits_patch", { revs, path: dest });
+}
+
+// Pick a .patch / .diff file and apply it to the working tree and index
+// (`git apply --3way`). Resolves to the file applied, or null if the user
+// cancelled the picker.
+export async function applyPatchFile(): Promise<string | null> {
+  if (!isTauri()) return "changes.patch";
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const path = await open({
+    title: "Apply Patch",
+    multiple: false,
+    filters: [{ name: "Patch", extensions: ["patch", "diff"] }],
+  });
+  if (typeof path !== "string") return null;
+  await invoke<void>("apply_patch", { path });
+  return path;
+}
+
 // Append `paths` to the repo's .gitignore; returns the number actually added.
 export async function addToGitignore(paths: string[]): Promise<number> {
   if (!isTauri()) return paths.length;

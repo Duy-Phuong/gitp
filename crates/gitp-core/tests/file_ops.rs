@@ -269,3 +269,52 @@ fn restore_files_from_puts_the_commits_version_back_staged() {
         .restore_files_from("--orphan", &["a.txt".into()])
         .is_err());
 }
+
+#[test]
+fn a_saved_commit_patch_applies_back_with_apply_patch() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let c2 = fx.commit_file("a.txt", "one\ntwo\n", "add two");
+    let c3 = fx.commit_file("b.txt", "bee\n", "add b");
+    let repo = Repo::open(fx.path()).unwrap();
+    let dest = fx.path().join("both.patch");
+
+    repo.save_commits_patch(&[c2.to_string(), c3.to_string()], &dest)
+        .unwrap();
+    let text = std::fs::read_to_string(&dest).unwrap();
+    assert!(text.contains("Subject: [PATCH] add two") && text.contains("Subject: [PATCH] add b"));
+    assert!(
+        text.find("add two") < text.find("add b"),
+        "in the order given"
+    );
+
+    // Back to before c2, then apply both commits' changes as one patch.
+    repo.reset("HEAD~2", gitp_core::ResetMode::Hard).unwrap();
+    repo.apply_patch(&dest).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "one\ntwo\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("b.txt")).unwrap(),
+        "bee\n"
+    );
+    assert_eq!(
+        repo.status_lists().unwrap().staged.len(),
+        2,
+        "applied and staged"
+    );
+
+    // A patch that doesn't apply is an error, and changes nothing.
+    let bad = fx.path().join("bad.patch");
+    std::fs::write(
+        &bad,
+        "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-nope\n+never\n",
+    )
+    .unwrap();
+    assert!(repo.apply_patch(&bad).is_err());
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "one\ntwo\n"
+    );
+}

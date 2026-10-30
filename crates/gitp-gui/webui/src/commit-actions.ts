@@ -17,6 +17,7 @@ import {
   restoreFilesFromCommit,
   revertCommit,
   revertCommitHunk,
+  saveCommitsPatch,
 } from "./api";
 import { $ } from "./dom";
 import { logRowHeight, renderLog } from "./views/log";
@@ -253,6 +254,23 @@ export async function revertHunkAction(rev: string, file: FileDiff, hunkIndex: n
   }
 }
 
+// "Save as Patch…": `commits` (oldest first, so `git am` replays them in
+// order) as one patch file, wherever the user picks.
+async function saveCommitsPatchAction(commits: CommitRow[]): Promise<void> {
+  const name = commits.length === 1 ? `${commits[0].short_id}.patch` : `${commits.length}-commits.patch`;
+  setStatus("Saving patch…");
+  try {
+    const out = await saveCommitsPatch(commits.map((c) => c.id), name);
+    if (out === null) {
+      setStatus("Save cancelled.");
+      return;
+    }
+    reportDone(out || "Saved patch.");
+  } catch (err) {
+    opFailed("Save as Patch failed", err);
+  }
+}
+
 // Cherry-pick every selected commit, oldest first. A conflict pauses the
 // batch on the normal conflict resolver; finishing it resumes with whatever
 // is left in `pendingCherryPicks`, aborting cancels the rest (see the
@@ -306,6 +324,7 @@ function onCommitBulkContextMenu(x: number, y: number): void {
     ...(combined ? [{ label: "Show Combined Diff", run: () => void showCombinedDiff(combined.base, combined.head, n) }] : []),
     { label: `Cherry-pick ${n} Commits`, run: () => void cherryPickSelectedCommits(commits) },
     { label: `Copy ${n} SHAs`, run: () => void copySelectedShasAction(commits) },
+    { label: `Save ${n} Commits as Patch…`, run: () => void saveCommitsPatchAction(commits) },
     { separator: true },
     { label: `Squash ${n} Commits…`, run: () => void squashSelectedCommits(commits) },
     {
@@ -335,6 +354,7 @@ export function onCommitContextMenu(row: CommitRow, x: number, y: number): void 
     currentBranch: state.refs.head ?? "HEAD",
     copySha: () => void copySha(rev),
     compareWithWorkdir: () => void compareWithWorkdirAction(rev, short),
+    savePatch: () => void saveCommitsPatchAction([row]),
     checkoutCommit: () => void checkoutCommitAction(rev, short),
     newBranch: (name) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
     newTag: (name) => void tagAction(name, rev, short),

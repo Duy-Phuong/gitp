@@ -14,6 +14,7 @@ export interface CommitMenuHandlers {
   copySha: () => void;
   checkoutCommit: () => void;
   compareWithWorkdir: () => void;
+  savePatch: () => void;
   newBranch: (name: string) => void;
   newTag: (name: string) => void;
   cherryPick: () => void;
@@ -140,6 +141,7 @@ function buildRoot(menu: HTMLElement, row: CommitRow, h: CommitMenuHandlers): vo
     item("Hard (discard changes)", () => h.reset("Hard"), true),
     sep(),
     item("Copy Commit SHA", h.copySha),
+    item("Save as Patch…", h.savePatch),
   );
 }
 
