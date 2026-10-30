@@ -8,6 +8,7 @@
 //! below (`state` holds the shared session state and caches); each module ends
 //! with its Tauri command wrappers, which `run` registers.
 
+mod activity;
 mod askpass;
 mod bisect;
 mod branches;
@@ -204,6 +205,8 @@ pub fn run() {
             config::set_config,
             config::unset_config,
             reflog::get_reflog,
+            activity::get_activity_log,
+            activity::clear_activity_log,
             terminal::terminal_spawn,
             terminal::terminal_write,
             terminal::terminal_resize,
