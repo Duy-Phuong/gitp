@@ -1946,6 +1946,91 @@ body {
   background: var(--bg-elev-2);
   border-color: var(--border);
 }
+/* Merged local+remote badge: laptop for the local copy, a remote icon per
+   remote copy, after the name. */
+.refs-col .commit-ref.tip .local-icon,
+.refs-col .commit-ref.tip .remote-icon {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+.commit-ref.more {
+  cursor: pointer;
+}
+.commit-ref.more:hover {
+  color: var(--text);
+}
+
+/* Fixed widths for author, date and SHA on the GitKraken themes, shared by the
+   rows and the header so the two line up. */
+.commit-row.kraken .commit-author,
+.log-header-cols .commit-author {
+  flex: 0 0 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.commit-row.kraken .commit-time,
+.log-header-cols .commit-time {
+  flex: 0 0 90px;
+}
+.commit-row.kraken .commit-sha,
+.log-header-cols .commit-sha {
+  flex: 0 0 64px;
+}
+
+/* Column header on the GitKraken themes, sticky over the scrolling rows. */
+.log-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: 26px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  user-select: none;
+}
+.log-header-cell {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.log-header-cols {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+.log-header-cols > span {
+  font: inherit;
+  color: inherit;
+}
+.log-header-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  border-right: 1px solid var(--border);
+}
+.log-header-grip:hover {
+  border-right: 2px solid var(--accent);
+}
+
 .lane-guide {
   stroke: var(--text);
   stroke-opacity: 0.06;

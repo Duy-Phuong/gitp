@@ -12,6 +12,8 @@ export interface MenuItem {
   label?: string;
   danger?: boolean;
   separator?: boolean;
+  /// A small non-clickable section title.
+  heading?: string;
   run?: () => void;
   prompt?: { placeholder: string; value?: string; onSubmit: (value: string) => void };
 }
@@ -72,6 +74,10 @@ function renderItems(menu: HTMLElement, items: MenuItem[]): void {
   for (const it of items) {
     if (it.separator) {
       menu.append(el("div", { class: "menu-sep" }));
+      continue;
+    }
+    if (it.heading) {
+      menu.append(el("div", { class: "menu-label", text: it.heading }));
       continue;
     }
     const btn = el("button", {

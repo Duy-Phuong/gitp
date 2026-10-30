@@ -5,8 +5,9 @@
 // full geometry is computed once (cheap math); only rendering is windowed.
 
 import { avatarUrl } from "../avatar";
-import { clear, el, githubIcon, svg, tagIcon } from "../dom";
+import { clear, el, githubIcon, laptopIcon, svg, tagIcon } from "../dom";
 import { edgePath, fitLaneWidth, GRAPH_METRICS, type GraphMetrics, layoutGraph } from "../graph";
+import { loadRefColumnWidth, REF_COLUMN_DEFAULT, saveRefColumnWidth } from "../prefs";
 import { relativeTime } from "../timeago";
 import type { BisectStatus, CommitRow } from "../types";
 
@@ -19,6 +20,23 @@ import type { BisectStatus, CommitRow } from "../types";
 export interface RefLabels {
   labels: RefLabel[];
   total: number;
+  /// Refs whose tip is this commit, merged GitKraken-style: the badges of the
+  /// GitKraken themes' ref column. Absent when nothing points here.
+  tips?: TipRef[];
+}
+
+// One badge in the GitKraken ref column. A local branch and the remote
+// branches of the same name pointing at the same commit share one badge, with
+// a laptop icon for the local copy and a remote icon per remote.
+export interface TipRef {
+  /// The branch name without its remote prefix, or the tag name.
+  name: string;
+  kind: "branch" | "tag";
+  head: boolean;
+  /// A local branch of this name points here.
+  local: boolean;
+  /// Full names of the remote branches that point here, e.g. "origin/dev".
+  remotes: string[];
 }
 
 export interface RefLabel {
@@ -58,7 +76,7 @@ const GRAPH_THEMES: Record<"classic" | "gitkraken" | "neon", GraphTheme> = {
     guides: false,
   },
   gitkraken: {
-    metrics: { laneWidth: 22, rowHeight: 36, marginX: 16, cornerRadius: 10, originX: 170, curve: "corner" },
+    metrics: { laneWidth: 22, rowHeight: 36, marginX: 16, cornerRadius: 10, originX: REF_COLUMN_DEFAULT, curve: "corner" },
     colors: KRAKEN_COLORS,
     node: "avatar",
     nodeRadius: 12,
@@ -67,7 +85,7 @@ const GRAPH_THEMES: Record<"classic" | "gitkraken" | "neon", GraphTheme> = {
     guides: true,
   },
   neon: {
-    metrics: { laneWidth: 20, rowHeight: 32, marginX: 16, cornerRadius: 8, originX: 170, curve: "bezier" },
+    metrics: { laneWidth: 20, rowHeight: 32, marginX: 16, cornerRadius: 8, originX: REF_COLUMN_DEFAULT, curve: "bezier" },
     colors: ["#00D2D3", "#54a0ff", "#ff6b81", "#9b59b6", "#f368e0", "#48dbfb", "#1dd1a1", "#feca57"],
     node: "dot",
     nodeRadius: 6,
@@ -79,12 +97,33 @@ const GRAPH_THEMES: Record<"classic" | "gitkraken" | "neon", GraphTheme> = {
 
 // The graph for the theme in force. Read from the DOM, like the terminal does,
 // rather than from prefs, so the log doesn't depend on how themes are stored.
+//
+// On the GitKraken themes the ref column is as wide as the user dragged it, so
+// the theme comes back with that `originX`. The sized copy is kept until the
+// width or theme changes, because the layout cache is keyed on its identity.
 function graphThemeFor(): GraphTheme {
-  const theme = document.documentElement.dataset.theme;
-  if (theme === "gitkraken") return GRAPH_THEMES.gitkraken;
-  if (theme === "gitkraken-neon") return GRAPH_THEMES.neon;
-  return GRAPH_THEMES.classic;
+  const name = document.documentElement.dataset.theme;
+  const base =
+    name === "gitkraken" ? GRAPH_THEMES.gitkraken : name === "gitkraken-neon" ? GRAPH_THEMES.neon : GRAPH_THEMES.classic;
+  if (base.metrics.originX === 0) return base;
+  if (sizedTheme?.base !== base || sizedTheme.width !== refColumnWidth) {
+    sizedTheme = {
+      base,
+      width: refColumnWidth,
+      theme: { ...base, metrics: { ...base.metrics, originX: refColumnWidth } },
+    };
+  }
+  return sizedTheme.theme;
 }
+
+let refColumnWidth = loadRefColumnWidth();
+let sizedTheme: { base: GraphTheme; width: number; theme: GraphTheme } | null = null;
+
+const REF_COLUMN_MIN = 90;
+const REF_COLUMN_MAX = 420;
+
+// Height of the column header the GitKraken themes draw above the log.
+const HEADER_H = 26;
 
 // Row height of the graph in force, for callers that scroll to a row.
 export function logRowHeight(): number {
@@ -127,6 +166,42 @@ export function setBisectMarks(st: BisectStatus | null): boolean {
   // Once the culprit is found HEAD is just wherever testing stopped.
   if (!st.first_bad) bisectCurrent = st.current;
   return true;
+}
+
+// What clicking a "+N" ref badge does: open a list of every ref on the commit.
+// Set once at startup (see main.ts) rather than passed to renderLog, which has
+// many callers that would all pass the same thing.
+let onMoreRefs: ((id: string, x: number, y: number) => void) | null = null;
+
+export function setOnMoreRefs(handler: (id: string, x: number, y: number) => void): void {
+  onMoreRefs = handler;
+}
+
+// A "+N" badge; clicking it lists the refs it stands for.
+function moreBadge(id: string, n: number): HTMLElement {
+  const chip = el("span", { class: "commit-ref more", text: `+${n}`, title: "Show all refs on this commit" });
+  chip.addEventListener("click", (e) => {
+    if (!onMoreRefs) return;
+    // Not a row click: the row stays as selected as it was.
+    e.stopPropagation();
+    onMoreRefs(id, e.clientX, e.clientY);
+  });
+  return chip;
+}
+
+// A badge in the GitKraken ref column: name, then a laptop for the local copy
+// and a remote icon per remote copy (see TipRef).
+function tipBadge(t: TipRef): HTMLElement {
+  const where = [t.local ? "local" : "", ...t.remotes].filter(Boolean).join(" · ");
+  const chip = el("span", {
+    class: `commit-ref tip ${t.head ? "head" : t.kind}`,
+    title: t.kind === "tag" ? `tag ${t.name}` : `${t.name} (${where})`,
+  });
+  if (t.kind === "tag") chip.append(tagIcon());
+  chip.append(el("span", { class: "commit-ref-name", text: t.head ? `✓ ${t.name}` : t.name }));
+  if (t.local) chip.append(laptopIcon());
+  for (let k = 0; k < t.remotes.length; k++) chip.append(githubIcon());
+  return chip;
 }
 
 // One ResizeObserver at a time; disconnected when the log is re-rendered.
@@ -225,12 +300,16 @@ export function renderLog(
     return NO_LOG;
   }
 
-  const theme = graphThemeFor();
-  const metrics = theme.metrics;
+  // `let`: dragging the ref column's edge in the header lays the graph out again
+  // in place (see relayout), without tearing the log down.
+  let theme = graphThemeFor();
+  let metrics = theme.metrics;
   const laneColor = (color: number) => theme.colors[color % theme.colors.length];
-  // The GitKraken themes put ref badges in their own column left of the graph.
+  // The GitKraken themes put ref badges in their own column left of the graph,
+  // with a column header above the log.
   const refsColumn = metrics.originX > 0;
-  const { layout, emailById, laneWidth, maxLane } = getLayout(rows, host.clientWidth, theme);
+  const headerH = refsColumn ? HEADER_H : 0;
+  let { layout, emailById, laneWidth, maxLane } = getLayout(rows, host.clientWidth, theme);
   const rowH = metrics.rowHeight;
   let currentSelected = selectedId;
   // A local mutable copy, same pattern as `currentSelected` — updated
@@ -252,7 +331,56 @@ export function renderLog(
   // width, under the graph, so its hover and selection colour would hide it.
   // The graph ignores the pointer, so clicks still reach the rows.
   content.append(rowsLayer, graph);
+
+  // Column header (GitKraken themes): sticky at the top of the scrolling pane,
+  // so the rows scroll under it. The cells are placed by renderWindow, because
+  // where the commit message starts moves with the lanes on screen.
+  const header = el("div", { class: "log-header" });
+  const headRefs = el("span", { class: "log-header-cell", text: "Branch / Tag" });
+  const headGraph = el("span", { class: "log-header-cell", text: "Graph" });
+  const headCols = el("div", { class: "log-header-cols" }, [
+    el("span", { class: "commit-summary", text: "Commit message" }),
+    el("span", { class: "commit-meta commit-author", text: "Author" }),
+    el("span", { class: "commit-meta commit-time", text: "Date" }),
+    el("span", { class: "commit-sha", text: "SHA" }),
+  ]);
+  const grip = el("span", { class: "log-header-grip", title: "Drag to resize the branch column" });
+  header.append(headRefs, headGraph, headCols, grip);
+  if (refsColumn) host.append(header);
   host.append(content);
+
+  function relayout(): void {
+    theme = graphThemeFor();
+    metrics = theme.metrics;
+    ({ layout, emailById, laneWidth, maxLane } = getLayout(rows, host.clientWidth, theme));
+    content.style.height = `${layout.height}px`;
+    graph.setAttribute("width", String(layout.width));
+  }
+
+  // Drag the ref column's right edge to resize it. The width is kept for the
+  // session as the drag goes and saved when it ends.
+  grip.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = refColumnWidth;
+    const max = Math.max(REF_COLUMN_MIN, Math.min(REF_COLUMN_MAX, host.clientWidth * 0.5));
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    const onMove = (ev: MouseEvent) => {
+      refColumnWidth = Math.max(REF_COLUMN_MIN, Math.min(max, startW + ev.clientX - startX));
+      relayout();
+      renderWindow();
+    };
+    const stop = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", stop);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      saveRefColumnWidth(refColumnWidth);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", stop);
+  });
 
   // Where commit text starts. Sized to the lanes actually in use in the rows on
   // screen, not to `layout.width`, which is the widest point of the entire
@@ -281,6 +409,14 @@ export function renderLog(
     // Ask for more rows once the viewport nears the end of what's loaded.
     if (onNeedMore && scrollTop + viewH >= layout.height - rowH * 20) {
       onNeedMore();
+    }
+
+    if (refsColumn) {
+      headRefs.style.width = `${metrics.originX - 16}px`;
+      headGraph.style.left = `${metrics.originX + 8}px`;
+      headGraph.style.width = `${Math.max(0, textLeft - metrics.originX - 8)}px`;
+      grip.style.left = `${metrics.originX - 3}px`;
+      headCols.style.left = `${textLeft}px`;
     }
 
     clear(rowsLayer);
@@ -321,28 +457,30 @@ export function renderLog(
       // summary, always shown, colored per kind. Tags carry a tag glyph. Capped
       // so a heavily-tagged commit can't crowd out the row.
       const refs = refsAt?.(row.id);
-      if (refs && refs.labels.length) {
-        const box = el("span", { class: refsColumn ? "commit-refs refs-col" : "commit-refs" });
-        if (refsColumn) box.style.width = `${metrics.originX - 16}px`;
-        // The ref column has room for one badge; the rest go into "+N", the
-        // way GitKraken shows a commit with several refs.
-        const shown = refsColumn ? 1 : MAX_REF_CHIPS;
-        for (const r of refs.labels.slice(0, shown)) {
+      if (refsColumn && refs?.tips?.length) {
+        // The ref column only labels the commits refs point at, as GitKraken
+        // does, and has room for one badge; the rest go into "+N".
+        const box = el("span", { class: "commit-refs refs-col" });
+        box.style.width = `${metrics.originX - 16}px`;
+        box.append(tipBadge(refs.tips[0]));
+        if (refs.tips.length > 1) box.append(moreBadge(row.id, refs.tips.length - 1));
+        rowEl.append(box);
+      } else if (!refsColumn && refs && refs.labels.length) {
+        const box = el("span", { class: "commit-refs" });
+        for (const r of refs.labels.slice(0, MAX_REF_CHIPS)) {
           const chip = el("span", { class: `commit-ref ${r.kind}`, title: r.name });
           if (r.kind === "tag") chip.append(tagIcon());
           else if (r.kind === "remote") chip.append(githubIcon());
           chip.append(el("span", { class: "commit-ref-name", text: r.kind === "head" ? `✓ ${r.name}` : r.name }));
           box.append(chip);
         }
-        if (refs.total > shown) {
-          box.append(el("span", { class: "commit-ref more", text: `+${refs.total - shown}` }));
-        }
+        if (refs.total > MAX_REF_CHIPS) box.append(moreBadge(row.id, refs.total - MAX_REF_CHIPS));
         rowEl.append(box);
       }
 
       rowEl.append(
-        el("span", { class: "commit-meta", text: row.author_name }),
-        el("span", { class: "commit-meta", text: relativeTime(row.time) }),
+        el("span", { class: "commit-meta commit-author", text: row.author_name }),
+        el("span", { class: "commit-meta commit-time", text: relativeTime(row.time) }),
         el("span", { class: "commit-sha", text: row.short_id }),
       );
       rowEl.addEventListener("click", (e) => {
@@ -425,7 +563,7 @@ export function renderLog(
       const r = theme.nodeRadius;
 
       // GitKraken themes: a line from the commit's ref badges across to its node.
-      if (refsColumn && refsAt?.(node.id).labels.length) {
+      if (refsColumn && refsAt?.(node.id).tips?.length) {
         graph.append(
           svg("line", {
             x1: metrics.originX - 6,
@@ -523,7 +661,8 @@ export function renderLog(
   function reveal(index: number): void {
     const top = index * rowH;
     const margin = rowH * 2;
-    const viewH = host.clientHeight || 600;
+    // The sticky header covers the top of the pane, so less of it shows rows.
+    const viewH = (host.clientHeight || 600) - headerH;
     if (top - margin < host.scrollTop) {
       host.scrollTop = Math.max(0, top - margin);
     } else if (top + rowH + margin > host.scrollTop + viewH) {
@@ -568,7 +707,7 @@ export function renderLog(
       return selectIndex(next);
     },
     selectEdge: (edge) => selectIndex(edge === "first" ? 0 : rows.length - 1),
-    pageRows: () => Math.max(1, Math.floor((host.clientHeight || 600) / rowH) - 1),
+    pageRows: () => Math.max(1, Math.floor(((host.clientHeight || 600) - headerH) / rowH) - 1),
   };
 
   host.onscroll = renderWindow;

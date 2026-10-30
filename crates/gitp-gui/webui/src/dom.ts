@@ -122,6 +122,22 @@ export function githubIcon(): SVGElement {
   return s;
 }
 
+// A laptop outline, colored via `currentColor`. Marks the local copy of a branch
+// on the GitKraken themes' merged ref badges (the remote copy gets githubIcon).
+export function laptopIcon(): SVGElement {
+  const s = svg("svg", { viewBox: "0 0 16 16", class: "local-icon" });
+  s.appendChild(
+    svg("path", {
+      d: "M3 4.2a.8.8 0 0 1 .8-.8h8.4a.8.8 0 0 1 .8.8V10H3zM1.5 10h13l-.6 1.6a.8.8 0 0 1-.75.5H2.85a.8.8 0 0 1-.75-.5z",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": "1.2",
+      "stroke-linejoin": "round",
+    }),
+  );
+  return s;
+}
+
 // A small tag/label glyph, colored via `currentColor` so it inherits the chip's
 // text color. Used on tag ref chips in the commit log.
 export function tagIcon(): SVGElement {

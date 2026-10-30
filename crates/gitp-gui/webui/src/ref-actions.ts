@@ -57,6 +57,7 @@ import { checkoutCommitAction, confirmThenRun, openInteractiveRebase } from "./c
 import { showComparison } from "./compare";
 import { checkoutInNewWorktreeItem, worktreeOf } from "./worktree-actions";
 import { worktreeName } from "./views/sidebar";
+import { allRefsAt } from "./commit-refs";
 
 // Double-click a branch: check it out, then reload history + sidebar from the new
 // HEAD. Warns first if the working tree has uncommitted changes.
@@ -258,6 +259,46 @@ export function onStashMenu(s: StashRef, x: number, y: number): void {
     { separator: true },
     { label: "Delete…", danger: true, run: () => void deleteStashAction(s) },
   ];
+  showContextMenu(x, y, items);
+}
+
+// Click a "+N" ref badge in the log: every branch and tag on that commit, the
+// ones pointing at it first. A branch checks out on click, a remote branch
+// checks out as a tracking branch, and a tag opens its own menu.
+//
+// Each section is capped, so a commit on hundreds of branches still gets a menu
+// that fits on screen.
+const MORE_REFS_CAP = 20;
+
+export function onMoreRefsMenu(id: string, x: number, y: number): void {
+  const { tips, containing } = allRefsAt(id);
+  const byName = new Map(state.refs.branches.map((b) => [b.name, b]));
+  const branchItem = (name: string): MenuItem => {
+    const b = byName.get(name);
+    if (b?.is_head) return { label: `✓ ${name}` };
+    return { label: name, run: () => (b ? void checkoutBranchAction(b) : undefined) };
+  };
+  const capped = (list: MenuItem[]): MenuItem[] =>
+    list.length > MORE_REFS_CAP
+      ? [...list.slice(0, MORE_REFS_CAP), { label: `…and ${list.length - MORE_REFS_CAP} more` }]
+      : list;
+
+  const here: MenuItem[] = [];
+  for (const t of tips) {
+    if (t.kind === "tag") {
+      here.push({ label: `Tag ${t.name}…`, run: () => onTagMenu(t.name, id, x, y) });
+      continue;
+    }
+    if (t.local) here.push(branchItem(t.name));
+    for (const r of t.remotes) here.push({ label: r, run: () => void checkoutRemoteAction(r) });
+  }
+  const items: MenuItem[] = [];
+  if (here.length) items.push({ heading: "At this commit" }, ...capped(here));
+  if (containing.length) {
+    if (items.length) items.push({ separator: true });
+    items.push({ heading: "On branches" }, ...capped(containing.map(branchItem)));
+  }
+  if (!items.length) items.push({ label: "No refs on this commit" });
   showContextMenu(x, y, items);
 }
 
