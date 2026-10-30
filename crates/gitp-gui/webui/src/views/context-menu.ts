@@ -22,6 +22,9 @@ export interface MenuItem {
 }
 
 let openMenu: HTMLElement | null = null;
+// Where the open menu was asked to appear — each re-render (a submenu, a
+// prompt, Back) is placed from here again, so it fits the window as it is now.
+let anchor = { x: 0, y: 0 };
 let onDocMouseDown: ((e: MouseEvent) => void) | null = null;
 let onKeyDown: ((e: KeyboardEvent) => void) | null = null;
 let onScroll: ((e: Event) => void) | null = null;
@@ -42,19 +45,10 @@ export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
   closeContextMenu();
 
   const menu = el("div", { class: "menu commit-menu" });
-  renderItems(menu, items);
+  anchor = { x, y };
   document.body.append(menu);
   openMenu = menu;
-
-  menu.style.left = `${x}px`;
-  menu.style.top = `${y}px`;
-  const rect = menu.getBoundingClientRect();
-  if (rect.right > window.innerWidth) {
-    menu.style.left = `${Math.max(4, window.innerWidth - rect.width - 4)}px`;
-  }
-  if (rect.bottom > window.innerHeight) {
-    menu.style.top = `${Math.max(4, window.innerHeight - rect.height - 4)}px`;
-  }
+  renderItems(menu, items);
 
   onDocMouseDown = (e: MouseEvent) => {
     if (!menu.contains(e.target as Node)) closeContextMenu();
@@ -80,6 +74,35 @@ export function showPrompt(x: number, y: number, prompt: NonNullable<MenuItem["p
   if (openMenu) renderPrompt(openMenu, items, prompt);
 }
 
+// Where a `width` × `height` menu asked for at (x, y) goes: there, or pulled
+// back from the right / bottom edge of a `vw` × `vh` window, never past its
+// top-left margin.
+export function clampMenu(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  vw: number,
+  vh: number,
+): { left: number; top: number } {
+  return {
+    left: x + width > vw ? Math.max(4, vw - width - 4) : x,
+    top: y + height > vh ? Math.max(4, vh - height - 4) : y,
+  };
+}
+
+// Place the menu at its anchor, kept inside the window. Run after every
+// re-render: a submenu or prompt can be taller or wider than what it replaced.
+function fitMenu(menu: HTMLElement): void {
+  // Measured at the anchor, so it's sized for the room it has there.
+  menu.style.left = `${anchor.x}px`;
+  menu.style.top = `${anchor.y}px`;
+  const { width, height } = menu.getBoundingClientRect();
+  const { left, top } = clampMenu(anchor.x, anchor.y, width, height, window.innerWidth, window.innerHeight);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
 // `parent`: the items to go back to, when these are a submenu's.
 function renderItems(menu: HTMLElement, items: MenuItem[], parent?: MenuItem[]): void {
   menu.replaceChildren();
@@ -100,7 +123,7 @@ function renderItems(menu: HTMLElement, items: MenuItem[], parent?: MenuItem[]):
       if (it.submenu) {
         renderItems(menu, it.submenu, items);
       } else if (it.prompt) {
-        renderPrompt(menu, items, it.prompt);
+        renderPrompt(menu, items, it.prompt, parent);
       } else {
         closeContextMenu();
         it.run?.();
@@ -113,14 +136,16 @@ function renderItems(menu: HTMLElement, items: MenuItem[], parent?: MenuItem[]):
     back.addEventListener("click", () => renderItems(menu, parent));
     menu.append(el("div", { class: "menu-sep" }), back);
   }
+  fitMenu(menu);
 }
 
 // Swap the menu for a single labelled input; Enter/Create submits, Escape
-// returns to the item list.
+// returns to the item list (and its `parent`, when it's a submenu's).
 function renderPrompt(
   menu: HTMLElement,
   items: MenuItem[],
   prompt: NonNullable<MenuItem["prompt"]>,
+  parent?: MenuItem[],
 ): void {
   menu.replaceChildren();
   const input = el("input", {
@@ -139,10 +164,11 @@ function renderPrompt(
   input.addEventListener("keydown", (e) => {
     e.stopPropagation();
     if (e.key === "Enter") submit();
-    else if (e.key === "Escape") renderItems(menu, items);
+    else if (e.key === "Escape") renderItems(menu, items, parent);
   });
   menu.append(el("div", { class: "menu-newbranch" }, [input, create]));
   autoGrowInput(input);
+  fitMenu(menu);
   requestAnimationFrame(() => {
     input.focus();
     input.select();
