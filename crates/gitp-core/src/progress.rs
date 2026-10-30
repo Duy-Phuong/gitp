@@ -8,6 +8,7 @@
 //! filtered out of the returned text, so callers get the same output they did
 //! before progress existed.
 
+use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -19,6 +20,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+use crate::activity::Run;
 use crate::error::{Error, Result};
 use crate::git_bin::git_command;
 use crate::repo::Repo;
@@ -96,7 +98,7 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        run_progress(workdir, args, &self.net, self.has_own_askpass())
+        run_progress(workdir, args, &self.net, self.has_own_askpass(), workdir)
     }
 
     /// Mark the end of an operation's network part and the start of a local
@@ -137,12 +139,14 @@ impl Repo {
 /// Run `git <args>` in `dir` with the progress / cancel / askpass `hooks` (see
 /// [`Repo::run_git_progress`]). Free of any `Repo` so a clone, which has none
 /// yet, runs the same way. `own_askpass`: the user configured `core.askPass`,
-/// which ours must not override.
+/// which ours must not override. `log_as`: the working tree whose activity log
+/// the command goes in — for a clone, the one it makes rather than `dir`.
 pub(crate) fn run_progress(
     dir: &Path,
     args: &[&str],
     hooks: &NetworkHooks,
     own_askpass: bool,
+    log_as: &Path,
 ) -> Result<String> {
     if cancelled(hooks) {
         return Err(Error::Cancelled);
@@ -164,9 +168,15 @@ pub(crate) fn run_progress(
     // answer — not just git itself (see `kill`).
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+    let run = Run::start(log_as, args.iter().map(OsStr::new));
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            let err = format!("failed to run git: {e}");
+            run.fail(&err);
+            return Err(Error::Message(err));
+        }
+    };
 
     // Both pipes are drained on their own threads — reading one while git
     // blocks writing the other would deadlock. Stderr is split into lines
@@ -200,14 +210,28 @@ pub(crate) fn run_progress(
             Err(RecvTimeoutError::Disconnected) => break,
         }
         if cancelled(hooks) {
+            messages.push_str("Cancelled");
+            run.finish(None, false, b"", messages.as_bytes());
             return Err(kill(child));
         }
     }
 
-    let status = child
-        .wait()
-        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+    let status = match child.wait() {
+        Ok(status) => status,
+        Err(e) => {
+            let err = format!("failed to run git: {e}");
+            run.fail(&err);
+            return Err(Error::Message(err));
+        }
+    };
     let stdout = stdout_reader.join().unwrap_or_default();
+    // The meters are left out: hundreds of lines, none worth reading later.
+    run.finish(
+        status.code(),
+        status.success(),
+        &stdout,
+        messages.as_bytes(),
+    );
     let mut combined = String::from_utf8_lossy(&stdout).into_owned();
     combined.push_str(&messages);
     let combined = combined.trim().to_string();

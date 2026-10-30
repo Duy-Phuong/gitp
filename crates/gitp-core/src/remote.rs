@@ -9,6 +9,7 @@ use std::process::Stdio;
 
 use serde::Deserialize;
 
+use crate::activity;
 use crate::error::{Error, Result};
 use crate::git_bin::git_command;
 use crate::repo::Repo;
@@ -322,12 +323,13 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        let output = git_command()
-            .current_dir(workdir)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .args(args)
-            .output()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        let output = activity::output(
+            git_command()
+                .current_dir(workdir)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .args(args),
+        )
+        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
 
         let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
         combined.push_str(&String::from_utf8_lossy(&output.stderr));
@@ -349,12 +351,13 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        let output = git_command()
-            .current_dir(workdir)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .args(args)
-            .output()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        let output = activity::output(
+            git_command()
+                .current_dir(workdir)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .args(args),
+        )
+        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
         if output.status.success() {
             Ok(output.stdout)
         } else {
@@ -372,26 +375,33 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        let mut child = git_command()
-            .current_dir(workdir)
+        let mut cmd = git_command();
+        cmd.current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
-
-        child
-            .stdin
-            .take()
-            .ok_or_else(|| Error::Message("failed to open git stdin".into()))?
-            .write_all(input.as_bytes())
-            .map_err(|e| Error::Message(format!("failed to write patch to git: {e}")))?;
-
-        let output = child
-            .wait_with_output()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+            .stderr(Stdio::piped());
+        let run = activity::Run::of(&cmd);
+        let output = (|| {
+            let mut child = cmd
+                .spawn()
+                .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+            child
+                .stdin
+                .take()
+                .ok_or_else(|| Error::Message("failed to open git stdin".into()))?
+                .write_all(input.as_bytes())
+                .map_err(|e| Error::Message(format!("failed to write patch to git: {e}")))?;
+            child
+                .wait_with_output()
+                .map_err(|e| Error::Message(format!("failed to run git: {e}")))
+        })();
+        match &output {
+            Ok(out) => run.finish_output(out),
+            Err(e) => run.fail(e),
+        }
+        let output = output?;
 
         let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
         combined.push_str(&String::from_utf8_lossy(&output.stderr));

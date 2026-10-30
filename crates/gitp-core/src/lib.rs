@@ -2,6 +2,7 @@
 //!
 //! Frontend-agnostic. No UI, no CLI concerns. Returns plain data structures.
 
+mod activity;
 mod bisect;
 mod blame;
 mod branch_ops;
@@ -39,6 +40,7 @@ mod tree;
 mod undo;
 mod worktree_ops;
 
+pub use activity::ActivityEntry;
 pub use bisect::{BisectMark, BisectStatus};
 pub use blame::BlameLine;
 pub use branch_ops::MergeMode;
