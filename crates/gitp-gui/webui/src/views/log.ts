@@ -4,11 +4,11 @@
 // buffer) are in the DOM, so a repo with 100k commits stays responsive. The
 // full geometry is computed once (cheap math); only rendering is windowed.
 
-import { avatarUrl } from "../avatar";
+import { authorInitials, avatarUrl } from "../avatar";
 import { clear, el, githubIcon, laptopIcon, svg, tagIcon } from "../dom";
 import { edgePath, fitLaneWidth, GRAPH_METRICS, type GraphMetrics, layoutGraph } from "../graph";
-import { loadRefColumnWidth, REF_COLUMN_DEFAULT, saveRefColumnWidth } from "../prefs";
-import { relativeTime } from "../timeago";
+import { loadAuthorInitials, loadDateFormat, loadRefColumnWidth, REF_COLUMN_DEFAULT, saveRefColumnWidth } from "../prefs";
+import { formatTime, fullTime } from "../timeago";
 import { refDragHandle } from "./ref-drag";
 import type { BisectStatus, CommitRow, StashRef } from "../types";
 
@@ -404,6 +404,11 @@ export function renderLog(
   let { layout, emailById, laneWidth, maxLane } = getLayout(rows, host.clientWidth, theme);
   const rowH = metrics.rowHeight;
   let currentSelected = selectedId;
+  // Read once per render: Settings redraws the log when either changes. A
+  // full date needs a wider Date column than "3h ago".
+  const dateFormat = loadDateFormat();
+  const timeClass = `commit-meta commit-time${dateFormat === "relative" ? "" : " wide"}`;
+  const nameById = loadAuthorInitials() ? new Map(rows.map((r) => [r.id, r.author_name])) : null;
   // A local mutable copy, same pattern as `currentSelected` — updated
   // immediately so `renderWindow` reflects a click without waiting for the
   // caller to re-invoke renderLog with a fresh `multiSelected`.
@@ -446,7 +451,7 @@ export function renderLog(
   const headCols = el("div", { class: "log-header-cols" }, [
     el("span", { class: "commit-summary", text: "Commit message" }),
     el("span", { class: "commit-meta commit-author", text: "Author" }),
-    el("span", { class: "commit-meta commit-time", text: "Date" }),
+    el("span", { class: timeClass, text: "Date" }),
     el("span", { class: "commit-sha", text: "SHA" }),
   ]);
   const grip = el("span", { class: "log-header-grip", title: "Drag to resize the branch column" });
@@ -625,7 +630,7 @@ export function renderLog(
 
       rowEl.append(
         el("span", { class: "commit-meta commit-author", text: row.author_name }),
-        el("span", { class: "commit-meta commit-time", text: relativeTime(row.time) }),
+        el("span", { class: timeClass, text: formatTime(row.time, dateFormat), title: fullTime(row.time) }),
         el("span", { class: "commit-sha", text: row.short_id }),
       );
       rowEl.addEventListener("click", (e) => {
@@ -761,11 +766,16 @@ export function renderLog(
       // image is missing/fails to load.
       graphBody.append(svg("circle", { cx: node.x, cy: node.y, r, fill: color }));
 
-      const url = theme.node === "avatar" ? avatarUrl(emailById.get(node.id) ?? "") : undefined;
+      const url = theme.node === "avatar" && !nameById ? avatarUrl(emailById.get(node.id) ?? "") : undefined;
       if (theme.node === "dot") {
         // An inner ring in the background colour, so the dot reads as a bead
         // on the line rather than a blob.
         graphBody.append(svg("circle", { class: "node-inner", cx: node.x, cy: node.y, r: r - 2.5, fill: "none", "stroke-width": 1.5 }));
+      } else if (nameById) {
+        // Settings → Appearance: the author's initials on the lane colour.
+        const text = svg("text", { class: "node-initials", x: node.x, y: node.y, "font-size": Math.round(r * 0.85) });
+        text.textContent = authorInitials(nameById.get(node.id) ?? "");
+        graphBody.append(text);
       } else if (url) {
         const img = svg("image", {
           x: node.x - r,

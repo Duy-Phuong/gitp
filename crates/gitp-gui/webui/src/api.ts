@@ -181,12 +181,18 @@ export async function cloneRepository(url: string, dest: string, options: CloneO
   return invokeNetwork<string>("clone_repository", { url, dest, options });
 }
 
-// `git init` a new repository at `path` (created if missing), writing a
-// `.gitignore` with `gitignore` and a README.md when asked. Open it afterwards
-// with openRepo. In preview mode it simply succeeds.
-export async function initRepository(path: string, gitignore: string | null, readme: boolean): Promise<void> {
+// `git init` a new repository at `path` (created if missing) on `branch`
+// (null: git's default), writing a `.gitignore` with `gitignore` and a
+// README.md when asked. Open it afterwards with openRepo. In preview mode it
+// simply succeeds.
+export async function initRepository(
+  path: string,
+  branch: string | null,
+  gitignore: string | null,
+  readme: boolean,
+): Promise<void> {
   if (!isTauri()) return;
-  return invoke<void>("init_repository", { path, gitignore, readme });
+  return invoke<void>("init_repository", { path, branch, gitignore, readme });
 }
 
 // A cheap "has history changed?" probe. Pulling a page to find out costs ~264 KB
@@ -863,9 +869,10 @@ export async function removeRemote(name: string): Promise<string> {
 
 // `background`: the periodic refresh nobody asked for, which must never pop a
 // credential dialog — it fails quietly instead.
-export async function fetchAll(opts: { background?: boolean } = {}): Promise<string> {
+// `prune` (default on) drops remote-tracking branches deleted upstream.
+export async function fetchAll(opts: { background?: boolean; prune?: boolean } = {}): Promise<string> {
   if (!isTauri()) return "Fetched all remotes (preview mock)";
-  return invokeNetwork<string>("fetch_all", { background: opts.background ?? false });
+  return invokeNetwork<string>("fetch_all", { background: opts.background ?? false, prune: opts.prune ?? true });
 }
 
 export async function fetchAndUpdateBranch(name: string): Promise<string> {

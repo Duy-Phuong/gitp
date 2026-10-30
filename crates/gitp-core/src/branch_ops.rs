@@ -272,7 +272,18 @@ impl Repo {
     /// remote-tracking refs so every branch's ahead/behind reflects the remote.
     /// Doesn't touch the working tree or any local branch.
     pub fn fetch_all(&self) -> Result<String> {
-        self.run_git_network(&["fetch", "--all", "--prune"])
+        self.fetch_all_with(true)
+    }
+
+    /// [`Repo::fetch_all`], pruning only when `prune` is set — the auto-fetch's
+    /// "Prune remote-tracking branches" setting. Without `--prune`, a
+    /// remote-tracking branch deleted upstream stays until a fetch that prunes.
+    pub fn fetch_all_with(&self, prune: bool) -> Result<String> {
+        if prune {
+            self.run_git_network(&["fetch", "--all", "--prune"])
+        } else {
+            self.run_git_network(&["fetch", "--all"])
+        }
     }
 
     /// Fetch a single named remote (`git fetch --prune <remote>`), for when the

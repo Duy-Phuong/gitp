@@ -43,6 +43,7 @@ import { EMPTY_REFS, PAGE_SIZE, state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { markRemoteFetched, remoteFetchedAt, renderFetchAge } from "./fetch-age";
 import {
+  loadAutoFetchPrune,
   loadFavoriteRepos,
   loadGraphPrefs,
   loadWorkspace,
@@ -556,7 +557,7 @@ async function refreshRemoteQuietly(throttleMs = REMOTE_REFRESH_THROTTLE_MS): Pr
   // navigation start another one.
   markRemoteFetched();
   try {
-    await fetchAll({ background: true });
+    await fetchAll({ background: true, prune: loadAutoFetchPrune() });
     await loadSidebar();
   } catch (err) {
     readFailed("Background fetch failed", err);

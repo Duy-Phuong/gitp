@@ -552,7 +552,7 @@ mod tests {
 
         // No remotes, so this fetch has nothing to do — it only has to
         // register and deregister.
-        fetch_all_impl(&state, false).expect("fetch");
+        fetch_all_impl(&state, false, true).expect("fetch");
         assert!(state.1.in_flight.lock().unwrap().is_empty());
     }
 
@@ -579,7 +579,7 @@ mod tests {
         let state = RepoState::default();
         state.1.set_askpass("/opt/gitp/askpass".into());
         open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
-        let _ = fetch_all_impl(&state, background);
+        let _ = fetch_all_impl(&state, background, true);
         let env = std::fs::read_to_string(&dump).expect("the transport ran");
         env.lines().any(|l| l == "GIT_ASKPASS=/opt/gitp/askpass")
     }

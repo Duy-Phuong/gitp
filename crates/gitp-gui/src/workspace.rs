@@ -68,15 +68,23 @@ pub(crate) fn open_repo_impl(state: &RepoState, path: String) -> Result<Workspac
     Ok(guard.view())
 }
 
-/// `git init` a new repository at `path`, with an optional `.gitignore` body
-/// and README (see `gitp_core::init_repo`). The frontend opens it afterwards
-/// the way it opens any folder, so this doesn't touch the workspace.
+/// `git init` a new repository at `path` on `branch`, with an optional
+/// `.gitignore` body and README (see `gitp_core::init_repo`). The frontend
+/// opens it afterwards the way it opens any folder, so this doesn't touch the
+/// workspace.
 fn init_repository_impl(
     path: String,
+    branch: Option<String>,
     gitignore: Option<String>,
     readme: bool,
 ) -> Result<(), String> {
-    gitp_core::init_repo(Path::new(&path), gitignore.as_deref(), readme).map_err(to_message)
+    gitp_core::init_repo(
+        Path::new(&path),
+        branch.as_deref(),
+        gitignore.as_deref(),
+        readme,
+    )
+    .map_err(to_message)
 }
 
 fn list_repos_impl(state: &RepoState) -> Result<WorkspaceView, String> {
@@ -176,10 +184,11 @@ pub(crate) fn open_repo(path: String, state: State<RepoState>) -> Result<Workspa
 #[tauri::command(async)]
 pub(crate) fn init_repository(
     path: String,
+    branch: Option<String>,
     gitignore: Option<String>,
     readme: bool,
 ) -> Result<(), String> {
-    init_repository_impl(path, gitignore, readme)
+    init_repository_impl(path, branch, gitignore, readme)
 }
 
 #[tauri::command(async)]
@@ -221,7 +230,7 @@ mod tests {
         // no commits must load, not fail the first snapshot.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fresh").to_str().unwrap().to_string();
-        init_repository_impl(path.clone(), Some("target/\n".into()), true).expect("init");
+        init_repository_impl(path.clone(), None, Some("target/\n".into()), true).expect("init");
 
         let state = RepoState::default();
         open_repo_impl(&state, path).expect("open");

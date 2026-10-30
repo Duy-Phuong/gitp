@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 
-import { relativeTime } from "./timeago";
+import { formatTime, relativeTime } from "./timeago";
 
 // A fixed "now" so the expectations are about the formatter, not the clock.
 const NOW_SECONDS = 1_700_000_000;
@@ -40,5 +40,29 @@ describe("relativeTime", () => {
   it("treats a future timestamp as just now instead of a negative age", () => {
     vi.useFakeTimers();
     expect(at(-120)).toBe("just now");
+  });
+});
+
+describe("formatTime", () => {
+  afterEach(() => vi.useRealTimers());
+
+  // 2026-10-30 14:05:09 in whatever zone the tests run in: the absolute form
+  // is local time, so the instant is built from local fields.
+  const local = new Date(2026, 9, 30, 14, 5, 9).getTime() / 1000;
+
+  it("relative is the compact age", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime((local + 3 * 3600) * 1000);
+    expect(formatTime(local, "relative")).toBe("3h ago");
+  });
+
+  it("absolute is year-month-day hour:minute, zero-padded, in local time", () => {
+    expect(formatTime(local, "absolute")).toBe("2026-10-30 14:05");
+    expect(formatTime(new Date(2026, 0, 2, 3, 4).getTime() / 1000, "absolute")).toBe("2026-01-02 03:04");
+  });
+
+  it("locale is the locale's own short date and time", () => {
+    const expected = new Date(local * 1000).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+    expect(formatTime(local, "locale")).toBe(expected);
   });
 });

@@ -7,7 +7,7 @@
 // button) are the caller's — this view only lists and selects.
 
 import { clear, el } from "../dom";
-import { relativeTime } from "../timeago";
+import { formatTime } from "../timeago";
 import type { ReflogEntry } from "../types";
 
 export interface ReflogCallbacks {
@@ -107,7 +107,7 @@ export function setupReflog(host: HTMLElement, cb: ReflogCallbacks): ReflogHandl
         el("span", { class: "reflog-selector", text: entry.selector }),
         ...(action ? [el("span", { class: "reflog-action", text: action })] : []),
         el("span", { class: "commit-summary", text: detail }),
-        el("span", { class: "commit-meta", text: relativeTime(entry.time) }),
+        el("span", { class: "commit-meta", text: formatTime(entry.time) }),
         el("span", { class: "commit-sha", text: entry.short_id }),
         more,
       ],
