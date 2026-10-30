@@ -8,7 +8,6 @@ import type { LogHandle } from "./views/log";
 import type { DetailHandle } from "./views/detail";
 import type { ChangesHandle } from "./views/changes";
 import type { ConflictHandle } from "./views/conflict";
-import type { TerminalHandle } from "./views/terminal";
 import type { ReflogHandle } from "./views/reflog";
 import type {
   BisectStatus,
@@ -93,8 +92,22 @@ export const state: State = {
   bisect: null,
 };
 
+// The terminal panel (terminal-panel.ts): a strip of shell tabs per repo.
+export interface TerminalPanel {
+  // The tab on screen.
+  fit: () => void;
+  focus: () => void;
+  clear: () => void;
+  // Every tab, the ones in the background included.
+  syncTheme: () => void;
+  // Put `path`'s tabs on screen — the active repo changed.
+  showRepo: (path: string) => void;
+  // Kill `path`'s shells — its repo tab was closed.
+  closeRepo: (path: string) => void;
+}
+
 export const ui = {
-  terminal: null as TerminalHandle | null,
+  terminal: null as TerminalPanel | null,
   detailView: null as DetailHandle | null,
   changesView: null as ChangesHandle | null,
   conflictView: null as ConflictHandle | null,

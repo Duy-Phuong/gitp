@@ -2917,6 +2917,53 @@ textarea.rename-input {
   letter-spacing: 0.02em;
   text-transform: uppercase;
 }
+/* One tab per shell; the strip shows the active repo's. */
+.terminal-tabs {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+}
+.terminal-tab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-family: var(--mono);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.terminal-tab:hover {
+  background: var(--bg-elev-2);
+}
+.terminal-tab.active {
+  background: var(--bg-elev-2);
+  border-color: var(--border);
+  color: var(--text);
+}
+.terminal-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 12px;
+  line-height: 1;
+}
+.terminal-tab-close:hover {
+  background: var(--row-hover);
+  color: var(--text);
+}
+.terminal-tab-add {
+  font-size: 13px;
+  line-height: 1;
+}
 /* The working directory the shell is in — the terminal follows the active repo,
    and which one that is should not be a guess. */
 .terminal-cwd {
@@ -2957,6 +3004,12 @@ textarea.rename-input {
   flex: 1;
   min-height: 0;
   padding: 4px 8px;
+}
+.terminal-tab-host {
+  height: 100%;
+}
+.terminal-tab-host.hidden {
+  display: none;
 }
 /* xterm paints its own background; without this the panel colour shows through
    as a seam around the rows. */

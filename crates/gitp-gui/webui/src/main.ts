@@ -112,7 +112,7 @@ import {
 import { onWorktreeMenu } from "./worktree-actions";
 import { addRemoteAction, onRemoteFolderMenu, onRemotesMenu } from "./remote-actions";
 import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
-import { toggleTerminal, warmTerminal } from "./terminal-panel";
+import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
 import { openQuickLaunch } from "./quick-launch-commands";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
@@ -151,6 +151,7 @@ function wireUi(): void {
   setupShortcuts();
   setupBranchMenu();
   $("#quick-launch-btn").addEventListener("click", openQuickLaunch);
+  setupTerminalPanel();
   $("#terminal-toggle").addEventListener("click", toggleTerminal);
   $("#terminal-close").addEventListener("click", toggleTerminal);
   $("#terminal-clear").addEventListener("click", () => {

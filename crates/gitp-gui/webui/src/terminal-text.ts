@@ -1,0 +1,10 @@
+// Pure text helpers for the terminal panel.
+
+// The number for a new tab: the lowest one not in use, so closing "zsh 2" and
+// opening another gives "zsh 2" again rather than counting up forever.
+export function tabNumber(used: number[]): number {
+  let n = 1;
+  while (used.includes(n)) n++;
+  return n;
+}
+

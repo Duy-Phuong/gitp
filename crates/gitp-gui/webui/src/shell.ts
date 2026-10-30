@@ -129,6 +129,7 @@ export function applyWorkspace(ws: Workspace): void {
   renderRepoTabs();
   $("#action-bar").classList.toggle("hidden", state.repos.length === 0);
   $<HTMLInputElement>("#repo-input").value = state.repoPath;
+  ui.terminal?.showRepo(state.repoPath);
   saveWorkspace();
 }
 
@@ -202,6 +203,7 @@ export async function closeRepoTab(path: string): Promise<void> {
   const wasActive = path === state.repoPath;
   try {
     applyWorkspace(await closeRepo(path));
+    ui.terminal?.closeRepo(path);
     if (state.repos.length === 0) {
       state.rows = [];
       rowsRepoPath = "";
