@@ -516,7 +516,8 @@ export async function resetAction(rev: string, short: string, mode: ResetMode): 
   const question =
     mode === "Hard"
       ? `Hard reset the current branch to ${short}?\n\n` +
-        "Uncommitted changes and any commits after it on this branch will be lost."
+        "Uncommitted changes and any commits after it on this branch will be discarded. " +
+        "gitp saves the uncommitted changes first, so Undo can bring them back along with the commits."
       : `${mode} reset the current branch to ${short}?`;
   await confirmThenRun(question, `Resetting (${mode.toLowerCase()}) to ${short}`, () =>
     resetTo(rev, mode),

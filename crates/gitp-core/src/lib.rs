@@ -73,5 +73,5 @@ pub use signature::{CommitSignature, SignatureStatus, SigningConfig};
 pub use status::StatusLists;
 pub use submodule_ops::{Submodule, SubmoduleState};
 pub use tag_ops::TagDetail;
-pub use undo::{DeletedBranch, FileBlob, Undoable};
+pub use undo::{DeletedBranch, FileBlob, HeadMoveMode, Undoable};
 pub use worktree_ops::{Worktree, WorktreeTarget};

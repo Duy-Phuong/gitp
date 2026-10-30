@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use gitp_core::{FileBlob, Repo, Undoable};
+use gitp_core::{FileBlob, HeadMoveMode, Repo, Undoable};
 use serde::Serialize;
 use tauri::State;
 
@@ -77,17 +77,46 @@ fn remove_snapshot(path: Option<&String>) {
 
 /// Run a HEAD-moving op (commit / reset / merge / cherry-pick / revert /
 /// rebase), recording it as an undo only when the branch tip actually moves.
-/// `soft` keeps the working tree on undo (commit, so undone changes stay
-/// staged); otherwise undo uses a safe `--keep` reset. Invalidates the log.
+/// `mode` is how undo/redo move it back (see `HeadMoveMode`): `Soft` for a
+/// commit, so undone changes stay staged; `Keep` for most ops. Invalidates the
+/// log.
 pub(crate) fn with_recorded_head_move<T>(
     state: &RepoState,
     label: &str,
-    soft: bool,
+    mode: HeadMoveMode,
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
 ) -> Result<T, String> {
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
+    record_head_move(session, label, mode, None, f)
+}
+
+/// Run a hard reset, first saving the uncommitted work it is about to throw
+/// away (see `Repo::backup_uncommitted_work`) so its Undo can bring that back
+/// too. The backup is taken under the same lock as the reset, so nothing can
+/// change the working tree in between. A backup that fails stops the reset:
+/// the confirmation promised the work could come back.
+pub(crate) fn with_recorded_hard_reset<T>(
+    state: &RepoState,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
+) -> Result<T, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let backup = session.repo.backup_uncommitted_work().map_err(|e| {
+        format!("Couldn't save a backup of the uncommitted changes, so nothing was reset: {e}")
+    })?;
+    record_head_move(session, "Reset", HeadMoveMode::Keep, backup, f)
+}
+
+fn record_head_move<T>(
+    session: &mut Session,
+    label: &str,
+    mode: HeadMoveMode,
+    backup: Option<String>,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
+) -> Result<T, String> {
     let before = session.repo.head_commit_id().ok(); // None on an unborn HEAD
     let out = f(&session.repo).map_err(to_message)?;
     // A rebase paused on `edit` or a conflict (or a merge/cherry-pick/revert
@@ -101,14 +130,17 @@ pub(crate) fn with_recorded_head_move<T>(
     }
     let after = session.repo.head_commit_id().map_err(to_message)?;
     if let Some(before) = before {
-        if before != after {
+        // A backed-up hard reset is recorded even when the tip stayed put
+        // (reset to HEAD): discarding the work was the whole action.
+        if before != after || backup.is_some() {
             set_undo(
                 session,
                 Undoable::HeadMoved {
                     label: label.into(),
                     before,
                     after,
-                    soft,
+                    mode,
+                    backup,
                 },
             );
         }
@@ -231,7 +263,8 @@ pub(crate) fn record_pull(session: &mut Session, before: Option<String>) {
                 label: "Pull".into(),
                 before,
                 after,
-                soft: false,
+                mode: HeadMoveMode::Keep,
+                backup: None,
             },
         );
     }
@@ -961,6 +994,48 @@ mod tests {
         undo_impl(&state).expect("undo soft reset");
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), c2);
         assert_eq!(porcelain(dir.path()), "", "clean again");
+    }
+
+    #[test]
+    fn a_mixed_reset_is_undone_and_redone_without_touching_the_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1", "c2"]);
+        let state = open(dir.path());
+        let c2 = git_out(dir.path(), &["rev-parse", "HEAD"]);
+
+        reset_impl(&state, "HEAD~1".into(), ResetMode::Mixed).expect("mixed reset");
+        let c1 = git_out(dir.path(), &["rev-parse", "HEAD"]);
+        // c2's change is now a local edit, which a `--keep` undo would refuse.
+        undo_impl(&state).expect("undo mixed reset");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), c2);
+        assert_eq!(porcelain(dir.path()), "", "clean again");
+
+        redo_impl(&state).expect("redo mixed reset");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), c1);
+        let f = std::fs::read_to_string(dir.path().join("f.txt")).unwrap();
+        assert_eq!(f, "line 1\n", "the working tree kept c2's content");
+    }
+
+    #[test]
+    fn a_hard_reset_with_uncommitted_work_is_undone_with_the_work() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1", "c2"]);
+        let state = open(dir.path());
+        let c2 = git_out(dir.path(), &["rev-parse", "HEAD"]);
+        std::fs::write(dir.path().join("f.txt"), "unsaved\n").unwrap();
+        std::fs::write(dir.path().join("u.txt"), "untracked\n").unwrap();
+
+        reset_impl(&state, "HEAD~1".into(), ResetMode::Hard).expect("hard reset");
+        let f = std::fs::read_to_string(dir.path().join("f.txt")).unwrap();
+        assert_eq!(f, "line 0\n", "the edit is gone");
+        assert_eq!(undo_state_impl(&state).unwrap().undo.as_deref(), Some("Reset"));
+
+        undo_impl(&state).expect("undo hard reset");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), c2);
+        let f = std::fs::read_to_string(dir.path().join("f.txt")).unwrap();
+        assert_eq!(f, "unsaved\n", "the edit is back");
+        let u = std::fs::read_to_string(dir.path().join("u.txt")).unwrap();
+        assert_eq!(u, "untracked\n");
     }
 
     #[test]

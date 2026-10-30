@@ -1,6 +1,6 @@
 //! Merge / rebase conflict resolution.
 
-use gitp_core::{ConflictSides, ConflictStatus, Repo};
+use gitp_core::{ConflictSides, ConflictStatus, HeadMoveMode, Repo};
 use tauri::State;
 
 use crate::state::{with_repo, with_repo_clearing_undo, RepoState};
@@ -45,7 +45,9 @@ fn finish_conflict_impl(state: &RepoState, message: String) -> Result<String, St
         "revert" => "Revert",
         _ => return with_repo_clearing_undo(state, |repo| repo.finish_conflict(&message)),
     };
-    with_recorded_head_move(state, label, false, |repo| repo.finish_conflict(&message))
+    with_recorded_head_move(state, label, HeadMoveMode::Keep, |repo| {
+        repo.finish_conflict(&message)
+    })
 }
 
 // --- Tauri commands --------------------------------------------------------

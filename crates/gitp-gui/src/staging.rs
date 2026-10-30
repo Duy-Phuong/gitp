@@ -2,7 +2,7 @@
 //! single hunks or selected lines), committing, discarding, and per-file
 //! patch / ignore.
 
-use gitp_core::{FileDiff, Repo, SigningConfig, StatusLists};
+use gitp_core::{FileDiff, HeadMoveMode, Repo, SigningConfig, StatusLists};
 use tauri::State;
 
 use crate::state::{ensure_status, to_message, with_repo, with_repo_clearing_undo, RepoState};
@@ -154,7 +154,7 @@ pub(crate) fn commit_changes_impl(
     // Recorded soft: undo moves the tip back but keeps the committed changes
     // staged, so a mistaken commit can be reworked rather than lost.
     let label = if amend { "Amend commit" } else { "Commit" };
-    with_recorded_head_move(state, label, true, |repo| {
+    with_recorded_head_move(state, label, HeadMoveMode::Soft, |repo| {
         repo.commit(&subject, &body, amend, sign, no_verify)
     })
 }
