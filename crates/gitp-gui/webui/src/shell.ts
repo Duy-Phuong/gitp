@@ -639,7 +639,8 @@ function sidebarSignature(repoName: string): string {
     r.head ?? "",
     r.branches.map((b) => `${b.name}:${b.target}:${b.is_head ? 1 : 0}:${b.ahead}:${b.behind}:${b.has_upstream ? 1 : 0}`).join(","),
     r.remotes.map((rm) => `${rm.name}:${rm.target}`).join(","),
-    r.tags.map((t) => `${t.name}:${t.target}`).join(","),
+    // Annotating a tag keeps its commit but changes its tooltip.
+    r.tags.map((t) => `${t.name}:${t.target}:${t.message === null ? 0 : 1}`).join(","),
     r.stashes.map((st) => `${st.index}:${st.message}`).join(","),
     r.recent.join(","),
     [...state.sbCollapsed].sort().join(","),
