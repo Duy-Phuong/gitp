@@ -11,6 +11,7 @@ impl Repo {
     /// nothing is touched — HEAD stays put and the working tree is preserved —
     /// and a clear, actionable error is returned instead of git2's cryptic one.
     pub fn checkout_branch(&self, name: &str) -> Result<()> {
+        self.refuse_switch_mid_operation(name)?;
         // A local branch wins over anything else called `name`. `revparse_ext`
         // follows git's DWIM order, which tries `refs/tags/<name>` *before*
         // `refs/heads/<name>` — so with a same-named tag it would hand back the
@@ -80,6 +81,7 @@ impl Repo {
     /// Returns git's output for display.
     pub fn checkout_remote(&self, remote_ref: &str) -> Result<String> {
         let remote_ref = ref_arg(remote_ref)?;
+        self.refuse_switch_mid_operation(remote_ref)?;
         let local = self.local_name_for_remote(remote_ref);
         if self
             .inner
@@ -113,8 +115,34 @@ impl Repo {
     /// Create a branch named `name` at the current HEAD commit and check it out.
     /// Errors if the branch already exists.
     pub fn create_branch(&self, name: &str) -> Result<()> {
+        // Checked before the branch exists, so a refusal leaves no stray branch.
+        self.refuse_switch_mid_operation(name)?;
         let head = self.inner.head()?.peel_to_commit()?;
         self.inner.branch(name, &head, false)?;
         self.checkout_branch(name)
+    }
+
+    /// Refuse to move HEAD while a merge, rebase, cherry-pick or revert is
+    /// paused, as `git switch` does. git2's checkout (and `git checkout`) would
+    /// switch anyway when the files happen not to clash: the pending merge then
+    /// commits onto the new branch, and a continued rebase rewrites the branch
+    /// switched to.
+    pub(crate) fn refuse_switch_mid_operation(&self, target: &str) -> Result<()> {
+        let git_dir = self.inner.path();
+        let op = if git_dir.join("MERGE_HEAD").exists() {
+            "a merge"
+        } else if git_dir.join("rebase-merge").is_dir() || git_dir.join("rebase-apply").is_dir() {
+            "a rebase"
+        } else if git_dir.join("CHERRY_PICK_HEAD").exists() {
+            "a cherry-pick"
+        } else if git_dir.join("REVERT_HEAD").exists() {
+            "a revert"
+        } else {
+            return Ok(());
+        };
+        Err(Error::Message(format!(
+            "Can't switch to {target}: {op} is in progress. Finish or abort it first \
+             — nothing was changed."
+        )))
     }
 }
