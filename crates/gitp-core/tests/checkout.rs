@@ -312,14 +312,24 @@ fn stash_and_switch_carries_clashing_work_over_and_drops_the_stash() {
 
     // …but stashed, switched and popped, it merges into feature's version.
     let out = repo
-        .stash_and_switch("feature", |r| r.checkout_branch("feature").map(|()| String::new()))
+        .stash_and_switch("feature", |r| {
+            r.checkout_branch("feature").map(|()| String::new())
+        })
         .unwrap();
 
     assert!(!out.stash_kept);
     assert_eq!(head_branch(&repo), "feature");
     assert_eq!(read(&fx, "a.txt"), "ONE\n2\n3\n4\nFIVE\n");
-    assert_eq!(read(&fx, "new.txt"), "untracked\n", "untracked files come along");
-    assert_eq!(stash_count(&fx), 0, "the auto-stash is dropped once re-applied");
+    assert_eq!(
+        read(&fx, "new.txt"),
+        "untracked\n",
+        "untracked files come along"
+    );
+    assert_eq!(
+        stash_count(&fx),
+        0,
+        "the auto-stash is dropped once re-applied"
+    );
 }
 
 #[test]
@@ -328,16 +338,24 @@ fn stash_and_switch_keeps_the_stash_when_re_applying_conflicts() {
     std::fs::write(fx.path().join("a.txt"), "my precious work\n").unwrap();
 
     let out = repo
-        .stash_and_switch("feature", |r| r.checkout_branch("feature").map(|()| String::new()))
+        .stash_and_switch("feature", |r| {
+            r.checkout_branch("feature").map(|()| String::new())
+        })
         .unwrap();
 
     assert!(out.stash_kept, "a conflicting pop must be reported");
     assert_eq!(head_branch(&repo), "feature", "the switch itself happened");
-    assert!(read(&fx, "a.txt").contains("<<<<<<<"), "conflict markers left to resolve");
+    assert!(
+        read(&fx, "a.txt").contains("<<<<<<<"),
+        "conflict markers left to resolve"
+    );
     // git keeps the entry when the pop conflicts — the work is still there.
     assert_eq!(stash_count(&fx), 1);
     let message = repo.stash_message(0).unwrap();
-    assert!(message.contains("Auto-stash before switching to feature"), "{message}");
+    assert!(
+        message.contains("Auto-stash before switching to feature"),
+        "{message}"
+    );
 }
 
 #[test]
@@ -353,7 +371,9 @@ fn stash_and_switch_puts_the_work_back_when_the_switch_fails() {
     }
 
     let err = repo
-        .stash_and_switch("nope", |r| r.checkout_branch("nope").map(|()| String::new()))
+        .stash_and_switch("nope", |r| {
+            r.checkout_branch("nope").map(|()| String::new())
+        })
         .expect_err("no such branch");
 
     assert!(err.to_string().contains("put back"), "{err}");
@@ -365,5 +385,8 @@ fn stash_and_switch_puts_the_work_back_when_the_switch_fails() {
         .unwrap()
         .status_file(std::path::Path::new("staged.txt"))
         .unwrap();
-    assert!(staged.contains(git2::Status::INDEX_NEW), "staged work stays staged");
+    assert!(
+        staged.contains(git2::Status::INDEX_NEW),
+        "staged work stays staged"
+    );
 }

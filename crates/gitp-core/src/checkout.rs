@@ -174,7 +174,10 @@ impl Repo {
             Err(e) => return Err(e),
         };
         if !stashed {
-            return Ok(StashSwitch { output, stash_kept: false });
+            return Ok(StashSwitch {
+                output,
+                stash_kept: false,
+            });
         }
         match self.run_git(&["stash", "pop"]) {
             Ok(pop) => Ok(StashSwitch {

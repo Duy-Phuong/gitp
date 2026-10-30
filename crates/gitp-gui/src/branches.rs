@@ -42,7 +42,9 @@ fn stash_and_switch_impl(
                 .map(|()| format!("Switched to {target}")),
             "remote" => r.checkout_remote(&target),
             "commit" => r.checkout_commit(&target),
-            _ => Err(gitp_core::Error::Message(format!("unknown checkout kind {kind}"))),
+            _ => Err(gitp_core::Error::Message(format!(
+                "unknown checkout kind {kind}"
+            ))),
         })
     })
 }
