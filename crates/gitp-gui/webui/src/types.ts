@@ -343,6 +343,10 @@ export interface RepoSummary {
   behind: number;
   has_upstream: boolean;
   changes: number;
+  // The main worktree's folder when this is a linked worktree of it.
+  worktree_of: string | null;
+  // The git directory shared with the repo's other worktrees ("" when missing).
+  common_dir: string;
 }
 
 // Git's progress for one repo of a Workspaces bulk fetch or pull.

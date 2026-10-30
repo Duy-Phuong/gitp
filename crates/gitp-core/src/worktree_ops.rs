@@ -133,6 +133,35 @@ impl Repo {
             .find(|w| !w.is_current && w.branch.as_deref() == Some(name))
             .map(|w| w.path)
     }
+
+    /// The git directory every worktree of this repository shares (the main
+    /// worktree's `.git`), resolved so that each worktree gives the same path.
+    /// Objects and remote-tracking refs live there: fetching from one worktree
+    /// fetches for all of them.
+    pub fn common_dir(&self) -> PathBuf {
+        let own = self.inner.path();
+        // A linked worktree's git dir (`.git/worktrees/<name>/`) names the
+        // common one in its `commondir` file, usually relative to itself.
+        // libgit2 knows it too but this git2 doesn't expose it.
+        let common = std::fs::read_to_string(own.join("commondir"))
+            .map(|text| own.join(text.trim_end_matches(['\n', '\r'])))
+            .unwrap_or_else(|_| own.to_path_buf());
+        canonical(&common)
+    }
+
+    /// The main worktree's folder when this `Repo` was opened in a linked
+    /// worktree; `None` in the main one.
+    pub fn main_worktree(&self) -> Option<String> {
+        // Checked first so the common case doesn't spawn git.
+        if !self.inner.is_worktree() {
+            return None;
+        }
+        self.worktrees()
+            .ok()?
+            .into_iter()
+            .find(|w| w.is_main)
+            .map(|w| w.path)
+    }
 }
 
 fn path_arg(path: &Path) -> Result<&str> {

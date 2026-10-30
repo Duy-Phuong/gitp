@@ -20,10 +20,13 @@ import {
   workspacePull,
   workspaceRepoSummary,
   workspaceScanFolder,
+  workspaceWithWorktrees,
 } from "../api";
 import {
   folderName,
+  groupBySharedRepo,
   loadLocalWorkspaces,
+  repoLabel,
   runPool,
   saveLocalWorkspaces,
   summaryText,
@@ -81,7 +84,7 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
   const summaries = new Map<string, RepoSummary | { error: string }>();
   const results = new Map<string, RowResult>();
   // The cells a progress event or a finished summary rewrites in place.
-  const rowCells = new Map<string, { branch: HTMLElement; state: HTMLElement; result: HTMLElement; fix: HTMLElement }>();
+  const rowCells = new Map<string, { name: HTMLElement; branch: HTMLElement; state: HTMLElement; result: HTMLElement; fix: HTMLElement }>();
   let running = false;
   let stopped = false;
 
@@ -92,6 +95,10 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
   const isMissing = (p: string) => {
     const s = summaries.get(p);
     return !!s && "missing" in s && s.missing;
+  };
+  const summaryOf = (p: string): RepoSummary | undefined => {
+    const s = summaries.get(p);
+    return s && !("error" in s) ? s : undefined;
   };
 
   overlay = el("div", { class: "modal-overlay" });
@@ -172,16 +179,57 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
     return folder;
   };
 
-  const addRepos = (paths: string[]) => {
-    if (!current) return;
-    commit(withReposAdded(list, current, paths));
+  // Each repo comes with its other worktrees, and nothing the workspace
+  // already has is added again. Resolves with the paths that were added.
+  const addRepos = async (paths: string[]): Promise<string[]> => {
+    const ws = list.find((w) => w.name === current);
+    if (!ws) return [];
+    const added = await workspaceWithWorktrees(ws.repos, paths);
+    commit(withReposAdded(list, ws.name, added));
     renderNav();
     renderBody();
+    return added;
+  };
+
+  // "…, plus 2 worktrees" for what came with `paths` (empty when nothing did).
+  const withWorktreesNote = (added: string[], paths: string[]) => {
+    const n = added.filter((p) => !paths.includes(p)).length;
+    return n ? `, plus ${n} ${n === 1 ? "worktree" : "worktrees"}` : "";
   };
 
   const addFolder = async () => {
     const folder = await pickFolder("Add a Repository to the Workspace");
-    if (folder) addRepos([folder]);
+    if (!folder) return;
+    const added = await addRepos([folder]);
+    const extra = withWorktreesNote(added, [folder]);
+    if (extra) note(`Added ${folderName(folder)}${extra}.`);
+  };
+
+  // Add the worktrees of a repo already in the workspace — one added before
+  // they existed, say.
+  const addWorktreesOf = () => {
+    const ws = list.find((w) => w.name === current);
+    const repos = ws?.repos.filter((p) => !isMissing(p)) ?? [];
+    if (!ws || repos.length === 0) return;
+    openFormDialog(
+      {
+        title: "Add Worktrees",
+        sub: "Adds the repository's other worktrees that aren't in this workspace yet.",
+        fields: [
+          {
+            label: "Of",
+            value: repos.find((p) => checked.has(p)) ?? repos[0],
+            choices: repos.map((p) => ({ value: p, label: repoLabel(p, summaryOf(p)?.worktree_of) })),
+          },
+        ],
+        submitLabel: "Add",
+      },
+      ([repo]) =>
+        void addRepos([repo]).then((added) => {
+          const name = folderName(repo);
+          note(added.length ? `Added ${added.length} ${added.length === 1 ? "worktree" : "worktrees"} of ${name}.` : `${name} has no other worktrees to add.`);
+        }),
+    );
   };
 
   const addAllInFolder = async () => {
@@ -193,8 +241,8 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
         note(`No repositories directly inside ${folder}.`);
         return;
       }
-      addRepos(found);
-      note(`Found ${found.length} ${found.length === 1 ? "repository" : "repositories"} in ${folder}.`);
+      const added = await addRepos(found);
+      note(`Found ${found.length} ${found.length === 1 ? "repository" : "repositories"} in ${folder}${withWorktreesNote(added, found)}.`);
     } catch (err) {
       note(`Couldn't read ${folder}: ${String(err)}`);
     }
@@ -224,6 +272,7 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
     const cells = rowCells.get(path);
     const s = summaries.get(path);
     if (!cells || !s) return;
+    cells.name.textContent = repoLabel(path, "error" in s ? null : s.worktree_of);
     cells.fix.replaceChildren();
     cells.state.classList.remove("missing", "error");
     if ("error" in s) {
@@ -305,8 +354,19 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
     addOne.addEventListener("click", () => void addFolder());
     const addAll = el("button", { class: "btn ghost small", text: "Add All in Folder…", title: "Add every repository directly inside a folder" });
     addAll.addEventListener("click", () => void addAllInFolder());
+    const addWorktrees = el("button", { class: "btn ghost small", text: "Add Worktrees of…", title: "Add the other worktrees of a repository in this workspace" });
+    addWorktrees.addEventListener("click", addWorktreesOf);
+    addWorktrees.disabled = ws.repos.length === 0;
     body.append(
-      el("div", { class: "workspaces-head" }, [el("span", { class: "settings-heading", text: ws.name }), el("span", { class: "spacer" }), addOne, addAll, rename, del]),
+      el("div", { class: "workspaces-head" }, [
+        el("span", { class: "settings-heading", text: ws.name }),
+        el("span", { class: "spacer" }),
+        addOne,
+        addAll,
+        addWorktrees,
+        rename,
+        del,
+      ]),
     );
 
     if (ws.repos.length === 0) {
@@ -352,6 +412,7 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
         refreshBulkBar();
       });
       const cells = {
+        name: el("div", { class: "workspaces-name", text: repoLabel(path, summaryOf(path)?.worktree_of) }),
         branch: el("td", { class: "workspaces-branch" }),
         state: el("td", { class: "workspaces-state" }),
         result: el("span", { class: "workspaces-result" }),
@@ -362,7 +423,7 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
         el("tr", {}, [
           el("td", { class: "workspaces-check" }, [box]),
           el("td", { class: "workspaces-repo" }, [
-            el("div", { class: "workspaces-name", text: folderName(path) }),
+            cells.name,
             el("div", { class: "workspaces-path", text: path, title: path }),
           ]),
           cells.branch,
@@ -422,25 +483,32 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
     let failed = 0;
     let done = 0;
     note(`${kind === "fetch" ? "Fetching" : "Pulling"} ${paths.length} ${paths.length === 1 ? "repository" : "repositories"}…`);
+    // Worktrees of one repository share its objects and remote-tracking refs,
+    // so a fetch runs once per repository and its other rows share the
+    // outcome. Pulls stay per row: each worktree merges into its own branch.
+    if (kind === "fetch") await runPool(paths.filter((p) => !summaries.has(p)), 4, loadSummary);
+    const groups = kind === "fetch" ? groupBySharedRepo(paths, (p) => summaryOf(p)?.common_dir || undefined) : paths.map((p) => [p]);
     await runPool(
-      paths,
+      groups,
       CONCURRENCY,
-      async (path) => {
-        setResult(path, { kind: "running", text: kind === "fetch" ? "Fetching…" : "Pulling…" });
+      async ([path, ...shared]) => {
+        const rows = [path, ...shared];
+        for (const p of rows) setResult(p, { kind: "running", text: kind === "fetch" ? "Fetching…" : "Pulling…" });
         try {
           const out = kind === "fetch" ? await workspaceFetch(path) : await workspacePull(path, mode);
           const text = kind === "fetch" ? "Fetched" : /up.to.date/i.test(out) ? "Up to date" : "Pulled";
           setResult(path, { kind: "done", text, detail: out || text });
-          done++;
+          for (const p of shared) setResult(p, { kind: "done", text, detail: `Fetched once for this repository's worktrees, from ${folderName(path)}.` });
+          done += rows.length;
         } catch (err) {
-          if (isCancelled(err)) setResult(path, { kind: "cancelled", text: "Cancelled" });
-          else {
-            failed++;
-            const detail = String(err);
-            setResult(path, { kind: "failed", text: detail.split("\n")[0], detail });
+          const detail = String(err);
+          for (const p of rows) {
+            if (isCancelled(err)) setResult(p, { kind: "cancelled", text: "Cancelled" });
+            else setResult(p, { kind: "failed", text: detail.split("\n")[0], detail });
           }
+          if (!isCancelled(err)) failed += rows.length;
         }
-        await loadSummary(path);
+        await Promise.all(rows.map(loadSummary));
       },
       () => stopped,
     );
