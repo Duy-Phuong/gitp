@@ -135,7 +135,7 @@ impl NetworkOps {
     }
 
     /// Register an operation on `path`, returning the flag that cancels it.
-    fn begin(&self, path: &str) -> Arc<AtomicBool> {
+    pub(crate) fn begin(&self, path: &str) -> Arc<AtomicBool> {
         let flag = Arc::new(AtomicBool::new(false));
         if let Ok(mut ops) = self.in_flight.lock() {
             ops.push((path.to_string(), Arc::clone(&flag)));
@@ -143,7 +143,7 @@ impl NetworkOps {
         flag
     }
 
-    fn end(&self, flag: &Arc<AtomicBool>) {
+    pub(crate) fn end(&self, flag: &Arc<AtomicBool>) {
         if let Ok(mut ops) = self.in_flight.lock() {
             ops.retain(|(_, f)| !Arc::ptr_eq(f, flag));
         }
@@ -158,27 +158,35 @@ impl NetworkOps {
         }
     }
 
-    /// A progress callback for `op` that forwards to the frontend, at most
-    /// once per [`PROGRESS_INTERVAL`] — except a new phase, which always goes
-    /// through so a short one isn't skipped entirely.
+    /// A progress callback for `op` that forwards to the frontend, throttled
+    /// (see [`throttled`]).
     fn reporter(&self, op: &'static str) -> Option<ProgressFn> {
         let emit = Arc::clone(self.emit.get()?);
-        let last: Mutex<Option<(Instant, String)>> = Mutex::new(None);
-        Some(Box::new(move |p: &Progress| {
-            let Ok(mut last) = last.lock() else { return };
-            let due = match &*last {
-                Some((at, phase)) => *phase != p.phase || at.elapsed() >= PROGRESS_INTERVAL,
-                None => true,
-            };
-            if due {
-                *last = Some((Instant::now(), p.phase.clone()));
-                emit(ProgressEvent {
-                    op,
-                    progress: p.clone(),
-                });
-            }
+        Some(throttled(move |p| {
+            emit(ProgressEvent {
+                op,
+                progress: p.clone(),
+            })
         }))
     }
+}
+
+/// A progress callback that passes git's updates on to `emit` at most once per
+/// [`PROGRESS_INTERVAL`] — except a new phase, which always goes through so a
+/// short one isn't skipped entirely.
+pub(crate) fn throttled(emit: impl Fn(&Progress) + Send + 'static) -> ProgressFn {
+    let last: Mutex<Option<(Instant, String)>> = Mutex::new(None);
+    Box::new(move |p: &Progress| {
+        let Ok(mut last) = last.lock() else { return };
+        let due = match &*last {
+            Some((at, phase)) => *phase != p.phase || at.elapsed() >= PROGRESS_INTERVAL,
+            None => true,
+        };
+        if due {
+            *last = Some((Instant::now(), p.phase.clone()));
+            emit(p);
+        }
+    })
 }
 
 /// One open repository as shown in the tab bar.

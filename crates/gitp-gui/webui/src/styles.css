@@ -4526,3 +4526,146 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   height: 6px;
   border-radius: 3px;
 }
+
+/* Workspaces screen (Quick Launch → Workspaces…): the Settings layout, with a
+   workspace list on the left and the chosen one's repos as a table. */
+.workspaces-modal {
+  width: min(960px, 94vw);
+  height: min(580px, 86vh);
+}
+.workspaces-nav {
+  flex-basis: 170px;
+  overflow-y: auto;
+}
+.workspaces-nav .settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workspaces-nav-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspaces-nav-count {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.workspaces-new {
+  margin-top: 8px;
+}
+.workspaces-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.workspaces-head,
+.workspaces-bulk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.workspaces-head .spacer,
+.workspaces-bulk .spacer {
+  flex: 1;
+}
+.workspaces-count,
+.workspaces-status {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.workspaces-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspaces-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.workspaces-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.workspaces-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.workspaces-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-elev-2);
+  text-align: left;
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.workspaces-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.workspaces-table .workspaces-check {
+  width: 24px;
+}
+.workspaces-repo {
+  max-width: 280px;
+}
+.workspaces-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.workspaces-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspaces-branch {
+  font-family: var(--mono);
+}
+.workspaces-state.missing,
+.workspaces-state.error,
+.workspaces-result.failed {
+  color: var(--danger, #ff7b72);
+}
+.workspaces-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  color: var(--text-dim);
+}
+.workspaces-result > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspaces-result.done {
+  color: var(--add-fg);
+}
+.workspaces-result-link {
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.workspaces-fix {
+  display: inline-flex;
+  gap: 4px;
+  margin-right: 6px;
+}
+.workspaces-fix:empty {
+  display: none;
+}
