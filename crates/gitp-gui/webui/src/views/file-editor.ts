@@ -1,6 +1,7 @@
 // The in-app file editor: a working-tree file in a plain <textarea>, with
 // Save, Save and Stage, and Close. Cmd/Ctrl+S saves; a dot by the name marks
-// unsaved edits, and closing with some asks Save / Don't Save / Cancel. A
+// unsaved edits, and closing with some asks Save / Don't Save / Cancel. Save
+// asks before overwriting a file changed on disk since it was opened. A
 // Markdown file can be previewed (see markdown-preview.ts).
 //
 // The backend hands the text over with "\n" line breaks — what a textarea
@@ -9,6 +10,7 @@
 
 import { el } from "../dom";
 import type { TextFile } from "../types";
+import { askChoice } from "./choice-dialog";
 import { renderMarkdown } from "./markdown-preview";
 
 export interface FileEditorDeps {
@@ -38,8 +40,12 @@ export async function openFileEditor(path: string, deps: FileEditorDeps): Promis
   }
   if (isOpen) return; // opened again while this one was reading
   isOpen = true;
-  const { crlf } = file;
+  let { crlf } = file;
   let saved = file.text;
+  // The file's text as last read from or written to disk. Save compares the
+  // disk with it, so an edit made meanwhile elsewhere (another editor, a
+  // checkout) isn't overwritten without asking.
+  let onDisk = file.text;
   let saving = false;
   // Set while the Save / Don't Save / Cancel question is up.
   let asking = false;
@@ -122,6 +128,7 @@ export async function openFileEditor(path: string, deps: FileEditorDeps): Promis
     paint();
     const content = text.value;
     try {
+      if (!(await mayWrite())) return false;
       await deps.write(path, content, crlf);
     } catch (err) {
       deps.reportError("Save failed", String(err));
@@ -131,6 +138,7 @@ export async function openFileEditor(path: string, deps: FileEditorDeps): Promis
       paint();
     }
     saved = content;
+    onDisk = content;
     paint();
     let message = `Saved ${path}.`;
     if (andStage) {
@@ -143,6 +151,35 @@ export async function openFileEditor(path: string, deps: FileEditorDeps): Promis
     }
     deps.onSaved(message);
     return true;
+  }
+
+  // Whether Save may write: yes while the disk still holds what this editor
+  // last read or wrote, else the user decides. Reload takes the disk's text
+  // instead (dropping the edits here) and doesn't save.
+  async function mayWrite(): Promise<boolean> {
+    const now = await deps.read(path);
+    if (now?.text === onDisk) return true;
+    asking = true;
+    const answer = await askChoice<"overwrite" | "reload" | "cancel">(
+      now ? `${path} changed on disk` : `${path} was deleted`,
+      now
+        ? "It was changed outside this editor since you opened it. Overwrite it with your version, or reload it and drop your edits here?"
+        : "It was deleted outside this editor since you opened it. Save it again from your version?",
+      [
+        ...(now ? [{ label: "Reload", answer: "reload" as const, left: true }] : []),
+        { label: "Cancel", answer: "cancel" },
+        { label: now ? "Overwrite" : "Save", answer: "overwrite", primary: true },
+      ],
+      "cancel",
+      "file-editor-ask",
+    );
+    asking = false;
+    if (answer === "reload" && now) {
+      text.value = saved = onDisk = now.text;
+      crlf = now.crlf;
+    }
+    if (answer !== "overwrite") text.focus();
+    return answer === "overwrite";
   }
 
   function close(): void {
@@ -208,42 +245,15 @@ export async function openFileEditor(path: string, deps: FileEditorDeps): Promis
 // Save / Don't Save / Cancel for closing with unsaved edits. Escape or a
 // backdrop click cancels; Save has focus, so Enter saves.
 function askSave(path: string): Promise<"save" | "discard" | "cancel"> {
-  return new Promise((resolve) => {
-    const overlay = el("div", { class: "modal-overlay" });
-    const done = (answer: "save" | "discard" | "cancel") => {
-      document.removeEventListener("keydown", onKey, true);
-      overlay.remove();
-      resolve(answer);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      e.stopPropagation();
-      done("cancel");
-    };
-    const btn = (label: string, cls: string, answer: "save" | "discard" | "cancel") => {
-      const b = el("button", { class: cls, text: label });
-      b.addEventListener("click", () => done(answer));
-      return b;
-    };
-    const save = btn("Save", "btn", "save");
-    overlay.append(
-      el("div", { class: "modal file-editor-ask" }, [
-        el("div", { class: "modal-title", text: `Save changes to ${path}?` }),
-        el("div", { class: "modal-sub", text: "Your changes are lost if you don't save them." }),
-        el("div", { class: "modal-actions" }, [
-          btn("Don't Save", "btn ghost", "discard"),
-          el("span", { class: "spacer" }),
-          btn("Cancel", "btn ghost", "cancel"),
-          save,
-        ]),
-      ]),
-    );
-    overlay.addEventListener("mousedown", (e) => {
-      if (e.target === overlay) done("cancel");
-    });
-    document.addEventListener("keydown", onKey, true);
-    document.body.append(overlay);
-    requestAnimationFrame(() => save.focus());
-  });
+  return askChoice<"save" | "discard" | "cancel">(
+    `Save changes to ${path}?`,
+    "Your changes are lost if you don't save them.",
+    [
+      { label: "Don't Save", answer: "discard", left: true },
+      { label: "Cancel", answer: "cancel" },
+      { label: "Save", answer: "save", primary: true },
+    ],
+    "cancel",
+    "file-editor-ask",
+  );
 }
