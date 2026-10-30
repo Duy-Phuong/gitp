@@ -4,6 +4,10 @@
 //! Two modes, named after git's range syntax: two-dot (`base..head`) diffs the
 //! two trees directly; three-dot (`base...head`) diffs from their merge base
 //! to `head`, i.e. only what `head` added since the two diverged.
+//!
+//! Besides a revision, a side can be [`EMPTY_REV`] — no files at all — so a
+//! combined diff of a run of commits that starts at a root commit can diff
+//! from before it.
 
 use serde::Serialize;
 
@@ -11,7 +15,13 @@ use crate::diff::{collect_files, FileDiff};
 use crate::error::{Error, Result};
 use crate::repo::Repo;
 
-/// One side of a comparison.
+/// The `rev` naming the empty tree as a side of a comparison. It reads as a
+/// label because it is shown as one, and can never be a ref name (those can't
+/// contain a space), so it can't shadow a real revision.
+pub const EMPTY_REV: &str = "Empty Tree";
+
+/// One side of a comparison. `id`, `short_id` and `summary` are empty for
+/// [`EMPTY_REV`], which is no commit.
 #[derive(Debug, Clone, Serialize)]
 pub struct CompareEnd {
     /// The revision as given (a ref name or an id), for display.
@@ -43,9 +53,13 @@ impl Repo {
         let ends = self.compare_ends(base, head)?;
         let mut opts = git2::DiffOptions::new();
         let files = collect_files(&self.compare_diff(&ends, three_dot, opts.patience(true))?)?;
-        let (ahead, behind) = self
-            .inner
-            .graph_ahead_behind(ends.head.id(), ends.base.id())?;
+        let (ahead, behind) = match (ends.head.commit_id(), ends.base.commit_id()) {
+            (Some(h), Some(b)) => self.inner.graph_ahead_behind(h, b)?,
+            // The empty side has no commits: the other has all of its own.
+            (Some(h), None) => (self.count_commits(h)?, 0),
+            (None, Some(b)) => (0, self.count_commits(b)?),
+            (None, None) => (0, 0),
+        };
         Ok(Comparison {
             base: end(base, &ends.base),
             head: end(head, &ends.head),
@@ -83,18 +97,37 @@ impl Repo {
     }
 
     fn compare_ends(&self, base: &str, head: &str) -> Result<Ends<'_>> {
-        let base = self.inner.revparse_single(base)?.peel_to_commit()?;
-        let head = self.inner.revparse_single(head)?.peel_to_commit()?;
-        let merge_base = match self.inner.merge_base(base.id(), head.id()) {
-            Ok(id) => Some(id),
-            Err(e) if e.code() == git2::ErrorCode::NotFound => None,
-            Err(e) => return Err(e.into()),
+        let base = self.compare_side(base)?;
+        let head = self.compare_side(head)?;
+        let merge_base = match (base.commit_id(), head.commit_id()) {
+            (Some(b), Some(h)) => match self.inner.merge_base(b, h) {
+                Ok(id) => Some(id),
+                Err(e) if e.code() == git2::ErrorCode::NotFound => None,
+                Err(e) => return Err(e.into()),
+            },
+            _ => None,
         };
         Ok(Ends {
             base,
             head,
             merge_base,
         })
+    }
+
+    fn compare_side(&self, rev: &str) -> Result<Side<'_>> {
+        if rev == EMPTY_REV {
+            return Ok(Side::Empty);
+        }
+        Ok(Side::Commit(
+            self.inner.revparse_single(rev)?.peel_to_commit()?,
+        ))
+    }
+
+    /// How many commits `id` has in its history, itself included.
+    fn count_commits(&self, id: git2::Oid) -> Result<usize> {
+        let mut walk = self.inner.revwalk()?;
+        walk.push(id)?;
+        Ok(walk.count())
     }
 
     /// The tree-to-tree diff for a comparison, with renames detected.
@@ -110,13 +143,13 @@ impl Repo {
                     "these revisions have no common ancestor — use a two-dot comparison".into(),
                 )
             })?;
-            self.inner.find_commit(id)?.tree()?
+            Some(self.inner.find_commit(id)?.tree()?)
         } else {
             ends.base.tree()?
         };
         let mut diff =
             self.inner
-                .diff_tree_to_tree(Some(&from), Some(&ends.head.tree()?), Some(opts))?;
+                .diff_tree_to_tree(from.as_ref(), ends.head.tree()?.as_ref(), Some(opts))?;
         diff.find_similar(Some(&mut git2::DiffFindOptions::new()))?;
         Ok(diff)
     }
@@ -124,12 +157,44 @@ impl Repo {
 
 /// Both sides of a comparison, resolved, plus their merge base.
 struct Ends<'r> {
-    base: git2::Commit<'r>,
-    head: git2::Commit<'r>,
+    base: Side<'r>,
+    head: Side<'r>,
     merge_base: Option<git2::Oid>,
 }
 
-fn end(rev: &str, commit: &git2::Commit) -> CompareEnd {
+/// One side of a comparison, resolved.
+enum Side<'r> {
+    Commit(git2::Commit<'r>),
+    /// [`EMPTY_REV`].
+    Empty,
+}
+
+impl<'r> Side<'r> {
+    fn commit_id(&self) -> Option<git2::Oid> {
+        match self {
+            Side::Commit(c) => Some(c.id()),
+            Side::Empty => None,
+        }
+    }
+
+    /// The side's files; `None` is the empty tree.
+    fn tree(&self) -> Result<Option<git2::Tree<'r>>> {
+        match self {
+            Side::Commit(c) => Ok(Some(c.tree()?)),
+            Side::Empty => Ok(None),
+        }
+    }
+}
+
+fn end(rev: &str, side: &Side) -> CompareEnd {
+    let Side::Commit(commit) = side else {
+        return CompareEnd {
+            rev: rev.to_string(),
+            id: String::new(),
+            short_id: String::new(),
+            summary: String::new(),
+        };
+    };
     let id = commit.id().to_string();
     CompareEnd {
         rev: rev.to_string(),

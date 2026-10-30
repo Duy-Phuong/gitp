@@ -1,7 +1,7 @@
 mod common;
 
 use common::FixtureRepo;
-use gitp_core::{ChangeKind, Comparison, Repo};
+use gitp_core::{ChangeKind, Comparison, Repo, EMPTY_REV};
 
 /// Commit a tree holding exactly `files` (flat paths), with explicit parents,
 /// and point `refs/heads/<branch>` at it. Trees are built from scratch so a
@@ -253,4 +253,42 @@ fn three_dot_needs_a_common_ancestor() {
     assert_eq!((two.ahead, two.behind), (1, 1));
     let err = repo.compare("main", "orphan", true).unwrap_err();
     assert!(err.to_string().contains("common ancestor"), "{err}");
+}
+
+// A combined diff of commits back to the root diffs from the empty tree: every
+// file the head has reads as added, and the head's whole history is ahead.
+#[test]
+fn the_empty_tree_as_base_shows_everything_as_added() {
+    let f = FixtureRepo::init();
+    let c1 = commit_tree(&f, "main", &[("a.txt", "a\n")], &[], "c1");
+    let c2 = commit_tree(
+        &f,
+        "main",
+        &[("a.txt", "a\n"), ("b.txt", "b\n")],
+        &[c1],
+        "c2",
+    );
+    let repo = Repo::open(f.path()).unwrap();
+
+    let cmp = repo.compare(EMPTY_REV, &c2.to_string(), false).unwrap();
+    assert_eq!(
+        changes(&cmp),
+        [
+            ("a.txt".to_string(), ChangeKind::Added),
+            ("b.txt".to_string(), ChangeKind::Added),
+        ]
+    );
+    assert_eq!((cmp.ahead, cmp.behind), (2, 0));
+    assert!(cmp.merge_base.is_none());
+    assert_eq!(cmp.base.rev, EMPTY_REV);
+    assert_eq!(cmp.base.id, "");
+
+    let file = repo
+        .compare_file_diff(EMPTY_REV, &c2.to_string(), false, "b.txt", None, 3)
+        .unwrap();
+    assert_eq!(file.map(|d| d.status), Some(ChangeKind::Added));
+    assert!(
+        repo.compare(EMPTY_REV, "main", true).is_err(),
+        "no merge base"
+    );
 }

@@ -23,9 +23,11 @@ import type { CommitRow, RebaseAction, RebaseStep, ReflogEntry, ResetMode } from
 import { state, ui } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
+import { combinedDiffEnds, showComparison } from "./compare";
 import { refLabelsAt } from "./commit-refs";
 import {
   bisectStep,
+  clearCommitSelection,
   loadMoreCommits,
   loadSidebar,
   onCommitMultiSelect,
@@ -188,6 +190,16 @@ async function squashSelectedCommits(commits: CommitRow[]): Promise<void> {
   }
 }
 
+// "Show Combined Diff": what a run of consecutive commits changed together,
+// in the compare view. The selection goes first — two selected commits would
+// otherwise re-compare themselves on the next refresh (newest against oldest,
+// leaving out the oldest one's own changes).
+async function showCombinedDiff(base: string, head: string, n: number): Promise<void> {
+  await clearCommitSelection();
+  setStatus(`Combining the changes of ${n} commits…`);
+  await showComparison(base, head, false);
+}
+
 // Cherry-pick every selected commit, oldest first. A conflict pauses the
 // batch on the normal conflict resolver; finishing it resumes with whatever
 // is left in `pendingCherryPicks`, aborting cancels the rest (see the
@@ -236,7 +248,9 @@ export async function runNextCherryPick(): Promise<void> {
 function onCommitBulkContextMenu(x: number, y: number): void {
   const commits = selectedCommitsOldestFirst();
   const n = commits.length;
+  const combined = combinedDiffEnds(commits);
   const items: MenuItem[] = [
+    ...(combined ? [{ label: "Show Combined Diff", run: () => void showCombinedDiff(combined.base, combined.head, n) }] : []),
     { label: `Cherry-pick ${n} Commits`, run: () => void cherryPickSelectedCommits(commits) },
     { label: `Copy ${n} SHAs`, run: () => void copySelectedShasAction(commits) },
     { separator: true },

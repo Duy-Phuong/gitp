@@ -1575,6 +1575,10 @@ function mkReflog(to: string, from: string, message: string, time: number): Omit
 
 // --- Comparing two revisions ------------------------------------------------
 
+// The rev naming the empty tree as a side of a comparison — gitp-core's
+// EMPTY_REV. Its end comes back with no id.
+export const EMPTY_REV = "Empty Tree";
+
 // What differs between `base` and `head` (ref names or ids). `threeDot` diffs
 // from their merge base — only what `head` added since they diverged.
 export async function compareRevs(base: string, head: string, threeDot: boolean): Promise<Comparison> {
@@ -1605,6 +1609,7 @@ export async function fetchCompareFileDiff(
 // three-dot mode, so the toggle visibly does something.
 function mockCompare(base: string, head: string, threeDot: boolean): Comparison {
   const resolve = (rev: string): CompareEnd => {
+    if (rev === EMPTY_REV) return { rev, id: "", short_id: "", summary: "" };
     const target =
       [...MOCK_REFS.branches, ...MOCK_REFS.remotes, ...MOCK_REFS.tags].find((r) => r.name === rev)?.target ??
       (rev === "HEAD" ? MOCK_LOG[0].id : rev);
@@ -1614,7 +1619,9 @@ function mockCompare(base: string, head: string, threeDot: boolean): Comparison 
   };
   const b = resolve(base);
   const h = resolve(head);
-  const distance = MOCK_LOG.findIndex((r) => r.id === b.id) - MOCK_LOG.findIndex((r) => r.id === h.id);
+  // The empty tree sits below the oldest commit.
+  const depth = (end: CompareEnd) => (end.id ? MOCK_LOG.findIndex((r) => r.id === end.id) : MOCK_LOG.length);
+  const distance = depth(b) - depth(h);
   const files = b.id === h.id ? [] : mockDetail(h.id).files;
   return {
     base: b,

@@ -552,7 +552,9 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   }
 
   function compareChip(end: CompareEnd): HTMLElement {
-    return el("span", { class: "ref-chip compare-end", text: compareEndLabel(end), title: `${end.short_id} — ${end.summary}` });
+    // The empty tree (and any other end that isn't a commit) has no id to show.
+    const title = end.id ? `${end.short_id} — ${end.summary}` : compareEndLabel(end);
+    return el("span", { class: "ref-chip compare-end", text: compareEndLabel(end), title });
   }
 
   // --- File Tree tab --------------------------------------------------------
