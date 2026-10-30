@@ -3,12 +3,27 @@
 
 import type { CommitRow } from "./types";
 
-export const GRAPH_METRICS = {
+export interface GraphMetrics {
+  laneWidth: number;
+  rowHeight: number;
+  marginX: number;
+  /// Radius of the rounded right-angle corners where an edge changes lane.
+  cornerRadius: number;
+  /// Where lane 0 starts: 0, or the width of the ref-badge column that the
+  /// GitKraken themes draw to the left of the graph.
+  originX: number;
+  /// How an edge changes lane: a right angle with a rounded corner, or a
+  /// smooth S-curve.
+  curve: "corner" | "bezier";
+}
+
+export const GRAPH_METRICS: GraphMetrics = {
   laneWidth: 16,
   rowHeight: 28,
   marginX: 14,
-  /// Radius of the rounded right-angle corners where an edge changes lane.
   cornerRadius: 7,
+  originX: 0,
+  curve: "corner",
 };
 
 export interface GraphNode {
@@ -48,8 +63,8 @@ export interface GraphLayout {
   occupiedLane: Int32Array;
 }
 
-function rowY(index: number): number {
-  return index * GRAPH_METRICS.rowHeight + GRAPH_METRICS.rowHeight / 2;
+function rowY(index: number, metrics: GraphMetrics): number {
+  return index * metrics.rowHeight + metrics.rowHeight / 2;
 }
 
 /**
@@ -58,13 +73,15 @@ function rowY(index: number): number {
  * to the parent. Parents outside the loaded window are skipped.
  *
  * `laneWidth` controls horizontal lane spacing; callers compress it for repos
- * with many parallel lanes so the graph gutter stays bounded.
+ * with many parallel lanes so the graph gutter stays bounded. `metrics` is the
+ * theme's row height, margins and origin.
  */
 export function layoutGraph(
   rows: CommitRow[],
   laneWidth: number = GRAPH_METRICS.laneWidth,
+  metrics: GraphMetrics = GRAPH_METRICS,
 ): GraphLayout {
-  const laneX = (lane: number) => GRAPH_METRICS.marginX + lane * laneWidth;
+  const laneX = (lane: number) => metrics.originX + metrics.marginX + lane * laneWidth;
 
   const indexById = new Map<string, number>();
   rows.forEach((r, i) => indexById.set(r.id, i));
@@ -72,7 +89,7 @@ export function layoutGraph(
   const nodes: GraphNode[] = rows.map((r, i) => ({
     id: r.id,
     x: laneX(r.lane),
-    y: rowY(i),
+    y: rowY(i, metrics),
     color: r.color,
   }));
 
@@ -83,9 +100,9 @@ export function layoutGraph(
       if (j === undefined) return;
       edges.push({
         fromX: laneX(r.lane),
-        fromY: rowY(i),
+        fromY: rowY(i, metrics),
         toX: laneX(rows[j].lane),
-        toY: rowY(j),
+        toY: rowY(j, metrics),
         color: r.color,
         merge: k > 0,
       });
@@ -93,8 +110,8 @@ export function layoutGraph(
   });
 
   const maxLane = rows.reduce((m, r) => Math.max(m, r.lane), 0);
-  const width = laneX(maxLane) + GRAPH_METRICS.marginX;
-  const height = rows.length * GRAPH_METRICS.rowHeight;
+  const width = laneX(maxLane) + metrics.marginX;
+  const height = rows.length * metrics.rowHeight;
 
   return { nodes, edges, width, height, occupiedLane: occupiedLanes(rows, indexById, maxLane) };
 }
@@ -164,13 +181,27 @@ function occupiedLanes(
  * The radius shrinks to fit edges shorter than a full corner — a lane change
  * between adjacent rows, or between adjacent lanes on a compressed graph —
  * so the curve never overshoots either endpoint.
+ *
+ * With `metrics.curve` set to "bezier" the lane change is instead a cubic
+ * S-curve one row tall, at the same end of the edge as the corner would be.
  */
-export function edgePath(edge: GraphEdge): string {
+export function edgePath(edge: GraphEdge, metrics: GraphMetrics = GRAPH_METRICS): string {
   const { fromX, fromY, toX, toY } = edge;
   if (fromX === toX) return `M ${fromX} ${fromY} L ${toX} ${toY}`;
 
+  if (metrics.curve === "bezier") {
+    const h = Math.min(metrics.rowHeight, Math.abs(toY - fromY));
+    const k = h * 0.6; // control-point reach: how upright the curve leaves each end
+    if (edge.merge) {
+      const y = fromY + h;
+      return `M ${fromX} ${fromY} C ${fromX} ${fromY + k} ${toX} ${y - k} ${toX} ${y} L ${toX} ${toY}`;
+    }
+    const y = toY - h;
+    return `M ${fromX} ${fromY} L ${fromX} ${y} C ${fromX} ${y + k} ${toX} ${toY - k} ${toX} ${toY}`;
+  }
+
   const dir = toX > fromX ? 1 : -1;
-  const r = Math.min(GRAPH_METRICS.cornerRadius, Math.abs(toX - fromX), Math.abs(toY - fromY));
+  const r = Math.min(metrics.cornerRadius, Math.abs(toX - fromX), Math.abs(toY - fromY));
 
   if (edge.merge) {
     // Corner at the top: out sideways from the commit, then down the parent lane.
@@ -185,9 +216,13 @@ export function edgePath(edge: GraphEdge): string {
  * exceeding the default spacing. Repos with many lanes get compressed rather than
  * pushing commit text off-screen.
  */
-export function fitLaneWidth(maxLane: number, paneWidth: number): number {
-  if (maxLane <= 0) return GRAPH_METRICS.laneWidth;
+export function fitLaneWidth(
+  maxLane: number,
+  paneWidth: number,
+  metrics: GraphMetrics = GRAPH_METRICS,
+): number {
+  if (maxLane <= 0) return metrics.laneWidth;
   const maxGutter = Math.min(240, Math.max(80, paneWidth * 0.45));
-  const usable = maxGutter - 2 * GRAPH_METRICS.marginX;
-  return Math.max(4, Math.min(GRAPH_METRICS.laneWidth, usable / maxLane));
+  const usable = maxGutter - 2 * metrics.marginX;
+  return Math.max(4, Math.min(metrics.laneWidth, usable / maxLane));
 }

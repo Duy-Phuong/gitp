@@ -6,11 +6,9 @@
 
 import { avatarUrl } from "../avatar";
 import { clear, el, githubIcon, svg, tagIcon } from "../dom";
-import { edgePath, fitLaneWidth, GRAPH_METRICS, layoutGraph } from "../graph";
+import { edgePath, fitLaneWidth, GRAPH_METRICS, type GraphMetrics, layoutGraph } from "../graph";
 import { relativeTime } from "../timeago";
 import type { BisectStatus, CommitRow } from "../types";
-
-const AVATAR_R = 9;
 
 // A ref pointing at a commit, shown as a colored chip on hover.
 // What a log row shows for refs: the nearest few labels to draw, plus how many
@@ -28,23 +26,73 @@ export interface RefLabel {
   kind: "head" | "branch" | "remote" | "tag";
 }
 
-const LANE_COLORS = [
-  "#5b8cff",
-  "#f0883e",
-  "#7ee787",
-  "#d2a8ff",
-  "#ff9a94",
-  "#79c0ff",
-  "#e3b341",
-  "#ff7b72",
-];
+// How the graph is drawn. Each app theme picks one (see graphThemeFor): the
+// gitp themes share the compact classic look, the GitKraken themes move the
+// ref badges into a column of their own left of the graph, and differ from each
+// other in how a lane change is drawn and what a commit node looks like.
+interface GraphTheme {
+  metrics: GraphMetrics;
+  colors: string[];
+  /// Author avatar in a lane-coloured ring, or a plain solid dot.
+  node: "avatar" | "dot";
+  nodeRadius: number;
+  strokeWidth: number;
+  /// A lane-coloured band behind each row, from its node to the right edge.
+  bands: boolean;
+  /// Faint vertical lines down every lane.
+  guides: boolean;
+}
+
+// Main/production lanes come first, so lane 0 gets cyan and the next blue,
+// then the feature/release colours.
+const KRAKEN_COLORS = ["#00D2D3", "#54a0ff", "#f368e0", "#9b59b6", "#ff6b81", "#feca57", "#1dd1a1", "#ff9f43"];
+
+const GRAPH_THEMES: Record<"classic" | "gitkraken" | "neon", GraphTheme> = {
+  classic: {
+    metrics: GRAPH_METRICS,
+    colors: ["#5b8cff", "#f0883e", "#7ee787", "#d2a8ff", "#ff9a94", "#79c0ff", "#e3b341", "#ff7b72"],
+    node: "avatar",
+    nodeRadius: 9,
+    strokeWidth: 2,
+    bands: false,
+    guides: false,
+  },
+  gitkraken: {
+    metrics: { laneWidth: 22, rowHeight: 36, marginX: 16, cornerRadius: 10, originX: 170, curve: "corner" },
+    colors: KRAKEN_COLORS,
+    node: "avatar",
+    nodeRadius: 12,
+    strokeWidth: 2.5,
+    bands: true,
+    guides: true,
+  },
+  neon: {
+    metrics: { laneWidth: 20, rowHeight: 32, marginX: 16, cornerRadius: 8, originX: 170, curve: "bezier" },
+    colors: ["#00D2D3", "#54a0ff", "#ff6b81", "#9b59b6", "#f368e0", "#48dbfb", "#1dd1a1", "#feca57"],
+    node: "dot",
+    nodeRadius: 6,
+    strokeWidth: 2.5,
+    bands: false,
+    guides: true,
+  },
+};
+
+// The graph for the theme in force. Read from the DOM, like the terminal does,
+// rather than from prefs, so the log doesn't depend on how themes are stored.
+function graphThemeFor(): GraphTheme {
+  const theme = document.documentElement.dataset.theme;
+  if (theme === "gitkraken") return GRAPH_THEMES.gitkraken;
+  if (theme === "gitkraken-neon") return GRAPH_THEMES.neon;
+  return GRAPH_THEMES.classic;
+}
+
+// Row height of the graph in force, for callers that scroll to a row.
+export function logRowHeight(): number {
+  return graphThemeFor().metrics.rowHeight;
+}
 
 const BUFFER_ROWS = 8;
 const MAX_REF_CHIPS = 3;
-
-function laneColor(color: number): string {
-  return LANE_COLORS[color % LANE_COLORS.length];
-}
 
 // Bisect marks per commit id, drawn as a small chip before the summary; the
 // commit under test also gets its row highlighted. Set from the workspace
@@ -96,24 +144,31 @@ let resizeObserver: ResizeObserver | null = null;
 interface LayoutCache {
   rows: CommitRow[];
   hostWidth: number;
+  theme: GraphTheme;
+  maxLane: number;
   laneWidth: number;
   layout: ReturnType<typeof layoutGraph>;
   emailById: Map<string, string>;
 }
 let layoutCache: LayoutCache | null = null;
 
-function getLayout(rows: CommitRow[], hostWidth: number): LayoutCache {
+function getLayout(rows: CommitRow[], hostWidth: number, theme: GraphTheme): LayoutCache {
   const w = hostWidth || 360;
-  if (layoutCache && layoutCache.rows === rows && layoutCache.hostWidth === w) return layoutCache;
+  if (layoutCache && layoutCache.rows === rows && layoutCache.hostWidth === w && layoutCache.theme === theme) {
+    return layoutCache;
+  }
   // Compress lanes so a repo with many parallel branches doesn't push commit
-  // text off-screen. Based on the pane width available for the graph gutter.
+  // text off-screen. Based on the pane width available for the graph gutter,
+  // which is less the ref column on the GitKraken themes.
   const maxLane = rows.reduce((m, r) => Math.max(m, r.lane), 0);
-  const laneWidth = fitLaneWidth(maxLane, w);
+  const laneWidth = fitLaneWidth(maxLane, w - theme.metrics.originX, theme.metrics);
   layoutCache = {
     rows,
     hostWidth: w,
+    theme,
+    maxLane,
     laneWidth,
-    layout: layoutGraph(rows, laneWidth),
+    layout: layoutGraph(rows, laneWidth, theme.metrics),
     emailById: new Map(rows.map((r) => [r.id, r.author_email])),
   };
   return layoutCache;
@@ -170,8 +225,13 @@ export function renderLog(
     return NO_LOG;
   }
 
-  const { layout, emailById, laneWidth } = getLayout(rows, host.clientWidth);
-  const rowH = GRAPH_METRICS.rowHeight;
+  const theme = graphThemeFor();
+  const metrics = theme.metrics;
+  const laneColor = (color: number) => theme.colors[color % theme.colors.length];
+  // The GitKraken themes put ref badges in their own column left of the graph.
+  const refsColumn = metrics.originX > 0;
+  const { layout, emailById, laneWidth, maxLane } = getLayout(rows, host.clientWidth, theme);
+  const rowH = metrics.rowHeight;
   let currentSelected = selectedId;
   // A local mutable copy, same pattern as `currentSelected` — updated
   // immediately so `renderWindow` reflects a click without waiting for the
@@ -188,7 +248,10 @@ export function renderLog(
   const rowsLayer = el("div", { class: "rows" });
   rowsLayer.style.position = "absolute";
   rowsLayer.style.inset = "0";
-  content.append(graph, rowsLayer);
+  // The graph goes over the rows: on the GitKraken themes a row spans the full
+  // width, under the graph, so its hover and selection colour would hide it.
+  // The graph ignores the pointer, so clicks still reach the rows.
+  content.append(rowsLayer, graph);
   host.append(content);
 
   // Where commit text starts. Sized to the lanes actually in use in the rows on
@@ -203,7 +266,7 @@ export function renderLog(
       const lane = layout.occupiedLane[i];
       if (lane > widest) widest = lane;
     }
-    return GRAPH_METRICS.marginX + widest * laneWidth + GRAPH_METRICS.marginX;
+    return metrics.originX + metrics.marginX + widest * laneWidth + metrics.marginX;
   }
 
   function renderWindow(): void {
@@ -228,15 +291,27 @@ export function renderLog(
       });
       rowEl.style.position = "absolute";
       rowEl.style.top = `${i * rowH}px`;
-      rowEl.style.left = `${textLeft}px`;
       rowEl.style.right = "0";
       rowEl.style.height = `${rowH}px`;
-      // Lane-colored bar tying the message to its commit's graph strand/avatar.
-      // The same colour is published as `--lane` so the stylesheet can tint the
-      // selected row's background with its own strand colour (see styles.css)
-      // rather than one flat selection colour for every branch.
+      // The lane colour is published as `--lane` so the stylesheet can tint the
+      // selected row (and the GitKraken bands and badges) with its own strand
+      // colour (see styles.css) rather than one flat colour for every branch.
       rowEl.style.setProperty("--lane", laneColor(row.color));
-      rowEl.style.borderLeft = `3px solid ${laneColor(row.color)}`;
+      if (refsColumn) {
+        // Full width, so the ref badges on the left are part of the row.
+        rowEl.style.left = "0";
+        rowEl.style.paddingLeft = `${textLeft + 12}px`;
+        rowEl.classList.add("kraken");
+        if (theme.bands) {
+          const band = el("span", { class: "lane-band" });
+          band.style.left = `${layout.nodes[i].x}px`;
+          rowEl.append(band);
+        }
+      } else {
+        rowEl.style.left = `${textLeft}px`;
+        // Lane-colored bar tying the message to its commit's graph strand/avatar.
+        rowEl.style.borderLeft = `3px solid ${laneColor(row.color)}`;
+      }
       const mark = bisectMarks.get(row.id);
       if (mark) rowEl.append(el("span", { class: `bisect-mark ${mark}`, text: BISECT_MARK_LABEL[mark] }));
       else if (row.id === bisectCurrent) rowEl.append(el("span", { class: "bisect-mark testing", text: "testing" }));
@@ -247,16 +322,20 @@ export function renderLog(
       // so a heavily-tagged commit can't crowd out the row.
       const refs = refsAt?.(row.id);
       if (refs && refs.labels.length) {
-        const box = el("span", { class: "commit-refs" });
-        for (const r of refs.labels.slice(0, MAX_REF_CHIPS)) {
+        const box = el("span", { class: refsColumn ? "commit-refs refs-col" : "commit-refs" });
+        if (refsColumn) box.style.width = `${metrics.originX - 16}px`;
+        // The ref column has room for one badge; the rest go into "+N", the
+        // way GitKraken shows a commit with several refs.
+        const shown = refsColumn ? 1 : MAX_REF_CHIPS;
+        for (const r of refs.labels.slice(0, shown)) {
           const chip = el("span", { class: `commit-ref ${r.kind}`, title: r.name });
           if (r.kind === "tag") chip.append(tagIcon());
           else if (r.kind === "remote") chip.append(githubIcon());
           chip.append(el("span", { class: "commit-ref-name", text: r.kind === "head" ? `✓ ${r.name}` : r.name }));
           box.append(chip);
         }
-        if (refs.total > MAX_REF_CHIPS) {
-          box.append(el("span", { class: "commit-ref more", text: `+${refs.total - MAX_REF_CHIPS}` }));
+        if (refs.total > shown) {
+          box.append(el("span", { class: "commit-ref more", text: `+${refs.total - shown}` }));
         }
         rowEl.append(box);
       }
@@ -313,6 +392,12 @@ export function renderLog(
     }
 
     clear(graph);
+    if (theme.guides) {
+      for (let lane = 0; lane <= maxLane; lane++) {
+        const x = metrics.originX + metrics.marginX + lane * laneWidth;
+        graph.append(svg("line", { class: "lane-guide", x1: x, y1: top, x2: x, y2: bottom }));
+      }
+    }
     // One reusable circular clip (object-bounding-box units) for all avatars.
     const defs = svg("defs");
     const clip = svg("clipPath", { id: "avatarClip", clipPathUnits: "objectBoundingBox" });
@@ -325,10 +410,10 @@ export function renderLog(
       }
       graph.append(
         svg("path", {
-          d: edgePath(edge),
+          d: edgePath(edge, metrics),
           fill: "none",
           stroke: laneColor(edge.color),
-          "stroke-width": 2,
+          "stroke-width": theme.strokeWidth,
           "stroke-linecap": "round",
         }),
       );
@@ -337,6 +422,22 @@ export function renderLog(
       if (node.y < top || node.y > bottom) continue;
       const color = laneColor(node.color);
       const isSelected = node.id === currentSelected;
+      const r = theme.nodeRadius;
+
+      // GitKraken themes: a line from the commit's ref badges across to its node.
+      if (refsColumn && refsAt?.(node.id).labels.length) {
+        graph.append(
+          svg("line", {
+            x1: metrics.originX - 6,
+            y1: node.y,
+            x2: node.x,
+            y2: node.y,
+            stroke: color,
+            "stroke-width": 1.5,
+            opacity: 0.6,
+          }),
+        );
+      }
 
       // Selected commit: a leader line from its node across the rest of the
       // graph gutter to where its message row begins, so the eye can follow a
@@ -361,16 +462,21 @@ export function renderLog(
         );
       }
 
-      // Base dot: the fallback if the avatar image is missing/fails to load.
-      graph.append(svg("circle", { cx: node.x, cy: node.y, r: AVATAR_R, fill: color }));
+      // Base dot: the whole node on Neon, otherwise the fallback if the avatar
+      // image is missing/fails to load.
+      graph.append(svg("circle", { cx: node.x, cy: node.y, r, fill: color }));
 
-      const url = avatarUrl(emailById.get(node.id) ?? "");
-      if (url) {
+      const url = theme.node === "avatar" ? avatarUrl(emailById.get(node.id) ?? "") : undefined;
+      if (theme.node === "dot") {
+        // An inner ring in the background colour, so the dot reads as a bead
+        // on the line rather than a blob.
+        graph.append(svg("circle", { class: "node-inner", cx: node.x, cy: node.y, r: r - 2.5, fill: "none", "stroke-width": 1.5 }));
+      } else if (url) {
         const img = svg("image", {
-          x: node.x - AVATAR_R,
-          y: node.y - AVATAR_R,
-          width: AVATAR_R * 2,
-          height: AVATAR_R * 2,
+          x: node.x - r,
+          y: node.y - r,
+          width: r * 2,
+          height: r * 2,
           href: url,
           preserveAspectRatio: "xMidYMid slice",
           "clip-path": "url(#avatarClip)",
@@ -380,16 +486,18 @@ export function renderLog(
       }
 
       // Lane-colored ring around the avatar, thickened on the selected commit.
-      graph.append(
-        svg("circle", {
-          cx: node.x,
-          cy: node.y,
-          r: AVATAR_R,
-          fill: "none",
-          stroke: color,
-          "stroke-width": isSelected ? 3 : 2,
-        }),
-      );
+      if (theme.node === "avatar") {
+        graph.append(
+          svg("circle", {
+            cx: node.x,
+            cy: node.y,
+            r,
+            fill: "none",
+            stroke: color,
+            "stroke-width": isSelected ? 3 : 2,
+          }),
+        );
+      }
       // …plus a soft outer halo, so the active commit is findable at a glance
       // on a graph where every lane already has its own colour.
       if (isSelected) {
@@ -397,7 +505,7 @@ export function renderLog(
           svg("circle", {
             cx: node.x,
             cy: node.y,
-            r: AVATAR_R + 3.5,
+            r: r + 3.5,
             fill: "none",
             stroke: color,
             "stroke-width": 2,

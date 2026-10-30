@@ -109,9 +109,13 @@ export function loadWorkspace(): { paths: string[]; active: string } | null {
   }
 }
 
-// --- Theme (System / Light / Dark) -----------------------------------------
+// --- Theme (System / Light / Dark / GitKraken / GitKraken Neon) ------------
 
-export type ThemeChoice = "system" | "light" | "dark";
+// The GitKraken themes are dark palettes that also change how the commit graph
+// is drawn (see GRAPH_THEMES in views/log.ts).
+export type ThemeChoice = "system" | "light" | "dark" | "gitkraken" | "gitkraken-neon";
+
+const THEME_CHOICES: ThemeChoice[] = ["system", "light", "dark", "gitkraken", "gitkraken-neon"];
 
 const THEME_KEY = "gitp-theme";
 
@@ -122,11 +126,11 @@ const MAX_RECENT_REPOS = 12;
 
 export function currentTheme(): ThemeChoice {
   const v = localStorage.getItem(THEME_KEY);
-  return v === "light" || v === "dark" ? v : "system";
+  return (THEME_CHOICES as string[]).includes(v ?? "") ? (v as ThemeChoice) : "system";
 }
 
 // Apply and persist a theme. "system" clears the override so CSS follows the OS
-// via prefers-color-scheme; "light"/"dark" force the palette via data-theme.
+// via prefers-color-scheme; any other choice forces its palette via data-theme.
 export function applyTheme(choice: ThemeChoice): void {
   if (choice === "system") {
     document.documentElement.removeAttribute("data-theme");

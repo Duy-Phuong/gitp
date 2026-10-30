@@ -43,8 +43,8 @@ const ANSI_LIGHT = {
 // The theme actually in force: an explicit choice wins, otherwise the OS.
 function isDark(): boolean {
   const forced = document.documentElement.dataset.theme;
-  if (forced === "dark") return true;
-  if (forced === "light") return false;
+  // Every forced theme but Light is dark, the GitKraken ones included.
+  if (forced) return forced !== "light";
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 

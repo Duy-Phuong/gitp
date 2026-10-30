@@ -138,6 +138,31 @@ describe("edgePath", () => {
       expect(y).toBeLessThanOrEqual(6);
     }
   });
+
+  describe("with S-curves", () => {
+    const neon = { ...GRAPH_METRICS, rowHeight: 30, curve: "bezier" as const };
+    const curve = (p: Partial<Parameters<typeof edgePath>[0]>) =>
+      edgePath({ fromX: 0, fromY: 0, toX: 0, toY: 100, color: 0, merge: false, ...p }, neon);
+
+    it("still draws a straight line when the lanes match", () => {
+      expect(curve({ fromX: 30, toX: 30, fromY: 10, toY: 40 })).toBe("M 30 10 L 30 40");
+    });
+
+    it("curves across one row at the top for a merge parent", () => {
+      const d = curve({ fromX: 0, toX: 60, fromY: 10, toY: 100, merge: true });
+      expect(d).toBe("M 0 10 C 0 28 60 22 60 40 L 60 100");
+    });
+
+    it("curves across one row at the bottom when a branch ends", () => {
+      const d = curve({ fromX: 60, toX: 0, fromY: 10, toY: 100 });
+      expect(d).toBe("M 60 10 L 60 70 C 60 88 0 82 0 100");
+    });
+
+    it("fits the curve to an edge shorter than a row", () => {
+      const d = curve({ fromX: 0, toX: 20, fromY: 0, toY: 10, merge: true });
+      expect(d).toBe("M 0 0 C 0 6 20 4 20 10 L 20 10");
+    });
+  });
 });
 
 describe("occupiedLane", () => {

@@ -12,7 +12,7 @@ import {
   updateThemeMenu,
 } from "./prefs";
 import { setConfigTab } from "./config-panel";
-import { showView } from "./shell";
+import { showView, updateLogView } from "./shell";
 import { createBranchAction, runPullMethod } from "./repo-actions";
 import { checkoutBranchAction } from "./ref-actions";
 
@@ -148,6 +148,9 @@ export function setupSettingsMenu(): void {
       applyTheme(choice.dataset.themeChoice as ThemeChoice);
       updateThemeMenu();
       close();
+      // The GitKraken themes draw the graph differently, which CSS alone can't
+      // do, so the log is redrawn in the new style.
+      if (state.view === "history") void updateLogView();
     });
   }
   updateThemeMenu();
