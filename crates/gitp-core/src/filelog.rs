@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::error::{Error, Result};
 use crate::git_bin::git_command;
+use crate::remote::ref_arg;
 use crate::repo::Repo;
 
 /// One commit in a file's history.
@@ -35,7 +36,16 @@ impl Repo {
         let output = git_command()
             .current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
-            .args(["log", rev, "--follow", "-n", "200", &format, "--", path])
+            .args([
+                "log",
+                ref_arg(rev)?,
+                "--follow",
+                "-n",
+                "200",
+                &format,
+                "--",
+                path,
+            ])
             .output()
             .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
 

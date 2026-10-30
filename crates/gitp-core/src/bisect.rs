@@ -11,6 +11,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
+use crate::remote::ref_arg;
 use crate::repo::Repo;
 
 /// How the commit under test behaved.
@@ -113,6 +114,9 @@ impl Repo {
     /// waits for the other to be marked. Fails, leaving no session behind,
     /// when git can't check out the midpoint (e.g. conflicting local changes).
     pub fn bisect_start(&self, bad: Option<&str>, good: &[String]) -> Result<String> {
+        for rev in bad.iter().copied().chain(good.iter().map(String::as_str)) {
+            ref_arg(rev)?;
+        }
         let mut args = vec!["bisect", "start"];
         if let Some(bad) = bad {
             args.push(bad);
@@ -141,7 +145,7 @@ impl Repo {
             BisectMark::Skip => "skip".to_string(),
         };
         let mut args = vec!["bisect", term.as_str()];
-        args.extend(rev);
+        args.extend(rev.map(ref_arg).transpose()?);
         self.run_git(&args)
     }
 

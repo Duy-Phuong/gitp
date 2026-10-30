@@ -383,3 +383,32 @@ impl Repo {
 pub(crate) fn literal_pathspec(path: &str) -> String {
     format!(":(literal){path}")
 }
+
+/// Refuse a user-chosen branch, tag or revision that git would read as an
+/// option. These go to git positionally (`git merge <name>`, `git rebase
+/// <rev>`), where a `--` can't always shield them — for `checkout` it would
+/// turn the name into a pathspec — and a hostile remote can hand out a branch
+/// called `--exec=…`, which a rebase onto it would run. Git itself refuses to
+/// create names that start with a dash, so nothing legitimate is lost.
+pub(crate) fn ref_arg(name: &str) -> Result<&str> {
+    if name.starts_with('-') {
+        return Err(Error::Message(format!(
+            "refusing to pass {name:?} to git: it would be read as an option"
+        )));
+    }
+    Ok(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ref_arg;
+
+    #[test]
+    fn ref_arg_passes_names_and_refuses_options() {
+        assert_eq!(ref_arg("main").unwrap(), "main");
+        assert_eq!(ref_arg("feature/x-1").unwrap(), "feature/x-1");
+        assert_eq!(ref_arg("origin/main").unwrap(), "origin/main");
+        assert!(ref_arg("-x").is_err());
+        assert!(ref_arg("--exec=touch pwned").is_err());
+    }
+}
