@@ -70,8 +70,32 @@
   --shadow-color: rgba(16, 24, 40, 0.16);
 }
 
+/* GitKraken and GitKraken Neon: darker, cooler palettes that go with their
+   graph styles (see GRAPH_THEMES in views/log.ts). Always dark. */
+:root[data-theme="gitkraken"],
+:root[data-theme="gitkraken-neon"] {
+  --bg: #11151c;
+  --bg-elev: #171c25;
+  --bg-elev-2: #1f2531;
+  --border: #272e3c;
+  --text: #dfe4ee;
+  --text-dim: #8a93a6;
+  --accent: #00d2d3;
+  --accent-soft: rgba(0, 210, 211, 0.15);
+  --term-bg: #0c0f15;
+  --term-fg: #dfe4ee;
+  --row-hover: #1c222d;
+  --row-sel: #1d3340;
+}
+:root[data-theme="gitkraken-neon"] {
+  --accent: #f368e0;
+  --accent-soft: rgba(243, 104, 224, 0.15);
+  --row-sel: #33203a;
+}
+
+/* Only when no theme is forced: a GitKraken theme is dark on a light OS too. */
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
+  :root:not([data-theme]) {
     --bg: #f7f8fa;
     --bg-elev: #ffffff;
     --bg-elev-2: #f0f2f6;
@@ -1866,6 +1890,69 @@ body {
   color: var(--text-dim);
   font-size: 11px;
   font-family: var(--mono);
+}
+
+/* GitKraken graph themes. The row spans the full width, ref badges sit in a
+   column of their own on the left, and on GitKraken a band in the lane colour
+   runs from the commit's node to the right edge. `isolation` makes the row its
+   own stacking context, so the band (z-index -1) paints over the row's hover
+   and selection colour but under its text. */
+.commit-row.kraken {
+  isolation: isolate;
+  font-size: 13px;
+}
+.lane-band {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  right: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--lane) 24%, transparent),
+    color-mix(in srgb, var(--lane) 9%, transparent) 55%,
+    color-mix(in srgb, var(--lane) 3%, transparent)
+  );
+}
+.commit-refs.refs-col {
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  max-width: none;
+}
+.refs-col .commit-ref {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  min-width: 0;
+  color: var(--text);
+  background: color-mix(in srgb, var(--lane) 22%, transparent);
+  border-color: color-mix(in srgb, var(--lane) 70%, transparent);
+}
+.refs-col .commit-ref-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.refs-col .commit-ref.head {
+  background: color-mix(in srgb, var(--lane) 50%, transparent);
+  border-color: var(--lane);
+}
+.refs-col .commit-ref.more {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  background: var(--bg-elev-2);
+  border-color: var(--border);
+}
+.lane-guide {
+  stroke: var(--text);
+  stroke-opacity: 0.06;
+  stroke-width: 1;
+}
+.node-inner {
+  stroke: var(--bg);
 }
 
 /* Detail ----------------------------------------------------------------- */

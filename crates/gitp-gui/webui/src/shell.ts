@@ -32,8 +32,7 @@ import {
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el, $ } from "./dom";
-import { GRAPH_METRICS } from "./graph";
-import { renderLog, setBisectMarks } from "./views/log";
+import { logRowHeight, renderLog, setBisectMarks } from "./views/log";
 import { bisectBannerText } from "./bisect-text";
 import { closeCommitMenu } from "./views/commit-menu";
 import { renderSidebar, type SidebarView, type SidebarCallbacks } from "./views/sidebar";
@@ -762,7 +761,7 @@ export async function jumpToCommit(target: string, label: string): Promise<void>
   ui.logView = renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
   if (idx >= 0) {
     const pane = $("#log-pane");
-    pane.scrollTop = Math.max(0, idx * GRAPH_METRICS.rowHeight - pane.clientHeight / 2);
+    pane.scrollTop = Math.max(0, idx * logRowHeight() - pane.clientHeight / 2);
   }
   await selectCommit(target);
   ui.detailView?.focusCommit();
