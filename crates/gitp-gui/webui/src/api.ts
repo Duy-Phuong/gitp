@@ -38,6 +38,7 @@ import type {
   Worktree,
   WorktreeTarget,
   Submodule,
+  StashOptions,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -839,13 +840,20 @@ export async function pushForce(): Promise<string> {
   return invokeNetwork<string>("push_force", {});
 }
 
-export async function stash(): Promise<string> {
+// `git stash push` with the Stash dialog's options; an empty message lets git
+// name the entry ("WIP on <branch>").
+export async function stash(opts: StashOptions): Promise<string> {
   if (!isTauri()) {
-    MOCK_REFS.stashes.unshift({ index: 0, message: "WIP on develop (preview mock)" });
+    const message = opts.message ? `On develop: ${opts.message}` : "WIP on develop (preview mock)";
+    MOCK_REFS.stashes.unshift({ index: 0, message });
     MOCK_REFS.stashes.forEach((s, i) => (s.index = i));
-    return "Saved working directory (preview mock)";
+    return `Saved ${opts.staged ? "index state" : "working directory"} (preview mock)`;
   }
-  return invoke<string>("stash", {});
+  return invoke<string>("stash", {
+    message: opts.message || null,
+    staged: opts.staged,
+    includeUntracked: opts.includeUntracked,
+  });
 }
 
 export async function stashPop(): Promise<string> {

@@ -84,7 +84,7 @@ import {
   redoAction,
   refreshAllAction,
   runPullDefault,
-  stashAction,
+  openStashDialogAction,
   undoAction,
 } from "./repo-actions";
 import {
@@ -128,7 +128,7 @@ function wireUi(): void {
   setupPullMenu();
   updatePullButtonTitle();
   $("#push-btn").addEventListener("click", () => void pushAction());
-  $("#stash-btn").addEventListener("click", () => void stashAction());
+  $("#stash-btn").addEventListener("click", openStashDialogAction);
   $("#pop-btn").addEventListener("click", () => void popAction());
   $("#refresh-btn").addEventListener("click", () => void refreshAllAction());
   setupShortcuts();

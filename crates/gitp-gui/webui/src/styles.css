@@ -1289,6 +1289,17 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.stash-modal {
+  width: min(460px, 92vw);
+}
+.stash-modal .rename-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 10px;
+}
+.stash-modal .stash-apply-check + .stash-apply-check {
+  margin-top: 8px;
+}
 .stash-apply-check {
   display: flex;
   align-items: center;

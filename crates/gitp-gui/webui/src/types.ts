@@ -116,6 +116,14 @@ export interface StashRef {
   message: string;
 }
 
+// What the Stash dialog asks `git stash push` for: an entry name (empty for
+// git's own), only the staged changes, and whether new files go too.
+export interface StashOptions {
+  message: string;
+  staged: boolean;
+  includeUntracked: boolean;
+}
+
 export interface Refs {
   head: string | null;
   branches: BranchRef[];
