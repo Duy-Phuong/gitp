@@ -683,7 +683,7 @@ export async function stashAndSwitch(kind: "branch" | "remote" | "commit", targe
     if (kind === "branch") await checkoutBranch(target);
     else if (kind === "remote") output = await checkoutRemoteBranch(target);
     else output = await checkoutCommit(target);
-    return { output, stash_kept: false };
+    return { output, stash_kept: false, staging_lost: false };
   }
   return invoke<StashSwitch>("stash_and_switch", { kind, target });
 }

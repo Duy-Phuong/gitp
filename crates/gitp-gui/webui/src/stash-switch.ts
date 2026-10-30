@@ -33,7 +33,11 @@ export function askSwitchWithChanges(target: string): Promise<SwitchChoice> {
 // says where the work is (markers in the files, and still the top stash).
 export function reportStashSwitch(target: string, r: StashSwitch): void {
   if (!r.stash_kept) {
-    reportDone(`Checked out ${target} and re-applied your changes.`);
+    reportDone(
+      r.staging_lost
+        ? `Checked out ${target} and re-applied your changes, all unstaged: what was staged didn't apply to ${target}'s index.`
+        : `Checked out ${target} and re-applied your changes.`,
+    );
     return;
   }
   const title = `Checked out ${target}, but your changes didn't re-apply cleanly`;
