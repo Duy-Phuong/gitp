@@ -101,6 +101,18 @@ impl Repo {
         run_progress(workdir, args, &self.net, self.has_own_askpass(), workdir)
     }
 
+    /// [`Repo::run_git_progress`] for `git lfs`, which — told to show its
+    /// meters without a terminal (`lfs.forceprogress`) — prints them on stdout
+    /// rather than stderr.
+    pub(crate) fn run_git_progress_on_stdout(&self, args: &[&str]) -> Result<String> {
+        let workdir = self
+            .inner
+            .workdir()
+            .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
+        let own_askpass = self.has_own_askpass();
+        run_progress_with(workdir, args, &self.net, own_askpass, workdir, true)
+    }
+
     /// Mark the end of an operation's network part and the start of a local
     /// write (merge, rebase, fast-forward) that must not be interrupted. A
     /// Cancel that already landed stops the operation here, before anything
@@ -148,6 +160,20 @@ pub(crate) fn run_progress(
     own_askpass: bool,
     log_as: &Path,
 ) -> Result<String> {
+    run_progress_with(dir, args, hooks, own_askpass, log_as, false)
+}
+
+/// [`run_progress`], reading meters from stdout as well when
+/// `meters_on_stdout` (see [`Repo::run_git_progress_on_stdout`]). Its other
+/// lines then join the messages, trimmed like stderr's.
+fn run_progress_with(
+    dir: &Path,
+    args: &[&str],
+    hooks: &NetworkHooks,
+    own_askpass: bool,
+    log_as: &Path,
+    meters_on_stdout: bool,
+) -> Result<String> {
     if cancelled(hooks) {
         return Err(Error::Cancelled);
     }
@@ -182,13 +208,21 @@ pub(crate) fn run_progress(
     // blocks writing the other would deadlock. Stderr is split into lines
     // as it arrives and handed back here, where the hooks run.
     let mut stdout = child.stdout.take().expect("stdout is piped");
-    let stdout_reader = thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = stdout.read_to_end(&mut buf);
-        buf
-    });
-    let stderr = child.stderr.take().expect("stderr is piped");
     let (tx, rx) = mpsc::channel();
+    let stdout_reader = if meters_on_stdout {
+        let tx = tx.clone();
+        thread::spawn(move || {
+            split_lines(stdout, |line| tx.send(line).is_ok());
+            Vec::new()
+        })
+    } else {
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stdout.read_to_end(&mut buf);
+            buf
+        })
+    };
+    let stderr = child.stderr.take().expect("stderr is piped");
     thread::spawn(move || split_lines(stderr, |line| tx.send(line).is_ok()));
 
     let mut messages = String::new();

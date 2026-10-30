@@ -97,6 +97,7 @@ import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeO
 import { addSubmoduleAction, syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
 import { finishFlowAction, initGitflowAction, startFlowAction } from "./gitflow-actions";
 import { FLOW_KINDS, flowBranch } from "./gitflow";
+import { lfsFetchAction, lfsInstallAction, lfsPullAction, lfsTrackAction, lfsUntrackAction } from "./lfs-actions";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { addRemoteAction } from "./remote-actions";
 import { createFileAction, editFileStage } from "./editor-actions";
@@ -445,6 +446,7 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Stage All Changes", run: () => void stageAllAction() },
     { kind: "command", label: "Unstage All Changes", run: () => void unstageAllAction() },
     ...gitflowCommands(),
+    ...lfsCommands(),
     ...commitCommands(),
   ];
 
@@ -527,6 +529,44 @@ function flowFinishStage(): QuickStage {
         items: state.refs.branches
           .filter((b) => flowBranch(state.gitflow, b.name))
           .map((b) => ({ kind: "branch" as const, label: b.name, run: () => void finishFlowAction(b.name) })),
+      },
+    ],
+  };
+}
+
+// Git LFS. Track and Initialize are offered in any repository — they are how
+// one starts using LFS; the rest only where it is in use.
+function lfsCommands(): QuickItem[] {
+  const items: QuickItem[] = [
+    {
+      kind: "command",
+      label: "LFS: Track Pattern…",
+      run: () => promptFor("Pattern, e.g. *.psd", (p) => void lfsTrackAction(p)),
+    },
+    { kind: "command", label: "LFS: Initialize", run: () => void lfsInstallAction() },
+  ];
+  if (state.lfs?.used) {
+    items.push(
+      { kind: "command", label: "LFS: Untrack Pattern…", next: lfsUntrackStage },
+      { kind: "command", label: "LFS: Fetch", run: () => void lfsFetchAction() },
+      { kind: "command", label: "LFS: Pull", run: () => void lfsPullAction() },
+    );
+  }
+  return items;
+}
+
+function lfsUntrackStage(): QuickStage {
+  return {
+    chip: "Untrack",
+    placeholder: "pattern",
+    sections: [
+      {
+        title: "LFS Patterns",
+        items: (state.lfs?.patterns ?? []).map((p) => ({
+          kind: "option" as const,
+          label: p,
+          run: () => void lfsUntrackAction(p),
+        })),
       },
     ],
   };

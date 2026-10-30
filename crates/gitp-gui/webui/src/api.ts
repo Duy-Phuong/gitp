@@ -51,6 +51,7 @@ import type {
   StashOptions,
   FlowKind,
   GitFlowConfig,
+  LfsStatus,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -1553,6 +1554,53 @@ export async function removeSubmodule(path: string): Promise<string> {
   return invoke<string>("remove_submodule", { path });
 }
 
+// --- Git LFS ----------------------------------------------------------------
+
+// Whether git-lfs is installed, and whether (and how) this repo uses it.
+export async function lfsStatus(): Promise<LfsStatus> {
+  if (!isTauri()) return { ...MOCK_LFS, patterns: [...MOCK_LFS.patterns] };
+  return invoke<LfsStatus>("lfs_status", {});
+}
+
+// `git lfs track` / `untrack`: edit .gitattributes, left for the user to commit.
+export async function lfsTrack(pattern: string): Promise<string> {
+  if (!isTauri()) {
+    MOCK_LFS.patterns.push(pattern);
+    MOCK_LFS.used = true;
+    return `Tracking "${pattern}" (preview mock)`;
+  }
+  return invoke<string>("lfs_track", { pattern });
+}
+
+export async function lfsUntrack(pattern: string): Promise<string> {
+  if (!isTauri()) {
+    MOCK_LFS.patterns = MOCK_LFS.patterns.filter((p) => p !== pattern);
+    MOCK_LFS.used = MOCK_LFS.patterns.length > 0;
+    return `Untracking "${pattern}" (preview mock)`;
+  }
+  return invoke<string>("lfs_untrack", { pattern });
+}
+
+// `git lfs install --local`: the LFS filters and hooks for this repo.
+export async function lfsInstall(): Promise<string> {
+  if (!isTauri()) {
+    MOCK_LFS.initialized = true;
+    return "Updated Git hooks.\nGit LFS initialized. (preview mock)";
+  }
+  return invoke<string>("lfs_install", {});
+}
+
+// `git lfs fetch` / `pull`: network operations, with progress and Cancel.
+export async function lfsFetch(): Promise<string> {
+  if (!isTauri()) return "fetch: 2 objects found, done. (preview mock)";
+  return invokeNetwork<string>("lfs_fetch", {});
+}
+
+export async function lfsPull(): Promise<string> {
+  if (!isTauri()) return "Downloading LFS objects: 100% (2/2), done. (preview mock)";
+  return invokeNetwork<string>("lfs_pull", {});
+}
+
 // ---------------------------------------------------------------------------
 // Mock data (browser-only)
 // ---------------------------------------------------------------------------
@@ -2218,6 +2266,9 @@ const MOCK_WORKTREES: Worktree[] = [
 
 // Git Flow isn't set up in the mock repo until Initialize runs.
 let mockGitflow: GitFlowConfig | null = null;
+
+// The mock repo tracks its design files with LFS.
+const MOCK_LFS: LfsStatus = { installed: true, used: true, initialized: true, patterns: ["*.psd"] };
 
 // One submodule, with an older commit checked out than the repo records.
 const MOCK_SUBMODULES: Submodule[] = [

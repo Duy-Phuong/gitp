@@ -31,6 +31,7 @@ import {
   listSubmodules,
   listRemotes,
   gitflowConfig,
+  lfsStatus,
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el, $ } from "./dom";
@@ -43,6 +44,7 @@ import type { BisectMark, CommitRow, ConflictStatus, LogPage, LogScope, ReflogEn
 import { EMPTY_REFS, PAGE_SIZE, state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { markRemoteFetched, remoteFetchedAt, renderFetchAge } from "./fetch-age";
+import { renderLfsIndicator } from "./lfs-indicator";
 import {
   loadFavoriteRepos,
   loadGraphPrefs,
@@ -232,6 +234,7 @@ export async function closeRepoTab(path: string): Promise<void> {
       state.worktrees = [];
       state.submodules = [];
       state.gitflow = null;
+      state.lfs = null;
       state.localChanges = 0;
       // No repo: nothing is in progress and nothing can be undone. Left as
       // they were, the banners stay up with buttons that hit "no active repo".
@@ -646,12 +649,13 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
   try {
     // Worktrees, submodules and remotes are separate, cheap reads; failing one
     // only hides its section (or, for remotes, the never-fetched ones).
-    const [snap, worktrees, submodules, remoteList, gitflow] = await Promise.all([
+    const [snap, worktrees, submodules, remoteList, gitflow, lfs] = await Promise.all([
       workspaceSnapshot(),
       listWorktrees().catch(() => []),
       listSubmodules().catch(() => []),
       listRemotes().catch(() => []),
       gitflowConfig().catch(() => null),
+      lfsStatus().catch(() => null),
     ]);
     // A passive refresh must not land a snapshot taken before an operation the
     // user started while it was in flight: that would repaint the pre-op state
@@ -664,6 +668,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     state.submodules = submodules;
     state.remoteList = remoteList;
     state.gitflow = gitflow;
+    state.lfs = lfs;
     state.localChanges = snap.local_changes;
     state.rebase = snap.rebase;
     ui.undoLabels = snap.undo;
@@ -776,6 +781,7 @@ export function renderSidebarNow(): void {
   // The fetch age is per repo, so it has to follow a tab switch, not just the
   // 30s tick.
   renderFetchAge();
+  renderLfsIndicator();
   renderTerminalCwd();
   refreshActionButtons();
   renderHiddenRefs();

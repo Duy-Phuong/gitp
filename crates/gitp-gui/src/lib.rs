@@ -19,6 +19,7 @@ mod conflict;
 mod editor;
 mod gitflow;
 mod history;
+mod lfs;
 mod os;
 mod rebase;
 mod reflog;
@@ -245,6 +246,12 @@ pub fn run() {
             submodules::add_submodule,
             submodules::set_submodule_url,
             submodules::remove_submodule,
+            lfs::lfs_status,
+            lfs::lfs_track,
+            lfs::lfs_untrack,
+            lfs::lfs_install,
+            lfs::lfs_fetch,
+            lfs::lfs_pull,
         ])
         .run(tauri::generate_context!())
         .expect("error while running gitp");

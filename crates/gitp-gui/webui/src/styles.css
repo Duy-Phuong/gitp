@@ -3895,6 +3895,29 @@ textarea:focus-visible,
 .status-fetched.hidden {
   display: none;
 }
+/* The LFS badge, after the fetch age; amber when git-lfs is missing or not
+   set up for the repository. */
+.status-lfs {
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 5px;
+  padding: 0 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.status-lfs:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.status-lfs.warn {
+  color: var(--mod-fg);
+  border-color: var(--mod-fg);
+}
+.status-lfs.hidden {
+  display: none;
+}
 
 /* Conflict resolver: a gutter arrow for a side already accepted into Result,
    and the read-only surviving text of a delete/modify conflict. */

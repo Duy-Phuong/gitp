@@ -57,6 +57,7 @@ import { copyText } from "./clipboard";
 import { state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus, watchNetwork, watchPending } from "./report";
 import { setupFetchAgeIndicator } from "./fetch-age";
+import { onLfsMenu } from "./lfs-actions";
 import {
   applyTheme,
   currentTheme,
@@ -183,6 +184,10 @@ function wireUi(): void {
   setupExternalChangeRefresh();
   setupLogKeyboardNav();
   setupFetchAgeIndicator();
+  $("#status-lfs").addEventListener("click", (e) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    onLfsMenu(r.left, r.top);
+  });
   startAutoFetch(loadAutoFetchMinutes());
   setupBranchToggle();
   setupLogSearch();
