@@ -138,8 +138,16 @@ fn run_on_path<T>(
     let out = f(&repo);
     ops.0.end(&cancel);
     // Even a failed pull may have moved HEAD (a merge stopped on conflicts).
+    // The tab is matched by its resolved working tree: the workspace and the
+    // tab may spell the same folder differently (/tmp vs /private/tmp, a
+    // trailing slash).
+    let here = std::fs::canonicalize(repo.workdir()).ok();
     let mut guard = state.0.lock().map_err(to_message)?;
-    if let Some(session) = guard.sessions.iter_mut().find(|s| s.path == path) {
+    if let Some(session) = guard
+        .sessions
+        .iter_mut()
+        .find(|s| here.is_some() && std::fs::canonicalize(s.repo.workdir()).ok() == here)
+    {
         after(session);
     }
     out.map_err(to_message)
@@ -353,6 +361,26 @@ mod tests {
         );
         drop(guard);
         assert_eq!(head(active.path()), active_head);
+    }
+
+    #[test]
+    fn a_bulk_pull_finds_the_tab_under_another_spelling_of_its_path() {
+        let (_root, repo, _other) = repo_behind_its_remote();
+        let state = RepoState::default();
+        let ops = WorkspaceOps::default();
+        open_repo_impl(&state, path_of(&repo)).unwrap();
+        state.0.lock().unwrap().sessions[0].undo = Some(gitp_core::Undoable::HeadMoved {
+            label: "Commit".into(),
+            before: "a".into(),
+            after: "b".into(),
+            mode: gitp_core::HeadMoveMode::Soft,
+            backup: None,
+        });
+
+        let spelled = format!("{}/", path_of(&repo));
+        workspace_pull_impl(&state, &ops, &spelled, PullMode::FastForward, None).expect("pull");
+
+        assert!(state.0.lock().unwrap().sessions[0].undo.is_none());
     }
 
     #[test]
