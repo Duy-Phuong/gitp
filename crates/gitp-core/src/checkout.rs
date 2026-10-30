@@ -1,6 +1,7 @@
 //! Branch checkout — the first operation that mutates the working tree.
 
 use crate::error::{Error, Result};
+use crate::remote::ref_arg;
 use crate::repo::Repo;
 
 impl Repo {
@@ -78,6 +79,7 @@ impl Repo {
     /// to it; otherwise create a local branch tracking the remote and switch.
     /// Returns git's output for display.
     pub fn checkout_remote(&self, remote_ref: &str) -> Result<String> {
+        let remote_ref = ref_arg(remote_ref)?;
         let local = self.local_name_for_remote(remote_ref);
         if self
             .inner

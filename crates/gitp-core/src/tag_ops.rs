@@ -9,6 +9,7 @@
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::remote::ref_arg;
 use crate::repo::Repo;
 
 /// What a tag is and what it points at, for the tag details dialog.
@@ -68,18 +69,18 @@ impl Repo {
 
     /// Push tag `name` to `origin` (`git push origin <tag>`).
     pub fn push_tag(&self, name: &str) -> Result<String> {
-        self.run_git_network(&["push", "origin", name])
+        self.run_git_network(&["push", "origin", ref_arg(name)?])
     }
 
     /// Delete the local tag `name` (`git tag -d <name>`). Leaves any tag of the
     /// same name on the remote alone — see `delete_remote_tag`.
     pub fn delete_tag(&self, name: &str) -> Result<String> {
-        self.run_git(&["tag", "-d", name])
+        self.run_git(&["tag", "-d", ref_arg(name)?])
     }
 
     /// Delete tag `name` on `origin` (`git push origin --delete <tag>`).
     pub fn delete_remote_tag(&self, name: &str) -> Result<String> {
-        self.run_git_network(&["push", "origin", "--delete", name])
+        self.run_git_network(&["push", "origin", "--delete", ref_arg(name)?])
     }
 
     /// Whether `origin` has a tag called `name`, probed live with

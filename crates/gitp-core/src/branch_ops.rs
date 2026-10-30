@@ -6,20 +6,21 @@
 //! (`checkout.rs`, `commit_ops.rs`) and are reused by the menu as-is.
 
 use crate::error::{Error, Result};
+use crate::remote::ref_arg;
 use crate::repo::Repo;
 
 impl Repo {
     /// Rename branch `old` to `new` (`git branch -m`). Works on the current
     /// branch too. Errors if `new` already exists.
     pub fn rename_branch(&self, old: &str, new: &str) -> Result<String> {
-        self.run_git(&["branch", "-m", old, new])
+        self.run_git(&["branch", "-m", ref_arg(old)?, ref_arg(new)?])
     }
 
     /// Create branch `name` at the current HEAD *without* checking it out
     /// (`git branch <name>`). Used to snapshot state before a rewrite like a
     /// rebase. Errors if `name` already exists.
     pub fn create_branch_here(&self, name: &str) -> Result<String> {
-        self.run_git(&["branch", name])
+        self.run_git(&["branch", ref_arg(name)?])
     }
 
     /// Rename branch `new`'s counterpart on the remote, run *after* the local
@@ -27,6 +28,7 @@ impl Repo {
     /// remote-rename, so this pushes `new` (updating its upstream) and then
     /// deletes the old remote branch. No-op-ish when the remote name is unchanged.
     pub fn rename_remote_branch(&self, new: &str) -> Result<String> {
+        let new = ref_arg(new)?;
         let (remote, old_remote) = self.remote_target(new);
         let pushed = self.run_git_network(&["push", "-u", &remote, new])?;
         if old_remote != new {
@@ -39,12 +41,16 @@ impl Repo {
 
     /// Set `branch`'s upstream (tracking) to `upstream`, e.g. `origin/main`.
     pub fn set_upstream(&self, branch: &str, upstream: &str) -> Result<String> {
-        self.run_git(&["branch", &format!("--set-upstream-to={upstream}"), branch])
+        self.run_git(&[
+            "branch",
+            &format!("--set-upstream-to={upstream}"),
+            ref_arg(branch)?,
+        ])
     }
 
     /// Clear `branch`'s upstream (stop tracking).
     pub fn unset_upstream(&self, branch: &str) -> Result<String> {
-        self.run_git(&["branch", "--unset-upstream", branch])
+        self.run_git(&["branch", "--unset-upstream", ref_arg(branch)?])
     }
 
     /// The web URL for opening a pull/merge request for `branch` on `origin`,
@@ -77,14 +83,14 @@ impl Repo {
     /// otherwise `-d`, which refuses to drop unmerged work.
     pub fn delete_branch(&self, name: &str, force: bool) -> Result<String> {
         let flag = if force { "-D" } else { "-d" };
-        self.run_git(&["branch", flag, name])
+        self.run_git(&["branch", flag, ref_arg(name)?])
     }
 
     /// Delete branch `name` on its remote (`git push <remote> --delete`). Uses
     /// the branch's configured remote and its remote-side name when known,
     /// falling back to `origin` and the same name. This affects the remote.
     pub fn delete_remote_branch(&self, name: &str) -> Result<String> {
-        let (remote, remote_branch) = self.remote_target(name);
+        let (remote, remote_branch) = self.remote_target(ref_arg(name)?);
         self.run_git_network(&["push", &remote, "--delete", &remote_branch])
     }
 
@@ -123,12 +129,12 @@ impl Repo {
     /// Merge `name` into the current branch (`git merge`). Conflicts leave the
     /// merge in progress and surface as an error.
     pub fn merge_branch(&self, name: &str) -> Result<String> {
-        self.run_git(&["merge", name])
+        self.run_git(&["merge", ref_arg(name)?])
     }
 
     /// Push branch `name` to `origin` (`git push origin <name>`).
     pub fn push_branch(&self, name: &str) -> Result<String> {
-        self.run_git_network(&["push", "origin", name])
+        self.run_git_network(&["push", "origin", ref_arg(name)?])
     }
 
     /// Fetch updates for `name`'s remote (its configured remote, or all remotes
@@ -229,6 +235,7 @@ impl Repo {
     /// is advanced with `merge --ff-only`; another branch is advanced by a local
     /// fetch into it, which git only allows when it's a true fast-forward.
     pub fn fast_forward_branch(&self, name: &str) -> Result<String> {
+        let name = ref_arg(name)?;
         let upstream =
             self.run_git(&["rev-parse", "--abbrev-ref", &format!("{name}@{{upstream}}")])?;
         let current = self

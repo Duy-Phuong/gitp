@@ -133,3 +133,29 @@ fn checkout_commit_detaches_even_when_given_a_branch_name() {
 
     assert!(repo.refs().unwrap().head.is_none(), "HEAD is detached");
 }
+
+#[test]
+fn names_that_read_as_git_options_are_refused() {
+    let (fx, oids) = linear_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+    let head = repo.refs().unwrap().head;
+
+    for result in [
+        repo.checkout_commit("--detach"),
+        repo.create_branch_at("--force", &oids[0]),
+        repo.create_tag_at("-f", &oids[0]),
+        repo.cherry_pick("--exec=touch pwned"),
+        repo.revert("-n"),
+        repo.reset("--hard", ResetMode::Soft),
+        repo.rebase_onto("--exec=touch pwned"),
+        repo.merge_branch("--squash"),
+        repo.delete_branch("-D", false),
+        repo.rename_branch(head.as_deref().unwrap(), "--force"),
+    ] {
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("read as an option"), "{err}");
+    }
+    // Nothing ran: HEAD is still on the same branch.
+    assert_eq!(repo.refs().unwrap().head, head);
+    assert!(!fx.path().join("pwned").exists());
+}

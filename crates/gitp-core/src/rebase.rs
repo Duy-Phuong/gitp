@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::git_bin::git_command;
+use crate::remote::ref_arg;
 use crate::repo::Repo;
 
 /// One commit in a rebase plan, as shown in the editor UI.
@@ -80,7 +81,7 @@ impl Repo {
     /// but not from `onto` (i.e. `merge-base(HEAD, onto)..HEAD`), oldest first,
     /// matching the top-to-bottom order of a rebase todo.
     pub fn rebase_todo(&self, onto: &str) -> Result<Vec<RebaseCommit>> {
-        let range = format!("{onto}..HEAD");
+        let range = format!("{}..HEAD", ref_arg(onto)?);
         let out = self.run_git(&["log", "--reverse", "--format=%H%x1f%h%x1f%s", &range])?;
         Ok(out
             .lines()
@@ -115,6 +116,7 @@ impl Repo {
         steps: &[RebaseStep],
         update_refs: bool,
     ) -> Result<String> {
+        let onto = ref_arg(onto)?;
         // The first applied (non-dropped) step must land a commit — you can't
         // squash or fix up into a commit that isn't there yet.
         if let Some(first) = steps
