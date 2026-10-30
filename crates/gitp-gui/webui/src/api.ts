@@ -52,6 +52,7 @@ import type {
   WorktreeTarget,
   Submodule,
   StashOptions,
+  StashSwitch,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -661,6 +662,20 @@ export async function checkoutRemoteBranch(name: string): Promise<string> {
     return `Switched to ${local} (preview mock)`;
   }
   return invoke<string>("checkout_remote", { name });
+}
+
+// Stash & Switch: check out a local branch, a remote branch or a commit
+// (detached) with the uncommitted work stashed across the switch and popped
+// on the other side. `stash_kept`: the pop conflicted and git kept the stash.
+export async function stashAndSwitch(kind: "branch" | "remote" | "commit", target: string): Promise<StashSwitch> {
+  if (!isTauri()) {
+    let output = `Switched to ${target} (preview mock)`;
+    if (kind === "branch") await checkoutBranch(target);
+    else if (kind === "remote") output = await checkoutRemoteBranch(target);
+    else output = await checkoutCommit(target);
+    return { output, stash_kept: false };
+  }
+  return invoke<StashSwitch>("stash_and_switch", { kind, target });
 }
 
 export async function createBranch(name: string): Promise<void> {
@@ -1370,7 +1385,7 @@ export async function conflictStatus(): Promise<ConflictStatus> {
 
 export async function conflictSides(path: string): Promise<ConflictSides> {
   if (!isTauri()) {
-    return MOCK_SIDES[path] ?? { ours: "", theirs: "", base: null, working: "", binary: false };
+    return MOCK_SIDES[path] ?? { ours: "", theirs: "", base: null, working: "", binary: false, edited: false };
   }
   return invoke<ConflictSides>("conflict_sides", { path });
 }
@@ -1994,6 +2009,7 @@ const MOCK_SIDES: Record<string, ConflictSides> = {
     base: `${BASE_README.join("\n")}\n`,
     working: "<<<<<<< HEAD\n(conflict)\n=======\n(conflict)\n>>>>>>> test-1\n",
     binary: false,
+    edited: false,
   },
   "reset.css": {
     ours: "body {\n  margin: 10px;\n}\n",
@@ -2001,6 +2017,7 @@ const MOCK_SIDES: Record<string, ConflictSides> = {
     base: "body {\n  margin: 0;\n}\n",
     working: "body {\n<<<<<<< HEAD\n  margin: 10px;\n=======\n  margin: 20px;\n>>>>>>> test-1\n}\n",
     binary: false,
+    edited: false,
   },
 };
 

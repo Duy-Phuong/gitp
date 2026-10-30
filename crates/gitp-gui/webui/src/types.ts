@@ -295,12 +295,22 @@ export interface ConflictStatus {
 }
 
 // The three staged versions plus the working text of a conflicted file.
+// What a Stash & Switch did (mirrors gitp-core's StashSwitch).
+export interface StashSwitch {
+  output: string;
+  // Popping on the new HEAD conflicted: markers are in the files and the
+  // auto-stash is still stash@{0}.
+  stash_kept: boolean;
+}
+
 export interface ConflictSides {
   ours: string | null;
   theirs: string | null;
   base: string | null;
   working: string;
   binary: boolean;
+  // Changed on disk since git wrote it (matches neither side, no markers).
+  edited: boolean;
 }
 
 // Pushed by the backend's filesystem watcher (Tauri event `repo-changed`) when

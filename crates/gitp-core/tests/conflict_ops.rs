@@ -320,3 +320,99 @@ fn status_summary_lists_an_unmerged_file_once_as_conflicted() {
     assert_eq!(s.unstaged[0].status, gitp_core::ChangeKind::Conflicted);
     assert_eq!(repo.local_change_count().unwrap(), 1);
 }
+
+// --- Squash merge ------------------------------------------------------------
+
+/// Like `conflicted_repo`, but squash-merging `theirs`: git writes SQUASH_MSG
+/// and the conflicted file, and no MERGE_HEAD.
+fn squash_conflicted_repo() -> FixtureRepo {
+    let fx = FixtureRepo::init();
+    fx.commit_file("f.txt", "a\nbase\nc\n", "c1");
+    let dir = fx.path();
+    git(dir, &["branch", "-M", "dev"]);
+    git(dir, &["checkout", "-b", "theirs"]);
+    std::fs::write(dir.join("f.txt"), "a\ntheirs\nc\n").unwrap();
+    git(dir, &["commit", "-am", "theirs change"]);
+    git(dir, &["checkout", "dev"]);
+    std::fs::write(dir.join("f.txt"), "a\nours\nc\n").unwrap();
+    git(dir, &["commit", "-am", "ours change"]);
+    let repo = Repo::open(dir).unwrap();
+    assert!(
+        repo.merge_branch("theirs", MergeMode::Squash).is_err(),
+        "squash should conflict"
+    );
+    assert!(!dir.join(".git/MERGE_HEAD").exists());
+    assert!(dir.join(".git/SQUASH_MSG").exists());
+    fx
+}
+
+#[test]
+fn a_conflicted_squash_merge_is_reported_as_a_merge_session() {
+    let fx = squash_conflicted_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    let status = repo.conflict_status().unwrap();
+    assert_eq!(status.kind, "merge");
+    assert_eq!(status.conflicted, vec!["f.txt"]);
+    assert!(status.summary.contains("Squash"), "{}", status.summary);
+    assert!(
+        status.message.contains("theirs change"),
+        "the squash message lists the squashed commits: {}",
+        status.message
+    );
+}
+
+#[test]
+fn finishing_a_squash_merge_commits_one_parent_with_the_message() {
+    let fx = squash_conflicted_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.resolve_conflict("f.txt", "a\nresolved\nc\n").unwrap();
+    // Still a session once every file is resolved, so Finish stays reachable.
+    assert_eq!(repo.conflict_status().unwrap().kind, "merge");
+    repo.finish_conflict("Squash theirs").unwrap();
+
+    assert_eq!(repo.conflict_status().unwrap().kind, "none");
+    assert!(!fx.path().join(".git/SQUASH_MSG").exists());
+    let head = repo.commit_detail("HEAD").unwrap();
+    assert_eq!(head.parents.len(), 1, "a squash is an ordinary commit");
+    assert_eq!(head.message.trim(), "Squash theirs");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("f.txt")).unwrap(),
+        "a\nresolved\nc\n"
+    );
+}
+
+#[test]
+fn aborting_a_squash_merge_restores_the_branch() {
+    let fx = squash_conflicted_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.abort_conflict().unwrap();
+
+    assert_eq!(repo.conflict_status().unwrap().kind, "none");
+    assert!(!fx.path().join(".git/SQUASH_MSG").exists());
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("f.txt")).unwrap(),
+        "a\nours\nc\n"
+    );
+    assert_eq!(repo.local_change_count().unwrap(), 0, "nothing left behind");
+}
+
+#[test]
+fn conflict_sides_flags_a_working_file_edited_since_the_conflict() {
+    let fx = conflicted_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+    assert!(
+        !repo.conflict_sides("f.txt").unwrap().edited,
+        "git's marked-up merge"
+    );
+
+    // One side's version as is, the way git leaves binary files: not an edit.
+    git(fx.path(), &["checkout", "--ours", "--", "f.txt"]);
+    assert!(!repo.conflict_sides("f.txt").unwrap().edited);
+
+    // Hand-resolved in an editor: taking a side would overwrite this.
+    std::fs::write(fx.path().join("f.txt"), "a\nhand-made\nc\n").unwrap();
+    assert!(repo.conflict_sides("f.txt").unwrap().edited);
+}
