@@ -67,8 +67,6 @@ export interface SidebarCallbacks {
   onRemoteMenu: (name: string, target: string, x: number, y: number) => void;
   // The "+" on the Remotes header: add a remote.
   onAddRemote: () => void;
-  // Right-click the Remotes header.
-  onRemotesMenu: (x: number, y: number) => void;
   // Right-click a remote's folder row: edit, rename, remove, fetch it.
   onRemoteFolderMenu: (remote: string, x: number, y: number) => void;
   // Right-click a tag: open its actions menu at the cursor.
@@ -457,10 +455,6 @@ function buildRemotes(
     cb.onAddRemote();
   });
   row.append(add);
-  row.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    cb.onRemotesMenu(e.clientX, e.clientY);
-  });
   tree.append(row);
   if (collapsed) return;
 

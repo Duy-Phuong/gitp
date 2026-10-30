@@ -72,11 +72,23 @@ export function authorTerm(query: string): string | null {
   return value ? value : null;
 }
 
+// What an author: term for `author` can hold. The search has no escape for a
+// quote — it only opens or closes a quoted value — so a name with quotes in it
+// is cut to its longest quote-free piece: the search matches part of a name,
+// and that piece is still part of this one.
+export function authorSearchValue(author: string): string {
+  return author
+    .split('"')
+    .map((piece) => piece.trim())
+    .reduce((best, piece) => (piece.length > best.length ? piece : best), "");
+}
+
 // The query with its author: terms replaced by one for `author`, or removed
 // when `author` is null; every other term stays.
 export function withAuthorTerm(query: string, author: string | null): string {
   const rest = terms(query).filter((t) => !AUTHOR_TERM.test(t));
-  if (author) rest.push(/\s/.test(author) ? `author:"${author}"` : `author:${author}`);
+  const value = author ? authorSearchValue(author) : "";
+  if (value) rest.push(/\s/.test(value) ? `author:"${value}"` : `author:${value}`);
   return rest.join(" ");
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { signatureText } from "./detail";
-import type { CommitSignature } from "../types";
+import { compareImageSides, signatureText } from "./detail";
+import type { CommitSignature, CompareEnd, Comparison } from "../types";
 
 function sig(over: Partial<CommitSignature>): CommitSignature {
   return { status: "Good", signer: "", key: "", detail: "", ...over };
@@ -26,5 +26,34 @@ describe("signatureText", () => {
     const t = signatureText(sig({ status: "UnknownKey", key: "SHA256:xyz" }));
     expect(t.label).toBe("Unknown key");
     expect(t.who).toBe("SHA256:xyz");
+  });
+});
+
+describe("compareImageSides", () => {
+  const commit = (id: string): CompareEnd => ({ rev: id, id, short_id: id.slice(0, 7), summary: "" });
+  const workdir: CompareEnd = { rev: "Working Directory", id: "", short_id: "", summary: "" };
+  const empty: CompareEnd = { rev: "Empty Tree", id: "", short_id: "", summary: "" };
+  const cmp = (base: CompareEnd, head: CompareEnd, three_dot = false, merge_base: string | null = null): Comparison => ({
+    base,
+    head,
+    three_dot,
+    merge_base,
+    ahead: 0,
+    behind: 0,
+    files: [],
+  });
+
+  it("reads each commit's tree, or the merge base's for three-dot", () => {
+    expect(compareImageSides(cmp(commit("aaa"), commit("bbb")))).toEqual([{ Rev: "aaa" }, { Rev: "bbb" }]);
+    expect(compareImageSides(cmp(commit("aaa"), commit("bbb"), true, "mmm"))).toEqual([{ Rev: "mmm" }, { Rev: "bbb" }]);
+  });
+
+  it("reads the working directory's side from the files on disk", () => {
+    expect(compareImageSides(cmp(commit("aaa"), workdir))).toEqual([{ Rev: "aaa" }, "WorkTree"]);
+    expect(compareImageSides(cmp(workdir, commit("bbb")))).toEqual(["WorkTree", { Rev: "bbb" }]);
+  });
+
+  it("has nothing to read on an empty tree's side", () => {
+    expect(compareImageSides(cmp(empty, commit("bbb")))).toEqual([null, { Rev: "bbb" }]);
   });
 });

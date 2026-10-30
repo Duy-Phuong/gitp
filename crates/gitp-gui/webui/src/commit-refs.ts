@@ -28,13 +28,14 @@ let commitRefs = new Map<string, RefLabels>();
 // commit on demand: the branches in bit order, each loaded commit's row, and
 // the containment bitsets (`words` 32-bit words per row), and the rows they
 // describe.
-let containment: {
+interface Containment {
   rows: CommitRow[];
   branches: BranchRef[];
   index: Map<string, number>;
   bits: Uint32Array;
   words: number;
-} | null = null;
+}
+let containment: Containment | null = null;
 let commitTips = new Map<string, TipRef[]>();
 
 const NO_REFS: RefLabels = { labels: [], total: 0 };
@@ -260,9 +261,25 @@ export function ghostBranch(refs: RefLabels | undefined): string | null {
 // local one hidden from the graph), is walked from its tip once over the loaded
 // rows, children before parents as in rebuildCommitRefs. A commit outside the
 // loaded log (a search result further down) is never faded: there's no telling.
+//
+// The test follows the latest rebuild: a branch stays hovered while a fetch or
+// a commit rebuilds the refs and repaints the log, and the repaint must fade by
+// where the branch is now, not by the bits and rows it was hovered with.
 export function branchReach(ref: DragRef): ((id: string) => boolean) | null {
   if (!containment) return null;
-  const { rows, branches, index, bits, words } = containment;
+  let builtFrom: Containment | null = null;
+  let test: (id: string) => boolean = () => true;
+  return (id) => {
+    if (builtFrom !== containment) {
+      builtFrom = containment!;
+      test = reachIn(ref, builtFrom);
+    }
+    return test(id);
+  };
+}
+
+function reachIn(ref: DragRef, c: Containment): (id: string) => boolean {
+  const { rows, branches, index, bits, words } = c;
   if (ref.kind === "local") {
     const bi = branches.findIndex((b) => b.name === ref.name);
     if (bi >= 0) {

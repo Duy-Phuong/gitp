@@ -50,7 +50,7 @@ import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
 import { setAuthorFilter, setOnGhostCheckout, setOnMoreRefs, setOnOpenWip, setStashHandlers } from "./views/log";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
-import { authorsOf, authorTerm, withAuthorTerm } from "./log-columns";
+import { authorsOf, authorSearchValue, authorTerm, withAuthorTerm } from "./log-columns";
 import { setupBranchHover } from "./branch-hover";
 import { setupChanges } from "./views/changes";
 import { setupConflict } from "./views/conflict";
@@ -128,7 +128,7 @@ import {
   runNextCherryPick,
 } from "./commit-actions";
 import { onWorktreeMenu } from "./worktree-actions";
-import { addRemoteAction, onRemoteFolderMenu, onRemotesMenu } from "./remote-actions";
+import { addRemoteAction, onRemoteFolderMenu } from "./remote-actions";
 import { addSubmoduleAction, onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { createFileAction, editFileAction } from "./editor-actions";
 import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
@@ -245,7 +245,7 @@ function openAuthorFilterMenu(x: number, y: number): void {
   ];
   for (const a of authorsOf(state.rows).slice(0, AUTHOR_MENU_CAP)) {
     // By email where there is one: a name can be part of someone else's.
-    const value = a.email || a.name;
+    const value = authorSearchValue(a.email || a.name);
     const on = value.toLowerCase() === current;
     items.push({ label: `${on ? "✓ " : ""}${a.name} (${a.commits})`, run: () => apply(on ? null : value) });
   }
@@ -292,7 +292,6 @@ async function init(): Promise<void> {
     onStashMenu,
     onRemoteMenu,
     onAddRemote: addRemoteAction,
-    onRemotesMenu,
     onRemoteFolderMenu,
     onTagMenu,
     onCommitContextMenu,
