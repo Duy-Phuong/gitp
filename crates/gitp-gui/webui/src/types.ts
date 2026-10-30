@@ -53,6 +53,16 @@ export interface StatusLists {
   unstaged: FileDiff[];
 }
 
+// Where to read one side of a file from (mirrors gitp-core's FileSide): a
+// revision's tree, the index, or the working tree.
+export type FileSide = { Rev: string } | "Index" | "WorkTree";
+
+// A file's bytes as base64, or only its size when it's too big to preview.
+export interface FileContent {
+  size: number;
+  base64: string | null;
+}
+
 export interface CommitDetail {
   id: string;
   summary: string;

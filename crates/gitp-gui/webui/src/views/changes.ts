@@ -5,7 +5,7 @@
 
 import { DEFAULT_CONTEXT_LINES } from "../api";
 import { autoGrowTextarea, clear, copyToClipboard, el } from "../dom";
-import type { ChangeKind, CommitDetail, FileDiff, SigningConfig, StatusLists } from "../types";
+import type { ChangeKind, CommitDetail, FileContent, FileDiff, FileSide, SigningConfig, StatusLists } from "../types";
 import { type MenuItem, showContextMenu } from "./context-menu";
 import { contextControls, diffToggles, renderFile, renderSplitDiff } from "./detail";
 import { loadDiffWrap, loadIgnoreWhitespace } from "../prefs";
@@ -19,6 +19,7 @@ import {
   selectedPairs,
   type LineKey,
 } from "./line-selection";
+import { imageMime, loadOnce, renderImageDiff, type ImageLoad } from "./image-diff";
 import { renderFileTree } from "./tree";
 import { describeSubmoduleChange, parseSubmoduleDiff } from "../submodule-diff";
 
@@ -36,6 +37,8 @@ export interface ChangesCallbacks {
     contextLines: number,
     ignoreWhitespace: boolean,
   ) => Promise<FileDiff | null>;
+  // One side of an image file, for the image diff.
+  fetchFileContent: (side: FileSide, path: string) => Promise<FileContent | null>;
   stage: (path: string) => Promise<void>;
   unstage: (path: string) => Promise<void>;
   stageAll: () => Promise<void>;
@@ -179,6 +182,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let lineOrder: LineKey[] = [];
   // Repaints the selection highlight and action bar of the diff on screen.
   let paintLines: (() => void) | null = null;
+  // The selected image's before / after loaders, kept while the same diff
+  // object is on screen (a re-read diff, or another file, loads afresh).
+  let images: { diff: FileDiff | null; path: string; loads: [ImageLoad | null, ImageLoad | null] } | null = null;
 
   // Esc drops the line selection — unless something layered on top (a dialog,
   // Quick Launch, a menu) is what the Escape is for.
@@ -273,8 +279,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", selectedDiffContext, selectedDiffWs);
     if (token !== diffToken) return; // selection moved on; drop this result
     // Unchanged: keep the very same object, so the line selection survives and
-    // nothing is repainted.
-    if (sameDiff(file, selectedDiff)) return;
+    // nothing is repainted. Not for an image: a binary file's diff has no
+    // lines to compare, so an edit to it on disk would never show.
+    if (sameDiff(file, selectedDiff) && !imageMime(sel.path)) return;
     // A new diff object: renderDiffInto starts the line selection over, as for
     // any other newly loaded diff.
     selectedDiff = file;
@@ -436,6 +443,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     // stage piecemeal, only the whole entry (from the file list).
     const submodule = selectedDiff ? parseSubmoduleDiff(selectedDiff) : null;
     const hasDiff = selectedDiff != null && selectedDiff.hunks.length > 0 && !submodule;
+    const mime = submodule ? null : imageMime(selected.path);
     pane.append(diffToolbar(hasDiff));
     const body = el("div", { class: `staging-diff-body${loadDiffWrap() ? " wrap-lines" : ""}` });
     // The selected-lines action bar, under the diff (not scrolled with it).
@@ -458,7 +466,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         ]),
       );
     } else if (hasDiff) {
-      body.append(splitView ? renderSplitDiff(selectedDiff!) : renderFile(selectedDiff!));
+      const diff = splitView ? renderSplitDiff(selectedDiff!) : renderFile(selectedDiff!);
+      // An SVG is text as well: its image goes above the text diff.
+      if (mime) diff.querySelector(".file-head")?.after(imagePanel(selected, mime));
+      body.append(diff);
       if (selectedDiffWs) {
         // Not the real blocks (see selectedDiffWs): show the controls, disabled.
         attachHunkControls(body, WS_BLOCKED);
@@ -473,6 +484,8 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       }
     } else if (!diffLoaded) {
       body.append(el("div", { class: "detail-empty", text: "Loading changes…" }));
+    } else if (mime) {
+      body.append(imagePanel(selected, mime));
     } else if (selectedDiffWs) {
       body.append(
         el("div", {
@@ -488,6 +501,32 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       );
     }
     pane.append(body, bar);
+  }
+
+  function imagePanel(sel: { panel: Panel; path: string }, mime: string): HTMLElement {
+    if (images?.diff !== selectedDiff || images.path !== sel.path) {
+      images = { diff: selectedDiff, path: sel.path, loads: imageLoads(sel) };
+    }
+    return renderImageDiff(mime, ...images.loads);
+  }
+
+  // Where the two sides of the selected image live: unstaged is the index vs
+  // the working tree, staged is HEAD vs the index, and an amend-only file is
+  // the amended commit itself. A new file has no before, a deleted one no
+  // after.
+  function imageLoads(sel: { panel: Panel; path: string }): [ImageLoad | null, ImageLoad | null] {
+    const file = (sel.panel === "staged" ? stagedDisplay() : unstaged).find((f) => f.path === sel.path);
+    const [from, to]: [FileSide, FileSide] = amendOnly(sel.path)
+      ? [{ Rev: "HEAD^" }, { Rev: "HEAD" }]
+      : sel.panel === "staged"
+        ? [{ Rev: "HEAD" }, "Index"]
+        : ["Index", "WorkTree"];
+    const at = (side: FileSide, path: string) => loadOnce(() => cb.fetchFileContent(side, path));
+    const isNew = file?.status === "Added" || file?.status === "Untracked";
+    return [
+      isNew ? null : at(from, file?.old_path ?? sel.path),
+      file?.status === "Deleted" ? null : at(to, sel.path),
+    ];
   }
 
   // Unified / Split toggle and context controls (when there's a diff to show),

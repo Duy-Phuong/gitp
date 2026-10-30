@@ -1,9 +1,9 @@
 //! Reading history: the paged commit log and its search, commit details and
-//! diffs, the ref tree, and per-file tree / blame / history.
+//! diffs, the ref tree, and per-file tree / blame / history / content.
 
 use gitp_core::{
-    BlameLine, CommitDetail, CommitRow, CommitSignature, FileCommit, FileDiff, LogSearch, Refs,
-    Repo,
+    BlameLine, CommitDetail, CommitRow, CommitSignature, FileCommit, FileContent, FileDiff,
+    FileSide, LogSearch, Refs, Repo, PREVIEW_MAX_BYTES,
 };
 use serde::Serialize;
 use tauri::State;
@@ -144,6 +144,17 @@ fn get_commit_file_diff_impl(
     })
 }
 
+/// `path` as it is on `side` (a revision, the index or the working tree), for
+/// the image diff — capped at PREVIEW_MAX_BYTES. Shared by the commit detail
+/// and Local Changes.
+fn get_file_content_impl(
+    state: &RepoState,
+    side: FileSide,
+    path: String,
+) -> Result<Option<FileContent>, String> {
+    with_repo(state, |repo| repo.file_content(&side, &path, PREVIEW_MAX_BYTES))
+}
+
 fn get_refs_impl(state: &RepoState) -> Result<Refs, String> {
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
@@ -225,6 +236,15 @@ pub(crate) fn get_commit_file_diff(
     state: State<RepoState>,
 ) -> Result<Option<FileDiff>, String> {
     get_commit_file_diff_impl(&state, rev, path, old_path, context_lines, ignore_whitespace)
+}
+
+#[tauri::command(async)]
+pub(crate) fn get_file_content(
+    side: FileSide,
+    path: String,
+    state: State<RepoState>,
+) -> Result<Option<FileContent>, String> {
+    get_file_content_impl(&state, side, path)
 }
 
 #[tauri::command(async)]

@@ -11,6 +11,7 @@ import {
   fetchCommitTree,
   fetchCompareFileDiff,
   fetchFileHistory,
+  fetchFileContent,
   fetchFileDiff,
   fetchStatusSummary,
   fetchReflog,
@@ -221,6 +222,7 @@ async function init(): Promise<void> {
       fetchCommitFileDiff(id, file.path, file.old_path, contextLines, ignoreWhitespace),
     fetchCompareFileDiff,
     onCompare: (base, head, threeDot) => void showComparison(base, head, threeDot),
+    fetchFileContent,
     onCloseCompare: () => void leaveComparison(),
     fetchSignature: fetchCommitSignature,
     initialTab: loadDetailTab(),
@@ -229,6 +231,7 @@ async function init(): Promise<void> {
   ui.changesView = setupChanges($("#changes-pane"), {
     fetchStatus: fetchStatusSummary,
     fetchFileDiff,
+    fetchFileContent,
     stage,
     unstage,
     stageAll,

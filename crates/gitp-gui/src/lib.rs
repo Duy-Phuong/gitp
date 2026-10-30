@@ -92,6 +92,7 @@ pub fn run() {
             history::log_index_of,
             history::get_commit_detail,
             history::get_commit_file_diff,
+            history::get_file_content,
             compare::compare_revs,
             compare::get_compare_file_diff,
             history::get_refs,

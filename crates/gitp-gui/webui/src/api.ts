@@ -17,7 +17,9 @@ import type {
   ConflictStatus,
   DotfileKind,
   FileCommit,
+  FileContent,
   FileDiff,
+  FileSide,
   GitProgress,
   DeleteBranchesResult,
   LogPage,
@@ -263,6 +265,18 @@ export async function fetchCommitFileDiff(
 ): Promise<FileDiff | null> {
   if (!isTauri()) return mockDetail(rev).files.find((f) => f.path === path) ?? null;
   return invoke<FileDiff | null>("get_commit_file_diff", { rev, path, oldPath, contextLines, ignoreWhitespace });
+}
+
+// `path` as it is on `side`, for the image diff. Null when the file doesn't
+// exist there; `base64` is null when it's too big to preview. In preview mode,
+// a coloured square: blue for a revision, green for the index / working tree.
+export async function fetchFileContent(side: FileSide, path: string): Promise<FileContent | null> {
+  if (!isTauri()) {
+    const fill = typeof side === "object" ? "#5b8cff" : "#3fb950";
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64"><rect width="96" height="64" rx="8" fill="${fill}"/></svg>`;
+    return { size: svg.length, base64: btoa(svg) };
+  }
+  return invoke<FileContent | null>("get_file_content", { side, path });
 }
 
 export async function fetchRefs(): Promise<Refs> {
@@ -1253,6 +1267,8 @@ function mockDetail(rev: string): CommitDetail {
           },
         ],
       },
+      // No hunks, like any binary file — shown by the image diff.
+      { path: "assets/logo.svg", old_path: null, status: "Modified", hunks: [] },
       {
         path: "README.md",
         old_path: null,

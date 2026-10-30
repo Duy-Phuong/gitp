@@ -18,8 +18,20 @@
 import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT } from "../api";
 import { clear, copyToClipboard, el, statusBadge, svg } from "../dom";
 import { loadDiffWrap, loadIgnoreWhitespace, saveDiffWrap, saveIgnoreWhitespace } from "../prefs";
-import type { BlameLine, CommitDetail, CommitSignature, CompareEnd, Comparison, FileCommit, FileDiff, SignatureStatus } from "../types";
+import type {
+  BlameLine,
+  CommitDetail,
+  CommitSignature,
+  CompareEnd,
+  Comparison,
+  FileCommit,
+  FileContent,
+  FileDiff,
+  FileSide,
+  SignatureStatus,
+} from "../types";
 import { hunkWordDiffs, type Seg } from "../worddiff";
+import { imageMime, loadOnce, renderImageDiff, type ImageLoad } from "./image-diff";
 import { renderFileTree } from "./tree";
 
 // Which pane of the commit detail is showing. Exported so the host can persist
@@ -52,6 +64,8 @@ export interface DetailCallbacks {
   // The compare header: re-run the comparison with these ends and mode (Swap,
   // the two-dot / three-dot toggle), or close it.
   onCompare: (base: string, head: string, threeDot: boolean) => void;
+  // One side of an image file, for the image diff.
+  fetchFileContent: (side: FileSide, path: string) => Promise<FileContent | null>;
   onCloseCompare: () => void;
   // Verify the commit's signature (null when unsigned). Can be slow — it runs
   // gpg / ssh-keygen — so the Commit tab fills its badge in when this lands.
@@ -109,6 +123,8 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   // The re-diff currently being fetched, so repeated render()s while it's in
   // flight don't each start another request.
   let recontextInFlight: string | null = null;
+  // The selected image's before / after loaders, kept across repaints.
+  let images: Cached<[ImageLoad | null, ImageLoad | null]> | null = null;
   const collapsed = new Set<string>(); // collapsed folders in the File Tree
   // The last commit whose signature was verified, and the one being verified.
   let signature: { id: string; sig: CommitSignature | null } | null = null;
@@ -340,10 +356,36 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const shown = displayedDiff(selectedFile);
     if (shown === undefined) return renderRecontexted(view, file);
     view.classList.toggle("wrap-lines", loadDiffWrap());
-    view.append(splitView ? renderSplitDiff(shown) : renderUnifiedDiff(shown));
+    const diff = splitView ? renderSplitDiff(shown) : renderUnifiedDiff(shown);
+    const mime = imageMime(file.path);
+    if (mime) diff.querySelector(".file-head")?.after(renderImageDiff(mime, ...imageLoads(file)));
+    view.append(diff);
     if (shown.hunks.length === 0 && file.hunks.length > 0) {
       view.append(el("div", { class: "detail-empty", text: "Only whitespace changed — Ignore whitespace is on." }));
     }
+  }
+
+  // Where the two sides of an image live: the parent (the merge base or base
+  // of a comparison) and the commit (the head). An added file has no before,
+  // a deleted one no after, and a root commit no parent.
+  function imageLoads(file: FileDiff): [ImageLoad | null, ImageLoad | null] {
+    const key = `${viewKey()}:${file.path}`;
+    if (images?.key === key) return images.data;
+    const d = detail!;
+    const oldRev = compare
+      ? compare.three_dot
+        ? compare.merge_base
+        : compare.base.id
+      : d.parents.length > 0
+        ? `${d.id}^`
+        : null;
+    const at = (rev: string, path: string) => loadOnce(() => cb.fetchFileContent({ Rev: rev }, path));
+    const data: [ImageLoad | null, ImageLoad | null] = [
+      file.status !== "Added" && oldRev ? at(oldRev, file.old_path ?? file.path) : null,
+      file.status !== "Deleted" ? at(d.id, file.path) : null,
+    ];
+    images = { key, data };
+    return data;
   }
 
   // The file as it should be drawn at the current context and whitespace
