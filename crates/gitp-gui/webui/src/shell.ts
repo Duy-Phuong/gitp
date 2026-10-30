@@ -29,6 +29,7 @@ import {
   bisectReset,
   listWorktrees,
   listSubmodules,
+  listRemotes,
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el, $ } from "./dom";
@@ -54,6 +55,9 @@ interface RefActions {
   onBranchBulkMenu: SidebarCallbacks["onBranchBulkMenu"];
   onStashMenu: SidebarCallbacks["onStashMenu"];
   onRemoteMenu: SidebarCallbacks["onRemoteMenu"];
+  onAddRemote: SidebarCallbacks["onAddRemote"];
+  onRemotesMenu: SidebarCallbacks["onRemotesMenu"];
+  onRemoteFolderMenu: SidebarCallbacks["onRemoteFolderMenu"];
   onTagMenu: SidebarCallbacks["onTagMenu"];
   onCommitContextMenu: (row: CommitRow, x: number, y: number) => void;
   onWorktreeMenu: SidebarCallbacks["onWorktreeMenu"];
@@ -543,12 +547,13 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
 export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise<void> {
   let marksChanged = false;
   try {
-    // Worktrees and submodules are separate, cheap reads; failing one only
-    // hides its section.
-    const [snap, worktrees, submodules] = await Promise.all([
+    // Worktrees, submodules and remotes are separate, cheap reads; failing one
+    // only hides its section (or, for remotes, the never-fetched ones).
+    const [snap, worktrees, submodules, remoteList] = await Promise.all([
       workspaceSnapshot(),
       listWorktrees().catch(() => []),
       listSubmodules().catch(() => []),
+      listRemotes().catch(() => []),
     ]);
     // A passive refresh must not land a snapshot taken before an operation the
     // user started while it was in flight: that would repaint the pre-op state
@@ -559,6 +564,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     state.refs = snap.refs;
     state.worktrees = worktrees;
     state.submodules = submodules;
+    state.remoteList = remoteList;
     state.localChanges = snap.local_changes;
     state.rebase = snap.rebase;
     ui.undoLabels = snap.undo;
@@ -642,6 +648,7 @@ function sidebarSignature(repoName: string): string {
     [...state.busyRefs].sort().join(","),
     state.worktrees.map((w) => `${w.path}:${w.head}:${w.branch}:${w.is_current}:${w.locked}:${w.lock_reason}:${w.prunable}`).join(","),
     state.submodules.map((m) => `${m.path}:${m.url}:${m.recorded}:${m.checked_out}:${m.state}`).join(","),
+    state.remoteList.map((rm) => `${rm.name}:${rm.url}`).join(","),
   ].join("|");
 }
 
@@ -673,6 +680,7 @@ export function renderSidebarNow(): void {
       busyRefs: state.busyRefs,
       worktrees: state.worktrees,
       submodules: state.submodules,
+      remoteList: state.remoteList,
     },
     {
       onSelectView: (v: SidebarView) => (v === "reflog" ? showReflog() : showView(v)),
@@ -706,6 +714,9 @@ export function renderSidebarNow(): void {
       onStashClick: (s) => void showStashDetail(s),
       onStashMenu: (s, x, y) => refActions.onStashMenu(s, x, y),
       onRemoteMenu: (name, target, x, y) => refActions.onRemoteMenu(name, target, x, y),
+      onAddRemote: () => refActions.onAddRemote(),
+      onRemotesMenu: (x, y) => refActions.onRemotesMenu(x, y),
+      onRemoteFolderMenu: (remote, x, y) => refActions.onRemoteFolderMenu(remote, x, y),
       onTagMenu: (name, target, x, y) => refActions.onTagMenu(name, target, x, y),
       onWorktreeOpen: (w) => void loadRepo(w.path),
       onWorktreeMenu: (w, x, y) => refActions.onWorktreeMenu(w, x, y),

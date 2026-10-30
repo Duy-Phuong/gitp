@@ -60,6 +60,7 @@ import { showComparison } from "./compare";
 import { checkoutInNewWorktreeItem, worktreeOf } from "./worktree-actions";
 import { worktreeName } from "./views/sidebar";
 import { allRefsAt } from "./commit-refs";
+import { pushTargets } from "./push-targets";
 
 // Double-click a branch: check it out, then reload history + sidebar from the new
 // HEAD. Warns first if the working tree has uncommitted changes.
@@ -148,14 +149,19 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
     label: "Fetch and Update (fast-forward)",
     run: () => onBranch(`Fetching and updating ${b.name}`, () => fetchAndUpdateBranch(b.name), true),
   });
-  items.push({ label: "Push to origin", run: () => onBranch(`Pushing ${b.name}`, () => pushBranch(b.name), false) });
+  for (const remote of branchPushTargets(b)) {
+    items.push({
+      label: `Push to ${remote}`,
+      run: () => onBranch(`Pushing ${b.name} to ${remote}`, () => pushBranch(b.name, remote), false),
+    });
+  }
   if (b.behind > 0) {
     items.push({
       label: "Fast-forward to upstream",
       run: () => onBranch(`Fast-forwarding ${b.name}`, () => fastForwardBranch(b.name), true),
     });
   }
-  items.push({ label: "Create Pull Request on origin", run: () => void createPullRequestAction(b) });
+  items.push({ label: `Create Pull Request on ${branchPushTargets(b)[0]}`, run: () => void createPullRequestAction(b) });
 
   items.push({ separator: true });
   items.push({
@@ -176,6 +182,11 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
   items.push({ label: "Copy Branch Name", run: () => void copyText(b.name, `Copied ${b.name}`) });
 
   showContextMenu(x, y, items);
+}
+
+// The remotes the branch menu offers to push to (see pushTargets).
+function branchPushTargets(b: BranchRef): string[] {
+  return pushTargets(b.upstream_remote, state.remoteList.map((r) => r.name));
 }
 
 export function onBranchBulkMenu(x: number, y: number): void {
@@ -690,11 +701,12 @@ async function runDelete(b: BranchRef, deleteRemote: boolean): Promise<void> {
   reportDone(note);
 }
 
-// Open the branch's pull-request page in the browser (URL derived from origin).
+// Open the branch's pull-request page in the browser, on its default remote
+// (the one the menu names — see pushTargets).
 export async function createPullRequestAction(b: BranchRef): Promise<void> {
   setStatus(`Opening pull request for ${b.name}…`);
   try {
-    const url = await createPullRequest(b.name);
+    const url = await createPullRequest(b.name, branchPushTargets(b)[0]);
     reportDone(`Opened pull request page: ${url}`);
   } catch (err) {
     opFailed("Create pull request failed", err);

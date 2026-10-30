@@ -78,6 +78,7 @@ import {
 import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
 import { syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
+import { addRemoteAction } from "./remote-actions";
 
 // --- Quick Launch -----------------------------------------------------------
 
@@ -259,7 +260,7 @@ function repoCommands(): QuickItem[] {
     },
     {
       kind: "command",
-      label: "Create Pull Request on 'origin'",
+      label: "Create Pull Request…",
       next: () => branchStage("Create Pull Request", (b) => void createPullRequestAction(b)),
     },
     {
@@ -390,6 +391,7 @@ function repoCommands(): QuickItem[] {
         ),
     },
     { kind: "command", label: "Add Worktree…", next: () => addWorktreeStage() },
+    { kind: "command", label: "Add Remote…", run: addRemoteAction },
     { kind: "command", label: "Prune Worktrees", run: () => void pruneWorktreesAction() },
     { kind: "command", label: "Stage All Changes", run: () => void stageAllAction() },
     { kind: "command", label: "Unstage All Changes", run: () => void unstageAllAction() },
@@ -744,9 +746,7 @@ function pullStage(): QuickStage {
 
 function openFetchOptions(): void {
   setStatus("Choose what to fetch…");
-  // Remote *names* aren't a field of their own — derive them from the
-  // remote-tracking branches the sidebar already has.
-  const names = [...new Set(state.refs.remotes.map((r) => r.remote))].sort();
+  const names = state.remoteList.map((r) => r.name);
   openFetchDialog(names, (remote) => {
     if (remote === null) void refreshAllAction();
     else void runBranchOp(`Fetching ${remote}`, () => fetchRemote(remote), true, remote);

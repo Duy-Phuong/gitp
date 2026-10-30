@@ -28,6 +28,7 @@ import type {
   RebaseStep,
   ReflogEntry,
   Refs,
+  RemoteInfo,
   RepoChanged,
   ResetMode,
   SigningConfig,
@@ -682,9 +683,10 @@ export async function squashMessage(): Promise<string | null> {
   return invoke<string | null>("squash_message", {});
 }
 
-export async function pushBranch(name: string): Promise<string> {
-  if (!isTauri()) return `Pushed ${name} to origin (preview mock)`;
-  return invokeNetwork<string>("push_branch", { name });
+// `remote`: where to push; by default the remote the branch tracks, else origin.
+export async function pushBranch(name: string, remote?: string): Promise<string> {
+  if (!isTauri()) return `Pushed ${name} to ${remote ?? "origin"} (preview mock)`;
+  return invokeNetwork<string>("push_branch", { name, remote: remote ?? null });
 }
 
 export async function fetchBranch(name: string): Promise<string> {
@@ -703,6 +705,54 @@ export async function goneBranches(): Promise<string[]> {
 export async function fetchRemote(remote: string): Promise<string> {
   if (!isTauri()) return `Fetched ${remote} (preview mock)`;
   return invokeNetwork<string>("fetch_remote", { remote });
+}
+
+// Preview mode's configured remotes: origin plus one never fetched, so the
+// sidebar shows an empty remote and the branch menu offers a choice of push.
+const MOCK_REMOTES: RemoteInfo[] = [
+  { name: "origin", url: "git@github.com:ada/gitp.git" },
+  { name: "upstream", url: "https://github.com/gitp-org/gitp.git" },
+];
+
+export async function listRemotes(): Promise<RemoteInfo[]> {
+  if (!isTauri()) return MOCK_REMOTES.map((r) => ({ ...r }));
+  return invoke<RemoteInfo[]>("list_remotes", {});
+}
+
+export async function addRemote(name: string, url: string): Promise<string> {
+  if (!isTauri()) {
+    MOCK_REMOTES.push({ name, url });
+    MOCK_REMOTES.sort((a, b) => a.name.localeCompare(b.name));
+    return "";
+  }
+  return invoke<string>("add_remote", { name, url });
+}
+
+export async function setRemoteUrl(name: string, url: string): Promise<string> {
+  if (!isTauri()) {
+    const r = MOCK_REMOTES.find((m) => m.name === name);
+    if (r) r.url = url;
+    return "";
+  }
+  return invoke<string>("set_remote_url", { name, url });
+}
+
+export async function renameRemote(old: string, name: string): Promise<string> {
+  if (!isTauri()) {
+    const r = MOCK_REMOTES.find((m) => m.name === old);
+    if (r) r.name = name;
+    return "";
+  }
+  return invoke<string>("rename_remote", { old, new: name });
+}
+
+export async function removeRemote(name: string): Promise<string> {
+  if (!isTauri()) {
+    const i = MOCK_REMOTES.findIndex((m) => m.name === name);
+    if (i !== -1) MOCK_REMOTES.splice(i, 1);
+    return "";
+  }
+  return invoke<string>("remove_remote", { name });
 }
 
 // `background`: the periodic refresh nobody asked for, which must never pop a
@@ -732,9 +782,10 @@ export async function unsetUpstream(branch: string): Promise<string> {
   return invoke<string>("unset_upstream", { branch });
 }
 
-export async function createPullRequest(branch: string): Promise<string> {
-  if (!isTauri()) return `https://example.com/compare/${branch} (preview mock)`;
-  return invoke<string>("create_pull_request", { branch });
+// `remote`: whose web UI to open it on; by default the remote the branch tracks.
+export async function createPullRequest(branch: string, remote?: string): Promise<string> {
+  if (!isTauri()) return `https://example.com/${remote ?? "origin"}/compare/${branch} (preview mock)`;
+  return invoke<string>("create_pull_request", { branch, remote: remote ?? null });
 }
 
 export async function fetchRebaseTodo(onto: string): Promise<RebaseCommit[]> {

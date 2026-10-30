@@ -79,17 +79,23 @@ impl Repo {
         self.run_git(&["branch", "--unset-upstream", ref_arg(branch)?])
     }
 
-    /// The web URL for opening a pull/merge request for `branch` on `origin`,
-    /// derived from the remote URL. Recognizes GitHub, GitLab, and Bitbucket;
-    /// falls back to a GitHub-style compare URL for other hosts.
-    pub fn pull_request_url(&self, branch: &str) -> Result<String> {
+    /// The web URL for opening a pull/merge request for `branch` on `remote`,
+    /// or by default the remote it tracks (else `origin`), derived from the
+    /// remote URL. Recognizes GitHub, GitLab, and Bitbucket; falls back to a
+    /// GitHub-style compare URL for other hosts.
+    pub fn pull_request_url(&self, branch: &str, remote: Option<&str>) -> Result<String> {
+        // The request is for the branch as the remote knows it, which can be
+        // named differently from the local one.
+        let (tracked, branch) = self.remote_target(branch);
+        let remote_name = remote.map_or(tracked, str::to_string);
+        let branch = branch.as_str();
         let remote = self
             .inner
-            .find_remote("origin")
-            .map_err(|_| Error::Message("no 'origin' remote configured".into()))?;
+            .find_remote(&remote_name)
+            .map_err(|_| Error::Message(format!("no '{remote_name}' remote configured")))?;
         let url = remote
             .url()
-            .ok_or_else(|| Error::Message("'origin' has no URL".into()))?;
+            .ok_or_else(|| Error::Message(format!("'{remote_name}' has no URL")))?;
         let (host, base) = parse_remote_url(url)
             .ok_or_else(|| Error::Message(format!("can't parse remote URL: {url}")))?;
         let enc = encode_query(branch);
@@ -173,9 +179,15 @@ impl Repo {
         Some(message.join("\n").trim().to_string())
     }
 
-    /// Push branch `name` to `origin` (`git push origin <name>`).
-    pub fn push_branch(&self, name: &str) -> Result<String> {
-        self.run_git_network(&["push", "origin", ref_arg(name)?])
+    /// Push branch `name` to `remote` (`git push <remote> <name>`), or — when
+    /// none is given — to the remote it tracks, else `origin`.
+    pub fn push_branch(&self, name: &str, remote: Option<&str>) -> Result<String> {
+        let name = ref_arg(name)?;
+        let remote = match remote {
+            Some(remote) => remote.to_string(),
+            None => self.remote_target(name).0,
+        };
+        self.run_git_network(&["push", ref_arg(&remote)?, name])
     }
 
     /// Fetch updates for `name`'s remote (its configured remote, or all remotes

@@ -98,12 +98,21 @@ export interface BranchRef {
   target: string;
   // False when the branch has no upstream (never pushed / no remote to compare).
   has_upstream: boolean;
+  // The remote it tracks (branch.<name>.remote), where a push or a pull request
+  // goes by default. Always sent by the backend; preview mocks leave it out.
+  upstream_remote?: string | null;
 }
 
 export interface RemoteBranch {
   remote: string;
   name: string;
   target: string;
+}
+
+// A configured remote (mirrors gitp-core's RemoteInfo).
+export interface RemoteInfo {
+  name: string;
+  url: string | null;
 }
 
 export interface TagRef {

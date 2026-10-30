@@ -95,6 +95,7 @@ import {
 } from "./ref-actions";
 import { onCommitContextMenu, onReflogMenu, runNextCherryPick } from "./commit-actions";
 import { onWorktreeMenu } from "./worktree-actions";
+import { addRemoteAction, onRemoteFolderMenu, onRemotesMenu } from "./remote-actions";
 import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
@@ -202,6 +203,9 @@ async function init(): Promise<void> {
     onBranchBulkMenu,
     onStashMenu,
     onRemoteMenu,
+    onAddRemote: addRemoteAction,
+    onRemotesMenu,
+    onRemoteFolderMenu,
     onTagMenu,
     onCommitContextMenu,
     onWorktreeMenu,

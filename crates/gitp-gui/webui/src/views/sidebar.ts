@@ -5,7 +5,7 @@
 // (filter text, which sections/folders are collapsed) and re-renders on change.
 
 import { chevronIcon, clear, el } from "../dom";
-import type { BranchRef, Refs, StashRef, Submodule, Worktree } from "../types";
+import type { BranchRef, Refs, RemoteInfo, StashRef, Submodule, Worktree } from "../types";
 
 export type SidebarView = "history" | "changes" | "reflog";
 
@@ -33,6 +33,9 @@ export interface SidebarState {
   worktrees: Worktree[];
   // The repo's submodules; the section shows only when there are any.
   submodules: Submodule[];
+  // The configured remotes, listed in Remotes even before any branch of
+  // theirs has been fetched.
+  remoteList: RemoteInfo[];
 }
 
 export interface SidebarCallbacks {
@@ -56,6 +59,12 @@ export interface SidebarCallbacks {
   onStashMenu: (s: StashRef, x: number, y: number) => void;
   // Right-click a remote branch: open its actions menu (checkout, copy name).
   onRemoteMenu: (name: string, target: string, x: number, y: number) => void;
+  // The "+" on the Remotes header: add a remote.
+  onAddRemote: () => void;
+  // Right-click the Remotes header.
+  onRemotesMenu: (x: number, y: number) => void;
+  // Right-click a remote's folder row: edit, rename, remove, fetch it.
+  onRemoteFolderMenu: (remote: string, x: number, y: number) => void;
   // Right-click a tag: open its actions menu at the cursor.
   onTagMenu: (name: string, target: string, x: number, y: number) => void;
   // Double-click a worktree: open it as a repo tab.
@@ -382,10 +391,24 @@ function buildRemotes(
   filtering: boolean,
 ): void {
   const { row, collapsed } = sectionHeader("sec:remotes", "Remotes", s, cb);
+  const add = el("button", { class: "sb-section-add", text: "+", title: "Add Remote…" });
+  add.addEventListener("click", (e) => {
+    e.stopPropagation(); // not a collapse toggle
+    cb.onAddRemote();
+  });
+  row.append(add);
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    cb.onRemotesMenu(e.clientX, e.clientY);
+  });
   tree.append(row);
   if (collapsed) return;
 
+  // Configured remotes first, so one never fetched still gets its row (and its
+  // menu); then any remote known only from its tracking branches.
   const remotes = new Map<string, { full: string; label: string; target: string }[]>();
+  const urls = new Map(s.remoteList.map((r) => [r.name, r.url]));
+  for (const r of s.remoteList) remotes.set(r.name, []);
   for (const r of s.refs.remotes) {
     const label = r.name.startsWith(`${r.remote}/`) ? r.name.slice(r.remote.length + 1) : r.name;
     const list = remotes.get(r.remote) ?? [];
@@ -395,10 +418,16 @@ function buildRemotes(
 
   for (const remote of [...remotes.keys()].sort()) {
     const shown = remotes.get(remote)!.filter((r) => match(r.full));
-    if (shown.length === 0) continue;
+    if (shown.length === 0 && (filtering || !urls.has(remote))) continue;
     const rkey = `rm:${remote}`;
     const rcollapsed = s.collapsed.has(rkey) && !filtering;
-    tree.append(folderRow(rkey, remote, rcollapsed, cb));
+    const folder = folderRow(rkey, remote, rcollapsed, cb);
+    folder.title = `${remote}${urls.get(remote) ? `\n${urls.get(remote)}` : ""}\nRight-click: actions`;
+    folder.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      cb.onRemoteFolderMenu(remote, e.clientX, e.clientY);
+    });
+    tree.append(folder);
     if (!rcollapsed) {
       for (const r of shown) {
         tree.append(remoteLeaf(r.label, r.full, r.target, s.busyRefs.has(r.full), cb));

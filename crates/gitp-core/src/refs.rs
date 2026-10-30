@@ -24,6 +24,9 @@ pub struct BranchRef {
     /// pushed / has no configured remote branch (so ahead/behind are 0 not
     /// because it's in sync, but because there's nothing to compare against).
     pub has_upstream: bool,
+    /// The remote it tracks (`branch.<name>.remote`), even before that remote
+    /// has been fetched — where a push or a pull request goes by default.
+    pub upstream_remote: Option<String>,
 }
 
 /// A remote-tracking branch, e.g. `origin/master`.
@@ -88,6 +91,10 @@ impl Repo {
             }
             let (ahead, behind) = ahead_behind(repo, &branch);
             let has_upstream = branch.upstream().is_ok();
+            let upstream_remote = repo
+                .branch_upstream_remote(&format!("refs/heads/{name}"))
+                .ok()
+                .and_then(|remote| remote.as_str().map(str::to_string));
             let target = branch
                 .get()
                 .target()
@@ -100,6 +107,7 @@ impl Repo {
                 behind,
                 target,
                 has_upstream,
+                upstream_remote,
             });
         }
         branches.sort_by(|a, b| a.name.cmp(&b.name));
