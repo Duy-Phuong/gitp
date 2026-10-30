@@ -394,8 +394,8 @@ function mergeMenuItem(name: string, current: string, ref: string): MenuItem {
 
 // Merge `name` into the current branch. A squash commits nothing: it stages
 // the combined changes, so it lands in Local Changes with the message git
-// prepared already in the commit box — conflicts included, which are resolved
-// there before that commit.
+// prepared already in the commit box. A conflicted squash is a merge session
+// like any other: the error offers the resolver, whose Commit finishes it.
 export async function mergeAction(name: string, mode: MergeMode, ref?: string): Promise<void> {
   const current = state.refs.head ?? "HEAD";
   if (mode !== "Squash") {
@@ -418,9 +418,12 @@ export async function mergeAction(name: string, mode: MergeMode, ref?: string): 
     ui.changesView?.prefillMessage(subject, body.join("\n").replace(/^\s+/, ""));
     showView("changes");
   }
+  if (failure) {
+    await opFailedMaybeConflict(`${label} failed`, failure); // reloads the sidebar too
+    return;
+  }
   await loadSidebar();
-  if (failure) opFailed(`${label} failed`, failure);
-  else reportDone(message ? `Squashed ${name} — review and commit it in Local Changes.` : out || `${label} done.`);
+  reportDone(message ? `Squashed ${name} — review and commit it in Local Changes.` : out || `${label} done.`);
 }
 
 // Right-click a stash: apply (with a delete-after checkbox), rename, save the

@@ -1,6 +1,6 @@
 //! Conflict resolution driven by the conflict-resolver view, for every git
-//! operation that can stop mid-way with conflict markers: merge, rebase,
-//! cherry-pick, and revert. Reports the in-progress session, reads the three
+//! operation that can stop mid-way with conflict markers: merge (squash
+//! included), rebase, cherry-pick, and revert. Reports the in-progress session, reads the three
 //! sides of a conflicted file, marks files resolved, and finishes (commit /
 //! continue) or aborts. Everything shells out through `run_git` so git's own
 //! conflict handling and messages apply as-is.
@@ -14,8 +14,8 @@ use crate::repo::Repo;
 /// A snapshot of the current conflict session, for the resolver UI.
 #[derive(Debug, Clone, Serialize)]
 pub struct ConflictStatus {
-    /// `"merge"`, `"rebase"`, `"cherry-pick"`, `"revert"`, or `"none"` when
-    /// nothing is in progress.
+    /// `"merge"` (a squash merge too), `"rebase"`, `"cherry-pick"`,
+    /// `"revert"`, or `"none"` when nothing is in progress.
     pub kind: String,
     /// Human summary, e.g. `Merging origin/x into dev` or `Rebasing dev`.
     pub summary: String,
@@ -50,8 +50,9 @@ impl Repo {
             git_dir.join("rebase-merge").is_dir() || git_dir.join("rebase-apply").is_dir();
         let cherry_picking = git_dir.join("CHERRY_PICK_HEAD").exists();
         let reverting = git_dir.join("REVERT_HEAD").exists();
+        let squashing = self.squash_pending();
 
-        if !merging && !rebasing && !cherry_picking && !reverting {
+        if !merging && !rebasing && !cherry_picking && !reverting && !squashing {
             return Ok(ConflictStatus {
                 kind: "none".into(),
                 summary: String::new(),
@@ -61,6 +62,15 @@ impl Repo {
         }
 
         let conflicted = self.unmerged_paths()?;
+
+        if squashing {
+            return Ok(ConflictStatus {
+                kind: "merge".into(),
+                summary: format!("Squash merge into {}", self.current_branch_label()),
+                conflicted,
+                message: self.squash_message().unwrap_or_default(),
+            });
+        }
 
         if rebasing {
             let into = self.rebasing_branch_label();
@@ -175,6 +185,17 @@ impl Repo {
             self.run_git(&["cherry-pick", "--abort"])
         } else if git_dir.join("REVERT_HEAD").exists() {
             self.run_git(&["revert", "--abort"])
+        } else if self.squash_pending() {
+            // `merge --abort` needs MERGE_HEAD, which a squash never writes;
+            // `reset --merge` is what it would run. Drop the message too, or
+            // the squash would still look pending.
+            let out = self.run_git(&["reset", "--merge"])?;
+            let msg = git_dir.join("SQUASH_MSG");
+            if msg.exists() {
+                std::fs::remove_file(&msg)
+                    .map_err(|e| Error::Message(format!("can't remove SQUASH_MSG: {e}")))?;
+            }
+            Ok(out)
         } else {
             let out = self.run_git(&["rebase", "--abort"]);
             self.cleanup_rebase_scratch();
@@ -187,7 +208,7 @@ impl Repo {
     /// which reuses its own pending message).
     pub fn finish_conflict(&self, message: &str) -> Result<String> {
         let git_dir = self.inner.path();
-        if git_dir.join("MERGE_HEAD").exists() {
+        if git_dir.join("MERGE_HEAD").exists() || self.squash_pending() {
             self.run_git_stdin(&["commit", "-F", "-"], message)
         } else if git_dir.join("CHERRY_PICK_HEAD").exists() {
             self.continue_without_editor(&["cherry-pick", "--continue"])
@@ -222,6 +243,22 @@ impl Repo {
         } else {
             Err(Error::Message(combined))
         }
+    }
+
+    /// A `git merge --squash` is waiting to be committed. It writes no
+    /// MERGE_HEAD — only SQUASH_MSG, plus unmerged files when it conflicted —
+    /// yet it is a merge to resolve, commit or abort all the same. git removes
+    /// the file on commit and reset; should a stale one sit beside another
+    /// operation's state, that operation wins.
+    fn squash_pending(&self) -> bool {
+        let git_dir = self.inner.path();
+        git_dir.join("SQUASH_MSG").exists()
+            && ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]
+                .iter()
+                .all(|f| !git_dir.join(f).exists())
+            && ["rebase-merge", "rebase-apply"]
+                .iter()
+                .all(|d| !git_dir.join(d).is_dir())
     }
 
     /// Working-tree paths with unresolved conflicts.
