@@ -25,6 +25,8 @@ interface State {
   repos: RepoTab[];
   rows: CommitRow[];
   total: number;
+  // HEAD's commit as of the last log page — where the graph's WIP row hangs.
+  headId: string | null;
   selectedId: string | null;
   view: View;
   refs: Refs;
@@ -56,6 +58,7 @@ export const state: State = {
   repos: [],
   rows: [],
   total: 0,
+  headId: null,
   selectedId: null,
   view: "history",
   refs: EMPTY_REFS,

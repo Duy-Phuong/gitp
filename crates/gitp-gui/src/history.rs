@@ -15,6 +15,10 @@ use crate::state::{ensure_log, ensure_refs, to_message, with_repo, with_repo_unl
 pub(crate) struct LogPage {
     pub(crate) rows: Vec<CommitRow>,
     pub(crate) total: usize,
+    /// HEAD's commit, where the graph hangs its WIP row. `None` on an unborn
+    /// branch. Sent with the page rather than read from the refs because a
+    /// detached HEAD has no branch to read it from.
+    pub(crate) head: Option<String>,
 }
 
 /// Return the `[offset, offset+limit)` slice of the active repo's log, computing
@@ -32,7 +36,8 @@ pub(crate) fn get_log_page_impl(
     let total = log.len();
     let end = offset.saturating_add(limit).min(total);
     let rows = log.get(offset..end).map(<[_]>::to_vec).unwrap_or_default();
-    Ok(LogPage { rows, total })
+    let head = session.repo.resolve_commit("HEAD").ok();
+    Ok(LogPage { rows, total, head })
 }
 
 /// A cheap stand-in for "has history changed?", for callers that would
@@ -272,6 +277,8 @@ mod tests {
         assert_eq!(p0.total, 5);
         assert_eq!(p0.rows.len(), 2);
         assert_eq!(p0.rows[0].summary, "c5", "newest first");
+        // The WIP row hangs off HEAD, which here is the newest commit.
+        assert_eq!(p0.head.as_deref(), Some(p0.rows[0].id.as_str()));
 
         let p1 = get_log_page_impl(&state, 2, 2, true).expect("page 1");
         assert_eq!(p1.rows.len(), 2);

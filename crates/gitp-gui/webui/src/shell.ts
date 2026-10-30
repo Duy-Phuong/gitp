@@ -32,7 +32,7 @@ import {
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el, $ } from "./dom";
-import { logRowHeight, renderLog, setBisectMarks } from "./views/log";
+import { logRowTop, renderLog, setBisectMarks, setWipRow } from "./views/log";
 import { bisectBannerText } from "./bisect-text";
 import { closeCommitMenu } from "./views/commit-menu";
 import { renderSidebar, type SidebarView, type SidebarCallbacks } from "./views/sidebar";
@@ -179,6 +179,7 @@ export async function closeRepoTab(path: string): Promise<void> {
       state.rows = [];
       rowsRepoPath = "";
       state.total = 0;
+      state.headId = null;
       state.selectedId = null;
       state.refs = EMPTY_REFS;
       state.worktrees = [];
@@ -190,6 +191,7 @@ export async function closeRepoTab(path: string): Promise<void> {
       state.conflict = null;
       state.bisect = null;
       setBisectMarks(null);
+      setWipRow(0, null);
       ui.undoLabels = { undo: null, redo: null };
       renderRebaseBanner();
       renderConflictBanner();
@@ -259,6 +261,8 @@ export async function refreshHistory(opts: { keepSelection?: boolean } = {}): Pr
   state.rows = page.rows;
   rowsRepoPath = state.repoPath;
   state.total = page.total;
+  state.headId = page.head;
+  setWipRow(state.localChanges, state.headId);
   const keep = Boolean(opts.keepSelection && state.selectedId && state.rows.some((r) => r.id === state.selectedId));
   if (!keep) state.selectedId = state.rows[0]?.id ?? null;
   // Drop any multi-selected commits that no longer exist (e.g. a rebase
@@ -367,8 +371,9 @@ export async function updateLogView(): Promise<void> {
   if (seq !== logViewSeq || logSearchQuery() !== query) return;
   await ensureAvatars(results.map((r) => r.author_email));
   if (seq !== logViewSeq) return;
-  // No onNeedMore: search returns the complete match set, not a page.
-  ui.logView = renderLog(pane, results, state.selectedId, selectCommit, undefined, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
+  // No onNeedMore: search returns the complete match set, not a page. No WIP
+  // row either: it isn't a search result.
+  ui.logView = renderLog(pane, results, state.selectedId, selectCommit, undefined, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect, false);
   if (!results.length) {
     pane.append(el("div", { class: "detail-empty", text: `No commits match “${query}”.` }));
   }
@@ -388,6 +393,7 @@ export async function loadMoreCommits(): Promise<void> {
     state.rows = state.rows.concat(page.rows);
     rowsRepoPath = state.repoPath;
     state.total = page.total;
+    state.headId = page.head;
     const host = $("#log-pane");
     const keepScroll = host.scrollTop;
     await ensureAvatars(state.rows.map((r) => r.author_email));
@@ -542,6 +548,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
 // Now status runs once and is shared with the Local Changes view.
 export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise<void> {
   let marksChanged = false;
+  let wipChanged = false;
   try {
     // Worktrees and submodules are separate, cheap reads; failing one only
     // hides its section.
@@ -569,6 +576,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     applyConflictStatus(snap.conflict);
     state.bisect = snap.bisect;
     marksChanged = setBisectMarks(state.bisect);
+    wipChanged = setWipRow(state.localChanges, state.headId);
     renderBisectBanner();
     // Whatever moved a ref (an action, undo, a terminal command) added a reflog
     // entry the open Reflog should list.
@@ -582,7 +590,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
   // log so the branch chips appear on every commit.
   ui.detailView?.refresh();
   const chipsChanged = rebuildCommitRefs();
-  const needsRepaint = chipsChanged || marksChanged || lastPaintedRows !== state.rows || lastPaintedSelection !== state.selectedId;
+  const needsRepaint = chipsChanged || marksChanged || wipChanged || lastPaintedRows !== state.rows || lastPaintedSelection !== state.selectedId;
   if (state.view === "history" && state.rows.length && needsRepaint) {
     const pane = $("#log-pane");
     const keep = pane.scrollTop;
@@ -594,6 +602,17 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     lastPaintedRows = state.rows;
     lastPaintedSelection = state.selectedId;
   }
+}
+
+// The change count moved without a workspace snapshot (Local Changes staged,
+// discarded or stashed something): bring the log's WIP row along. Repainted
+// even while Local Changes is on screen, so History is current on the way back.
+export function refreshWipRow(): void {
+  if (!setWipRow(state.localChanges, state.headId) || !state.rows.length || logSearchQuery()) return;
+  const pane = $("#log-pane");
+  const keep = pane.scrollTop;
+  ui.logView = renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
+  pane.scrollTop = keep;
 }
 
 // What the log pane was last painted from, so a refresh that changed neither
@@ -761,7 +780,7 @@ export async function jumpToCommit(target: string, label: string): Promise<void>
   ui.logView = renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
   if (idx >= 0) {
     const pane = $("#log-pane");
-    pane.scrollTop = Math.max(0, idx * logRowHeight() - pane.clientHeight / 2);
+    pane.scrollTop = Math.max(0, logRowTop(idx) - pane.clientHeight / 2);
   }
   await selectCommit(target);
   ui.detailView?.focusCommit();
@@ -789,6 +808,7 @@ async function loadDownTo(target: string, label: string): Promise<number> {
     state.rows = state.rows.concat(page.rows);
     rowsRepoPath = state.repoPath;
     state.total = page.total;
+    state.headId = page.head;
     await ensureAvatars(state.rows.map((r) => r.author_email));
     rebuildCommitRefs();
     return state.rows.findIndex((r) => r.id === target);

@@ -41,7 +41,7 @@ import {
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
-import { setOnMoreRefs } from "./views/log";
+import { setOnMoreRefs, setOnOpenWip } from "./views/log";
 import { setupChanges } from "./views/changes";
 import { setupConflict } from "./views/conflict";
 import { setupReflog } from "./views/reflog";
@@ -68,6 +68,7 @@ import {
   loadSidebar,
   refreshHistory,
   refreshUndoLabels,
+  refreshWipRow,
   renderSidebarNow,
   restoreWorkspace,
   setRefActions,
@@ -196,6 +197,7 @@ async function init(): Promise<void> {
   // The shell draws the sidebar and the log; the menus and actions behind their
   // rows live in modules built on top of it, so they are plugged in from here.
   setOnMoreRefs(onMoreRefsMenu);
+  setOnOpenWip(() => showView("changes"));
   setRefActions({
     checkoutBranchAction,
     onBranchMenu,
@@ -264,6 +266,7 @@ async function init(): Promise<void> {
       if (state.localChanges === count) return;
       state.localChanges = count;
       renderSidebarNow();
+      refreshWipRow();
     },
     onCommitted: () => {
       void loadSidebar();

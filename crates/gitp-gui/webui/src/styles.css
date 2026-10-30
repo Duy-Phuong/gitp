@@ -2047,6 +2047,25 @@ body {
   stroke: var(--bg);
 }
 
+/* The "// WIP" row above the graph (uncommitted changes): a hollow, dashed
+   node in HEAD's lane, a dashed line down to HEAD, and a dimmed italic
+   message — present, but plainly not a commit yet. */
+.wip-node {
+  fill: var(--bg);
+  stroke-dasharray: 3 2;
+}
+.wip-edge {
+  stroke-dasharray: 4 3;
+  opacity: 0.7;
+}
+.wip-row .commit-summary {
+  font-style: italic;
+  color: var(--text-dim);
+}
+.wip-row .wip-count {
+  flex: 0 0 auto;
+}
+
 /* Detail ----------------------------------------------------------------- */
 .detail-pane {
   display: flex;

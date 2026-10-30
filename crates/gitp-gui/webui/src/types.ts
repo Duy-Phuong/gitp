@@ -15,6 +15,8 @@ export interface CommitRow {
 export interface LogPage {
   rows: CommitRow[];
   total: number;
+  // HEAD's commit, where the graph's WIP row hangs; null on an unborn branch.
+  head: string | null;
 }
 
 export type ChangeKind =

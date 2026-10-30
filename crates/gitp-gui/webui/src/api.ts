@@ -179,7 +179,7 @@ export async function fetchLogPage(
   allBranches: boolean,
 ): Promise<LogPage> {
   if (!isTauri()) {
-    return { rows: MOCK_LOG.slice(offset, offset + limit), total: MOCK_LOG.length };
+    return { rows: MOCK_LOG.slice(offset, offset + limit), total: MOCK_LOG.length, head: MOCK_LOG[0].id };
   }
   return invoke<LogPage>("get_log_page", { offset, limit, allBranches });
 }

@@ -15,7 +15,7 @@ import {
   revertCommit,
 } from "./api";
 import { $ } from "./dom";
-import { logRowHeight, renderLog } from "./views/log";
+import { logRowTop, renderLog } from "./views/log";
 import { showCommitMenu } from "./views/commit-menu";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { openRebaseModal, type RebaseOptions } from "./views/rebase";
@@ -344,7 +344,7 @@ async function landOnCommit(rev: string): Promise<void> {
   ui.logView = renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
   if (idx >= 0) {
     const pane = $("#log-pane");
-    pane.scrollTop = Math.max(0, idx * logRowHeight() - pane.clientHeight / 2);
+    pane.scrollTop = Math.max(0, logRowTop(idx) - pane.clientHeight / 2);
   }
   await selectCommit(rev);
 }

@@ -125,9 +125,35 @@ const REF_COLUMN_MAX = 420;
 // Height of the column header the GitKraken themes draw above the log.
 const HEADER_H = 26;
 
-// Row height of the graph in force, for callers that scroll to a row.
-export function logRowHeight(): number {
-  return graphThemeFor().metrics.rowHeight;
+// Where row `index` of the last rendered log starts, for callers that scroll to
+// a row. Not just `index * rowHeight`: the WIP row, when shown, sits above row 0.
+export function logRowTop(index: number): number {
+  return index * graphThemeFor().metrics.rowHeight + wipLead;
+}
+
+// The "// WIP" row GitKraken draws above the graph while the working tree has
+// uncommitted changes: a hollow node in HEAD's lane with a dashed line down to
+// HEAD. It is drawn by renderLog as a leading row of its own rather than faked
+// into the rows, so every row index (selection, keyboard moves, search results,
+// jump-to-commit) still means the same commit. Set from the workspace snapshot
+// (see setWipRow), like the bisect marks.
+let wip: { changes: number; head: string | null } | null = null;
+let onOpenWip: (() => void) | null = null;
+// Height of the WIP row in the last rendered log: 0, or one row.
+let wipLead = 0;
+
+// Adopt the change count and HEAD's commit. Returns whether the WIP row
+// changed, so the caller knows the log needs repainting.
+export function setWipRow(changes: number, head: string | null): boolean {
+  const next = changes > 0 ? { changes, head } : null;
+  if (next?.changes === wip?.changes && next?.head === wip?.head) return false;
+  wip = next;
+  return true;
+}
+
+// What clicking the WIP row does: open Local Changes. Set once at startup.
+export function setOnOpenWip(handler: () => void): void {
+  onOpenWip = handler;
 }
 
 const BUFFER_ROWS = 8;
@@ -290,10 +316,13 @@ export function renderLog(
   // should extend from.
   multiSelected: Set<string> = new Set(),
   onMultiSelect?: (ids: Set<string>) => void,
+  // The WIP row belongs above the history, not above a list of search results.
+  showWip = true,
 ): LogHandle {
   resizeObserver?.disconnect();
   host.onscroll = null;
   clear(host);
+  wipLead = 0;
 
   if (rows.length === 0) {
     host.append(el("div", { class: "detail-empty", text: "No commits to show." }));
@@ -317,13 +346,25 @@ export function renderLog(
   // caller to re-invoke renderLog with a fresh `multiSelected`.
   let currentMultiSelected = multiSelected;
 
+  // The WIP row, when there is one, takes the first row slot and pushes the
+  // commits down by `lead`; HEAD's row is where its dashed line ends. HEAD not
+  // loaded (a detached checkout far down the log) still gets the row, in lane 0
+  // with no line.
+  const wipRow = showWip ? wip : null;
+  const headIdx = wipRow?.head ? rows.findIndex((r) => r.id === wipRow.head) : -1;
+  const lead = wipRow ? rowH : 0;
+  wipLead = lead;
+
   // A full-height spacer establishes the scrollbar; children are absolutely
   // positioned within it.
   const content = el("div", { class: "log" });
   content.style.position = "relative";
-  content.style.height = `${layout.height}px`;
+  content.style.height = `${layout.height + lead}px`;
 
-  const graph = svg("svg", { class: "graph", width: layout.width, height: layout.height });
+  const graph = svg("svg", { class: "graph", width: layout.width, height: layout.height + lead });
+  // Everything in the graph is laid out from row 0, so it is drawn in a group
+  // shifted down past the WIP row rather than by offsetting every coordinate.
+  const graphBody = svg("g", { transform: `translate(0 ${lead})` });
   const rowsLayer = el("div", { class: "rows" });
   rowsLayer.style.position = "absolute";
   rowsLayer.style.inset = "0";
@@ -353,7 +394,7 @@ export function renderLog(
     theme = graphThemeFor();
     metrics = theme.metrics;
     ({ layout, emailById, laneWidth, maxLane } = getLayout(rows, host.clientWidth, theme));
-    content.style.height = `${layout.height}px`;
+    content.style.height = `${layout.height + lead}px`;
     graph.setAttribute("width", String(layout.width));
   }
 
@@ -397,9 +438,65 @@ export function renderLog(
     return metrics.originX + metrics.marginX + widest * laneWidth + metrics.marginX;
   }
 
+  // Position a row and give it its lane colour. Shared by the commit rows and
+  // the WIP row, so the two line up on every theme.
+  function placeRow(rowEl: HTMLElement, y: number, nodeX: number, color: string, textLeft: number): void {
+    rowEl.style.position = "absolute";
+    rowEl.style.top = `${y}px`;
+    rowEl.style.right = "0";
+    rowEl.style.height = `${rowH}px`;
+    // The lane colour is published as `--lane` so the stylesheet can tint the
+    // selected row (and the GitKraken bands and badges) with its own strand
+    // colour (see styles.css) rather than one flat colour for every branch.
+    rowEl.style.setProperty("--lane", color);
+    if (refsColumn) {
+      // Full width, so the ref badges on the left are part of the row.
+      rowEl.style.left = "0";
+      rowEl.style.paddingLeft = `${textLeft + 12}px`;
+      rowEl.classList.add("kraken");
+      if (theme.bands) {
+        const band = el("span", { class: "lane-band" });
+        band.style.left = `${nodeX}px`;
+        rowEl.append(band);
+      }
+    } else {
+      rowEl.style.left = `${textLeft}px`;
+      // Lane-colored bar tying the message to its commit's graph strand/avatar.
+      rowEl.style.borderLeft = `3px solid ${color}`;
+    }
+  }
+
+  // The WIP row and its node: a dashed hollow circle in HEAD's lane, joined to
+  // HEAD's node by a dashed line. Drawn in graph coordinates, one row above row 0.
+  function renderWip(textLeft: number, changes: number): void {
+    const head = headIdx >= 0 ? layout.nodes[headIdx] : null;
+    const x = head?.x ?? metrics.originX + metrics.marginX;
+    const y = -rowH / 2;
+    const color = laneColor(head?.color ?? 0);
+
+    const rowEl = el("div", { class: "commit-row wip-row", title: "Uncommitted changes · Click: open Local Changes" });
+    placeRow(rowEl, 0, x, color, textLeft);
+    rowEl.append(
+      el("span", { class: "commit-summary", text: "// WIP" }),
+      el("span", { class: "commit-meta wip-count", text: `${changes} changed file${changes === 1 ? "" : "s"}` }),
+    );
+    rowEl.addEventListener("click", () => onOpenWip?.());
+    rowsLayer.append(rowEl);
+
+    if (head) {
+      graphBody.append(
+        svg("line", { class: "wip-edge", x1: x, y1: y, x2: x, y2: head.y, stroke: color, "stroke-width": theme.strokeWidth }),
+      );
+    }
+    graphBody.append(
+      svg("circle", { class: "wip-node", cx: x, cy: y, r: theme.nodeRadius - 1, stroke: color, "stroke-width": 2 }),
+    );
+  }
+
   function renderWindow(): void {
     const viewH = host.clientHeight || 600;
-    const scrollTop = host.scrollTop;
+    // In graph coordinates, i.e. measured from row 0 below the WIP row.
+    const scrollTop = host.scrollTop - lead;
     const start = Math.max(0, Math.floor(scrollTop / rowH) - BUFFER_ROWS);
     const end = Math.min(rows.length, Math.ceil((scrollTop + viewH) / rowH) + BUFFER_ROWS);
     const textLeft = textLeftFor(start, end);
@@ -425,29 +522,7 @@ export function renderLog(
       const rowEl = el("div", {
         class: `commit-row${row.id === currentSelected ? " selected" : ""}${currentMultiSelected.has(row.id) ? " multi-selected" : ""}${row.id === bisectCurrent ? " bisect-current" : ""}`,
       });
-      rowEl.style.position = "absolute";
-      rowEl.style.top = `${i * rowH}px`;
-      rowEl.style.right = "0";
-      rowEl.style.height = `${rowH}px`;
-      // The lane colour is published as `--lane` so the stylesheet can tint the
-      // selected row (and the GitKraken bands and badges) with its own strand
-      // colour (see styles.css) rather than one flat colour for every branch.
-      rowEl.style.setProperty("--lane", laneColor(row.color));
-      if (refsColumn) {
-        // Full width, so the ref badges on the left are part of the row.
-        rowEl.style.left = "0";
-        rowEl.style.paddingLeft = `${textLeft + 12}px`;
-        rowEl.classList.add("kraken");
-        if (theme.bands) {
-          const band = el("span", { class: "lane-band" });
-          band.style.left = `${layout.nodes[i].x}px`;
-          rowEl.append(band);
-        }
-      } else {
-        rowEl.style.left = `${textLeft}px`;
-        // Lane-colored bar tying the message to its commit's graph strand/avatar.
-        rowEl.style.borderLeft = `3px solid ${laneColor(row.color)}`;
-      }
+      placeRow(rowEl, i * rowH + lead, layout.nodes[i].x, laneColor(row.color), textLeft);
       const mark = bisectMarks.get(row.id);
       if (mark) rowEl.append(el("span", { class: `bisect-mark ${mark}`, text: BISECT_MARK_LABEL[mark] }));
       else if (row.id === bisectCurrent) rowEl.append(el("span", { class: "bisect-mark testing", text: "testing" }));
@@ -530,23 +605,27 @@ export function renderLog(
     }
 
     clear(graph);
-    if (theme.guides) {
-      for (let lane = 0; lane <= maxLane; lane++) {
-        const x = metrics.originX + metrics.marginX + lane * laneWidth;
-        graph.append(svg("line", { class: "lane-guide", x1: x, y1: top, x2: x, y2: bottom }));
-      }
-    }
+    clear(graphBody);
     // One reusable circular clip (object-bounding-box units) for all avatars.
     const defs = svg("defs");
     const clip = svg("clipPath", { id: "avatarClip", clipPathUnits: "objectBoundingBox" });
     clip.appendChild(svg("circle", { cx: 0.5, cy: 0.5, r: 0.5 }));
     defs.appendChild(clip);
-    graph.appendChild(defs);
+    graph.append(defs, graphBody);
+    // The WIP row is on screen whenever the first rows are.
+    const wipShown = wipRow !== null && start === 0;
+    if (theme.guides) {
+      for (let lane = 0; lane <= maxLane; lane++) {
+        const x = metrics.originX + metrics.marginX + lane * laneWidth;
+        graphBody.append(svg("line", { class: "lane-guide", x1: x, y1: wipShown ? -lead : top, x2: x, y2: bottom }));
+      }
+    }
+    if (wipShown) renderWip(textLeft, wipRow.changes);
     for (const edge of layout.edges) {
       if (Math.max(edge.fromY, edge.toY) < top || Math.min(edge.fromY, edge.toY) > bottom) {
         continue;
       }
-      graph.append(
+      graphBody.append(
         svg("path", {
           d: edgePath(edge, metrics),
           fill: "none",
@@ -564,7 +643,7 @@ export function renderLog(
 
       // GitKraken themes: a line from the commit's ref badges across to its node.
       if (refsColumn && refsAt?.(node.id).tips?.length) {
-        graph.append(
+        graphBody.append(
           svg("line", {
             x1: metrics.originX - 6,
             y1: node.y,
@@ -588,7 +667,7 @@ export function renderLog(
       // drawn to the old width runs straight through the message like a
       // strikethrough.
       if (isSelected) {
-        graph.append(
+        graphBody.append(
           svg("line", {
             x1: node.x,
             y1: node.y,
@@ -602,13 +681,13 @@ export function renderLog(
 
       // Base dot: the whole node on Neon, otherwise the fallback if the avatar
       // image is missing/fails to load.
-      graph.append(svg("circle", { cx: node.x, cy: node.y, r, fill: color }));
+      graphBody.append(svg("circle", { cx: node.x, cy: node.y, r, fill: color }));
 
       const url = theme.node === "avatar" ? avatarUrl(emailById.get(node.id) ?? "") : undefined;
       if (theme.node === "dot") {
         // An inner ring in the background colour, so the dot reads as a bead
         // on the line rather than a blob.
-        graph.append(svg("circle", { class: "node-inner", cx: node.x, cy: node.y, r: r - 2.5, fill: "none", "stroke-width": 1.5 }));
+        graphBody.append(svg("circle", { class: "node-inner", cx: node.x, cy: node.y, r: r - 2.5, fill: "none", "stroke-width": 1.5 }));
       } else if (url) {
         const img = svg("image", {
           x: node.x - r,
@@ -620,12 +699,12 @@ export function renderLog(
           "clip-path": "url(#avatarClip)",
         });
         img.addEventListener("error", () => img.remove());
-        graph.append(img);
+        graphBody.append(img);
       }
 
       // Lane-colored ring around the avatar, thickened on the selected commit.
       if (theme.node === "avatar") {
-        graph.append(
+        graphBody.append(
           svg("circle", {
             cx: node.x,
             cy: node.y,
@@ -639,7 +718,7 @@ export function renderLog(
       // …plus a soft outer halo, so the active commit is findable at a glance
       // on a graph where every lane already has its own colour.
       if (isSelected) {
-        graph.append(
+        graphBody.append(
           svg("circle", {
             cx: node.x,
             cy: node.y,
@@ -659,7 +738,7 @@ export function renderLog(
   // the jump-to-commit path does, where it's a one-off) would make the graph
   // lurch under a held arrow key.
   function reveal(index: number): void {
-    const top = index * rowH;
+    const top = index * rowH + lead;
     const margin = rowH * 2;
     // The sticky header covers the top of the pane, so less of it shows rows.
     const viewH = (host.clientHeight || 600) - headerH;
