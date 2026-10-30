@@ -77,7 +77,6 @@ interface RefActions {
   onStashMenu: SidebarCallbacks["onStashMenu"];
   onRemoteMenu: SidebarCallbacks["onRemoteMenu"];
   onAddRemote: SidebarCallbacks["onAddRemote"];
-  onRemotesMenu: SidebarCallbacks["onRemotesMenu"];
   onRemoteFolderMenu: SidebarCallbacks["onRemoteFolderMenu"];
   onTagMenu: SidebarCallbacks["onTagMenu"];
   onCommitContextMenu: (row: CommitRow, x: number, y: number) => void;
@@ -893,7 +892,6 @@ export function renderSidebarNow(): void {
       onStashMenu: (s, x, y) => refActions.onStashMenu(s, x, y),
       onRemoteMenu: (name, target, x, y) => refActions.onRemoteMenu(name, target, x, y),
       onAddRemote: () => refActions.onAddRemote(),
-      onRemotesMenu: (x, y) => refActions.onRemotesMenu(x, y),
       onRemoteFolderMenu: (remote, x, y) => refActions.onRemoteFolderMenu(remote, x, y),
       onTagMenu: (name, target, x, y) => refActions.onTagMenu(name, target, x, y),
       onWorktreeOpen: (w) => void loadRepo(w.path),

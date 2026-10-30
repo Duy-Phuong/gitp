@@ -10,11 +10,6 @@ import { copyText } from "./clipboard";
 import { loadSidebar } from "./shell";
 import { runBranchOp } from "./ref-actions";
 
-// Right-click the Remotes header.
-export function onRemotesMenu(x: number, y: number): void {
-  showContextMenu(x, y, [{ label: "Add Remote…", run: addRemoteAction }]);
-}
-
 // Add a remote: a name and a URL. Not fetched — that's one right-click away,
 // and a URL typed wrong is better found out before the wait than during it.
 export function addRemoteAction(): void {

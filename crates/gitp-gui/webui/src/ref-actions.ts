@@ -75,6 +75,7 @@ import { allRefsAt } from "./commit-refs";
 import { pushTargets } from "./push-targets";
 import { dropActions, isAncestorInRows, type DragRef, type DropRef } from "./ref-drop";
 import { finishFlowItem, gitflowMenuItem } from "./gitflow-actions";
+import { addRemoteAction } from "./remote-actions";
 import { askSwitchWithChanges, reportStashSwitch } from "./stash-switch";
 
 // Double-click a branch: check it out, then reload history + sidebar from the new
@@ -307,7 +308,7 @@ function visibilityItems(refname: string): MenuItem[] {
 
 // Right-click the Branches, Remotes or Tags header: hide or show every ref in
 // it at once (the checked-out branch stays: HEAD is always walked). Branches'
-// also has the Git Flow submenu.
+// also has the Git Flow submenu, Remotes' Add Remote….
 export function onSectionMenu(key: string, x: number, y: number): void {
   const refnames =
     key === "sec:branches"
@@ -330,6 +331,10 @@ export function onSectionMenu(key: string, x: number, y: number): void {
   if (key === "sec:branches" && state.repoPath) {
     if (items.length) items.push({ separator: true });
     items.push(gitflowMenuItem());
+  }
+  if (key === "sec:remotes") {
+    if (items.length) items.push({ separator: true });
+    items.push({ label: "Add Remote…", run: addRemoteAction });
   }
   if (!items.length) return;
   showContextMenu(x, y, items);

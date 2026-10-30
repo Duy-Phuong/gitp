@@ -128,7 +128,7 @@ import {
   runNextCherryPick,
 } from "./commit-actions";
 import { onWorktreeMenu } from "./worktree-actions";
-import { addRemoteAction, onRemoteFolderMenu, onRemotesMenu } from "./remote-actions";
+import { addRemoteAction, onRemoteFolderMenu } from "./remote-actions";
 import { addSubmoduleAction, onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { createFileAction, editFileAction } from "./editor-actions";
 import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
@@ -292,7 +292,6 @@ async function init(): Promise<void> {
     onStashMenu,
     onRemoteMenu,
     onAddRemote: addRemoteAction,
-    onRemotesMenu,
     onRemoteFolderMenu,
     onTagMenu,
     onCommitContextMenu,
