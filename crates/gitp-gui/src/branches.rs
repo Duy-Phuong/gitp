@@ -11,8 +11,8 @@ use crate::state::{
     ensure_refs, to_message, with_repo, with_repo_clearing_undo, with_repo_networked, RepoState,
 };
 use crate::undo::{
-    clear_undo, set_undo, with_recorded_branch_create, with_recorded_checkout, with_recorded_head_move,
-    with_recorded_upstream,
+    clear_undo, set_undo, with_recorded_branch_create, with_recorded_checkout,
+    with_recorded_head_move, with_recorded_upstream,
 };
 
 /// Check out `name` on the active repo. Invalidates the cached log because HEAD

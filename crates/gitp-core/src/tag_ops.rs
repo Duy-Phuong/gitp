@@ -74,7 +74,9 @@ impl Repo {
     pub fn annotate_tag(&self, name: &str, message: &str) -> Result<String> {
         let obj = self.inner.revparse_single(&format!("refs/tags/{name}"))?;
         if obj.as_tag().is_some() {
-            return Err(Error::Message(format!("{name} is already an annotated tag")));
+            return Err(Error::Message(format!(
+                "{name} is already an annotated tag"
+            )));
         }
         let commit = obj.peel_to_commit()?.id().to_string();
         self.run_git(&[

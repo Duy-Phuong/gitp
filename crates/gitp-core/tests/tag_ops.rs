@@ -112,7 +112,13 @@ fn create_annotated_tag_at_makes_a_tag_object_and_keeps_hash_lines() {
     // The refs listing carries the message for the tooltip; a lightweight tag has none.
     repo.create_tag_at("light", &oid.to_string()).unwrap();
     let tags = repo.refs().unwrap().tags;
-    let msg = |name: &str| tags.iter().find(|t| t.name == name).unwrap().message.clone();
+    let msg = |name: &str| {
+        tags.iter()
+            .find(|t| t.name == name)
+            .unwrap()
+            .message
+            .clone()
+    };
     assert_eq!(msg("v1.0").as_deref(), Some("Release 1\n\n#42 fixed"));
     assert_eq!(msg("light"), None);
 }
@@ -151,5 +157,8 @@ fn annotate_tag_turns_a_lightweight_tag_into_an_annotated_one_in_place() {
 
     // Already annotated: refused rather than silently replacing the annotation.
     assert!(repo.annotate_tag("v1.0", "again").is_err());
-    assert_eq!(repo.tag_detail("v1.0").unwrap().message.as_deref(), Some("Release 1\n"));
+    assert_eq!(
+        repo.tag_detail("v1.0").unwrap().message.as_deref(),
+        Some("Release 1\n")
+    );
 }

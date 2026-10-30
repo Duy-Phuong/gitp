@@ -97,7 +97,12 @@ fn repo_with_side_ahead() -> (FixtureRepo, Repo) {
 }
 
 fn head_parents(fx: &FixtureRepo) -> usize {
-    fx.repo.head().unwrap().peel_to_commit().unwrap().parent_count()
+    fx.repo
+        .head()
+        .unwrap()
+        .peel_to_commit()
+        .unwrap()
+        .parent_count()
 }
 
 #[test]
@@ -110,7 +115,8 @@ fn merge_no_ff_records_a_merge_commit_even_when_it_could_fast_forward() {
 #[test]
 fn merge_ff_only_fast_forwards_and_refuses_a_diverged_branch() {
     let (fx, repo) = repo_with_side_ahead();
-    repo.merge_branch("side", MergeMode::FastForwardOnly).unwrap();
+    repo.merge_branch("side", MergeMode::FastForwardOnly)
+        .unwrap();
     assert_eq!(head_parents(&fx), 1, "fast-forwarded onto side's commit");
 
     // Diverge: master gets a commit of its own, side another.
@@ -118,7 +124,9 @@ fn merge_ff_only_fast_forwards_and_refuses_a_diverged_branch() {
     repo.checkout_branch("side").unwrap();
     fx.commit_file("c.txt", "c\n", "on side");
     repo.checkout_branch("master").unwrap();
-    assert!(repo.merge_branch("side", MergeMode::FastForwardOnly).is_err());
+    assert!(repo
+        .merge_branch("side", MergeMode::FastForwardOnly)
+        .is_err());
 }
 
 #[test]
@@ -130,14 +138,21 @@ fn squash_merge_stages_the_changes_and_prepares_a_message() {
     repo.merge_branch("side", MergeMode::Squash).unwrap();
 
     // HEAD hasn't moved; side's change is staged, waiting for one commit.
-    assert_eq!(fx.repo.head().unwrap().peel_to_commit().unwrap().id(), before);
+    assert_eq!(
+        fx.repo.head().unwrap().peel_to_commit().unwrap().id(),
+        before
+    );
     assert!(fx.path().join("side.txt").exists());
     let message = repo.squash_message().expect("SQUASH_MSG written");
     assert!(message.contains("add side"), "{message}");
 
     // Committing finishes the squash: git removes SQUASH_MSG.
     repo.commit("Squash side", "", false, None).unwrap();
-    assert_eq!(head_parents(&fx), 1, "an ordinary commit, no merge recorded");
+    assert_eq!(
+        head_parents(&fx),
+        1,
+        "an ordinary commit, no merge recorded"
+    );
     assert_eq!(repo.squash_message(), None);
 }
 
