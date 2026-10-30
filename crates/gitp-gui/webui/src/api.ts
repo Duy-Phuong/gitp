@@ -3,6 +3,7 @@
 // UI is fully explorable without the desktop shell.
 
 import type {
+  ActivityEntry,
   BisectMark,
   BisectStatus,
   BlameLine,
@@ -1794,6 +1795,60 @@ function mkReflog(to: string, from: string, message: string, time: number): Omit
     summary: MOCK_LOG.find((r) => r.id === newId)?.summary ?? null,
   };
 }
+
+// --- Activity log -----------------------------------------------------------
+
+// The git commands gitp ran for the active repo, newest first; with `since`,
+// only those after that entry id.
+export async function fetchActivityLog(since: number | null = null): Promise<ActivityEntry[]> {
+  if (!isTauri()) return MOCK_ACTIVITY.filter((e) => since === null || e.id > since);
+  return invoke<ActivityEntry[]>("get_activity_log", { since });
+}
+
+export async function clearActivityLog(): Promise<void> {
+  if (!isTauri()) {
+    MOCK_ACTIVITY.length = 0;
+    return;
+  }
+  await invoke<void>("clear_activity_log", {});
+}
+
+// Preview mode: a push, a commit a pre-commit hook rejected, and the quiet
+// probes a refresh runs around them.
+const MOCK_ACTIVITY: ActivityEntry[] = (() => {
+  const now = Date.now();
+  const at = (secondsAgo: number) => now - secondsAgo * 1000;
+  const ok = { exit_code: 0, success: true, stderr: "", stdout: "" };
+  return [
+    { id: 9, started_at: at(5), duration_ms: 31, command: "git --no-optional-locks status --porcelain=v1 -z --untracked-files=all", quiet: true, ...ok },
+    {
+      id: 8,
+      started_at: at(8),
+      duration_ms: 1840,
+      command: "git push --progress -u origin feature/widget",
+      quiet: false,
+      ...ok,
+      stderr: "To github.com:ada/gitp.git\n * [new branch]      feature/widget -> feature/widget\nbranch 'feature/widget' set up to track 'origin/feature/widget'.",
+    },
+    { id: 7, started_at: at(40), duration_ms: 212, command: "git commit -m 'feat: add dashboard widget'", quiet: false, ...ok },
+    { id: 6, started_at: at(41), duration_ms: 9, command: "git config --get commit.gpgsign", quiet: true, exit_code: 1, success: false, stderr: "", stdout: "" },
+    {
+      id: 5,
+      started_at: at(95),
+      duration_ms: 3120,
+      command: "git commit -m 'feat: add dashboard widget'",
+      quiet: false,
+      exit_code: 1,
+      success: false,
+      stderr: "eslint.....................................................Failed\n- hook id: eslint\n- exit code: 1\n\nsrc/widget.ts\n  12:7  error  'unused' is assigned a value but never used  no-unused-vars\n\n✖ 1 problem (1 error, 0 warnings)",
+      stdout: "",
+    },
+    { id: 4, started_at: at(120), duration_ms: 14, command: "git add -- :(literal)src/widget.ts", quiet: false, ...ok },
+    { id: 3, started_at: at(122), duration_ms: 27, command: "git diff -- src/widget.ts", quiet: true, ...ok },
+    { id: 2, started_at: at(300), duration_ms: 2410, command: "git fetch --progress --all --prune", quiet: false, ...ok, stderr: "From github.com:ada/gitp\n   b5b31e4..ec1daa1  main       -> origin/main" },
+    { id: 1, started_at: at(302), duration_ms: 18, command: "git worktree list --porcelain -z", quiet: true, ...ok },
+  ];
+})();
 
 // --- Comparing two revisions ------------------------------------------------
 

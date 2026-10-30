@@ -1,4 +1,4 @@
-// Left sidebar: repo header, the Local Changes / All Commits / Reflog nav, a filter box,
+// Left sidebar: repo header, the Local Changes / All Commits / Reflog / Activity nav, a filter box,
 // and a collapsible ref tree (Branches, Remotes, Tags, Stashes).
 //
 // Rendered as a pure function of state + callbacks; main.ts owns the state
@@ -7,7 +7,7 @@
 import { chevronIcon, clear, el } from "../dom";
 import type { BranchRef, Refs, RemoteInfo, StashRef, Submodule, Worktree } from "../types";
 
-export type SidebarView = "history" | "changes" | "reflog";
+export type SidebarView = "history" | "changes" | "reflog" | "activity";
 
 export interface SidebarState {
   refs: Refs;
@@ -92,6 +92,7 @@ export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCal
     navRow("Local Changes", s.localChanges, s.activeView === "changes", () => cb.onSelectView("changes")),
     navRow("All Commits", null, s.activeView === "history", () => cb.onSelectView("history")),
     navRow("Reflog", null, s.activeView === "reflog", () => cb.onSelectView("reflog")),
+    navRow("Activity", null, s.activeView === "activity", () => cb.onSelectView("activity")),
   );
 
   const filter = el("input", {

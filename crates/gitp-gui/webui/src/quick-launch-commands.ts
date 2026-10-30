@@ -373,6 +373,7 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Reveal in Finder", run: () => void revealRepo() },
     { kind: "command", label: "Save Stash…", run: openStashDialogAction },
     { kind: "command", label: "Show Reflog", run: () => showReflog() },
+    { kind: "command", label: "Show Activity Log", run: () => showView("activity") },
     { kind: "command", label: "Switch Repository", next: () => repoStage() },
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
     { kind: "command", label: "Clone Repository…", run: cloneRepoAction },

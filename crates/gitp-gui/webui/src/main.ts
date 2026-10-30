@@ -15,6 +15,8 @@ import {
   fetchFileDiff,
   fetchStatusSummary,
   fetchReflog,
+  fetchActivityLog,
+  clearActivityLog,
   isTauri,
   listRepos,
   stage,
@@ -49,6 +51,8 @@ import { setOnMoreRefs } from "./views/log";
 import { setupChanges } from "./views/changes";
 import { setupConflict } from "./views/conflict";
 import { setupReflog } from "./views/reflog";
+import { setupActivity } from "./views/activity";
+import { copyText } from "./clipboard";
 import { state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus, watchNetwork, watchPending } from "./report";
 import { setupFetchAgeIndicator } from "./fetch-age";
@@ -358,6 +362,12 @@ async function init(): Promise<void> {
     fetch: fetchReflog,
     onSelect: (entry) => void showReflogDetail(entry),
     onMenu: onReflogMenu,
+    reportError: readFailed,
+  });
+  ui.activityView = setupActivity($("#activity-view"), {
+    fetch: fetchActivityLog,
+    clear: clearActivityLog,
+    copy: (text) => void copyText(text, "Copied the command and its output."),
     reportError: readFailed,
   });
   if (isTauri()) {
