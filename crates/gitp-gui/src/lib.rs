@@ -84,6 +84,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             workspace::open_repo,
+            workspace::init_repository,
             workspace::list_repos,
             workspace::activate_repo,
             workspace::close_repo,

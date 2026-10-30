@@ -77,6 +77,7 @@ import {
 import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
 import { syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
+import { initRepoAction } from "./new-repo-actions";
 
 // --- Quick Launch -----------------------------------------------------------
 
@@ -144,6 +145,7 @@ async function openRecentRepo(path: string): Promise<void> {
 function openOnlyCommands(): QuickItem[] {
   return [
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
+    { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Terminal", run: toggleTerminal },
   ];
 }
@@ -340,6 +342,7 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Show Reflog", run: () => showReflog() },
     { kind: "command", label: "Switch Repository", next: () => repoStage() },
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
+    { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Close Repository", run: () => void closeRepoTab(state.repoPath) },
     { kind: "command", label: "Terminal", run: toggleTerminal },
     {

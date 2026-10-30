@@ -1,0 +1,46 @@
+// Making a repository that isn't open yet — Init Repository — and opening the
+// result as a tab.
+
+import { initRepository } from "./api";
+import { state } from "./app-state";
+import { opFailed, reportDone, setStatus } from "./report";
+import { loadRepo } from "./shell";
+import { warmTerminal } from "./terminal-panel";
+import { openInitDialog } from "./views/new-repo-dialog";
+
+// New repositories usually go next to the ones already in use, so the dialogs
+// start in the active repo's parent folder.
+function besideActiveRepo(): string {
+  return trimSlashes(state.repoPath).replace(/[^/]*$/, "");
+}
+
+// The tab is keyed by the path exactly as opened, so `/a/b/` and `/a/b` would
+// be two different repos to the workspace.
+function trimSlashes(path: string): string {
+  return path.length > 1 ? path.replace(/\/+$/, "") : path;
+}
+
+export function initRepoAction(): void {
+  setStatus("Initialize a repository…");
+  openInitDialog(besideActiveRepo(), (req) => void runInit(trimSlashes(req.path), req.gitignore, req.readme));
+}
+
+async function runInit(path: string, gitignore: string | null, readme: boolean): Promise<void> {
+  setStatus(`Initializing ${path}…`);
+  try {
+    await initRepository(path, gitignore, readme);
+  } catch (err) {
+    opFailed("Init failed", err);
+    return;
+  }
+  await openCreated(path, `Initialized an empty repository in ${path}.`);
+}
+
+// Open the repository just made as a tab. loadRepo reports its own failure, so
+// success is only announced once the tab is really there.
+async function openCreated(path: string, done: string): Promise<void> {
+  await loadRepo(path);
+  if (state.repoPath !== path) return;
+  warmTerminal();
+  reportDone(done);
+}
