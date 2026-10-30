@@ -171,7 +171,9 @@ impl TerminalState {
 
 /// Start session `id` running the user's shell in `cwd`. Returns the shell's
 /// name (`zsh`), which the frontend titles the tab with.
-#[tauri::command]
+// `(async)`: spawning over a live id ends the old shell first, which waits out
+// its SIGHUP grace period, like `terminal_kill`.
+#[tauri::command(async)]
 pub fn terminal_spawn(
     app: AppHandle,
     state: State<TerminalState>,
