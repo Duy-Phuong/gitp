@@ -35,8 +35,9 @@ pub struct TextFile {
 
 impl Repo {
     /// `path` as text, or `None` when it doesn't exist. Refuses a file over
-    /// [`EDIT_MAX_BYTES`], a binary one, and one that isn't valid text in the
-    /// repo's encoding (see `encoding.rs`).
+    /// [`EDIT_MAX_BYTES`], a binary one, one that isn't valid text in the
+    /// repo's encoding (see `encoding.rs`), and one that wouldn't encode back
+    /// to the same bytes.
     pub fn read_text_file(&self, path: &str) -> Result<Option<TextFile>> {
         let full = self.edit_path(path)?;
         let meta = match fs::symlink_metadata(&full) {
@@ -62,6 +63,16 @@ impl Repo {
         let raw = enc
             .decode(&bytes)
             .ok_or_else(|| Error::Message(format!("{path} isn't {} text", enc.name())))?;
+        // Some encodings read several byte sequences as one character (WHATWG
+        // Shift_JIS has NEC and IBM codes for the same kanji) and write back
+        // only one of them, so a save would change bytes no one edited.
+        if enc.encode(&raw).as_deref() != Some(&bytes[..]) {
+            return Err(Error::Message(format!(
+                "{path} can't be edited here: saving it as {} would change bytes you \
+                 didn't edit",
+                enc.name()
+            )));
+        }
         Ok(Some(split_line_breaks(&raw)))
     }
 
