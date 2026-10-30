@@ -31,14 +31,15 @@ import {
   dropStash,
   renameStash,
   saveStashPatch,
+  squashMessage,
 } from "./api";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { openDeleteBranchModal, openDeleteTagModal } from "./views/delete-branch";
 import { openRenameBranchModal } from "./views/rename-branch";
 import { openTagDetailsModal } from "./views/tag-details";
 import { openStashApplyModal } from "./views/stash-apply";
-import type { BranchRef, StashRef } from "./types";
-import { state } from "./app-state";
+import type { BranchRef, MergeMode, StashRef } from "./types";
+import { state, ui } from "./app-state";
 import { opFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
 import {
@@ -125,10 +126,7 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
 
   if (!b.is_head && current) {
     items.push({ separator: true });
-    items.push({
-      label: `Merge into ${current}`,
-      run: () => onBranch(`Merging ${b.name} into ${current}`, () => mergeBranch(b.name), true),
-    });
+    items.push(mergeMenuItem(b.name, current, b.name));
     items.push({
       label: `Rebase ${current} onto ${b.name}`,
       run: () =>
@@ -230,6 +228,58 @@ async function deleteSelectedBranchesAction(names: string[]): Promise<void> {
   reportDone(parts.join(" "));
 }
 
+// --- Merge ------------------------------------------------------------------
+
+// git's default merge and its three common variants, in menu order.
+export const MERGE_MODES: { mode: MergeMode; label: string }[] = [
+  { mode: "Default", label: "Merge" },
+  { mode: "NoFastForward", label: "Merge (no fast-forward)" },
+  { mode: "FastForwardOnly", label: "Fast-forward only" },
+  { mode: "Squash", label: "Squash merge" },
+];
+
+// "Merge into '<current>' ▸" for a branch or tag menu: the modes, in place.
+function mergeMenuItem(name: string, current: string, ref: string): MenuItem {
+  return {
+    label: `Merge into '${current}' ▸`,
+    submenu: [
+      { heading: `Merge ${name} into ${current}` },
+      ...MERGE_MODES.map(({ mode, label }) => ({ label, run: () => void mergeAction(name, mode, ref) })),
+    ],
+  };
+}
+
+// Merge `name` into the current branch. A squash commits nothing: it stages
+// the combined changes, so it lands in Local Changes with the message git
+// prepared already in the commit box — conflicts included, which are resolved
+// there before that commit.
+export async function mergeAction(name: string, mode: MergeMode, ref?: string): Promise<void> {
+  const current = state.refs.head ?? "HEAD";
+  if (mode !== "Squash") {
+    await runBranchOp(`Merging ${name} into ${current}`, () => mergeBranch(name, mode), true, ref);
+    return;
+  }
+  const label = `Squash-merging ${name} into ${current}`;
+  setStatus(`${label}…`);
+  let out = "";
+  let failure: unknown = null;
+  try {
+    out = (await withBusyRef(ref, () => mergeBranch(name, mode))).trim();
+  } catch (err) {
+    failure = err;
+  }
+  // No message means nothing was squashed ("Already up to date").
+  const message = await squashMessage().catch(() => null);
+  if (message) {
+    const [subject, ...body] = message.split("\n");
+    ui.changesView?.prefillMessage(subject, body.join("\n").replace(/^\s+/, ""));
+    showView("changes");
+  }
+  await loadSidebar();
+  if (failure) opFailed(`${label} failed`, failure);
+  else reportDone(message ? `Squashed ${name} — review and commit it in Local Changes.` : out || `${label} done.`);
+}
+
 // Right-click a stash: apply (with a delete-after checkbox), rename, save the
 // diff as a patch, or drop.
 export function onStashMenu(s: StashRef, x: number, y: number): void {
@@ -314,11 +364,7 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
 
   if (current) {
     items.push({ separator: true });
-    items.push({
-      label: `Merge into '${current}'…`,
-      run: () =>
-        void runBranchOp(`Merging ${name} into ${current}`, () => mergeBranch(name), true, name),
-    });
+    items.push(mergeMenuItem(name, current, name));
     items.push({
       label: `Rebase on '${name}'…`,
       run: () =>

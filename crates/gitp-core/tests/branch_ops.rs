@@ -3,7 +3,7 @@
 mod common;
 
 use common::FixtureRepo;
-use gitp_core::Repo;
+use gitp_core::{MergeMode, Repo};
 
 #[test]
 fn rename_branch_changes_its_name() {
@@ -75,11 +75,70 @@ fn merge_branch_brings_in_another_branchs_commit() {
     fx.commit_file("side.txt", "hi\n", "add side");
     repo.checkout_branch("master").unwrap();
 
-    repo.merge_branch("side").unwrap();
+    repo.merge_branch("side", MergeMode::Default).unwrap();
     assert!(
         fx.path().join("side.txt").exists(),
         "side's file merged into master"
     );
+}
+
+/// master at c1, `side` one commit ahead of it: a merge that could fast-forward.
+fn repo_with_side_ahead() -> (FixtureRepo, Repo) {
+    let fx = FixtureRepo::init();
+    let c1 = fx.commit_file("a.txt", "one\n", "c1");
+    fx.repo
+        .branch("side", &fx.repo.find_commit(c1).unwrap(), false)
+        .unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.checkout_branch("side").unwrap();
+    fx.commit_file("side.txt", "hi\n", "add side");
+    repo.checkout_branch("master").unwrap();
+    (fx, repo)
+}
+
+fn head_parents(fx: &FixtureRepo) -> usize {
+    fx.repo.head().unwrap().peel_to_commit().unwrap().parent_count()
+}
+
+#[test]
+fn merge_no_ff_records_a_merge_commit_even_when_it_could_fast_forward() {
+    let (fx, repo) = repo_with_side_ahead();
+    repo.merge_branch("side", MergeMode::NoFastForward).unwrap();
+    assert_eq!(head_parents(&fx), 2, "a merge commit, not a fast-forward");
+}
+
+#[test]
+fn merge_ff_only_fast_forwards_and_refuses_a_diverged_branch() {
+    let (fx, repo) = repo_with_side_ahead();
+    repo.merge_branch("side", MergeMode::FastForwardOnly).unwrap();
+    assert_eq!(head_parents(&fx), 1, "fast-forwarded onto side's commit");
+
+    // Diverge: master gets a commit of its own, side another.
+    fx.commit_file("b.txt", "b\n", "on master");
+    repo.checkout_branch("side").unwrap();
+    fx.commit_file("c.txt", "c\n", "on side");
+    repo.checkout_branch("master").unwrap();
+    assert!(repo.merge_branch("side", MergeMode::FastForwardOnly).is_err());
+}
+
+#[test]
+fn squash_merge_stages_the_changes_and_prepares_a_message() {
+    let (fx, repo) = repo_with_side_ahead();
+    let before = fx.repo.head().unwrap().peel_to_commit().unwrap().id();
+    assert_eq!(repo.squash_message(), None, "nothing to squash yet");
+
+    repo.merge_branch("side", MergeMode::Squash).unwrap();
+
+    // HEAD hasn't moved; side's change is staged, waiting for one commit.
+    assert_eq!(fx.repo.head().unwrap().peel_to_commit().unwrap().id(), before);
+    assert!(fx.path().join("side.txt").exists());
+    let message = repo.squash_message().expect("SQUASH_MSG written");
+    assert!(message.contains("add side"), "{message}");
+
+    // Committing finishes the squash: git removes SQUASH_MSG.
+    repo.commit("Squash side", "", false, None).unwrap();
+    assert_eq!(head_parents(&fx), 1, "an ordinary commit, no merge recorded");
+    assert_eq!(repo.squash_message(), None);
 }
 
 #[test]

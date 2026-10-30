@@ -21,6 +21,7 @@ import type {
   GitProgress,
   DeleteBranchesResult,
   LogPage,
+  MergeMode,
   PullMode,
   RebaseCommit,
   RebaseStatus,
@@ -670,9 +671,15 @@ export async function remoteBranchExists(name: string): Promise<string | null> {
   return invoke<string | null>("remote_branch_exists", { name });
 }
 
-export async function mergeBranch(name: string): Promise<string> {
-  if (!isTauri()) return `Merged ${name} (preview mock)`;
-  return invoke<string>("merge_branch", { name });
+export async function mergeBranch(name: string, mode: MergeMode = "Default"): Promise<string> {
+  if (!isTauri()) return `Merged ${name} (${mode}, preview mock)`;
+  return invoke<string>("merge_branch", { name, mode });
+}
+
+// The commit message a squash merge prepared, or null when none is pending.
+export async function squashMessage(): Promise<string | null> {
+  if (!isTauri()) return "Squashed commit of the following:\n\ncommit 1111111\n\n    feat: add widget (preview mock)";
+  return invoke<string | null>("squash_message", {});
 }
 
 export async function pushBranch(name: string): Promise<string> {

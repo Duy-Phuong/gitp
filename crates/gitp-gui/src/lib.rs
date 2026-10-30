@@ -137,6 +137,7 @@ pub fn run() {
             branches::delete_remote_branch,
             branches::remote_branch_exists,
             branches::merge_branch,
+            branches::squash_message,
             remote::push_branch,
             remote::fetch_branch,
             remote::fetch_all,

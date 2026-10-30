@@ -1,13 +1,39 @@
 //! Branch-scoped operations invoked from the sidebar's right-click menu:
-//! rename, delete, merge, push, and fast-forward. All shell out through
+//! rename, delete, merge (plain, no-ff, ff-only, squash), push, and
+//! fast-forward. All shell out through
 //! `run_git` so git's own conflict handling, hooks, and messages apply as-is.
 //!
 //! Checkout, branch/tag creation, and rebase already live elsewhere
 //! (`checkout.rs`, `commit_ops.rs`) and are reused by the menu as-is.
 
+use serde::Deserialize;
+
 use crate::error::{Error, Result};
 use crate::remote::ref_arg;
 use crate::repo::Repo;
+
+/// How `merge_branch` combines the other branch: git's default (fast-forward
+/// when it can, else a merge commit), always a merge commit (`--no-ff`), only
+/// a fast-forward (`--ff-only`), or `--squash` — the combined changes staged
+/// for one ordinary commit, with no merge recorded.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub enum MergeMode {
+    Default,
+    NoFastForward,
+    FastForwardOnly,
+    Squash,
+}
+
+impl MergeMode {
+    fn flag(self) -> Option<&'static str> {
+        match self {
+            MergeMode::Default => None,
+            MergeMode::NoFastForward => Some("--no-ff"),
+            MergeMode::FastForwardOnly => Some("--ff-only"),
+            MergeMode::Squash => Some("--squash"),
+        }
+    }
+}
 
 impl Repo {
     /// Rename branch `old` to `new` (`git branch -m`). Works on the current
@@ -126,10 +152,25 @@ impl Repo {
         (remote, remote_branch)
     }
 
-    /// Merge `name` into the current branch (`git merge`). Conflicts leave the
-    /// merge in progress and surface as an error.
-    pub fn merge_branch(&self, name: &str) -> Result<String> {
-        self.run_git(&["merge", ref_arg(name)?])
+    /// Merge `name` into the current branch (`git merge`, with `mode`'s flag).
+    /// Conflicts leave the merge in progress and surface as an error. A squash
+    /// commits nothing: the result is staged, and its prepared message is in
+    /// `squash_message`.
+    pub fn merge_branch(&self, name: &str, mode: MergeMode) -> Result<String> {
+        let mut args = vec!["merge"];
+        args.extend(mode.flag());
+        args.push(ref_arg(name)?);
+        self.run_git(&args)
+    }
+
+    /// The commit message `git merge --squash` prepared (`.git/SQUASH_MSG`),
+    /// or `None` when no squash is waiting to be committed. Comment lines are
+    /// dropped, as `git commit` would. git deletes the file once a commit is
+    /// made, so a stale one never outlives the squash it belongs to.
+    pub fn squash_message(&self) -> Option<String> {
+        let raw = std::fs::read_to_string(self.inner.path().join("SQUASH_MSG")).ok()?;
+        let message: Vec<&str> = raw.lines().filter(|l| !l.starts_with('#')).collect();
+        Some(message.join("\n").trim().to_string())
     }
 
     /// Push branch `name` to `origin` (`git push origin <name>`).

@@ -1,9 +1,9 @@
 //! Local branches: checkout, create, rename, delete (singly or in bulk),
-//! merge, fast-forward, and upstream tracking.
+//! merge (with its options), fast-forward, and upstream tracking.
 
 use std::collections::HashSet;
 
-use gitp_core::{DeletedBranch, Repo, Undoable};
+use gitp_core::{DeletedBranch, MergeMode, Repo, Undoable};
 use serde::Serialize;
 use tauri::State;
 
@@ -11,7 +11,7 @@ use crate::state::{
     ensure_refs, to_message, with_repo, with_repo_clearing_undo, with_repo_networked, RepoState,
 };
 use crate::undo::{
-    set_undo, with_recorded_branch_create, with_recorded_checkout, with_recorded_head_move,
+    clear_undo, set_undo, with_recorded_branch_create, with_recorded_checkout, with_recorded_head_move,
     with_recorded_upstream,
 };
 
@@ -242,11 +242,27 @@ fn remote_branch_exists_impl(state: &RepoState, name: String) -> Result<Option<S
     with_repo(state, |repo| repo.remote_branch_exists(&name))
 }
 
-/// Merge `name` into the current branch. Invalidates the cached log.
-fn merge_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
+/// Merge `name` into the current branch as `mode` says. Invalidates the
+/// cached log.
+fn merge_branch_impl(state: &RepoState, name: String, mode: MergeMode) -> Result<String, String> {
+    if let MergeMode::Squash = mode {
+        // A squash moves no ref, only the index and working tree — under any
+        // stored undo, which is therefore dropped, conflicts or not.
+        let mut guard = state.0.lock().map_err(to_message)?;
+        let idx = guard.active.ok_or("no repository is open")?;
+        let session = &mut guard.sessions[idx];
+        let out = session.repo.merge_branch(&name, mode);
+        clear_undo(session);
+        return out.map_err(to_message);
+    }
     with_recorded_head_move(state, &format!("Merge {name}"), false, |repo| {
-        repo.merge_branch(&name)
+        repo.merge_branch(&name, mode)
     })
+}
+
+/// The message a squash merge left for its commit, if one is pending.
+fn squash_message_impl(state: &RepoState) -> Result<Option<String>, String> {
+    with_repo(state, |repo| Ok(repo.squash_message()))
 }
 
 /// Fast-forward `name` to its upstream. Invalidates the cached log (it may be
@@ -366,8 +382,17 @@ pub(crate) fn remote_branch_exists(
 }
 
 #[tauri::command(async)]
-pub(crate) fn merge_branch(name: String, state: State<RepoState>) -> Result<String, String> {
-    merge_branch_impl(&state, name)
+pub(crate) fn merge_branch(
+    name: String,
+    mode: MergeMode,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    merge_branch_impl(&state, name, mode)
+}
+
+#[tauri::command(async)]
+pub(crate) fn squash_message(state: State<RepoState>) -> Result<Option<String>, String> {
+    squash_message_impl(&state)
 }
 
 #[tauri::command(async)]

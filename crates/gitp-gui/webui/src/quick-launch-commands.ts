@@ -11,7 +11,6 @@ import {
   fetchCommitTree,
   fetchRemote,
   fetchFileHistory,
-  mergeBranch,
   pushBranch,
   rebaseOnto,
   revertCommit,
@@ -57,6 +56,8 @@ import {
   createPullRequestAction,
   deleteBranchAction,
   deleteStashAction,
+  MERGE_MODES,
+  mergeAction,
   renameBranchAction,
   runBranchOp,
   runStashOp,
@@ -400,14 +401,7 @@ function repoCommands(): QuickItem[] {
     // meaning to offer.
     return items.filter((i) => !i.label.startsWith("Rebase") && !i.label.startsWith("Merge"));
   }
-  items.push({
-    kind: "command",
-    label: `Merge into ${head}`,
-    next: () =>
-      branchStage(`Merge into ${head}`, (b) =>
-        void runBranchOp(`Merging ${b.name} into ${head}`, () => mergeBranch(b.name), true, b.name),
-      true),
-  });
+  items.push({ kind: "command", label: `Merge into ${head}…`, next: () => mergeStage(head) });
   if (state.refs.stashes.length) {
     items.push(
       { kind: "command", label: "Apply Stash…", next: () => stashStage("Apply Stash", applyStashPicked) },
@@ -671,6 +665,40 @@ function bisectCommands(): QuickItem[] {
         ),
     },
   ];
+}
+
+// Pick the branch to merge into `head`, then how (the branch menu's modes).
+function mergeStage(head: string): QuickStage {
+  return {
+    chip: `Merge into ${head}`,
+    placeholder: "branch",
+    emptyNote: "No other local branches — this repository has only the one you're on.",
+    sections: [
+      {
+        title: "Local Branches",
+        items: state.refs.branches
+          .filter((b) => !b.is_head)
+          .map((b) => ({ kind: "branch" as const, label: b.name, next: () => mergeModeStage(b.name, head) })),
+      },
+    ],
+  };
+}
+
+function mergeModeStage(name: string, head: string): QuickStage {
+  return {
+    chip: `Merge ${name} into ${head}`,
+    placeholder: "how",
+    sections: [
+      {
+        title: "Merge",
+        items: MERGE_MODES.map(({ mode, label }) => ({
+          kind: "option" as const,
+          label,
+          run: () => void mergeAction(name, mode, name),
+        })),
+      },
+    ],
+  };
 }
 
 function resetStage(rev: string, short: string): QuickStage {

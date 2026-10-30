@@ -37,6 +37,7 @@ mod worktree_ops;
 
 pub use bisect::{BisectMark, BisectStatus};
 pub use blame::BlameLine;
+pub use branch_ops::MergeMode;
 pub use commit_ops::ResetMode;
 pub use compare::{CompareEnd, Comparison};
 pub use config::{ConfigEntry, ConfigScope};

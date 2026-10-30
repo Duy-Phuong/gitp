@@ -3,7 +3,7 @@
 mod common;
 
 use common::FixtureRepo;
-use gitp_core::{Repo, ResetMode};
+use gitp_core::{MergeMode, Repo, ResetMode};
 
 /// A repo with three linear commits on `main`; returns their oids oldest→newest.
 fn linear_repo() -> (FixtureRepo, Vec<String>) {
@@ -149,7 +149,7 @@ fn names_that_read_as_git_options_are_refused() {
         repo.revert("-n"),
         repo.reset("--hard", ResetMode::Soft),
         repo.rebase_onto("--exec=touch pwned"),
-        repo.merge_branch("--squash"),
+        repo.merge_branch("--squash", MergeMode::Default),
         repo.delete_branch("-D", false),
         repo.rename_branch(head.as_deref().unwrap(), "--force"),
     ] {
