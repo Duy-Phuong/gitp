@@ -164,6 +164,7 @@ pub fn run() {
             stash::stash_rename,
             stash::save_stash_patch,
             staging::discard_files,
+            staging::restore_files_from_commit,
             stash::stash_files,
             staging::save_files_patch,
             staging::add_to_gitignore,

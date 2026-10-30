@@ -94,7 +94,7 @@ import {
   onMoreRefsMenu,
   onTagMenu,
 } from "./ref-actions";
-import { onCommitContextMenu, onReflogMenu, runNextCherryPick } from "./commit-actions";
+import { onCommitContextMenu, onReflogMenu, restoreFilesAction, runNextCherryPick } from "./commit-actions";
 import { onWorktreeMenu } from "./worktree-actions";
 import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { toggleTerminal, warmTerminal } from "./terminal-panel";
@@ -223,6 +223,7 @@ async function init(): Promise<void> {
     fetchCompareFileDiff,
     onCompare: (base, head, threeDot) => void showComparison(base, head, threeDot),
     onCloseCompare: () => void leaveComparison(),
+    restoreFiles: (id, paths) => void restoreFilesAction(id, paths),
     fetchSignature: fetchCommitSignature,
     initialTab: loadDetailTab(),
     onTabChange: saveDetailTab,

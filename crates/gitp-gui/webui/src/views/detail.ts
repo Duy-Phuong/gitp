@@ -8,6 +8,9 @@
 // tab, selected file, view mode, split flag, context size, current hunk, and the
 // lazily-loaded tree / blame / history / re-contexted diff (each cached).
 //
+// A commit's file lists take Cmd/Shift-click multi-selection; right-clicking
+// offers to restore the files from that commit.
+//
 // The same pane also shows a comparison of two revisions (showCompare): a
 // compare header in place of the tabs, over the Changes view of the files that
 // differ — so the diff renderer, context controls and Blame / History (as of
@@ -17,6 +20,7 @@ import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT } from "../api";
 import { clear, copyToClipboard, el, statusBadge, svg } from "../dom";
 import type { BlameLine, CommitDetail, CommitSignature, CompareEnd, Comparison, FileCommit, FileDiff, SignatureStatus } from "../types";
 import { hunkWordDiffs, type Seg } from "../worddiff";
+import { showContextMenu } from "./context-menu";
 import { renderFileTree } from "./tree";
 
 // Which pane of the commit detail is showing. Exported so the host can persist
@@ -44,6 +48,8 @@ export interface DetailCallbacks {
   // the two-dot / three-dot toggle), or close it.
   onCompare: (base: string, head: string, threeDot: boolean) => void;
   onCloseCompare: () => void;
+  // Put `paths` back to how they are in commit `id` (staged in Local Changes).
+  restoreFiles: (id: string, paths: string[]) => void;
   // Verify the commit's signature (null when unsigned). Can be slow — it runs
   // gpg / ssh-keygen — so the Commit tab fills its badge in when this lands.
   fetchSignature: (id: string) => Promise<CommitSignature | null>;
@@ -100,6 +106,10 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   // flight don't each start another request.
   let recontextInFlight: string | null = null;
   const collapsed = new Set<string>(); // collapsed folders in the File Tree
+  // The Cmd/Shift-clicked files of the commit's file lists, and the row a
+  // Shift-click ranges from (the last one clicked).
+  let multi = new Set<string>();
+  let anchor: number | null = null;
   // The last commit whose signature was verified, and the one being verified.
   let signature: { id: string; sig: CommitSignature | null } | null = null;
   let signatureInFlight: string | null = null;
@@ -116,6 +126,8 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
       currentHunk = 0;
       tree = null;
       collapsed.clear();
+      multi = new Set();
+      anchor = null;
     }
     render();
   }
@@ -259,7 +271,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     }
     const list = el("div", { class: "file-list" });
     d.files.forEach((f, idx) =>
-      list.append(fileRow(f, false, () => {
+      list.append(fileRow(f, idx, false, () => {
         selectedFile = idx;
         currentHunk = 0;
         fileMode = "diff";
@@ -284,7 +296,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const split = el("div", { class: "changes-split" });
     const listCol = el("div", { class: "changes-list" });
     d.files.forEach((f, idx) =>
-      listCol.append(fileRow(f, idx === selectedFile, () => {
+      listCol.append(fileRow(f, idx, idx === selectedFile, () => {
         selectedFile = idx;
         currentHunk = 0;
         render();
@@ -636,14 +648,61 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
 
   // --- small builders -------------------------------------------------------
 
-  function fileRow(file: FileDiff, active: boolean, onClick: () => void): HTMLElement {
-    const row = el("div", { class: `file-item${active ? " active" : ""}`, title: file.path });
+  function fileRow(file: FileDiff, idx: number, active: boolean, onClick: () => void): HTMLElement {
+    const picked = multi.has(file.path) ? " multi-selected" : "";
+    const row = el("div", { class: `file-item${active ? " active" : ""}${picked}`, title: file.path });
+    row.dataset.path = file.path;
     row.append(statusBadge(file.status));
     const label =
       file.old_path && file.old_path !== file.path ? `${file.old_path} → ${file.path}` : file.path;
     row.append(el("span", { class: "file-item-path", text: label }));
-    row.addEventListener("click", onClick);
+    row.addEventListener("click", (e) => {
+      // A comparison's files belong to no one commit: nothing to restore.
+      if (!compare && (e.shiftKey || e.metaKey || e.ctrlKey)) return pickFile(idx, e.shiftKey);
+      multi = new Set();
+      anchor = idx;
+      onClick();
+    });
+    if (!compare) row.addEventListener("contextmenu", (e) => openFileMenu(file, e));
     return row;
+  }
+
+  // Cmd-click toggles a file in the multi-selection, Shift-click selects the
+  // run from the last clicked file — the log's rules. Repainted in place, so
+  // a long Commit-tab list keeps its scroll position.
+  function pickFile(idx: number, range: boolean): void {
+    const files = detail!.files;
+    if (range) {
+      const from = anchor ?? idx;
+      multi = new Set(files.slice(Math.min(from, idx), Math.max(from, idx) + 1).map((f) => f.path));
+    } else {
+      // The first Cmd-click starts from the file last clicked, as in the log.
+      if (!multi.size && anchor !== null) multi.add(files[anchor].path);
+      const path = files[idx].path;
+      if (multi.has(path)) multi.delete(path);
+      else multi.add(path);
+      anchor = idx;
+    }
+    host.querySelectorAll<HTMLElement>(".file-item").forEach((row) => {
+      row.classList.toggle("multi-selected", multi.has(row.dataset.path ?? ""));
+    });
+  }
+
+  // Right-click a file of the commit: restore it — or the whole multi-selection,
+  // when the click lands inside one — as it is in this commit. A file the
+  // commit deleted has no version here to restore.
+  function openFileMenu(file: FileDiff, e: MouseEvent): void {
+    e.preventDefault();
+    const d = detail!;
+    const many = multi.has(file.path) && multi.size > 1;
+    const files = many ? d.files.filter((f) => multi.has(f.path)) : [file];
+    const paths = files.filter((f) => f.status !== "Deleted").map((f) => f.path);
+    if (paths.length === 0) {
+      showContextMenu(e.clientX, e.clientY, [{ label: "Deleted in this commit — nothing to restore" }]);
+      return;
+    }
+    const label = many ? `Restore ${paths.length} Selected Files` : "Restore File from This Commit";
+    showContextMenu(e.clientX, e.clientY, [{ label, run: () => cb.restoreFiles(d.id, paths) }]);
   }
 
   showEmpty();

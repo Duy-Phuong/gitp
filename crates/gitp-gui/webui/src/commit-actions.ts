@@ -11,8 +11,10 @@ import {
   createTagAt,
   createBackupBranch,
   fetchRebaseTodo,
+  fetchStatusSummary,
   interactiveRebase,
   resetTo,
+  restoreFilesFromCommit,
   revertCommit,
 } from "./api";
 import { $ } from "./dom";
@@ -209,6 +211,32 @@ export async function compareWithWorkdirAction(rev: string, label: string): Prom
   await clearCommitSelection();
   setStatus(`Comparing ${label} with the working directory…`);
   await showComparison(rev, WORKDIR_REV, false);
+}
+
+// "Restore File from This Commit": put `paths` back to how they are in `rev`,
+// staged in Local Changes. Asks first when that overwrites local changes to
+// any of them; Undo brings those back either way.
+export async function restoreFilesAction(rev: string, paths: string[]): Promise<void> {
+  const short = rev.slice(0, 7);
+  const what = paths.length > 1 ? `${paths.length} files` : paths[0];
+  try {
+    const status = await fetchStatusSummary();
+    const changed = new Set([...status.staged, ...status.unstaged].map((f) => f.path));
+    const dirty = paths.filter((p) => changed.has(p));
+    if (dirty.length) {
+      const which = dirty.length === 1 ? `${dirty[0]} has` : `${dirty.length} of these files have`;
+      if (!(await confirmDialog(`${which} local changes.\n\nReplace with the version from ${short}?`))) {
+        setStatus("Restore cancelled.");
+        return;
+      }
+    }
+    setStatus(`Restoring ${what} from ${short}…`);
+    await restoreFilesFromCommit(rev, paths);
+    await loadSidebar(); // the Local Changes count and the Undo button
+    reportDone(`Restored ${what} from ${short} — staged in Local Changes.`);
+  } catch (err) {
+    opFailed("Restore failed", err);
+  }
 }
 
 // Cherry-pick every selected commit, oldest first. A conflict pauses the

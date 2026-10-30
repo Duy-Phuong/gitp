@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
-use crate::remote::literal_pathspec;
+use crate::remote::{literal_pathspec, ref_arg};
 use crate::repo::Repo;
 
 impl Repo {
@@ -153,6 +153,17 @@ impl Repo {
     pub fn untrack_files(&self, paths: &[String]) -> Result<()> {
         let specs: Vec<String> = paths.iter().map(|p| literal_pathspec(p)).collect();
         let mut args = vec!["rm", "--cached", "-q", "--"];
+        args.extend(specs.iter().map(String::as_str));
+        self.run_git(&args).map(|_| ())
+    }
+
+    /// Put `paths` back to how they are in commit `rev`
+    /// (`git checkout <rev> -- <paths>`): written to the working tree and
+    /// staged, overwriting any local changes to them. Each path must exist in
+    /// `rev`.
+    pub fn restore_files_from(&self, rev: &str, paths: &[String]) -> Result<()> {
+        let specs: Vec<String> = paths.iter().map(|p| literal_pathspec(p)).collect();
+        let mut args = vec!["checkout", "-q", ref_arg(rev)?, "--"];
         args.extend(specs.iter().map(String::as_str));
         self.run_git(&args).map(|_| ())
     }

@@ -246,3 +246,26 @@ fn untrack_files_stages_the_removal_and_keeps_the_file() {
     assert_eq!(s.staged[0].path, "secret.env");
     assert_eq!(s.staged[0].status, gitp_core::ChangeKind::Deleted);
 }
+
+#[test]
+fn restore_files_from_puts_the_commits_version_back_staged() {
+    let fx = FixtureRepo::init();
+    let c1 = fx.commit_file("a.txt", "first\n", "c1");
+    fx.commit_file("a.txt", "second\n", "c2");
+    std::fs::write(fx.path().join("a.txt"), "local edit\n").unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.restore_files_from(&c1.to_string(), &["a.txt".into()])
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "first\n"
+    );
+    let s = repo.status_lists().unwrap();
+    assert_eq!(s.staged.len(), 1, "the restored version is staged");
+    assert!(s.unstaged.is_empty(), "the local edit is overwritten");
+    assert!(repo
+        .restore_files_from("--orphan", &["a.txt".into()])
+        .is_err());
+}

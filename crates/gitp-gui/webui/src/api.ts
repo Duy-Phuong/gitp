@@ -906,6 +906,22 @@ export async function discardFiles(paths: string[]): Promise<void> {
   await invoke<void>("discard_files", { paths });
 }
 
+// Put `paths` back to how they are in commit `rev` — written and staged
+// (`git checkout <rev> -- <paths>`). Undoable like a discard.
+export async function restoreFilesFromCommit(rev: string, paths: string[]): Promise<void> {
+  if (!isTauri()) {
+    for (const p of paths) {
+      mockMove(MOCK_STATUS.unstaged, [], p);
+      if (!MOCK_STATUS.staged.some((f) => f.path === p)) {
+        MOCK_STATUS.staged.push({ path: p, old_path: null, status: "Modified", hunks: [] });
+      }
+    }
+    mockRecord(`Restore ${paths.length} file${paths.length === 1 ? "" : "s"} from ${rev.slice(0, 7)}`);
+    return;
+  }
+  await invoke<void>("restore_files_from_commit", { rev, paths });
+}
+
 // Stash only `paths` away (`git stash push -u -- <paths>`).
 export async function stashFiles(paths: string[]): Promise<string> {
   if (!isTauri()) {

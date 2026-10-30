@@ -6,7 +6,9 @@ use gitp_core::{FileDiff, Repo, SigningConfig, StatusLists};
 use tauri::State;
 
 use crate::state::{ensure_status, to_message, with_repo, with_repo_clearing_undo, RepoState};
-use crate::undo::{with_recorded_discard, with_recorded_head_move, with_recorded_index};
+use crate::undo::{
+    with_recorded_discard, with_recorded_files, with_recorded_head_move, with_recorded_index,
+};
 
 fn get_working_changes_impl(state: &RepoState) -> Result<Vec<FileDiff>, String> {
     with_repo(state, Repo::working_changes)
@@ -148,6 +150,24 @@ fn get_signing_config_impl(state: &RepoState) -> Result<SigningConfig, String> {
 /// Discard all local changes to `paths` (revert to HEAD; delete new files).
 pub(crate) fn discard_files_impl(state: &RepoState, paths: Vec<String>) -> Result<(), String> {
     with_recorded_discard(state, &paths, |repo| repo.discard_files(&paths))
+}
+
+/// Restore `paths` as they are in commit `rev` (staged), undoable like a
+/// discard.
+pub(crate) fn restore_files_from_commit_impl(
+    state: &RepoState,
+    rev: String,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let n = paths.len();
+    let short = rev.get(..7).unwrap_or(&rev);
+    let label = format!(
+        "Restore {n} file{} from {short}",
+        if n == 1 { "" } else { "s" }
+    );
+    with_recorded_files(state, label, &paths, |repo| {
+        repo.restore_files_from(&rev, &paths)
+    })
 }
 
 /// Write a patch of `paths` (staged or working-tree direction) to `dest`.
@@ -299,6 +319,15 @@ pub(crate) fn get_signing_config(state: State<RepoState>) -> Result<SigningConfi
 #[tauri::command(async)]
 pub(crate) fn discard_files(paths: Vec<String>, state: State<RepoState>) -> Result<(), String> {
     discard_files_impl(&state, paths)
+}
+
+#[tauri::command(async)]
+pub(crate) fn restore_files_from_commit(
+    rev: String,
+    paths: Vec<String>,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    restore_files_from_commit_impl(&state, rev, paths)
 }
 
 #[tauri::command(async)]
