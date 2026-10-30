@@ -112,7 +112,7 @@ import {
 } from "./commit-actions";
 import { onWorktreeMenu } from "./worktree-actions";
 import { addRemoteAction, onRemoteFolderMenu, onRemotesMenu } from "./remote-actions";
-import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
+import { addSubmoduleAction, onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
 import { openQuickLaunch } from "./quick-launch-commands";
@@ -232,6 +232,7 @@ async function init(): Promise<void> {
     onWorktreeMenu,
     onSubmoduleOpen: openSubmodule,
     onSubmoduleMenu,
+    onAddSubmodule: addSubmoduleAction,
     createBranchAt: (name, rev) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
   });
   applyTheme(currentTheme());

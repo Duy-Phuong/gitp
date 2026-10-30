@@ -1,10 +1,13 @@
 //! Submodules: their status for the sidebar, `update --init --recursive` (a
-//! network operation, with progress and Cancel) and `sync`.
+//! network operation, with progress and Cancel) and `sync`, and adding,
+//! re-pointing and removing one.
 
 use gitp_core::Submodule;
 use tauri::State;
 
-use crate::state::{invalidate_status, with_repo, with_repo_networked, RepoState};
+use crate::state::{
+    invalidate_status, with_repo, with_repo_clearing_undo, with_repo_networked, RepoState,
+};
 
 /// Every submodule of the active repo, with where it stands.
 fn list_submodules_impl(state: &RepoState) -> Result<Vec<Submodule>, String> {
@@ -28,6 +31,30 @@ fn sync_submodules_impl(state: &RepoState, path: Option<String>) -> Result<Strin
     with_repo(state, |repo| repo.sync_submodules(path.as_deref()))
 }
 
+/// Add a submodule: clones `url`, so it runs like `update` (progress, Cancel).
+fn add_submodule_impl(
+    state: &RepoState,
+    url: String,
+    path: Option<String>,
+) -> Result<String, String> {
+    with_repo_networked(
+        state,
+        "clone",
+        |repo| repo.add_submodule(&url, path.as_deref()),
+        invalidate_status,
+    )
+}
+
+fn set_submodule_url_impl(state: &RepoState, path: String, url: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.set_submodule_url(&path, &url))
+}
+
+/// Remove a submodule, leaving the removal staged. It rewrites the index, so a
+/// recorded staging undo would no longer match it.
+fn remove_submodule_impl(state: &RepoState, path: String) -> Result<String, String> {
+    with_repo_clearing_undo(state, |repo| repo.remove_submodule(&path))
+}
+
 // --- Tauri commands --------------------------------------------------------
 
 #[tauri::command(async)]
@@ -49,4 +76,27 @@ pub(crate) fn sync_submodules(
     state: State<RepoState>,
 ) -> Result<String, String> {
     sync_submodules_impl(&state, path)
+}
+
+#[tauri::command(async)]
+pub(crate) fn add_submodule(
+    url: String,
+    path: Option<String>,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    add_submodule_impl(&state, url, path)
+}
+
+#[tauri::command(async)]
+pub(crate) fn set_submodule_url(
+    path: String,
+    url: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    set_submodule_url_impl(&state, path, url)
+}
+
+#[tauri::command(async)]
+pub(crate) fn remove_submodule(path: String, state: State<RepoState>) -> Result<String, String> {
+    remove_submodule_impl(&state, path)
 }

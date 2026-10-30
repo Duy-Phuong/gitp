@@ -1,14 +1,17 @@
 //! Submodules: what each one has checked out against what the superproject
-//! records, and `git submodule update` / `sync` to reconcile them.
+//! records, `git submodule update` / `sync` to reconcile them, and adding,
+//! re-pointing and removing one.
 //!
 //! Status comes from libgit2 (no output to parse, and it honours each
 //! submodule's `ignore` setting as `git status` does). Update shells out like
 //! the other network commands — it clones and fetches with the user's own
 //! credentials — and runs with progress and Cancel (see `progress.rs`).
 
+use std::path::{Component, Path};
+
 use serde::Serialize;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::repo::Repo;
 
 /// Where a submodule stands relative to the commit the superproject records.
@@ -52,6 +55,12 @@ impl Repo {
             let status = self
                 .inner
                 .submodule_status(&name, git2::SubmoduleIgnore::Unspecified)?;
+            // libgit2 also lists one only HEAD still has — removed, with the
+            // removal staged but not yet committed. It's gone as far as the
+            // user is concerned.
+            if !status.intersects(S::IN_INDEX | S::IN_CONFIG) {
+                continue;
+            }
             let checked_out = sm.workdir_id();
             let state = if status.contains(S::WD_UNINITIALIZED) || checked_out.is_none() {
                 SubmoduleState::Uninitialized
@@ -98,4 +107,93 @@ impl Repo {
         }
         self.run_git(&args)
     }
+
+    /// `git submodule add -- <url> [<path>]`: clone `url` into `path` (by
+    /// default git's name for it: the URL's last part, minus `.git`) and stage
+    /// it with its `.gitmodules` entry, for the user to commit. Clones, so it
+    /// runs with progress and Cancel like `update_submodules`.
+    pub fn add_submodule(&self, url: &str, path: Option<&str>) -> Result<String> {
+        let url = submodule_url_arg(url)?;
+        let mut args = vec!["submodule", "add", "--progress", "--", url];
+        if let Some(path) = path {
+            submodule_path_arg(path)?;
+            args.push(path);
+        }
+        self.run_git_progress(&args)
+    }
+
+    /// `git submodule set-url -- <path> <url>`: point the submodule at a new
+    /// URL in `.gitmodules`, and sync it into the config and the submodule's
+    /// own remote. The `.gitmodules` change is left for the user to commit.
+    pub fn set_submodule_url(&self, path: &str, url: &str) -> Result<String> {
+        let url = submodule_url_arg(url)?;
+        submodule_path_arg(path)?;
+        self.run_git(&["submodule", "set-url", "--", path, url])
+    }
+
+    /// Remove the submodule at `path` the way git's docs describe: `deinit -f`
+    /// (empty its folder, drop its config), `git rm -f` (drop the folder and
+    /// its `.gitmodules` entry — the removal ends up staged, for the user to
+    /// commit), then delete its clone under `.git/modules`, which neither of
+    /// those touches and which would otherwise be silently reused by a later
+    /// add of the same name.
+    pub fn remove_submodule(&self, path: &str) -> Result<String> {
+        submodule_path_arg(path)?;
+        let name = self
+            .submodules()?
+            .into_iter()
+            .find(|sm| sm.path == path)
+            .map(|sm| sm.name)
+            .ok_or_else(|| Error::Message(format!("No submodule at {path}.")))?;
+        let mut out = vec![self.run_git(&["submodule", "deinit", "-f", "--", path])?];
+        out.push(self.run_git(&["rm", "-f", "--", path])?);
+        // The name comes from .gitmodules; git refuses ones that climb out of
+        // `modules/`, but this is a recursive delete, so check again.
+        if relative_inside(&name) {
+            // The common dir, not this worktree's: that's where modules live.
+            let common =
+                self.run_git(&["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+            let clone = Path::new(&common).join("modules").join(&name);
+            if clone.is_dir() {
+                std::fs::remove_dir_all(&clone).map_err(|e| {
+                    Error::Message(format!("can't remove {}: {e}", clone.display()))
+                })?;
+            }
+        }
+        Ok(out.join("\n").trim().to_string())
+    }
+}
+
+/// A submodule URL from the user, trimmed: present, and not readable as an
+/// option.
+fn submodule_url_arg(url: &str) -> Result<&str> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err(Error::Message("Enter the submodule's URL.".into()));
+    }
+    if url.starts_with('-') {
+        return Err(Error::Message(format!("\"{url}\" can't be a URL.")));
+    }
+    Ok(url)
+}
+
+/// A submodule path from the user: relative, inside the working tree, and
+/// not readable as an option.
+fn submodule_path_arg(path: &str) -> Result<()> {
+    if path.trim().is_empty() {
+        return Err(Error::Message("Enter the folder for the submodule.".into()));
+    }
+    if path.starts_with('-') || !relative_inside(path) {
+        return Err(Error::Message(format!(
+            "\"{path}\" must be a folder inside the repository, without \"..\"."
+        )));
+    }
+    Ok(())
+}
+
+/// Relative, with no `..` component (nor a root or drive prefix).
+fn relative_inside(path: &str) -> bool {
+    Path::new(path)
+        .components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }

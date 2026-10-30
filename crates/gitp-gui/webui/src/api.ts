@@ -1381,6 +1381,39 @@ export async function syncSubmodules(path: string | null): Promise<string> {
   return invoke<string>("sync_submodules", { path });
 }
 
+// `git submodule add -- <url> [<path>]` (no path: git names the folder after
+// the repository): clones, so it reports progress and
+// can be cancelled like update. The new submodule is left staged.
+export async function addSubmodule(url: string, path: string | null): Promise<string> {
+  if (!isTauri()) {
+    path ??= url.replace(/\/+$/, "").split("/").pop()!.replace(/\.git$/, "");
+    MOCK_SUBMODULES.push({ name: path, path, url, recorded: mockOid("d"), checked_out: mockOid("d"), state: "up_to_date" });
+    return `Cloning into '${path}'... (preview mock)`;
+  }
+  return invokeNetwork<string>("add_submodule", { url, path });
+}
+
+// `git submodule set-url`: a new URL in .gitmodules, synced into the config.
+export async function setSubmoduleUrl(path: string, url: string): Promise<string> {
+  if (!isTauri()) {
+    const m = MOCK_SUBMODULES.find((m) => m.path === path);
+    if (m) m.url = url;
+    return "";
+  }
+  return invoke<string>("set_submodule_url", { path, url });
+}
+
+// Deinit, `git rm` and delete its clone under .git/modules; the removal is
+// left staged for the user to commit.
+export async function removeSubmodule(path: string): Promise<string> {
+  if (!isTauri()) {
+    const i = MOCK_SUBMODULES.findIndex((m) => m.path === path);
+    if (i !== -1) MOCK_SUBMODULES.splice(i, 1);
+    return `rm '${path}' (preview mock)`;
+  }
+  return invoke<string>("remove_submodule", { path });
+}
+
 // ---------------------------------------------------------------------------
 // Mock data (browser-only)
 // ---------------------------------------------------------------------------

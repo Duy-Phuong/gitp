@@ -64,6 +64,7 @@ interface RefActions {
   onWorktreeMenu: SidebarCallbacks["onWorktreeMenu"];
   onSubmoduleOpen: SidebarCallbacks["onSubmoduleOpen"];
   onSubmoduleMenu: SidebarCallbacks["onSubmoduleMenu"];
+  onAddSubmodule: SidebarCallbacks["onAddSubmodule"];
   // The detached-HEAD banner's "Create Branch Here…".
   createBranchAt: (name: string, rev: string) => void;
 }
@@ -770,6 +771,7 @@ export function renderSidebarNow(): void {
       onWorktreeMenu: (w, x, y) => refActions.onWorktreeMenu(w, x, y),
       onSubmoduleOpen: (sm) => refActions.onSubmoduleOpen(sm),
       onSubmoduleMenu: (sm, x, y) => refActions.onSubmoduleMenu(sm, x, y),
+      onAddSubmodule: () => refActions.onAddSubmodule(),
     },
   );
 }

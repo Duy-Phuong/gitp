@@ -225,6 +225,9 @@ pub fn run() {
             submodules::list_submodules,
             submodules::update_submodules,
             submodules::sync_submodules,
+            submodules::add_submodule,
+            submodules::set_submodule_url,
+            submodules::remove_submodule,
         ])
         .run(tauri::generate_context!())
         .expect("error while running gitp");
