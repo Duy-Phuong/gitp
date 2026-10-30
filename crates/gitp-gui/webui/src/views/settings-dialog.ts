@@ -10,14 +10,25 @@ import { el } from "../dom";
 import {
   AUTO_FETCH_MINUTES,
   currentTheme,
+  FONT_FAMILIES,
+  FONT_SIZES,
   loadAutoFetchMinutes,
+  loadCodePrefs,
   loadDetailTab,
   loadPullDefault,
+  loadSyntaxHighlight,
+  loadTerminalFont,
   PULL_DEFAULT_LABEL,
   PULL_DEFAULTS,
+  saveCodePrefs,
   saveDetailTab,
   savePullDefault,
+  saveSyntaxHighlight,
+  saveTerminalFont,
+  TAB_SIZES,
+  type CodePrefs,
   type PullDefault,
+  type TerminalFont,
   type ThemeChoice,
 } from "../prefs";
 import type { DetailTab } from "./detail";
@@ -34,6 +45,8 @@ export interface SettingsActions {
   hooksPath: () => Promise<string | null>;
   setHooksPath: (path: string) => Promise<void>;
   browseFolder: (title: string) => Promise<string | null>;
+  // Draw the diffs on screen again (syntax highlighting was switched).
+  redrawDiffs: () => void;
   // Leave the dialog for one of the Config view's tabs.
   openConfig: (tab: "git" | "dotfiles") => void;
 }
@@ -74,6 +87,56 @@ export function openSettingsDialog(actions: SettingsActions): void {
 
   const sections: Section[] = [
     { title: "Appearance", render: () => [row("Theme", themeCards(actions), "block")] },
+    {
+      title: "Editor & Diff",
+      render: () => {
+        const code = loadCodePrefs();
+        const setCode = (change: Partial<CodePrefs>) => saveCodePrefs({ ...loadCodePrefs(), ...change });
+        const term = loadTerminalFont();
+        const setTerm = (change: Partial<TerminalFont>) => saveTerminalFont({ ...loadTerminalFont(), ...change });
+        return [
+          row(
+            "Syntax highlighting",
+            segToggle(
+              [
+                { value: true, label: "On" },
+                { value: false, label: "Off" },
+              ],
+              loadSyntaxHighlight(),
+              (on) => {
+                saveSyntaxHighlight(on);
+                actions.redrawDiffs();
+              },
+            ),
+            "inline",
+            "Colours code by file type in diffs and the blame view.",
+          ),
+          row("Font", fontPicker(code.font, (font) => setCode({ font })), "block", "Diffs, blame and the file editor."),
+          row("Font size", sizeSelect(code.size, (size) => setCode({ size }))),
+          row(
+            "Tab width",
+            segToggle(
+              TAB_SIZES.map((n) => ({ value: n, label: String(n) })),
+              code.tabSize,
+              (tabSize) => setCode({ tabSize }),
+            ),
+          ),
+          row(
+            "Line numbers in diffs",
+            segToggle(
+              [
+                { value: true, label: "Show" },
+                { value: false, label: "Hide" },
+              ],
+              code.lineNumbers,
+              (lineNumbers) => setCode({ lineNumbers }),
+            ),
+          ),
+          row("Terminal font", fontPicker(term.font, (font) => setTerm({ font })), "block"),
+          row("Terminal font size", sizeSelect(term.size, (size) => setTerm({ size }))),
+        ];
+      },
+    },
     {
       title: "Pull",
       render: () => [
@@ -215,6 +278,41 @@ function autoFetchSelect(actions: SettingsActions): HTMLElement {
   }
   select.value = String(loadAutoFetchMinutes());
   select.addEventListener("change", () => actions.setAutoFetch(Number(select.value)));
+  return select;
+}
+
+// A font family: the app's monospace, one of FONT_FAMILIES, or any other typed
+// in as Custom (saved when the field changes).
+function fontPicker(current: string, onChange: (font: string) => void): HTMLElement {
+  const CUSTOM = "(custom)";
+  const select = el("select", { class: "settings-select" }) as HTMLSelectElement;
+  select.append(el("option", { value: "", text: "Default monospace" }));
+  for (const f of FONT_FAMILIES) select.append(el("option", { value: f, text: f }));
+  select.append(el("option", { value: CUSTOM, text: "Custom…" }));
+  const custom = el("input", {
+    class: "settings-select settings-path",
+    placeholder: "Font family, e.g. Iosevka",
+    spellcheck: "false",
+    autocomplete: "off",
+  }) as HTMLInputElement;
+  const preset = current === "" || FONT_FAMILIES.includes(current);
+  select.value = preset ? current : CUSTOM;
+  custom.value = preset ? "" : current;
+  custom.hidden = preset;
+  select.addEventListener("change", () => {
+    custom.hidden = select.value !== CUSTOM;
+    if (select.value === CUSTOM) custom.focus();
+    else onChange(select.value);
+  });
+  custom.addEventListener("change", () => onChange(custom.value.trim()));
+  return el("div", { class: "settings-path-row" }, [select, custom]);
+}
+
+function sizeSelect(current: number, onChange: (size: number) => void): HTMLElement {
+  const select = el("select", { class: "settings-select" }) as HTMLSelectElement;
+  for (const n of FONT_SIZES) select.append(el("option", { value: String(n), text: `${n} px` }));
+  select.value = String(current);
+  select.addEventListener("change", () => onChange(Number(select.value)));
   return select;
 }
 

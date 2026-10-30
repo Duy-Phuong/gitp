@@ -157,6 +157,11 @@ const panel: TerminalPanel = {
   syncTheme: () => {
     for (const terms of repos.values()) for (const tab of terms.tabs) tab.handle.syncTheme();
   },
+  // A tab in the background is fitted when it's next shown (see layout).
+  syncFont: () => {
+    for (const terms of repos.values()) for (const tab of terms.tabs) tab.handle.syncFont();
+    if (panelOpen()) activeTab()?.handle.fit();
+  },
   showRepo: (path) => {
     if (path === shown) return;
     shown = path;

@@ -2,7 +2,7 @@
 
 import { browseForFolder, fetchConfig, saveConfig, unsetConfig } from "./api";
 import { clear, el, $ } from "./dom";
-import { state } from "./app-state";
+import { state, ui } from "./app-state";
 import { opFailed, reportDone } from "./report";
 import {
   applyTheme,
@@ -156,6 +156,11 @@ export function setupSettingsMenu(): void {
         }
       },
       browseFolder: browseForFolder,
+      redrawDiffs: () => {
+        ui.detailView?.redraw();
+        // Re-renders from the status it has; the diff itself isn't re-read.
+        void ui.changesView?.reload();
+      },
       openConfig: (tab) => {
         closeSettingsDialog();
         setConfigTab(tab);

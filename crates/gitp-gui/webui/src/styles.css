@@ -26,6 +26,20 @@
   --row-sel: #223056;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* The code panes' font, size and tab width (diffs, blame, the file editor),
+     set from Settings → Editor & Diff by applyCodePrefs in prefs.ts. */
+  --code-font: var(--mono);
+  --code-size: 12px;
+  --tab-size: 4;
+  /* Syntax highlighting (highlight.ts), GitHub's dark colours. The GitKraken
+     themes are dark too and keep these. */
+  --syn-keyword: #ff7b72;
+  --syn-string: #a5d6ff;
+  --syn-comment: #8b949e;
+  --syn-number: #79c0ff;
+  --syn-title: #d2a8ff;
+  --syn-type: #ffa657;
+  --syn-tag: #7ee787;
 
   /* Shared interaction tokens — the values that were previously inlined
      inconsistently across the sheet, or missing entirely. Derived from the
@@ -68,6 +82,13 @@
   --row-hover: #eef1f6;
   --row-sel: #dce7ff;
   --shadow-color: rgba(16, 24, 40, 0.16);
+  --syn-keyword: #cf222e;
+  --syn-string: #0a3069;
+  --syn-comment: #6e7781;
+  --syn-number: #0550ae;
+  --syn-title: #8250df;
+  --syn-type: #953800;
+  --syn-tag: #116329;
 }
 
 /* GitKraken and GitKraken Neon: darker, cooler palettes that go with their
@@ -119,6 +140,13 @@
     --row-hover: #eef1f6;
     --row-sel: #dce7ff;
     --shadow-color: rgba(16, 24, 40, 0.16);
+    --syn-keyword: #cf222e;
+    --syn-string: #0a3069;
+    --syn-comment: #6e7781;
+    --syn-number: #0550ae;
+    --syn-title: #8250df;
+    --syn-type: #953800;
+    --syn-tag: #116329;
   }
 }
 
@@ -1338,10 +1366,11 @@ textarea.rename-input {
 }
 .file-editor-text {
   resize: none;
-  font-family: var(--mono);
-  font-size: 12.5px;
+  font-family: var(--code-font);
+  /* A touch larger than the diffs, as it always was. */
+  font-size: calc(var(--code-size) + 0.5px);
   line-height: 1.5;
-  tab-size: 4;
+  tab-size: var(--tab-size);
   white-space: pre;
 }
 .file-editor-text:focus {
@@ -2514,8 +2543,9 @@ body.ref-dragging * {
 }
 /* Split (side-by-side) diff. */
 .split-table {
-  font-family: var(--mono);
-  font-size: 12px;
+  font-family: var(--code-font);
+  font-size: var(--code-size);
+  tab-size: var(--tab-size);
 }
 .split-row {
   display: flex;
@@ -2567,8 +2597,9 @@ body.ref-dragging * {
 }
 /* Blame view. */
 .blame {
-  font-family: var(--mono);
-  font-size: 12px;
+  font-family: var(--code-font);
+  font-size: var(--code-size);
+  tab-size: var(--tab-size);
 }
 .blame-row {
   display: flex;
@@ -2905,8 +2936,9 @@ body.ref-dragging * {
   color: var(--text-dim);
 }
 .diff-line {
-  font-family: var(--mono);
-  font-size: 12px;
+  font-family: var(--code-font);
+  font-size: var(--code-size);
+  tab-size: var(--tab-size);
   padding: 0 12px;
   white-space: pre;
 }
@@ -2965,6 +2997,80 @@ body.ref-dragging * {
 .word-del {
   background: var(--word-del-bg);
   border-radius: 2px;
+}
+/* Settings → Editor & Diff → Line numbers off: no number gutters, so the
+   wrapped-line indent loses their 80px; the split view keeps a sliver of
+   gutter as the line-selection handle. */
+:root[data-no-line-numbers] .diff-ln {
+  display: none;
+}
+:root[data-no-line-numbers] .wrap-lines .diff-line {
+  padding-left: calc(12px + 2ch);
+  text-indent: -2ch;
+}
+:root[data-no-line-numbers] .split-ln {
+  min-width: 6px;
+}
+:root[data-no-line-numbers] .split-ln::before {
+  content: none;
+}
+/* Syntax highlighting (highlight.ts): highlight.js's token classes in the
+   theme's --syn-* colours. A highlighted line's plain text is the normal text
+   colour — the line's tint already says added or removed. */
+.diff-line.syn,
+.split-cell.syn {
+  color: var(--text);
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag {
+  color: var(--syn-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-char,
+.hljs-addition {
+  color: var(--syn-string);
+}
+.hljs-comment,
+.hljs-quote,
+.hljs-deletion {
+  color: var(--syn-comment);
+}
+.hljs-number,
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-selector-attr,
+.hljs-selector-pseudo {
+  color: var(--syn-number);
+}
+.hljs-title,
+.hljs-section,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--syn-title);
+}
+.hljs-type,
+.hljs-built_in,
+.hljs-meta {
+  color: var(--syn-type);
+}
+.hljs-name,
+.hljs-tag,
+.hljs-bullet,
+.hljs-link {
+  color: var(--syn-tag);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
 }
 
 /* Config ----------------------------------------------------------------- */

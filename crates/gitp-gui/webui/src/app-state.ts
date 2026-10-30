@@ -108,6 +108,8 @@ export interface TerminalPanel {
   clear: () => void;
   // Every tab, the ones in the background included.
   syncTheme: () => void;
+  // Every tab too; the one on screen is refitted to the new cell size.
+  syncFont: () => void;
   // Put `path`'s tabs on screen — the active repo changed.
   showRepo: (path: string) => void;
   // Kill `path`'s shells — its repo tab was closed.

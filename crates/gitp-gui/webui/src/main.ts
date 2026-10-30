@@ -58,6 +58,7 @@ import { state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus, watchNetwork, watchPending } from "./report";
 import { setupFetchAgeIndicator } from "./fetch-age";
 import {
+  applyCodePrefs,
   applyTheme,
   currentTheme,
   loadAllBranches,
@@ -252,6 +253,7 @@ async function init(): Promise<void> {
     onSectionMenu,
   });
   applyTheme(currentTheme());
+  applyCodePrefs();
   state.allBranches = loadAllBranches(); // before wireUi so the toggle reflects it
   wireUi();
   ui.detailView = setupDetail($("#detail-pane"), {

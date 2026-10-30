@@ -50,6 +50,119 @@ export function saveIgnoreWhitespace(on: boolean): void {
   localStorage.setItem(DIFF_IGNORE_WS_KEY, on ? "1" : "0");
 }
 
+// Settings → Editor & Diff. Syntax highlighting is read as each diff is drawn
+// (highlight.ts); the code font, size, tab width and line numbers are CSS
+// variables on :root (see applyCodePrefs), shared by the diffs, the blame view
+// and the file editor; the terminal has a font of its own.
+const SYNTAX_KEY = "gitp-syntax-highlight";
+const CODE_FONT_KEY = "gitp-code-font";
+const CODE_SIZE_KEY = "gitp-code-font-size";
+const TAB_SIZE_KEY = "gitp-tab-size";
+const LINE_NUMBERS_KEY = "gitp-diff-line-numbers";
+const TERMINAL_FONT_KEY = "gitp-terminal-font";
+const TERMINAL_SIZE_KEY = "gitp-terminal-font-size";
+
+export const FONT_SIZES = [10, 11, 12, 13, 14, 15, 16, 18, 20];
+export const TAB_SIZES = [2, 4, 8];
+// What the code panes used before these settings existed.
+const DEFAULT_FONT_SIZE = 12;
+const DEFAULT_TAB_SIZE = 4;
+
+// Font families offered by name; anything else is typed in as Custom. ""
+// is the app's own monospace stack (--mono).
+export const FONT_FAMILIES = [
+  "SF Mono",
+  "Menlo",
+  "Monaco",
+  "JetBrains Mono",
+  "Fira Code",
+  "Cascadia Code",
+  "Source Code Pro",
+  "Consolas",
+  "Courier New",
+];
+
+export function loadSyntaxHighlight(): boolean {
+  return localStorage.getItem(SYNTAX_KEY) !== "0";
+}
+
+export function saveSyntaxHighlight(on: boolean): void {
+  localStorage.setItem(SYNTAX_KEY, on ? "1" : "0");
+}
+
+export interface CodePrefs {
+  font: string;
+  size: number;
+  tabSize: number;
+  lineNumbers: boolean;
+}
+
+function oneOf(raw: string | null, choices: number[], fallback: number): number {
+  const v = Number(raw);
+  return choices.includes(v) ? v : fallback;
+}
+
+export function loadCodePrefs(): CodePrefs {
+  return {
+    font: localStorage.getItem(CODE_FONT_KEY) ?? "",
+    size: oneOf(localStorage.getItem(CODE_SIZE_KEY), FONT_SIZES, DEFAULT_FONT_SIZE),
+    tabSize: oneOf(localStorage.getItem(TAB_SIZE_KEY), TAB_SIZES, DEFAULT_TAB_SIZE),
+    lineNumbers: localStorage.getItem(LINE_NUMBERS_KEY) !== "0",
+  };
+}
+
+export function saveCodePrefs(p: CodePrefs): void {
+  localStorage.setItem(CODE_FONT_KEY, p.font);
+  localStorage.setItem(CODE_SIZE_KEY, String(p.size));
+  localStorage.setItem(TAB_SIZE_KEY, String(p.tabSize));
+  localStorage.setItem(LINE_NUMBERS_KEY, p.lineNumbers ? "1" : "0");
+  applyCodePrefs(p);
+}
+
+// The CSS variables that carry `p` (styles.css reads them).
+export function codeCssVars(p: CodePrefs): Record<string, string> {
+  return {
+    "--code-font": fontStack(p.font, "var(--mono)"),
+    "--code-size": `${p.size}px`,
+    "--tab-size": String(p.tabSize),
+  };
+}
+
+export function applyCodePrefs(p: CodePrefs = loadCodePrefs()): void {
+  const root = document.documentElement;
+  for (const [name, value] of Object.entries(codeCssVars(p))) root.style.setProperty(name, value);
+  root.toggleAttribute("data-no-line-numbers", !p.lineNumbers);
+}
+
+// A CSS font-family value: `family` first, then `fallback` for the glyphs it
+// lacks (or for all of them, when it isn't installed). One family name with a
+// space needs quotes; a list the user typed is used as written.
+export function fontStack(family: string, fallback: string): string {
+  const f = family.trim();
+  if (!f) return fallback;
+  const first = /[,"']/.test(f) || !/\s/.test(f) ? f : `"${f}"`;
+  return `${first}, ${fallback}`;
+}
+
+export interface TerminalFont {
+  font: string;
+  size: number;
+}
+
+export function loadTerminalFont(): TerminalFont {
+  return {
+    font: localStorage.getItem(TERMINAL_FONT_KEY) ?? "",
+    size: oneOf(localStorage.getItem(TERMINAL_SIZE_KEY), FONT_SIZES, DEFAULT_FONT_SIZE),
+  };
+}
+
+export function saveTerminalFont(f: TerminalFont): void {
+  localStorage.setItem(TERMINAL_FONT_KEY, f.font);
+  localStorage.setItem(TERMINAL_SIZE_KEY, String(f.size));
+  // Like the theme, xterm holds its font as JS values.
+  ui.terminal?.syncFont();
+}
+
 // What the plain Pull button runs. "FetchAll" isn't a real pull (no merge) but
 // is offered alongside the pull strategies, GitKraken-style.
 export type PullDefault = "FetchAll" | PullMode;
