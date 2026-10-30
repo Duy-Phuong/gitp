@@ -17,6 +17,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::activity;
 use crate::error::{Error, Result};
 use crate::git_bin::git_command;
 use crate::remote::ref_arg;
@@ -186,14 +187,15 @@ impl Repo {
             args.push("--update-refs");
         }
         args.push(onto);
-        let output = git_command()
-            .current_dir(workdir)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GIT_SEQUENCE_EDITOR", seq_editor)
-            .env("GIT_EDITOR", "true")
-            .args(&args)
-            .output()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        let output = activity::output(
+            git_command()
+                .current_dir(workdir)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .env("GIT_SEQUENCE_EDITOR", seq_editor)
+                .env("GIT_EDITOR", "true")
+                .args(&args),
+        )
+        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
 
         self.cleanup_rebase_scratch();
 
@@ -347,13 +349,14 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        let output = git_command()
-            .current_dir(workdir)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GIT_EDITOR", "true")
-            .args(args)
-            .output()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        let output = activity::output(
+            git_command()
+                .current_dir(workdir)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .env("GIT_EDITOR", "true")
+                .args(args),
+        )
+        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
         self.cleanup_rebase_scratch();
         let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
         combined.push_str(&String::from_utf8_lossy(&output.stderr));

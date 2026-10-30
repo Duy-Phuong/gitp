@@ -11,6 +11,7 @@ import type { ConflictHandle } from "./views/conflict";
 import type { TerminalHandle } from "./views/terminal";
 import type { ReflogHandle } from "./views/reflog";
 import type { GraphPrefs } from "./prefs";
+import type { ActivityHandle } from "./views/activity";
 import type {
   BisectStatus,
   CommitRow,
@@ -24,7 +25,7 @@ import type {
   Worktree,
 } from "./types";
 
-export type View = "history" | "changes" | "config" | "conflict" | "reflog";
+export type View = "history" | "changes" | "config" | "conflict" | "reflog" | "activity";
 
 export const EMPTY_REFS: Refs = { head: null, branches: [], remotes: [], tags: [], stashes: [], recent: [] };
 
@@ -106,6 +107,7 @@ export const ui = {
   changesView: null as ChangesHandle | null,
   conflictView: null as ConflictHandle | null,
   reflogView: null as ReflogHandle | null,
+  activityView: null as ActivityHandle | null,
   // The live log's handle, from the most recent renderLog — the log view owns
   // keyboard movement through the rows it has on screen (see LogHandle).
   logView: null as LogHandle | null,

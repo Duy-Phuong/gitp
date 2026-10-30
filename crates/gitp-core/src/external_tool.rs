@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
+use crate::activity::Run;
 use crate::error::{Error, Result};
 use crate::git_bin::git_command;
 use crate::remote::ref_arg;
@@ -108,37 +109,54 @@ impl Repo {
     /// long as the user looks at it. A failure in the first moments (the tool
     /// isn't installed) is still reported, with git's message.
     fn launch_git(&self, args: &[String]) -> Result<()> {
-        let mut child = git_command()
-            .current_dir(self.workdir_path()?)
+        let mut cmd = git_command();
+        cmd.current_dir(self.workdir_path()?)
             .env("GIT_TERMINAL_PROMPT", "0")
             .args(args)
             // No terminal: a prompt reads end-of-file and gives up rather than
             // waiting for an answer that can't come.
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+            .stderr(Stdio::piped());
+        let run = Run::of(&cmd);
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                let err = format!("failed to run git: {e}");
+                run.fail(&err);
+                return Err(Error::Message(err));
+            }
+        };
         let started = Instant::now();
         while started.elapsed() < LAUNCH_GRACE {
-            if let Some(status) = child
-                .try_wait()
-                .map_err(|e| Error::Message(format!("failed to run git: {e}")))?
-            {
+            let status = match child.try_wait() {
+                Ok(status) => status,
+                Err(e) => {
+                    let err = format!("failed to run git: {e}");
+                    run.fail(&err);
+                    return Err(Error::Message(err));
+                }
+            };
+            if let Some(status) = status {
                 if status.success() {
+                    run.finish(status.code(), true, b"", b"");
                     return Ok(());
                 }
                 let mut err = String::new();
                 if let Some(mut stderr) = child.stderr.take() {
                     let _ = stderr.read_to_string(&mut err);
                 }
+                run.finish(status.code(), false, b"", err.as_bytes());
                 return Err(Error::Message(err.trim().to_string()));
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        // Still running: reap it (draining stderr) whenever it's closed.
+        // Still running: reap it (draining stderr) whenever it's closed, and
+        // log it then, with how long the tool was open.
         std::thread::spawn(move || {
-            let _ = child.wait_with_output();
+            if let Ok(out) = child.wait_with_output() {
+                run.finish_output(&out);
+            }
         });
         Ok(())
     }

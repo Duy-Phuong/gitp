@@ -8,6 +8,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+use crate::activity::{key_for_new, Run};
 use crate::error::{Error, Result};
 use crate::git_bin::git_command;
 use crate::progress::{run_progress, NetworkHooks};
@@ -37,10 +38,10 @@ pub fn init_repo(path: &Path, gitignore: Option<&str>, readme: bool) -> Result<(
         }
     }
 
-    let output = git_command()
-        .args(["init", "--"])
-        .arg(path)
-        .output()
+    let mut cmd = git_command();
+    cmd.args(["init", "--"]).arg(path);
+    let output = Run::start(&key_for_new(path), cmd.get_args())
+        .output(&mut cmd)
         .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
     if !output.status.success() {
         return Err(Error::Message(
@@ -135,7 +136,13 @@ pub fn clone_repo(
         args.push("--recurse-submodules");
     }
     args.extend(["--", url, dest]);
-    run_progress(parent, &args, hooks, own_askpass())
+    run_progress(
+        parent,
+        &args,
+        hooks,
+        own_askpass(),
+        &key_for_new(Path::new(dest)),
+    )
 }
 
 /// Whether the user's global config sets `core.askPass`, which ours must not

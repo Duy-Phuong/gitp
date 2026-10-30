@@ -319,6 +319,25 @@ export interface ReflogEntry {
   summary: string | null;
 }
 
+// One git command gitp ran for the repo (the Activity view).
+export interface ActivityEntry {
+  // Increasing; poll with the newest one seen to get only what's new.
+  id: number;
+  // When git started, ms since the epoch.
+  started_at: number;
+  duration_ms: number;
+  // `git …` with credentials masked.
+  command: string;
+  // null when git couldn't start or was stopped (Cancel).
+  exit_code: number | null;
+  success: boolean;
+  // A read-only probe a refresh runs (status, log, …): hidden by default.
+  quiet: boolean;
+  // The last few KB of each stream; stdout only for a failure.
+  stderr: string;
+  stdout: string;
+}
+
 // One side of a comparison: the revision as given (a ref name or an id) and
 // the commit it resolved to.
 export interface CompareEnd {

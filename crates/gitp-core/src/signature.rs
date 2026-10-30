@@ -10,6 +10,7 @@
 
 use serde::Serialize;
 
+use crate::activity;
 use crate::error::{Error, Result};
 use crate::git_bin::git_command;
 use crate::repo::Repo;
@@ -80,15 +81,16 @@ impl Repo {
         // `--no-show-signature`: a `log.showSignature = true` would otherwise
         // print the verifier's own report into stdout ahead of the format.
         // LC_ALL=C keeps git's error text matchable below.
-        let output = git_command()
-            .current_dir(workdir)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("LC_ALL", "C")
-            .args(["log", "-1", "--no-show-signature"])
-            .arg("--format=%G?%x00%GS%x00%GK%x00%GF")
-            .arg(oid.to_string())
-            .output()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        let output = activity::output(
+            git_command()
+                .current_dir(workdir)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .env("LC_ALL", "C")
+                .args(["log", "-1", "--no-show-signature"])
+                .arg("--format=%G?%x00%GS%x00%GK%x00%GF")
+                .arg(oid.to_string()),
+        )
+        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if !output.status.success() {

@@ -3945,6 +3945,103 @@ textarea:focus-visible,
   color: var(--text);
 }
 
+/* Activity view: the git commands gitp ran, newest first; a row opens to show
+   what git printed. */
+#activity-view:not(.hidden) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.activity-quiet {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.activity-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.activity-row {
+  border-bottom: 1px solid var(--border);
+}
+.activity-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+  padding: 0 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.activity-head:hover {
+  background: var(--row-hover);
+}
+.activity-row.open .activity-head {
+  background: var(--row-sel);
+}
+/* Background probes: listed on request, and kept out of the way when they are. */
+.activity-row.quiet .activity-command,
+.activity-row.quiet .activity-time {
+  color: var(--text-dim);
+}
+.activity-status {
+  flex: 0 0 auto;
+  width: 12px;
+  font-weight: 700;
+}
+.activity-status.ok {
+  color: var(--add-fg);
+}
+.activity-status.failed {
+  color: var(--del-fg);
+}
+.activity-time,
+.activity-duration {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.activity-command {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.activity-detail {
+  padding: 4px 12px 10px 34px;
+  background: var(--bg-elev);
+}
+.activity-detail-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.activity-output {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
 /* Compare view: the header that replaces the detail tabs while two revisions
    are being compared — `base ← head`, how far apart, and the mode / swap /
    close controls (see compareHeader in views/detail.ts). */

@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 
+use crate::activity;
 use crate::error::{Error, Result};
 use crate::git_bin::git_command;
 use crate::remote::ref_arg;
@@ -33,21 +34,22 @@ impl Repo {
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
 
         let format = format!("--format=%H{SEP}%h{SEP}%an{SEP}%at{SEP}%s");
-        let output = git_command()
-            .current_dir(workdir)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .args([
-                "log",
-                ref_arg(rev)?,
-                "--follow",
-                "-n",
-                "200",
-                &format,
-                "--",
-                path,
-            ])
-            .output()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        let output = activity::output(
+            git_command()
+                .current_dir(workdir)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .args([
+                    "log",
+                    ref_arg(rev)?,
+                    "--follow",
+                    "-n",
+                    "200",
+                    &format,
+                    "--",
+                    path,
+                ]),
+        )
+        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
 
         if !output.status.success() {
             return Err(Error::Message(
