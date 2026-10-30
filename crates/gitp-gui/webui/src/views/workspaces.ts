@@ -61,9 +61,29 @@ let overlay: HTMLElement | null = null;
 let onKey: ((e: KeyboardEvent) => void) | null = null;
 let unlisten: (() => void) | null = null;
 
+// The fetch / pull batch belongs to the module, not to one dialog: closing the
+// dialog doesn't stop it, so a reopened dialog has to show it still running —
+// rows, Cancel, actions disabled — rather than let a second batch start over
+// it and trip on index.lock. `view` is the open dialog the batch paints into.
+let running = false;
+let stopped = false;
+const results = new Map<string, RowResult>();
+let view: {
+  paintResult: (path: string) => void;
+  refreshBulkBar: () => void;
+  note: (message: string) => void;
+  loadSummary: (path: string) => Promise<void>;
+} | null = null;
+
+function setResult(path: string, r: RowResult): void {
+  results.set(path, r);
+  view?.paintResult(path);
+}
+
 export function closeWorkspacesDialog(): void {
   overlay?.remove();
   overlay = null;
+  view = null;
   if (onKey) document.removeEventListener("keydown", onKey, true);
   onKey = null;
   unlisten?.();
@@ -79,11 +99,10 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
   // What each repo's row shows: its summary (or why there is none), and the
   // outcome of the last bulk operation that included it.
   const summaries = new Map<string, RepoSummary | { error: string }>();
-  const results = new Map<string, RowResult>();
+  // A new dialog starts with clean rows, unless a batch is still running.
+  if (!running) results.clear();
   // The cells a progress event or a finished summary rewrites in place.
   const rowCells = new Map<string, { branch: HTMLElement; state: HTMLElement; result: HTMLElement; fix: HTMLElement }>();
-  let running = false;
-  let stopped = false;
 
   const commit = (next: LocalWorkspace[]) => {
     list = next;
@@ -274,11 +293,6 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
     }
   };
 
-  const setResult = (path: string, r: RowResult) => {
-    results.set(path, r);
-    paintResult(path);
-  };
-
   // --- the chosen workspace -------------------------------------------------
 
   const renderBody = () => {
@@ -412,16 +426,18 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
     return bar;
   };
 
+  // Painted through `view`, as the dialog may be closed and reopened midway.
   const runBatch = async (kind: "fetch" | "pull", paths: string[]) => {
     if (running || paths.length === 0) return;
     running = true;
     stopped = false;
-    refreshBulkBar();
+    const workspace = current;
+    view?.refreshBulkBar();
     for (const p of paths) setResult(p, { kind: "queued", text: "Queued" });
     const mode = actions.pullMode();
     let failed = 0;
     let done = 0;
-    note(`${kind === "fetch" ? "Fetching" : "Pulling"} ${paths.length} ${paths.length === 1 ? "repository" : "repositories"}…`);
+    view?.note(`${kind === "fetch" ? "Fetching" : "Pulling"} ${paths.length} ${paths.length === 1 ? "repository" : "repositories"}…`);
     await runPool(
       paths,
       CONCURRENCY,
@@ -440,17 +456,17 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
             setResult(path, { kind: "failed", text: detail.split("\n")[0], detail });
           }
         }
-        await loadSummary(path);
+        await view?.loadSummary(path);
       },
       () => stopped,
     );
     for (const p of paths) if (results.get(p)?.kind === "queued") setResult(p, { kind: "cancelled", text: "Cancelled" });
     running = false;
-    refreshBulkBar();
+    view?.refreshBulkBar();
     const verb = kind === "fetch" ? "Fetched" : "Pulled";
     const message = `${verb} ${done} of ${paths.length}${failed ? ` · ${failed} failed` : ""}${stopped ? " · cancelled" : ""}.`;
-    note(message);
-    actions.setStatus(`Workspace ${current ?? ""}: ${message}`);
+    view?.note(message);
+    actions.setStatus(`Workspace ${workspace ?? ""}: ${message}`);
     if (paths.includes(actions.activeRepo())) await actions.refreshActive();
   };
 
@@ -493,6 +509,9 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
     if (overlay && modal.isConnected) unlisten = stop;
     else stop();
   });
+
+  view = { paintResult, refreshBulkBar: () => refreshBulkBar(), note, loadSummary };
+  if (running) note("A fetch or pull is still running…");
 
   const close = el("button", { class: "btn", text: "Done" });
   close.addEventListener("click", closeWorkspacesDialog);
