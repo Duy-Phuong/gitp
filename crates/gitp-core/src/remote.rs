@@ -319,6 +319,12 @@ impl Repo {
     /// clear message instead of hanging a GUI that has no TTY. On success
     /// returns the trimmed combined output; on failure returns it as an error.
     pub(crate) fn run_git(&self, args: &[&str]) -> Result<String> {
+        self.run_git_env(args, &[])
+    }
+
+    /// `run_git` with extra environment variables — e.g. `GIT_INDEX_FILE`, to
+    /// work on a scratch index without touching the real one.
+    pub(crate) fn run_git_env(&self, args: &[&str], env: &[(&str, &str)]) -> Result<String> {
         let workdir = self
             .inner
             .workdir()
@@ -327,6 +333,7 @@ impl Repo {
             git_command()
                 .current_dir(workdir)
                 .env("GIT_TERMINAL_PROMPT", "0")
+                .envs(env.iter().copied())
                 .args(args),
         )
         .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;

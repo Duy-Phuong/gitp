@@ -1,11 +1,13 @@
 //! Actions on a single commit in the graph: check it out, cherry-pick,
 //! revert, or reset the current branch to it — or save commits as a patch.
 
-use gitp_core::{PickPlanOutcome, PickStep, ResetMode, Undoable};
+use gitp_core::{HeadMoveMode, PickPlanOutcome, PickStep, ResetMode, Undoable};
 use tauri::State;
 
 use crate::state::{to_message, with_repo, RepoState};
-use crate::undo::{clear_undo, set_undo, with_recorded_checkout, with_recorded_head_move};
+use crate::undo::{
+    clear_undo, set_undo, with_recorded_checkout, with_recorded_hard_reset, with_recorded_head_move,
+};
 
 /// Detach HEAD onto `rev`. Invalidates the cached log because HEAD moves.
 pub(crate) fn checkout_commit_impl(state: &RepoState, rev: String) -> Result<String, String> {
@@ -27,7 +29,9 @@ fn short_rev(rev: &str) -> String {
 
 /// Cherry-pick `rev` onto the current branch. Invalidates the cached log.
 fn cherry_pick_impl(state: &RepoState, rev: String) -> Result<String, String> {
-    with_recorded_head_move(state, "Cherry-pick", false, |repo| repo.cherry_pick(&rev))
+    with_recorded_head_move(state, "Cherry-pick", HeadMoveMode::Keep, |repo| {
+        repo.cherry_pick(&rev)
+    })
 }
 
 /// Cherry-pick an edited plan of commits onto the current branch. A plan that
@@ -37,7 +41,9 @@ pub(crate) fn cherry_pick_plan_impl(
     state: &RepoState,
     steps: Vec<PickStep>,
 ) -> Result<PickPlanOutcome, String> {
-    with_recorded_head_move(state, "Cherry-pick", false, |repo| repo.cherry_pick_plan(&steps))
+    with_recorded_head_move(state, "Cherry-pick", HeadMoveMode::Keep, |repo| {
+        repo.cherry_pick_plan(&steps)
+    })
 }
 
 /// Resume a plan paused on a conflict. The resolver's own `--continue` was
@@ -63,7 +69,8 @@ pub(crate) fn continue_cherry_pick_plan_impl(state: &RepoState) -> Result<PickPl
                 label: "Cherry-pick".into(),
                 before: out.start_head.clone(),
                 after,
-                soft: false,
+                mode: HeadMoveMode::Keep,
+                backup: None,
             },
         );
     }
@@ -72,7 +79,9 @@ pub(crate) fn continue_cherry_pick_plan_impl(state: &RepoState) -> Result<PickPl
 
 /// Revert `rev` on the current branch. Invalidates the cached log.
 fn revert_impl(state: &RepoState, rev: String) -> Result<String, String> {
-    with_recorded_head_move(state, "Revert", false, |repo| repo.revert(&rev))
+    with_recorded_head_move(state, "Revert", HeadMoveMode::Keep, |repo| {
+        repo.revert(&rev)
+    })
 }
 
 /// Reset the current branch to `rev`. Invalidates the cached log.
@@ -81,10 +90,19 @@ pub(crate) fn reset_impl(
     rev: String,
     mode: ResetMode,
 ) -> Result<String, String> {
-    // A soft reset leaves the index as it was, so its undo must too: a `--keep`
-    // undo would refuse (or, for a staged-new file, drop it back to untracked).
-    let soft = matches!(mode, ResetMode::Soft);
-    with_recorded_head_move(state, "Reset", soft, |repo| repo.reset(&rev, mode))
+    // Undone the way it was done: a soft reset leaves the index as it was, and
+    // a mixed one leaves the files it moved past as local edits, so a `--keep`
+    // undo would refuse them (or drop a staged-new file back to untracked). A
+    // hard reset left a clean tree, so `--keep` is safe — and its uncommitted
+    // work is backed up first, for the undo to put back.
+    let undo_mode = match mode {
+        ResetMode::Soft => HeadMoveMode::Soft,
+        ResetMode::Mixed => HeadMoveMode::Mixed,
+        ResetMode::Hard => {
+            return with_recorded_hard_reset(state, |repo| repo.reset(&rev, mode));
+        }
+    };
+    with_recorded_head_move(state, "Reset", undo_mode, |repo| repo.reset(&rev, mode))
 }
 
 /// Write `revs` (in that order) to `path` as one patch file.

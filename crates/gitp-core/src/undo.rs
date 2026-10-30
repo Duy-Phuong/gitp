@@ -7,9 +7,9 @@
 //! last one), matching GitKraken's single-step scope.
 //!
 //! Reversal shells out through `run_git`/git2 like the rest of the crate, so
-//! git's own reflog, safety checks, and messages apply. Ref moves use a *safe*
-//! reset (`--keep`, or `--soft` for commit) so an undo aborts rather than
-//! clobbering unrelated uncommitted work.
+//! git's own reflog, safety checks, and messages apply. Ref moves use a reset
+//! that can't lose work (`--keep`, or `--soft`/`--mixed` to mirror a soft or
+//! mixed reset) so an undo aborts rather than clobbering uncommitted work.
 
 use std::fs;
 use std::path::Path;
@@ -39,18 +39,38 @@ pub struct FileBlob {
     pub after: Option<Vec<u8>>,
 }
 
+/// How undo/redo moves the branch tip of a [`Undoable::HeadMoved`] — the
+/// `git reset` mode, chosen so the move can never lose work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadMoveMode {
+    /// `--soft`: index and working tree stay (commit, so undone changes
+    /// reappear staged; a soft reset).
+    Soft,
+    /// `--mixed`: the index follows, the working tree stays. A mixed reset
+    /// leaves the files it moved past as local edits, which `--keep` would
+    /// refuse to step over — so it is undone the way it was done.
+    Mixed,
+    /// `--keep`: the working tree follows too, but git aborts rather than
+    /// overwrite a file with local edits.
+    Keep,
+}
+
 /// A recorded, reversible action. Stored one-at-a-time (single-level undo).
 #[derive(Debug, Clone)]
 pub enum Undoable {
     /// The current branch's tip moved `before` → `after` — commit, reset, merge,
-    /// cherry-pick, revert, or rebase. `soft` keeps the index/working tree on the
-    /// move (commit, so undone changes reappear staged); otherwise a `--keep`
-    /// reset also updates the working tree without discarding local edits.
+    /// cherry-pick, revert, or rebase.
+    ///
+    /// `backup` is set for a hard reset that threw away uncommitted work: the
+    /// commit [`Repo::backup_uncommitted_work`] saved it in. Undo puts that work
+    /// back in the working tree after moving the tip; `before` and `after` may
+    /// then be equal (a hard reset to HEAD only discards changes).
     HeadMoved {
         label: String,
         before: String,
         after: String,
-        soft: bool,
+        mode: HeadMoveMode,
+        backup: Option<String>,
     },
     /// HEAD switched between two revisions (checkout). Each side is a branch name
     /// or, when detached, a commit id.
@@ -489,7 +509,23 @@ impl Repo {
     /// Reverse `action` (Undo).
     pub fn undo(&self, action: &Undoable) -> Result<()> {
         match action {
-            Undoable::HeadMoved { before, soft, .. } => self.move_head(before, *soft),
+            Undoable::HeadMoved {
+                before,
+                mode,
+                backup,
+                ..
+            } => {
+                // Checked before the tip moves: once it has, a refusal here
+                // would leave the branch back but the work still missing.
+                if let Some(backup) = backup {
+                    self.check_backup_restorable(backup)?;
+                }
+                self.move_head(before, *mode, "Undo")?;
+                match backup {
+                    Some(backup) => self.restore_backup(backup),
+                    None => Ok(()),
+                }
+            }
             Undoable::Switched { before, .. } => self.checkout_branch(before),
             Undoable::BranchCreated { name, prev, .. } => {
                 self.checkout_branch(prev)?;
@@ -557,7 +593,24 @@ impl Repo {
     /// Re-apply `action` (Redo) — the inverse of [`Repo::undo`].
     pub fn redo(&self, action: &Undoable) -> Result<()> {
         match action {
-            Undoable::HeadMoved { after, soft, .. } => self.move_head(after, *soft),
+            Undoable::HeadMoved {
+                after,
+                mode,
+                backup,
+                ..
+            } => {
+                // Redo of a backed-up hard reset discards the restored work
+                // again, but only while it is exactly what the backup holds —
+                // anything edited since is new work, and then the move falls
+                // back to `--keep`, which refuses to overwrite it.
+                if let Some(backup) = backup {
+                    let saved = self.run_git(&["rev-parse", &format!("{backup}^{{tree}}")])?;
+                    if self.work_tree_snapshot()? == saved {
+                        return self.run_git(&["reset", "--hard", after]).map(|_| ());
+                    }
+                }
+                self.move_head(after, *mode, "Redo")
+            }
             Undoable::Switched { after, .. } => self.checkout_branch(after),
             Undoable::BranchCreated { name, at, .. } => {
                 self.run_git(&["checkout", "-b", name, at]).map(|_| ())
@@ -628,12 +681,203 @@ impl Repo {
         }
     }
 
-    /// Move the current branch to `target`. `soft` keeps the index/working tree
-    /// (`--soft`); otherwise `--keep` also updates the working tree but aborts if
-    /// that would overwrite local modifications — so undo never loses work.
-    fn move_head(&self, target: &str, soft: bool) -> Result<()> {
-        let mode = if soft { "--soft" } else { "--keep" };
-        self.run_git(&["reset", mode, target]).map(|_| ())
+    /// Move the current branch to `target` with a reset that can't lose work
+    /// (see [`HeadMoveMode`]). `verb` ("Undo"/"Redo") heads the message when
+    /// `--keep` refuses.
+    fn move_head(&self, target: &str, mode: HeadMoveMode, verb: &str) -> Result<()> {
+        let flag = match mode {
+            HeadMoveMode::Soft => "--soft",
+            HeadMoveMode::Mixed => "--mixed",
+            HeadMoveMode::Keep => "--keep",
+        };
+        self.run_git(&["reset", flag, target])
+            .map(|_| ())
+            .map_err(|e| match mode {
+                HeadMoveMode::Keep => self.explain_keep_refusal(target, verb).unwrap_or(e),
+                _ => e,
+            })
+    }
+
+    /// A plain explanation of a refused `reset --keep`: which of the files the
+    /// move has to change hold local edits (or are untracked files in the way).
+    /// git itself names only the first one, as "Entry 'x' not uptodate. Cannot
+    /// merge." `None` when no such file explains the refusal — git's own message
+    /// is the better one then.
+    fn explain_keep_refusal(&self, target: &str, verb: &str) -> Option<Error> {
+        let moved = self
+            .git_paths(&["diff", "--name-only", "-z", "HEAD", target])
+            .ok()?;
+        let mut dirty = self
+            .git_paths(&["diff", "--name-only", "-z", "HEAD"])
+            .ok()?;
+        dirty.extend(self.untracked_paths().ok()?);
+        let blocking: Vec<String> = moved.into_iter().filter(|p| dirty.contains(p)).collect();
+        if blocking.is_empty() {
+            return None;
+        }
+        Some(local_changes_in_the_way(verb, &blocking))
+    }
+
+    /// The NUL-separated paths a `git ... -z` listing prints.
+    fn git_paths(&self, args: &[&str]) -> Result<Vec<String>> {
+        let out = self.run_git_raw(args)?;
+        Ok(out
+            .split(|b| *b == 0)
+            .filter(|p| !p.is_empty())
+            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .collect())
+    }
+
+    /// Untracked, non-ignored files, each listed (not collapsed to its folder).
+    fn untracked_paths(&self) -> Result<Vec<String>> {
+        self.git_paths(&["ls-files", "--others", "--exclude-standard", "-z"])
+    }
+
+    // --- hard-reset backups ----------------------------------------------------
+
+    /// Save the uncommitted work — tracked changes and untracked, non-ignored
+    /// files — as a commit on top of HEAD, kept reachable under
+    /// `refs/gitp/backups/<millis>`, so a hard reset can be undone with the work
+    /// it threw away. Neither the working tree nor the real index is touched.
+    /// `None` when there is nothing to save.
+    ///
+    /// Only the newest [`BACKUPS_KEPT`] backups are kept; older refs are deleted
+    /// (their commits then go with the next gc).
+    pub fn backup_uncommitted_work(&self) -> Result<Option<String>> {
+        let tree = self.work_tree_snapshot()?;
+        let head = self.head_commit_id()?;
+        if tree == self.run_git(&["rev-parse", "HEAD^{tree}"])? {
+            return Ok(None);
+        }
+        // A fixed identity: the commit is private and never pushed, and a
+        // repository without user.name/email must still be able to reset.
+        let identity = [
+            ("GIT_AUTHOR_NAME", "gitp"),
+            ("GIT_AUTHOR_EMAIL", "gitp@localhost"),
+            ("GIT_COMMITTER_NAME", "gitp"),
+            ("GIT_COMMITTER_EMAIL", "gitp@localhost"),
+        ];
+        let commit = self.run_git_env(
+            &[
+                "commit-tree",
+                &tree,
+                "-p",
+                &head,
+                "-m",
+                "gitp: uncommitted work before a hard reset",
+            ],
+            &identity,
+        )?;
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        self.run_git(&["update-ref", &format!("{BACKUP_REFS}{millis}"), &commit])?;
+        self.prune_backups();
+        Ok(Some(commit))
+    }
+
+    /// The tree the working tree would commit as with `git add -A` — written
+    /// through a scratch copy of the index, so the real one is left alone.
+    ///
+    /// The copy starts from the real index rather than an empty `read-tree
+    /// HEAD` so it keeps the stat cache: `add -A` then hashes only the files
+    /// that changed, not the whole working tree.
+    fn work_tree_snapshot(&self) -> Result<String> {
+        // Named like the undo index snapshots so the sweep on open
+        // (`remove_index_snapshots`) also clears one left by a crash.
+        let scratch = self.inner.path().join("gitp-undo-index-backup.tmp");
+        let real = self.inner.path().join("index");
+        let _ = fs::remove_file(&scratch);
+        if real.exists() {
+            fs::copy(&real, &scratch)
+                .map_err(|e| Error::Message(format!("can't snapshot the index: {e}")))?;
+        }
+        let scratch_str = scratch.to_string_lossy().into_owned();
+        let env = [("GIT_INDEX_FILE", scratch_str.as_str())];
+        let tree = (|| {
+            if !real.exists() {
+                self.run_git_env(&["read-tree", "HEAD"], &env)?;
+            }
+            self.run_git_env(&["add", "-A"], &env)?;
+            self.run_git_env(&["write-tree"], &env)
+        })();
+        let _ = fs::remove_file(&scratch);
+        tree
+    }
+
+    /// Delete all but the newest [`BACKUPS_KEPT`] backup refs. Best effort: a
+    /// failure leaves an extra ref, never loses the new one.
+    fn prune_backups(&self) {
+        let Ok(out) = self.run_git(&["for-each-ref", "--format=%(refname)", BACKUP_REFS]) else {
+            return;
+        };
+        // Millisecond names have the same width for centuries, so the text
+        // order is the time order.
+        let mut refs: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+        refs.sort_unstable();
+        let stale = refs.len().saturating_sub(BACKUPS_KEPT);
+        if stale == 0 {
+            return;
+        }
+        let script: String = refs[..stale]
+            .iter()
+            .map(|r| format!("delete {r}\n"))
+            .collect();
+        let _ = self.run_git_stdin(&["update-ref", "--stdin"], &script);
+    }
+
+    /// Refuse to undo a backed-up hard reset when restoring the backup would
+    /// overwrite work done since: any tracked change (the reset left the tracked
+    /// files clean, so it is new), or an untracked file that differs from the
+    /// one the backup would write there. Untracked files the reset left alone
+    /// are identical and pass.
+    fn check_backup_restorable(&self, backup: &str) -> Result<()> {
+        let mut blocking = self.git_paths(&["diff", "--name-only", "-z", "HEAD"])?;
+        let untracked = self.untracked_paths()?;
+        if !untracked.is_empty() {
+            let saved: std::collections::HashMap<String, String> = self
+                .git_paths(&["ls-tree", "-r", "-z", backup])?
+                .into_iter()
+                .filter_map(|line| {
+                    // "<mode> <type> <id>\t<path>"
+                    let (meta, path) = line.split_once('\t')?;
+                    Some((path.to_string(), meta.rsplit(' ').next()?.to_string()))
+                })
+                .collect();
+            let candidates: Vec<&String> = untracked
+                .iter()
+                .filter(|p| saved.contains_key(*p))
+                .collect();
+            if !candidates.is_empty() {
+                let input: String = candidates.iter().map(|p| format!("{p}\n")).collect();
+                let ids = self.run_git_stdin(&["hash-object", "--stdin-paths"], &input)?;
+                for (path, id) in candidates.into_iter().zip(ids.lines()) {
+                    if saved[path] != id.trim() {
+                        blocking.push(path.clone());
+                    }
+                }
+            }
+        }
+        if blocking.is_empty() {
+            Ok(())
+        } else {
+            Err(local_changes_in_the_way("Undo", &blocking))
+        }
+    }
+
+    /// Write the backed-up work back into the working tree: every file as the
+    /// backup holds it, tracked files it lacks deleted. The index stays at HEAD,
+    /// so the work comes back as uncommitted changes, untracked files untracked.
+    fn restore_backup(&self, backup: &str) -> Result<()> {
+        self.run_git(&[
+            "restore",
+            &format!("--source={backup}"),
+            "--worktree",
+            "--",
+            ".",
+        ])
+        .map(|_| ())
     }
 
     /// Write each file's captured bytes back (or delete it when that side was
@@ -666,6 +910,32 @@ impl Repo {
         }
         Ok(())
     }
+}
+
+/// Where hard-reset backups live: a private namespace no log walk or sidebar
+/// lists, but which keeps the commits from being garbage-collected.
+const BACKUP_REFS: &str = "refs/gitp/backups/";
+
+/// How many hard-reset backups are kept — enough to reach back past a few
+/// resets, small enough that old work doesn't pile up in the repository.
+const BACKUPS_KEPT: usize = 20;
+
+/// The refusal for an undo/redo blocked by local changes in `paths`, in place
+/// of git's "Entry 'x' not uptodate. Cannot merge.".
+fn local_changes_in_the_way(verb: &str, paths: &[String]) -> Error {
+    const SHOWN: usize = 5;
+    let mut list = paths
+        .iter()
+        .take(SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if paths.len() > SHOWN {
+        list.push_str(&format!(" and {} more", paths.len() - SHOWN));
+    }
+    Error::Message(format!(
+        "{verb} would overwrite uncommitted changes in {list}. Commit or stash them first; nothing was changed."
+    ))
 }
 
 /// What an index *means* for undo: each entry's path, mode, blob id and

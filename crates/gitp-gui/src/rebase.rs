@@ -1,7 +1,7 @@
 //! Rebasing: plain and interactive, and resuming / skipping / aborting a
 //! paused one.
 
-use gitp_core::{RebaseCommit, RebaseStatus, RebaseStep, Repo};
+use gitp_core::{HeadMoveMode, RebaseCommit, RebaseStatus, RebaseStep, Repo};
 use tauri::State;
 
 use crate::state::{with_repo, with_repo_clearing_undo, RepoState};
@@ -9,7 +9,9 @@ use crate::undo::with_recorded_head_move;
 
 /// Rebase the current branch onto `rev`. Invalidates the cached log.
 fn rebase_onto_impl(state: &RepoState, rev: String) -> Result<String, String> {
-    with_recorded_head_move(state, "Rebase", false, |repo| repo.rebase_onto(&rev))
+    with_recorded_head_move(state, "Rebase", HeadMoveMode::Keep, |repo| {
+        repo.rebase_onto(&rev)
+    })
 }
 
 /// The commits that a rebase onto `onto` would replay, for the editor UI.
@@ -24,7 +26,7 @@ pub(crate) fn interactive_rebase_impl(
     steps: Vec<RebaseStep>,
     update_refs: bool,
 ) -> Result<String, String> {
-    with_recorded_head_move(state, "Rebase", false, |repo| {
+    with_recorded_head_move(state, "Rebase", HeadMoveMode::Keep, |repo| {
         repo.interactive_rebase(&onto, &steps, update_refs)
     })
 }

@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use gitp_core::{DeletedBranch, MergeMode, Repo, Undoable};
+use gitp_core::{DeletedBranch, HeadMoveMode, MergeMode, Repo, Undoable};
 use serde::Serialize;
 use tauri::State;
 
@@ -255,9 +255,12 @@ fn merge_branch_impl(state: &RepoState, name: String, mode: MergeMode) -> Result
         clear_undo(session);
         return out.map_err(to_message);
     }
-    with_recorded_head_move(state, &format!("Merge {name}"), false, |repo| {
-        repo.merge_branch(&name, mode)
-    })
+    with_recorded_head_move(
+        state,
+        &format!("Merge {name}"),
+        HeadMoveMode::Keep,
+        |repo| repo.merge_branch(&name, mode),
+    )
 }
 
 /// The message a squash merge left for its commit, if one is pending.
@@ -270,7 +273,7 @@ fn squash_message_impl(state: &RepoState) -> Result<Option<String>, String> {
 fn fast_forward_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
     // Recorded as a HEAD move when it is the current branch that advances;
     // undoing is then a plain reset back to the old tip.
-    with_recorded_head_move(state, "Fast-forward", false, |repo| {
+    with_recorded_head_move(state, "Fast-forward", HeadMoveMode::Keep, |repo| {
         repo.fast_forward_branch(&name)
     })
 }
@@ -283,7 +286,7 @@ fn fast_forward_branch_to_impl(
     name: String,
     to: String,
 ) -> Result<String, String> {
-    with_recorded_head_move(state, "Fast-forward", false, |repo| {
+    with_recorded_head_move(state, "Fast-forward", HeadMoveMode::Keep, |repo| {
         repo.fast_forward_branch_to(&name, &to)
     })
 }
