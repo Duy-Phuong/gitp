@@ -157,6 +157,14 @@ export async function browseForRepo(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+// A native folder picker titled `title`; null if cancelled or outside Tauri.
+export async function browseForFolder(title: string): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({ directory: true, multiple: false, title });
+  return typeof selected === "string" ? selected : null;
+}
+
 // A cheap "has history changed?" probe. Pulling a page to find out costs ~264 KB
 // of JSON for a 1000-row page, serialized, sent over IPC and parsed, almost
 // always to be thrown away — see refreshHistory.
@@ -1033,6 +1041,16 @@ export async function saveConfig(
     return;
   }
   await invoke<void>("set_config", { scope, name, value });
+}
+
+// Remove `name` from `scope`'s config file; a key that isn't there is fine.
+export async function unsetConfig(scope: ConfigScope, name: string): Promise<void> {
+  if (!isTauri()) {
+    const i = MOCK_CONFIG.findIndex((e) => e.name === name && e.scope === scope);
+    if (i !== -1) MOCK_CONFIG.splice(i, 1);
+    return;
+  }
+  await invoke<void>("unset_config", { scope, name });
 }
 
 // The path each DotfileKind resolves to, purely for display — the backend

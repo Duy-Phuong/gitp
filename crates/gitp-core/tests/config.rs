@@ -93,3 +93,31 @@ fn commit_template_resolves_a_relative_path_from_the_working_directory() {
 
     assert_eq!(repo.commit_template().unwrap().as_deref(), Some("fix: "));
 }
+
+#[test]
+fn unsets_a_local_value() {
+    let fixture = FixtureRepo::init();
+    let repo = Repo::open(fixture.path()).unwrap();
+    repo.set_config(ConfigScope::Local, "core.hooksPath", "/tmp/hooks")
+        .unwrap();
+
+    repo.unset_config(ConfigScope::Local, "core.hooksPath")
+        .unwrap();
+
+    let entries = repo.read_config().unwrap();
+    assert!(
+        !entries
+            .iter()
+            .any(|e| e.name.eq_ignore_ascii_case("core.hooksPath")),
+        "the key is gone"
+    );
+}
+
+#[test]
+fn unsetting_a_missing_key_is_not_an_error() {
+    let fixture = FixtureRepo::init();
+    let repo = Repo::open(fixture.path()).unwrap();
+
+    repo.unset_config(ConfigScope::Local, "core.hooksPath")
+        .unwrap();
+}

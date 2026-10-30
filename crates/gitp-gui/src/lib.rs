@@ -185,6 +185,7 @@ pub fn run() {
             history::get_file_history,
             config::get_config,
             config::set_config,
+            config::unset_config,
             reflog::get_reflog,
             terminal::terminal_spawn,
             terminal::terminal_write,

@@ -1,7 +1,9 @@
 // The top bar's dropdown menus: Branch and the Pull caret; and the Settings gear.
 
+import { browseForFolder, fetchConfig, saveConfig, unsetConfig } from "./api";
 import { clear, el, $ } from "./dom";
 import { state } from "./app-state";
+import { opFailed, reportDone } from "./report";
 import {
   applyTheme,
   loadPullDefault,
@@ -138,6 +140,22 @@ export function setupSettingsMenu(): void {
         saveAutoFetchMinutes(minutes);
         startAutoFetch(minutes);
       },
+      // libgit2 lists keys with the variable name lowercased.
+      hooksPath: async () => {
+        if (!state.repoPath) return null;
+        const entries = await fetchConfig();
+        return entries.find((e) => e.scope === "Local" && e.name.toLowerCase() === "core.hookspath")?.value ?? "";
+      },
+      setHooksPath: async (path) => {
+        try {
+          if (path) await saveConfig("Local", "core.hooksPath", path);
+          else await unsetConfig("Local", "core.hooksPath");
+          reportDone(path ? `Hooks folder set to ${path}` : "Hooks folder reset to .git/hooks");
+        } catch (err) {
+          opFailed("Couldn't set the hooks folder", err);
+        }
+      },
+      browseFolder: browseForFolder,
       openConfig: (tab) => {
         closeSettingsDialog();
         setConfigTab(tab);

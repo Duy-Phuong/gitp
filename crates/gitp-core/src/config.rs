@@ -79,6 +79,21 @@ impl Repo {
         Ok(())
     }
 
+    /// Remove `name` from the config file for `scope`. A key that isn't set
+    /// there is not an error: the outcome — no value at that level — is the
+    /// one asked for.
+    pub fn unset_config(&self, scope: ConfigScope, name: &str) -> Result<()> {
+        let level = scope
+            .to_level()
+            .ok_or_else(|| git2::Error::from_str("cannot write to this config scope"))?;
+        let cfg = self.inner.config()?;
+        let mut leveled = cfg.open_level(level)?;
+        match leveled.remove(name) {
+            Err(e) if e.code() != git2::ErrorCode::NotFound => Err(e.into()),
+            _ => Ok(()),
+        }
+    }
+
     /// The text of the file `commit.template` names (from any config level),
     /// or `None` when it isn't set. libgit2 expands a leading `~/`; a relative
     /// path is taken from the working directory, which is where git itself
