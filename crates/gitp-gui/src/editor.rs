@@ -120,6 +120,24 @@ mod tests {
     }
 
     #[test]
+    fn undoing_a_delete_brings_the_file_back_with_its_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).unwrap();
+        let script = dir.path().join("run.sh");
+        std::fs::write(&script, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        delete_file_impl(&state, "run.sh".into()).unwrap();
+        undo_impl(&state).unwrap();
+
+        let mode = std::fs::metadata(&script).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
+    }
+
+    #[test]
     fn nothing_outside_the_working_tree_is_touched() {
         let dir = tempfile::tempdir().unwrap();
         make_repo(dir.path(), &["c1"]);

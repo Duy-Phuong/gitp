@@ -374,6 +374,10 @@ pub(crate) fn with_recorded_files(
         .iter()
         .map(|p| session.repo.read_workfile(p))
         .collect();
+    let before_modes: Vec<Option<u32>> = paths
+        .iter()
+        .map(|p| session.repo.workfile_mode(p))
+        .collect();
     let index_before = session.repo.snapshot_index(&before_slot).ok().flatten();
     if let Err(e) = f(&session.repo) {
         remove_snapshot(index_before.as_ref());
@@ -386,12 +390,18 @@ pub(crate) fn with_recorded_files(
         .map(|p| session.repo.read_workfile(p))
         .collect();
     let mut files = Vec::with_capacity(paths.len());
-    for (path, (before, after)) in paths.iter().zip(befores.into_iter().zip(afters)) {
+    for ((path, before_mode), (before, after)) in paths
+        .iter()
+        .zip(before_modes)
+        .zip(befores.into_iter().zip(afters))
+    {
         match (before, after) {
             (Ok(before), Ok(after)) => files.push(FileBlob {
                 path: path.clone(),
                 before,
                 after,
+                before_mode,
+                after_mode: session.repo.workfile_mode(path),
             }),
             _ => {
                 remove_snapshot(index_before.as_ref());
