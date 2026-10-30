@@ -2128,6 +2128,25 @@ textarea.rename-input {
 .commit-ref.more {
   cursor: pointer;
 }
+/* Ghost badge: the nearest branch containing a commit no ref points at, shown
+   only while its row is hovered or selected. */
+.refs-col .commit-ref.ghost {
+  opacity: 0.55;
+  border-style: dashed;
+  background: transparent;
+}
+.commit-row:not(:hover):not(.selected) .commit-ref.ghost {
+  display: none;
+}
+
+/* A branch is hovered: the commits that aren't on it fade (see
+   branch-hover.ts). */
+.commit-row.faded {
+  opacity: 0.3;
+}
+.graph-faded {
+  opacity: 0.2;
+}
 
 /* Dragging a branch onto another (badge in the log, row in the sidebar): a
    label follows the pointer and the branch under it is ringed in the accent. */
@@ -2217,6 +2236,49 @@ body.ref-dragging * {
 .log-header-cols > span {
   font: inherit;
   color: inherit;
+}
+/* Author, Date and SHA: dragged sideways to reorder them. */
+.log-header-cols > [data-column] {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: grab;
+}
+.log-header-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.log-header-cols > .dragging {
+  opacity: 0.5;
+}
+.log-header-cols > .drop-before {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.log-header-cols.drop-end > :last-child {
+  box-shadow: inset -2px 0 0 var(--accent);
+}
+/* The Author column's filter funnel; accent while a filter is in force. */
+.log-header-filter {
+  display: inline-flex;
+  padding: 2px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.log-header-filter:hover {
+  opacity: 1;
+  background: var(--row-hover);
+}
+.log-header-filter.active {
+  color: var(--accent);
+  opacity: 1;
+}
+.funnel-icon {
+  width: 11px;
+  height: 11px;
 }
 .log-header-grip {
   position: absolute;
