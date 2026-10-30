@@ -18,12 +18,14 @@ import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
 import { closeRepoTab, loadRepo, loadSidebar } from "./shell";
 import { deleteLocalBranch } from "./ref-actions";
+import { openTerminalAt } from "./terminal-panel";
 
 // Right-click a worktree in the sidebar.
 export function onWorktreeMenu(w: Worktree, x: number, y: number): void {
   const items: MenuItem[] = [];
   if (!w.is_current && !w.prunable) items.push({ label: "Open", run: () => void loadRepo(w.path) });
   if (!w.prunable) items.push({ label: "Reveal in Finder", run: () => void revealWorktree(w) });
+  if (!w.prunable) items.push({ label: "Open Terminal Here", run: () => openTerminalAt(w.path) });
   if (!w.is_main) {
     items.push({ separator: true });
     if (w.locked) {
