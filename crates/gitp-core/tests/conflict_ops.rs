@@ -416,3 +416,67 @@ fn conflict_sides_flags_a_working_file_edited_since_the_conflict() {
     std::fs::write(fx.path().join("f.txt"), "a\nhand-made\nc\n").unwrap();
     assert!(repo.conflict_sides("f.txt").unwrap().edited);
 }
+
+/// `dev` with a.txt, and `feat` changing it, squash-merged cleanly into dev:
+/// the result is staged and SQUASH_MSG is waiting, with no unmerged files.
+fn clean_squash_repo() -> FixtureRepo {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    fx.commit_file("b.txt", "b\n", "c2");
+    let dir = fx.path();
+    git(dir, &["branch", "-M", "dev"]);
+    git(dir, &["checkout", "-q", "-b", "feat"]);
+    std::fs::write(dir.join("a.txt"), "feat\n").unwrap();
+    git(dir, &["commit", "-qam", "feat change"]);
+    git(dir, &["checkout", "-q", "dev"]);
+    Repo::open(dir).unwrap().merge_branch("feat", MergeMode::Squash).unwrap();
+    assert!(dir.join(".git/SQUASH_MSG").exists());
+    fx
+}
+
+// Discarding the squash's staged result leaves SQUASH_MSG behind. Were it still
+// taken for a pending squash, Abort's `reset --merge` would wipe whatever the
+// user staged next.
+#[test]
+fn a_discarded_squash_is_no_longer_pending_and_abort_keeps_later_staged_work() {
+    let fx = clean_squash_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.discard_files(&["a.txt".into()]).unwrap();
+    assert!(!fx.path().join(".git/SQUASH_MSG").exists(), "discard drops it");
+    assert_eq!(repo.conflict_status().unwrap().kind, "none");
+
+    std::fs::write(fx.path().join("b.txt"), "my work\n").unwrap();
+    repo.stage("b.txt").unwrap();
+    assert_eq!(repo.conflict_status().unwrap().kind, "none");
+    let _ = repo.abort_conflict();
+
+    assert_eq!(std::fs::read_to_string(fx.path().join("b.txt")).unwrap(), "my work\n");
+    let staged = repo.status_summary().unwrap().staged;
+    assert_eq!(staged.len(), 1, "b.txt stays staged: {staged:?}");
+}
+
+// However it went stale, a SQUASH_MSG with the index equal to HEAD and nothing
+// unmerged is not a squash: it is dropped rather than reported.
+#[test]
+fn a_stale_squash_msg_with_a_clean_index_is_dropped() {
+    let fx = clean_squash_repo();
+    git(fx.path(), &["checkout", "-q", "HEAD", "--", "a.txt"]);
+    let repo = Repo::open(fx.path()).unwrap();
+
+    assert_eq!(repo.conflict_status().unwrap().kind, "none");
+    assert!(!fx.path().join(".git/SQUASH_MSG").exists());
+}
+
+#[test]
+fn aborting_a_clean_squash_merge_restores_the_branch() {
+    let fx = clean_squash_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+    assert_eq!(repo.conflict_status().unwrap().kind, "merge");
+
+    repo.abort_conflict().unwrap();
+
+    assert_eq!(repo.conflict_status().unwrap().kind, "none");
+    assert!(!fx.path().join(".git/SQUASH_MSG").exists());
+    assert_eq!(std::fs::read_to_string(fx.path().join("a.txt")).unwrap(), "one\n");
+    assert_eq!(repo.local_change_count().unwrap(), 0);
+}

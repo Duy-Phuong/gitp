@@ -270,15 +270,41 @@ impl Repo {
     /// yet it is a merge to resolve, commit or abort all the same. git removes
     /// the file on commit and reset; should a stale one sit beside another
     /// operation's state, that operation wins.
-    fn squash_pending(&self) -> bool {
+    ///
+    /// Discarding the staged result, or a switch, leaves SQUASH_MSG behind
+    /// too. With nothing unmerged and the index equal to HEAD there is no
+    /// squash left, so a leftover message is deleted here rather than taken
+    /// for one — Abort's `reset --merge` would wipe whatever is staged next.
+    pub(crate) fn squash_pending(&self) -> bool {
         let git_dir = self.inner.path();
-        git_dir.join("SQUASH_MSG").exists()
-            && ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]
+        let msg = git_dir.join("SQUASH_MSG");
+        if !msg.exists()
+            || ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]
                 .iter()
-                .all(|f| !git_dir.join(f).exists())
-            && ["rebase-merge", "rebase-apply"]
+                .any(|f| git_dir.join(f).exists())
+            || ["rebase-merge", "rebase-apply"]
                 .iter()
-                .all(|d| !git_dir.join(d).is_dir())
+                .any(|d| git_dir.join(d).is_dir())
+        {
+            return false;
+        }
+        let unmerged = self.unmerged_paths().map_or(true, |p| !p.is_empty());
+        if unmerged || !self.index_matches_head().unwrap_or(false) {
+            return true;
+        }
+        let _ = std::fs::remove_file(&msg);
+        false
+    }
+
+    /// The index holds exactly HEAD's tree (nothing staged).
+    fn index_matches_head(&self) -> Result<bool> {
+        let head_tree = self.inner.head().ok().and_then(|h| h.peel_to_tree().ok());
+        let mut index = self.inner.index()?;
+        index.read(true)?;
+        let diff = self
+            .inner
+            .diff_tree_to_index(head_tree.as_ref(), Some(&index), None)?;
+        Ok(diff.deltas().len() == 0)
     }
 
     /// Working-tree paths with unresolved conflicts.

@@ -51,6 +51,9 @@ impl Repo {
                 }
             }
         }
+        // Discarding a squash merge's whole staged result leaves its
+        // SQUASH_MSG stale; the check drops it once nothing is staged.
+        self.squash_pending();
         Ok(())
     }
 
