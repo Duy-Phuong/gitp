@@ -129,6 +129,8 @@ pub fn run() {
             tags::delete_remote_tag,
             tags::remote_tag_exists,
             commits::cherry_pick,
+            commits::cherry_pick_plan,
+            commits::continue_cherry_pick_plan,
             commits::revert,
             commits::reset,
             commits::save_commits_patch,

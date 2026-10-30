@@ -204,6 +204,14 @@ export interface RebaseStep {
   message: string | null;
 }
 
+// Where an interactive cherry-pick run got to: `paused` on a conflict (the
+// rest resumes through continueCherryPickPlan once it's resolved).
+export interface PickPlanOutcome {
+  output: string;
+  paused: boolean;
+  start_head: string;
+}
+
 export interface RebaseStatus {
   in_progress: boolean;
   paused_for: "edit" | "conflict" | null;

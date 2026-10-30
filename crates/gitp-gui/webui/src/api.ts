@@ -26,6 +26,7 @@ import type {
   DiffToolTarget,
   LogPage,
   MergeMode,
+  PickPlanOutcome,
   PullMode,
   RebaseCommit,
   RebaseStatus,
@@ -646,6 +647,21 @@ export async function remoteTagExists(name: string): Promise<boolean> {
 export async function cherryPick(rev: string): Promise<string> {
   if (!isTauri()) return `Cherry-picked ${rev.slice(0, 10)} (preview mock)`;
   return invoke<string>("cherry_pick", { rev });
+}
+
+// Cherry-pick an edited plan (pick / reword / squash / drop, in order) onto
+// HEAD. Only those four actions are valid here.
+export async function cherryPickPlan(steps: RebaseStep[]): Promise<PickPlanOutcome> {
+  if (!isTauri()) {
+    const n = steps.filter((s) => s.action !== "drop").length;
+    return { output: `Cherry-picked ${n} commits (preview mock)`, paused: false, start_head: "" };
+  }
+  return invoke<PickPlanOutcome>("cherry_pick_plan", { steps });
+}
+
+export async function continueCherryPickPlan(): Promise<PickPlanOutcome> {
+  if (!isTauri()) return { output: "Finished the cherry-pick plan (preview mock)", paused: false, start_head: "" };
+  return invoke<PickPlanOutcome>("continue_cherry_pick_plan");
 }
 
 export async function revertCommit(rev: string): Promise<string> {

@@ -224,7 +224,7 @@ impl Repo {
     }
 
     /// Working-tree paths with unresolved conflicts.
-    fn unmerged_paths(&self) -> Result<Vec<String>> {
+    pub(crate) fn unmerged_paths(&self) -> Result<Vec<String>> {
         Ok(self
             .run_git(&["diff", "--name-only", "--diff-filter=U"])?
             .lines()
