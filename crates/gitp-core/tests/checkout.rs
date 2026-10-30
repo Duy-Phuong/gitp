@@ -279,6 +279,39 @@ fn detaching_or_branching_mid_merge_is_refused_and_creates_no_branch() {
     assert_eq!(read(&fx, "f.txt"), "a\nMY RESOLUTION\nc\n");
 }
 
+// A squash writes no MERGE_HEAD, only SQUASH_MSG and a staged result — which a
+// switch would carry over to be committed on the other branch.
+#[test]
+fn a_switch_with_a_squash_merge_pending_is_refused() {
+    let (fx, repo) = paused_op_repo();
+    repo.merge_branch("side", gitp_core::MergeMode::Squash).unwrap();
+
+    let err = repo.checkout_branch("side2").expect_err("must refuse");
+    assert!(err.to_string().contains("a squash merge is in progress"), "{err}");
+    let err = repo
+        .stash_and_switch("side2", |r| r.checkout_branch("side2").map(|()| String::new()))
+        .expect_err("must refuse");
+    assert!(err.to_string().contains("a squash merge is in progress"), "{err}");
+
+    assert_eq!(head_branch(&repo), "dev");
+    assert!(fx.path().join(".git/SQUASH_MSG").exists(), "the squash is still pending");
+    assert_eq!(read(&fx, "h.txt"), "h\n");
+}
+
+// One whose staged result was thrown away is only a leftover message: it must
+// neither block the switch nor follow it to the other branch.
+#[test]
+fn a_stale_squash_msg_does_not_block_a_switch_and_is_dropped() {
+    let (fx, repo) = paused_op_repo();
+    repo.merge_branch("side", gitp_core::MergeMode::Squash).unwrap();
+    git(fx.path(), &["rm", "-q", "-f", "h.txt"]);
+
+    repo.checkout_branch("side2").unwrap();
+
+    assert_eq!(head_branch(&repo), "side2");
+    assert!(!fx.path().join(".git/SQUASH_MSG").exists());
+}
+
 // --- Stash & Switch ----------------------------------------------------------
 
 fn stash_count(fx: &FixtureRepo) -> usize {

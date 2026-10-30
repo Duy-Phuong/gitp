@@ -198,8 +198,8 @@ impl Repo {
         self.inner.refname_to_id("refs/stash").ok()
     }
 
-    /// Refuse to move HEAD while a merge, rebase, cherry-pick or revert is
-    /// paused, as `git switch` does. git2's checkout (and `git checkout`) would
+    /// Refuse to move HEAD while a merge (squash included), rebase,
+    /// cherry-pick or revert is paused, as `git switch` does. git2's checkout (and `git checkout`) would
     /// switch anyway when the files happen not to clash: the pending merge then
     /// commits onto the new branch, and a continued rebase rewrites the branch
     /// switched to.
@@ -213,6 +213,8 @@ impl Repo {
             "a cherry-pick"
         } else if git_dir.join("REVERT_HEAD").exists() {
             "a revert"
+        } else if self.squash_pending() {
+            "a squash merge"
         } else {
             return Ok(());
         };
