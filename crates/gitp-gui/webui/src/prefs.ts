@@ -158,10 +158,3 @@ export function applyTheme(choice: ThemeChoice): void {
   // terminal on the old theme until it's told.
   ui.terminal?.syncTheme();
 }
-
-export function updateThemeMenu(): void {
-  const cur = currentTheme();
-  for (const b of document.querySelectorAll<HTMLElement>("#settings-menu [data-theme-choice]")) {
-    b.classList.toggle("active", b.dataset.themeChoice === cur);
-  }
-}
