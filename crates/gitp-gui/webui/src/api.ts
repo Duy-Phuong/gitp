@@ -38,6 +38,7 @@ import type {
   Worktree,
   WorktreeTarget,
   Submodule,
+  StashOptions,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -153,6 +154,14 @@ export async function browseForRepo(): Promise<string | null> {
   if (!isTauri()) return null;
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({ directory: true, multiple: false, title: "Open Repository" });
+  return typeof selected === "string" ? selected : null;
+}
+
+// A native folder picker titled `title`; null if cancelled or outside Tauri.
+export async function browseForFolder(title: string): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({ directory: true, multiple: false, title });
   return typeof selected === "string" ? selected : null;
 }
 
@@ -434,19 +443,27 @@ export async function commitChanges(
   body: string,
   amend: boolean,
   sign: boolean | null,
+  noVerify: boolean,
 ): Promise<string> {
   if (!isTauri()) {
     const n = MOCK_STATUS.staged.length;
     MOCK_STATUS.staged.splice(0);
     mockRecord(amend ? "Amend commit" : "Commit");
-    return `[preview ${amend ? "amend" : "commit"}${sign ? ", signed" : ""}] ${subject} — ${n} file(s)`;
+    const flags = `${sign ? ", signed" : ""}${noVerify ? ", no hooks" : ""}`;
+    return `[preview ${amend ? "amend" : "commit"}${flags}] ${subject} — ${n} file(s)`;
   }
-  return invoke<string>("commit_changes", { subject, body, amend, sign });
+  return invoke<string>("commit_changes", { subject, body, amend, sign, noVerify });
 }
 
 export async function fetchSigningConfig(): Promise<SigningConfig> {
   if (!isTauri()) return { can_sign: true, sign_by_default: false };
   return invoke<SigningConfig>("get_signing_config", {});
+}
+
+// The raw text of the file commit.template names; null when it isn't set.
+export async function fetchCommitTemplate(): Promise<string | null> {
+  if (!isTauri()) return null; // the preview repo has no template configured
+  return invoke<string | null>("get_commit_template", {});
 }
 
 export async function fetchWorkingChanges(): Promise<FileDiff[]> {
@@ -831,13 +848,20 @@ export async function pushForce(): Promise<string> {
   return invokeNetwork<string>("push_force", {});
 }
 
-export async function stash(): Promise<string> {
+// `git stash push` with the Stash dialog's options; an empty message lets git
+// name the entry ("WIP on <branch>").
+export async function stash(opts: StashOptions): Promise<string> {
   if (!isTauri()) {
-    MOCK_REFS.stashes.unshift({ index: 0, message: "WIP on develop (preview mock)" });
+    const message = opts.message ? `On develop: ${opts.message}` : "WIP on develop (preview mock)";
+    MOCK_REFS.stashes.unshift({ index: 0, message });
     MOCK_REFS.stashes.forEach((s, i) => (s.index = i));
-    return "Saved working directory (preview mock)";
+    return `Saved ${opts.staged ? "index state" : "working directory"} (preview mock)`;
   }
-  return invoke<string>("stash", {});
+  return invoke<string>("stash", {
+    message: opts.message || null,
+    staged: opts.staged,
+    includeUntracked: opts.includeUntracked,
+  });
 }
 
 export async function stashPop(): Promise<string> {
@@ -1017,6 +1041,16 @@ export async function saveConfig(
     return;
   }
   await invoke<void>("set_config", { scope, name, value });
+}
+
+// Remove `name` from `scope`'s config file; a key that isn't there is fine.
+export async function unsetConfig(scope: ConfigScope, name: string): Promise<void> {
+  if (!isTauri()) {
+    const i = MOCK_CONFIG.findIndex((e) => e.name === name && e.scope === scope);
+    if (i !== -1) MOCK_CONFIG.splice(i, 1);
+    return;
+  }
+  await invoke<void>("unset_config", { scope, name });
 }
 
 // The path each DotfileKind resolves to, purely for display — the backend

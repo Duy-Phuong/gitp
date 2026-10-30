@@ -1289,6 +1289,17 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.stash-modal {
+  width: min(460px, 92vw);
+}
+.stash-modal .rename-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 10px;
+}
+.stash-modal .stash-apply-check + .stash-apply-check {
+  margin-top: 8px;
+}
 .stash-apply-check {
   display: flex;
   align-items: center;
@@ -1592,6 +1603,7 @@ body {
 }
 .commit-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
@@ -3899,6 +3911,16 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
+}
+.settings-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
 }
 .theme-cards {
   display: grid;

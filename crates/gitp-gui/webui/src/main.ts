@@ -38,6 +38,8 @@ import {
   unstageLines,
   fetchCommitSignature,
   fetchSigningConfig,
+  fetchCommitTemplate,
+  createBranchAt,
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
@@ -52,9 +54,12 @@ import {
   applyTheme,
   currentTheme,
   loadAllBranches,
+  loadAutoFetchMinutes,
   loadDetailTab,
+  loadPushAfterCommit,
   saveAllBranches,
   saveDetailTab,
+  savePushAfterCommit,
   updatePullButtonTitle,
 } from "./prefs";
 import { refsAt } from "./commit-refs";
@@ -73,6 +78,7 @@ import {
   setRefActions,
   showReflogDetail,
   showView,
+  startAutoFetch,
   updateLogView,
 } from "./shell";
 import {
@@ -81,7 +87,7 @@ import {
   redoAction,
   refreshAllAction,
   runPullDefault,
-  stashAction,
+  openStashDialogAction,
   undoAction,
 } from "./repo-actions";
 import {
@@ -93,7 +99,7 @@ import {
   onMoreRefsMenu,
   onTagMenu,
 } from "./ref-actions";
-import { onCommitContextMenu, onReflogMenu, runNextCherryPick } from "./commit-actions";
+import { onCommitContextMenu, onReflogMenu, runCommitOp, runNextCherryPick } from "./commit-actions";
 import { onWorktreeMenu } from "./worktree-actions";
 import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { toggleTerminal, warmTerminal } from "./terminal-panel";
@@ -125,7 +131,7 @@ function wireUi(): void {
   setupPullMenu();
   updatePullButtonTitle();
   $("#push-btn").addEventListener("click", () => void pushAction());
-  $("#stash-btn").addEventListener("click", () => void stashAction());
+  $("#stash-btn").addEventListener("click", openStashDialogAction);
   $("#pop-btn").addEventListener("click", () => void popAction());
   $("#refresh-btn").addEventListener("click", () => void refreshAllAction());
   setupShortcuts();
@@ -150,6 +156,7 @@ function wireUi(): void {
   setupExternalChangeRefresh();
   setupLogKeyboardNav();
   setupFetchAgeIndicator();
+  startAutoFetch(loadAutoFetchMinutes());
   setupBranchToggle();
   setupLogSearch();
   setupConfigTabs();
@@ -207,6 +214,7 @@ async function init(): Promise<void> {
     onWorktreeMenu,
     onSubmoduleOpen: openSubmodule,
     onSubmoduleMenu,
+    createBranchAt: (name, rev) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
   });
   applyTheme(currentTheme());
   state.allBranches = loadAllBranches(); // before wireUi so the toggle reflects it
@@ -256,6 +264,10 @@ async function init(): Promise<void> {
     },
     commit: commitChanges,
     fetchSigningConfig,
+    fetchCommitTemplate,
+    pushAfterCommit: loadPushAfterCommit,
+    setPushAfterCommit: savePushAfterCommit,
+    push: () => void pushAction(),
     // Staging doesn't change refs or history, so just update the badge — no ref
     // walk or log rebuild (that's what made each stage/unstage feel slow).
     onChanged: (count) => {

@@ -22,6 +22,10 @@ fn set_config_impl(
     with_repo(state, |repo| repo.set_config(scope, &name, &value))
 }
 
+fn unset_config_impl(state: &RepoState, scope: ConfigScope, name: String) -> Result<(), String> {
+    with_repo(state, |repo| repo.unset_config(scope, &name))
+}
+
 // --- User dotfiles (~/.gitconfig, ~/.tigrc) ---------------------------------
 // Deliberately scoped to exactly these two named files, resolved server-side
 // from $HOME — the frontend picks a `DotfileKind`, never a path. A generic
@@ -93,6 +97,15 @@ pub(crate) fn set_config(
     state: State<RepoState>,
 ) -> Result<(), String> {
     set_config_impl(&state, scope, name, value)
+}
+
+#[tauri::command(async)]
+pub(crate) fn unset_config(
+    scope: ConfigScope,
+    name: String,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    unset_config_impl(&state, scope, name)
 }
 
 #[tauri::command(async)]

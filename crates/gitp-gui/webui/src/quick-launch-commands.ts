@@ -46,7 +46,7 @@ import {
   refreshAllAction,
   runPullMethod,
   stageAllAction,
-  stashAction,
+  openStashDialogAction,
   undoAction,
   unstageAllAction,
 } from "./repo-actions";
@@ -336,7 +336,7 @@ function repoCommands(): QuickItem[] {
     },
     { kind: "command", label: "Repository Settings…", run: () => showView("config") },
     { kind: "command", label: "Reveal in Finder", run: () => void revealRepo() },
-    { kind: "command", label: "Save Stash", run: () => void stashAction() },
+    { kind: "command", label: "Save Stash…", run: openStashDialogAction },
     { kind: "command", label: "Show Reflog", run: () => showReflog() },
     { kind: "command", label: "Switch Repository", next: () => repoStage() },
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },

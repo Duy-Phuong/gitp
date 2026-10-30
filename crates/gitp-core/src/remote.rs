@@ -223,12 +223,14 @@ impl Repo {
     /// forces signing on (`-S`) or off (`--no-gpg-sign`); `None` leaves it to
     /// `commit.gpgsign`. Signing runs git's configured gpg / ssh-keygen, so a
     /// missing key or a cancelled pinentry fails the commit with git's error.
+    /// `no_verify` skips the pre-commit and commit-msg hooks (`--no-verify`).
     pub fn commit(
         &self,
         subject: &str,
         body: &str,
         amend: bool,
         sign: Option<bool>,
+        no_verify: bool,
     ) -> Result<String> {
         let mut args: Vec<&str> = vec!["commit", "-m", subject];
         let body = body.trim();
@@ -244,6 +246,9 @@ impl Repo {
             Some(false) => args.push("--no-gpg-sign"),
             None => {}
         }
+        if no_verify {
+            args.push("--no-verify");
+        }
         self.run_git(&args)
     }
 
@@ -253,7 +258,33 @@ impl Repo {
     /// `stash` would ignore them and do nothing when only new files exist).
     /// Returns git's output (including "No local changes to save").
     pub fn stash(&self) -> Result<String> {
-        self.run_git(&["stash", "--include-untracked"])
+        self.stash_push(None, false, true)
+    }
+
+    /// `git stash push` with the toolbar Stash dialog's options. `message`
+    /// names the entry (git's own "WIP on <branch>" when `None`); `staged`
+    /// saves only what is staged (`--staged`), leaving the rest of the working
+    /// tree alone; `include_untracked` takes new files too, as [`Repo::stash`]
+    /// does. git refuses `--staged` together with untracked files, so `staged`
+    /// wins over `include_untracked`.
+    pub fn stash_push(
+        &self,
+        message: Option<&str>,
+        staged: bool,
+        include_untracked: bool,
+    ) -> Result<String> {
+        let mut args = vec!["stash", "push"];
+        if staged {
+            args.push("--staged");
+        } else if include_untracked {
+            args.push("--include-untracked");
+        }
+        if let Some(message) = message {
+            // `-m` consumes the next argument whole, so a message that starts
+            // with `-` is still just the message.
+            args.extend(["-m", message]);
+        }
+        self.run_git(&args)
     }
 
     /// `git stash pop` — reapply the most recent stash and drop it. Errors if

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isActionable, movedBetweenPanels, sameDiff } from "./changes";
+import { isActionable, movedBetweenPanels, sameDiff, templateMessage } from "./changes";
 import type { ChangeKind, FileDiff, StatusLists } from "../types";
 
 // A status-list entry; the optimistic move only ever looks at path and status.
@@ -137,5 +137,26 @@ describe("sameDiff", () => {
     const more = diff("new");
     more.hunks.push({ header: "@@ -9 +9 @@", lines: [] });
     expect(sameDiff(diff("new"), more)).toBe(false);
+  });
+});
+
+describe("templateMessage", () => {
+  it("splits the first line off as the subject and drops comment lines", () => {
+    expect(templateMessage("feat: \n\n# Why?\nRefs: \n# trailing hint\n")).toEqual({
+      subject: "feat: ",
+      body: "Refs:",
+    });
+  });
+
+  it("keeps an empty subject when the template starts with the body", () => {
+    expect(templateMessage("\n\nTicket: \n")).toEqual({ subject: "", body: "Ticket:" });
+  });
+
+  it("is null for a template of only comments and blank lines", () => {
+    expect(templateMessage("\n# Subject line\n#\n# Body\n\n")).toBeNull();
+  });
+
+  it("handles CRLF line endings", () => {
+    expect(templateMessage("fix: \r\n# hint\r\n\r\nBody\r\n")).toEqual({ subject: "fix: ", body: "Body" });
   });
 });

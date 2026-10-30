@@ -124,18 +124,20 @@ fn unstage_all_impl(state: &RepoState) -> Result<(), String> {
 
 /// Commit the staged changes. Invalidates the cached log because HEAD moves.
 /// `sign` is the commit box's Sign toggle; `None` leaves it to git's config.
+/// `no_verify` is its Skip hooks toggle.
 pub(crate) fn commit_changes_impl(
     state: &RepoState,
     subject: String,
     body: String,
     amend: bool,
     sign: Option<bool>,
+    no_verify: bool,
 ) -> Result<String, String> {
     // Recorded soft: undo moves the tip back but keeps the committed changes
     // staged, so a mistaken commit can be reworked rather than lost.
     let label = if amend { "Amend commit" } else { "Commit" };
     with_recorded_head_move(state, label, true, |repo| {
-        repo.commit(&subject, &body, amend, sign)
+        repo.commit(&subject, &body, amend, sign, no_verify)
     })
 }
 
@@ -143,6 +145,12 @@ pub(crate) fn commit_changes_impl(
 /// starting state of the commit box's Sign toggle.
 fn get_signing_config_impl(state: &RepoState) -> Result<SigningConfig, String> {
     with_repo(state, Repo::signing_config)
+}
+
+/// The raw text of the configured `commit.template`, for pre-filling an empty
+/// commit box; `None` when no template is set.
+fn get_commit_template_impl(state: &RepoState) -> Result<Option<String>, String> {
+    with_repo(state, Repo::commit_template)
 }
 
 /// Discard all local changes to `paths` (revert to HEAD; delete new files).
@@ -280,14 +288,20 @@ pub(crate) fn commit_changes(
     body: String,
     amend: bool,
     sign: Option<bool>,
+    no_verify: bool,
     state: State<RepoState>,
 ) -> Result<String, String> {
-    commit_changes_impl(&state, subject, body, amend, sign)
+    commit_changes_impl(&state, subject, body, amend, sign, no_verify)
 }
 
 #[tauri::command(async)]
 pub(crate) fn get_signing_config(state: State<RepoState>) -> Result<SigningConfig, String> {
     get_signing_config_impl(&state)
+}
+
+#[tauri::command(async)]
+pub(crate) fn get_commit_template(state: State<RepoState>) -> Result<Option<String>, String> {
+    get_commit_template_impl(&state)
 }
 
 #[tauri::command(async)]

@@ -8,7 +8,9 @@
 
 import { el } from "../dom";
 import {
+  AUTO_FETCH_MINUTES,
   currentTheme,
+  loadAutoFetchMinutes,
   loadDetailTab,
   loadPullDefault,
   PULL_DEFAULT_LABEL,
@@ -25,6 +27,13 @@ export interface SettingsActions {
   setTheme: (choice: ThemeChoice) => void;
   allBranches: () => boolean;
   setAllBranches: (all: boolean) => void;
+  // Persist the auto-fetch interval (0 = off) and restart the timer on it.
+  setAutoFetch: (minutes: number) => void;
+  // The open repo's local core.hooksPath ("" when unset), or null when no repo
+  // is open; and writing it ("" unsets it).
+  hooksPath: () => Promise<string | null>;
+  setHooksPath: (path: string) => Promise<void>;
+  browseFolder: (title: string) => Promise<string | null>;
   // Leave the dialog for one of the Config view's tabs.
   openConfig: (tab: "git" | "dotfiles") => void;
 }
@@ -69,6 +78,12 @@ export function openSettingsDialog(actions: SettingsActions): void {
       title: "Pull",
       render: () => [
         row("Pull button runs", pullSelect(), "inline", "The Pull caret still offers every method."),
+        row(
+          "Auto-fetch",
+          autoFetchSelect(actions),
+          "inline",
+          "Fetches all remotes of the open repository in the background. Opening History or Local Changes fetches either way.",
+        ),
       ],
     },
     {
@@ -100,6 +115,12 @@ export function openSettingsDialog(actions: SettingsActions): void {
     {
       title: "Git",
       render: () => [
+        row(
+          "Hooks folder",
+          hooksField(actions),
+          "block",
+          "core.hooksPath in the open repository's own config. Empty uses .git/hooks.",
+        ),
         row("Git configuration", linkButton("Open Git Config", () => actions.openConfig("git"))),
         row("Dotfiles", linkButton("Open Dotfiles", () => actions.openConfig("dotfiles"))),
       ],
@@ -184,6 +205,57 @@ function pullSelect(): HTMLElement {
   select.value = loadPullDefault();
   select.addEventListener("change", () => savePullDefault(select.value as PullDefault));
   return select;
+}
+
+function autoFetchSelect(actions: SettingsActions): HTMLElement {
+  const select = el("select", { class: "settings-select" });
+  for (const m of AUTO_FETCH_MINUTES) {
+    const label = m === 0 ? "Off" : m === 1 ? "Every minute" : `Every ${m} minutes`;
+    select.append(el("option", { value: String(m), text: label }));
+  }
+  select.value = String(loadAutoFetchMinutes());
+  select.addEventListener("change", () => actions.setAutoFetch(Number(select.value)));
+  return select;
+}
+
+// The repo's hooks folder: a path field that saves when it changes (Enter or
+// leaving it), and Browse. Disabled until the current value has loaded, and
+// when no repo is open.
+function hooksField(actions: SettingsActions): HTMLElement {
+  const input = el("input", {
+    class: "settings-select settings-path",
+    placeholder: ".git/hooks",
+    spellcheck: "false",
+    autocomplete: "off",
+    disabled: true,
+  }) as HTMLInputElement;
+  const browse = el("button", { class: "btn ghost small", text: "Browse…", disabled: true }) as HTMLButtonElement;
+  let saved = "";
+  const save = () => {
+    const path = input.value.trim();
+    if (path === saved) return;
+    saved = path;
+    void actions.setHooksPath(path);
+  };
+  input.addEventListener("change", save);
+  browse.addEventListener("click", async () => {
+    const dir = await actions.browseFolder("Hooks Folder");
+    if (dir === null) return;
+    input.value = dir;
+    save();
+  });
+  void actions.hooksPath().then(
+    (path) => {
+      if (path === null) {
+        input.placeholder = "No repository open";
+        return;
+      }
+      saved = input.value = path;
+      input.disabled = browse.disabled = false;
+    },
+    () => (input.placeholder = "Couldn't read the repository's config"),
+  );
+  return el("div", { class: "settings-path-row" }, [input, browse]);
 }
 
 function segToggle<T>(options: { value: T; label: string }[], current: T, onChange: (v: T) => void): HTMLElement {

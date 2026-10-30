@@ -17,12 +17,13 @@ import {
   stashPop,
   unstageAll,
 } from "./api";
-import type { PullMode } from "./types";
+import type { PullMode, StashOptions } from "./types";
 import { state, ui } from "./app-state";
 import { opFailed, reportDone, setStatus } from "./report";
 import { markRemoteFetched } from "./fetch-age";
 import { loadPullDefault, type PullDefault } from "./prefs";
 import { setActionsBusy } from "./toolbar";
+import { openStashDialog } from "./views/stash-dialog";
 import {
   loadChanges,
   loadSidebar,
@@ -142,12 +143,19 @@ export async function pushForceAction(): Promise<void> {
   }
 }
 
-export async function stashAction(): Promise<void> {
+// The toolbar's Stash button and Quick Launch's "Save Stash": ask for the
+// message and options first.
+export function openStashDialogAction(): void {
+  if (!state.repoPath) return;
+  openStashDialog((opts) => void stashAction(opts));
+}
+
+export async function stashAction(opts: StashOptions): Promise<void> {
   if (!state.repoPath) return;
   setActionsBusy(true, "#stash-btn");
   setStatus("Stashing…");
   try {
-    const out = await stash();
+    const out = await stash(opts);
     if (state.view === "changes") await loadChanges();
     await loadSidebar();
     reportDone(out || "Stashed.");
