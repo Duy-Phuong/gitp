@@ -47,6 +47,10 @@ export interface SettingsActions {
   browseFolder: (title: string) => Promise<string | null>;
   // Draw the diffs on screen again (syntax highlighting was switched).
   redrawDiffs: () => void;
+  // The open repo's text encoding label (gitp.encoding, "utf-8" when unset),
+  // or null when no repo is open; and setting it, which re-reads the diffs.
+  encoding: () => Promise<string | null>;
+  setEncoding: (label: string) => Promise<void>;
   // Leave the dialog for one of the Config view's tabs.
   openConfig: (tab: "git" | "dotfiles") => void;
 }
@@ -64,6 +68,21 @@ const THEMES: { choice: ThemeChoice; label: string; bg: string; accent: string }
   { choice: "dark", label: "Dark", bg: "#0f1117", accent: "#5b8cff" },
   { choice: "gitkraken", label: "GitKraken", bg: "#11151c", accent: "#00d2d3" },
   { choice: "gitkraken-neon", label: "GitKraken Neon", bg: "#11151c", accent: "#f368e0" },
+];
+
+// The encodings offered for a repo's files, by WHATWG label (what gitp-core's
+// encoding.rs reads from gitp.encoding).
+const ENCODINGS: { label: string; name: string }[] = [
+  { label: "utf-8", name: "UTF-8" },
+  { label: "utf-16le", name: "UTF-16 LE" },
+  { label: "utf-16be", name: "UTF-16 BE" },
+  { label: "windows-1252", name: "Western (Windows-1252)" },
+  { label: "iso-8859-1", name: "Western (ISO-8859-1)" },
+  { label: "shift_jis", name: "Japanese (Shift_JIS)" },
+  { label: "euc-jp", name: "Japanese (EUC-JP)" },
+  { label: "gbk", name: "Chinese Simplified (GBK)" },
+  { label: "big5", name: "Chinese Traditional (Big5)" },
+  { label: "euc-kr", name: "Korean (EUC-KR)" },
 ];
 
 const DETAIL_TABS: { tab: DetailTab; label: string }[] = [
@@ -183,6 +202,12 @@ export function openSettingsDialog(actions: SettingsActions): void {
           hooksField(actions),
           "block",
           "core.hooksPath in the open repository's own config. Empty uses .git/hooks.",
+        ),
+        row(
+          "Text encoding",
+          encodingSelect(actions),
+          "inline",
+          "How the open repository's files are read and saved: diffs, blame, the file editor and the conflict resolver. Kept in its config as gitp.encoding. UTF-16 files stay binary in diffs, as git sees them.",
         ),
         row("Git configuration", linkButton("Open Git Config", () => actions.openConfig("git"))),
         row("Dotfiles", linkButton("Open Dotfiles", () => actions.openConfig("dotfiles"))),
@@ -313,6 +338,29 @@ function sizeSelect(current: number, onChange: (size: number) => void): HTMLElem
   for (const n of FONT_SIZES) select.append(el("option", { value: String(n), text: `${n} px` }));
   select.value = String(current);
   select.addEventListener("change", () => onChange(Number(select.value)));
+  return select;
+}
+
+// The open repo's text encoding. Disabled until the current value has loaded,
+// and when no repo is open. A label set by hand that isn't offered is shown as
+// it is, so the list never claims UTF-8 for it.
+function encodingSelect(actions: SettingsActions): HTMLElement {
+  const select = el("select", { class: "settings-select", disabled: true }) as HTMLSelectElement;
+  for (const e of ENCODINGS) select.append(el("option", { value: e.label, text: e.name }));
+  select.addEventListener("change", () => void actions.setEncoding(select.value));
+  void actions.encoding().then(
+    (label) => {
+      if (label === null) {
+        select.title = "No repository open";
+        return;
+      }
+      const known = ENCODINGS.find((e) => e.label === label.toLowerCase());
+      if (!known) select.append(el("option", { value: label, text: label }));
+      select.value = known?.label ?? label;
+      select.disabled = false;
+    },
+    () => (select.title = "Couldn't read the repository's config"),
+  );
   return select;
 }
 

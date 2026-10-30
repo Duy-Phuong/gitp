@@ -34,7 +34,7 @@ impl Repo {
         let commit = self.inner.find_commit(oid)?;
         let entry = commit.tree()?.get_path(Path::new(path))?;
         let blob = self.inner.find_blob(entry.id())?;
-        let text = String::from_utf8_lossy(blob.content());
+        let text = self.text_encoding().decode_lossy(blob.content());
 
         let mut lines = Vec::new();
         for (i, content) in text.lines().enumerate() {

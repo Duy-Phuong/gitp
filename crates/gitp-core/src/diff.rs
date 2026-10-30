@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 
+use crate::encoding::TextEncoding;
 use crate::error::Result;
 use crate::repo::Repo;
 
@@ -110,6 +111,7 @@ impl Repo {
         let files = collect_files(
             &self.commit_diff(&commit, opts.patience(true))?,
             Some(MAX_DIFF_LINES),
+            self.text_encoding(),
         )?;
 
         Ok(CommitDetail {
@@ -163,7 +165,11 @@ impl Repo {
         if let Some(old) = old_path {
             opts.pathspec(old);
         }
-        let files = collect_files(&self.commit_diff(&commit, &mut opts)?, max_lines)?;
+        let files = collect_files(
+            &self.commit_diff(&commit, &mut opts)?,
+            max_lines,
+            self.text_encoding(),
+        )?;
         Ok(files.into_iter().find(|f| f.path == path))
     }
 
@@ -190,7 +196,11 @@ impl Repo {
 /// Walk a diff's deltas, hunks and lines into owned `FileDiff`s. Each file
 /// keeps whole hunks while their lines total at most `max_lines`; the first
 /// hunk that would go over ends the file's hunks and marks it `truncated`.
-pub(crate) fn collect_files(diff: &git2::Diff, max_lines: Option<usize>) -> Result<Vec<FileDiff>> {
+pub(crate) fn collect_files(
+    diff: &git2::Diff,
+    max_lines: Option<usize>,
+    enc: TextEncoding,
+) -> Result<Vec<FileDiff>> {
     let mut files: Vec<FileDiff> = Vec::new();
 
     for (idx, delta) in diff.deltas().enumerate() {
@@ -229,15 +239,14 @@ pub(crate) fn collect_files(diff: &git2::Diff, max_lines: Option<usize>) -> Resu
                         origin: line.origin(),
                         old_lineno: line.old_lineno(),
                         new_lineno: line.new_lineno(),
-                        content: String::from_utf8_lossy(line.content())
+                        content: enc
+                            .decode_lossy(line.content())
                             .trim_end_matches('\n')
                             .to_string(),
                     });
                 }
                 file.hunks.push(DiffHunk {
-                    header: String::from_utf8_lossy(hunk.header())
-                        .trim_end()
-                        .to_string(),
+                    header: enc.decode_lossy(hunk.header()).trim_end().to_string(),
                     lines,
                 });
             }

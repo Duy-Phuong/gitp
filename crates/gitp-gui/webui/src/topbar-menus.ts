@@ -14,7 +14,7 @@ import {
   type ThemeChoice,
 } from "./prefs";
 import { setConfigTab } from "./config-panel";
-import { showView, startAutoFetch, updateLogView } from "./shell";
+import { reloadDiffs, showView, startAutoFetch, updateLogView } from "./shell";
 import { createBranchAction, runPullMethod } from "./repo-actions";
 import { checkoutBranchAction } from "./ref-actions";
 import { closeSettingsDialog, openSettingsDialog } from "./views/settings-dialog";
@@ -160,6 +160,22 @@ export function setupSettingsMenu(): void {
         ui.detailView?.redraw();
         // Re-renders from the status it has; the diff itself isn't re-read.
         void ui.changesView?.reload();
+      },
+      encoding: async () => {
+        if (!state.repoPath) return null;
+        const entries = await fetchConfig();
+        return entries.find((e) => e.scope === "Local" && e.name.toLowerCase() === "gitp.encoding")?.value ?? "utf-8";
+      },
+      // UTF-8 is the default, so choosing it unsets the key.
+      setEncoding: async (label) => {
+        try {
+          if (label === "utf-8") await unsetConfig("Local", "gitp.encoding");
+          else await saveConfig("Local", "gitp.encoding", label);
+          reportDone(`Text encoding set to ${label}`);
+          reloadDiffs();
+        } catch (err) {
+          opFailed("Couldn't set the text encoding", err);
+        }
       },
       openConfig: (tab) => {
         closeSettingsDialog();

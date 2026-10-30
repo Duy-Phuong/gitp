@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 base64 = "0.22"
+encoding_rs = "0.8"
 git2 = { version = "0.19", default-features = false, features = ["vendored-libgit2"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
