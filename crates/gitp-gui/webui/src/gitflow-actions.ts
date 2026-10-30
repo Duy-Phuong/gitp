@@ -9,7 +9,7 @@ import type { FlowKind } from "./types";
 import { state } from "./app-state";
 import { setStatus } from "./report";
 import { runBranchOp } from "./ref-actions";
-import { finishSteps, FLOW_KINDS, flowBranch, flowTag, suggestedGitflowConfig } from "./gitflow";
+import { finishSteps, FLOW_KINDS, flowBranch, flowTag, mergeBackTarget, suggestedGitflowConfig } from "./gitflow";
 
 // The "Git Flow" submenu of the branch menus: Start…, or Initialize before
 // it is set up.
@@ -78,7 +78,9 @@ export async function finishFlowAction(branch: string): Promise<void> {
   const cfg = state.gitflow;
   const flow = flowBranch(cfg, branch);
   if (!cfg || !flow) return;
-  const steps = finishSteps(cfg, flow.kind, branch, flow.name).join(", then ");
+  const branches = state.refs.branches.map((b) => b.name);
+  const steps = finishSteps(cfg, flow.kind, branch, flow.name, branches).join(", then ");
+  const lands = mergeBackTarget(cfg, flow.kind, branches);
   const label = `Finishing ${flow.kind.toLowerCase()} ${flow.name}`;
   if (flow.kind === "Feature") {
     const ok = await confirmDialog(
@@ -94,7 +96,7 @@ export async function finishFlowAction(branch: string): Promise<void> {
   openFormDialog(
     {
       title: `Finish ${flow.kind} ${flow.name}`,
-      sub: `This will ${steps}, leaving ${cfg.develop} checked out. Each merge makes a merge commit.`,
+      sub: `This will ${steps}, leaving ${lands} checked out. Each merge makes a merge commit.`,
       fields: [{ label: `Message for tag ${flowTag(cfg, flow.name)}:`, value: `${flow.kind} ${flow.name}`, required: true }],
       submitLabel: `Finish ${flow.kind}`,
     },

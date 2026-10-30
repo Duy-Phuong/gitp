@@ -305,3 +305,46 @@ fn a_hotfix_that_conflicts_with_develop_stops_there_and_finishing_again_complete
     assert!(!exists(dir, "refs/heads/hotfix/1.0.1"), "branch deleted");
     assert_eq!(git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]), "develop");
 }
+
+#[test]
+fn a_hotfix_finished_while_a_release_is_open_merges_into_the_release_not_develop() {
+    let (fx, production) = flow_repo();
+    let dir = fx.path();
+    let repo = Repo::open(dir).unwrap();
+    repo.gitflow_start(FlowKind::Release, "1.1").unwrap();
+    // The release and the hotfix both change a.txt: the merge into the release
+    // conflicts, so finishing again has to pick the same branch to complete.
+    commit(dir, "a.txt", "release's\n", "release edit");
+    let develop = rev(dir, "develop");
+    repo.gitflow_start(FlowKind::Hotfix, "1.0.1").unwrap();
+    commit(dir, "a.txt", "hotfix's\n", "hotfix edit");
+    let tip = rev(dir, "hotfix/1.0.1");
+
+    let err = repo
+        .gitflow_finish("hotfix/1.0.1", None)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("merge hotfix/1.0.1 into release/1.1"), "{err}");
+    assert_eq!(rev(dir, "v1.0.1^{commit}"), rev(dir, &production));
+    assert_eq!(
+        git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "release/1.1"
+    );
+
+    std::fs::write(dir.join("a.txt"), "both\n").unwrap();
+    git(dir, &["add", "a.txt"]);
+    git(dir, &["commit", "-q", "--no-edit"]);
+    let out = repo
+        .gitflow_finish("hotfix/1.0.1", None)
+        .expect("finish again");
+    assert!(out.contains("into release/1.1"), "{out}");
+
+    // The fix is in the release; develop gets it when the release finishes.
+    assert_eq!(rev(dir, "release/1.1^2"), tip);
+    assert_eq!(rev(dir, "develop"), develop, "develop is left alone");
+    assert_eq!(
+        git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "release/1.1"
+    );
+    assert!(!exists(dir, "refs/heads/hotfix/1.0.1"), "branch deleted");
+}
