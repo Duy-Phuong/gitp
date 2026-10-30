@@ -27,6 +27,40 @@ fn blame_attributes_each_line_to_its_last_commit() {
     assert_eq!(lines[0].author, "Fixture Author");
 }
 
+#[test]
+fn blame_maps_every_line_of_a_multi_line_group() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "a\nb\nc\nd\ne\n", "c1");
+    fx.commit_file("a.txt", "a\nB\nc\nd\nE\n", "c2");
+    let repo = Repo::open(fx.path()).unwrap();
+    let lines = repo.blame("HEAD", "a.txt").unwrap();
+    let c1 = repo.resolve_commit("HEAD~1").unwrap();
+    let c2 = repo.resolve_commit("HEAD").unwrap();
+    let got: Vec<(&str, usize)> = lines
+        .iter()
+        .map(|l| (l.commit.as_str(), l.line_no))
+        .collect();
+    assert_eq!(
+        got,
+        [(&*c1, 1), (&*c2, 2), (&*c1, 3), (&*c1, 4), (&*c2, 5)],
+        "c1's lines 3-4 come as one group"
+    );
+    assert_eq!(lines[1].content, "B");
+
+    // An ignore-revs file that doesn't exist fails `git blame` outright; the
+    // blame still comes back, from libgit2.
+    git(
+        fx.path(),
+        &["config", "blame.ignoreRevsFile", "missing-file"],
+    );
+    let again = repo.blame("HEAD", "a.txt").unwrap();
+    let got_again: Vec<(&str, usize)> = again
+        .iter()
+        .map(|l| (l.commit.as_str(), l.line_no))
+        .collect();
+    assert_eq!(got_again, got);
+}
+
 fn git(dir: &Path, args: &[&str]) {
     let ok = Command::new("git")
         .current_dir(dir)

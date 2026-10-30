@@ -7,12 +7,13 @@
 //! A workspace's repos are mostly *not* open as tabs, so everything here opens
 //! its own `Repo` by path and never touches the active session.
 
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gitp_core::{NetworkHooks, Progress, ProgressFn, PullMode, Repo};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::state::{invalidate_status, throttled, to_message, NetworkOps, RepoState, Session};
 use crate::undo::clear_undo;
@@ -35,6 +36,11 @@ pub(crate) struct RepoSummary {
     has_upstream: bool,
     /// Paths with uncommitted changes.
     changes: usize,
+    /// The main worktree's folder when this is a linked worktree of it.
+    worktree_of: Option<String>,
+    /// The git directory this repo shares with its other worktrees (empty when
+    /// missing): rows with the same one need fetching only once.
+    common_dir: String,
 }
 
 /// The `workspace-progress` event payload: git's progress for the repo at `path`.
@@ -56,7 +62,14 @@ fn open_at(path: &str) -> Result<Repo, String> {
     if !dir.join(".git").exists() {
         return Err(format!("not a git repository: {path}"));
     }
-    Repo::open(dir).map_err(to_message)
+    let repo = Repo::open(dir).map_err(to_message)?;
+    // An empty or broken `.git` passes the check above, and discovery walks
+    // past it to the enclosing repository.
+    let here = std::fs::canonicalize(repo.workdir()).map_err(to_message)?;
+    if here != std::fs::canonicalize(dir).map_err(to_message)? {
+        return Err(format!("not a git repository: {path}"));
+    }
+    Ok(repo)
 }
 
 /// Branch, ahead/behind and the number of changed paths of the repo at `path`;
@@ -78,7 +91,52 @@ pub(crate) fn workspace_repo_summary_impl(path: &str) -> Result<RepoSummary, Str
         behind: head.map_or(0, |b| b.behind),
         has_upstream: head.is_some_and(|b| b.has_upstream),
         changes: repo.local_change_count().map_err(to_message)?,
+        worktree_of: repo.main_worktree(),
+        common_dir: repo.common_dir().to_string_lossy().into_owned(),
     })
+}
+
+/// Resolve symlinks (macOS's `/var` → `/private/var`) so that git's spelling
+/// of a worktree's folder and the user's compare equal.
+fn canonical(path: &str) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path))
+}
+
+/// The other working trees of the repository at `path` — linked ones, and the
+/// main one when `path` is itself linked. Folders that are gone and a bare
+/// main repository are left out; so is everything when `path` isn't a repo.
+fn other_worktrees(path: &str) -> Vec<String> {
+    let Ok(list) = open_at(path).and_then(|repo| repo.worktrees().map_err(to_message)) else {
+        return Vec::new();
+    };
+    list.into_iter()
+        .filter(|w| !w.is_current && !w.prunable && Path::new(&w.path).join(".git").exists())
+        .map(|w| w.path)
+        .collect()
+}
+
+/// `paths` to add to a workspace, each followed by its repository's other
+/// worktrees, minus whatever is already in `known` or listed earlier — the
+/// same folder counted once however it is spelled, so "Add All in Folder…"
+/// over a repo and its sibling worktree adds that worktree once. Where git's
+/// spelling of a worktree and one in `paths` name the same folder, the
+/// user's is kept.
+pub(crate) fn workspace_with_worktrees_impl(known: &[String], paths: &[String]) -> Vec<String> {
+    let mut given: HashMap<PathBuf, &String> = HashMap::new();
+    for p in paths {
+        given.entry(canonical(p)).or_insert(p);
+    }
+    let mut seen: HashSet<PathBuf> = known.iter().map(|p| canonical(p)).collect();
+    let mut out = Vec::new();
+    for p in paths {
+        for candidate in std::iter::once(p.clone()).chain(other_worktrees(p)) {
+            let key = canonical(&candidate);
+            if seen.insert(key.clone()) {
+                out.push(given.get(&key).map_or(candidate, |s| s.to_string()));
+            }
+        }
+    }
+    out
 }
 
 /// The repositories directly inside `folder` (one level deep, hidden folders
@@ -131,8 +189,16 @@ fn run_on_path<T>(
     let out = f(&repo);
     ops.0.end(&cancel);
     // Even a failed pull may have moved HEAD (a merge stopped on conflicts).
+    // The tab is matched by its resolved working tree: the workspace and the
+    // tab may spell the same folder differently (/tmp vs /private/tmp, a
+    // trailing slash).
+    let here = std::fs::canonicalize(repo.workdir()).ok();
     let mut guard = state.0.lock().map_err(to_message)?;
-    if let Some(session) = guard.sessions.iter_mut().find(|s| s.path == path) {
+    if let Some(session) = guard
+        .sessions
+        .iter_mut()
+        .find(|s| here.is_some() && std::fs::canonicalize(s.repo.workdir()).ok() == here)
+    {
         after(session);
     }
     out.map_err(to_message)
@@ -192,9 +258,21 @@ fn row_progress(app: AppHandle, path: String) -> ProgressFn {
 
 // --- Tauri commands --------------------------------------------------------
 
-#[tauri::command(async)]
-pub(crate) fn workspace_repo_summary(path: String) -> Result<RepoSummary, String> {
-    workspace_repo_summary_impl(&path)
+/// Run `f` on tokio's blocking pool and await it. A plain `(async)` command
+/// runs on one of the few async workers, and a Workspaces batch (several
+/// fetches or pulls plus the summary loaders, each blocking on git and the
+/// network) can occupy all of them, stalling every other command meanwhile.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(to_message)?
+}
+
+#[tauri::command]
+pub(crate) async fn workspace_repo_summary(path: String) -> Result<RepoSummary, String> {
+    blocking(move || workspace_repo_summary_impl(&path)).await
 }
 
 #[tauri::command(async)]
@@ -203,26 +281,32 @@ pub(crate) fn workspace_scan_folder(folder: String) -> Result<Vec<String>, Strin
 }
 
 #[tauri::command(async)]
-pub(crate) fn workspace_fetch(
-    path: String,
-    app: AppHandle,
-    state: State<RepoState>,
-    ops: State<WorkspaceOps>,
-) -> Result<String, String> {
-    let progress = row_progress(app, path.clone());
-    workspace_fetch_impl(&state, &ops, &path, Some(progress))
+pub(crate) fn workspace_with_worktrees(known: Vec<String>, paths: Vec<String>) -> Vec<String> {
+    workspace_with_worktrees_impl(&known, &paths)
 }
 
-#[tauri::command(async)]
-pub(crate) fn workspace_pull(
+#[tauri::command]
+pub(crate) async fn workspace_fetch(path: String, app: AppHandle) -> Result<String, String> {
+    blocking(move || {
+        let progress = row_progress(app.clone(), path.clone());
+        let (state, ops) = (app.state::<RepoState>(), app.state::<WorkspaceOps>());
+        workspace_fetch_impl(&state, &ops, &path, Some(progress))
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn workspace_pull(
     path: String,
     mode: PullMode,
     app: AppHandle,
-    state: State<RepoState>,
-    ops: State<WorkspaceOps>,
 ) -> Result<String, String> {
-    let progress = row_progress(app, path.clone());
-    workspace_pull_impl(&state, &ops, &path, mode, Some(progress))
+    blocking(move || {
+        let progress = row_progress(app.clone(), path.clone());
+        let (state, ops) = (app.state::<RepoState>(), app.state::<WorkspaceOps>());
+        workspace_pull_impl(&state, &ops, &path, mode, Some(progress))
+    })
+    .await
 }
 
 #[tauri::command(async)]
@@ -349,6 +433,26 @@ mod tests {
     }
 
     #[test]
+    fn a_bulk_pull_finds_the_tab_under_another_spelling_of_its_path() {
+        let (_root, repo, _other) = repo_behind_its_remote();
+        let state = RepoState::default();
+        let ops = WorkspaceOps::default();
+        open_repo_impl(&state, path_of(&repo)).unwrap();
+        state.0.lock().unwrap().sessions[0].undo = Some(gitp_core::Undoable::HeadMoved {
+            label: "Commit".into(),
+            before: "a".into(),
+            after: "b".into(),
+            mode: gitp_core::HeadMoveMode::Soft,
+            backup: None,
+        });
+
+        let spelled = format!("{}/", path_of(&repo));
+        workspace_pull_impl(&state, &ops, &spelled, PullMode::FastForward, None).expect("pull");
+
+        assert!(state.0.lock().unwrap().sessions[0].undo.is_none());
+    }
+
+    #[test]
     fn a_failure_is_reported_for_that_repo_only() {
         let root = tempfile::tempdir().unwrap();
         let state = RepoState::default();
@@ -362,6 +466,23 @@ mod tests {
         let err = workspace_fetch_impl(&state, &ops, &gone, None).unwrap_err();
         assert!(err.contains("folder not found"), "{err}");
         assert!(workspace_repo_summary_impl(&gone).unwrap().missing);
+    }
+
+    #[test]
+    fn a_broken_git_folder_inside_a_repo_does_not_reach_the_parent() {
+        let (_root, repo, _other) = repo_behind_its_remote();
+        let inner = repo.join("a");
+        std::fs::create_dir_all(inner.join(".git")).unwrap();
+        let state = RepoState::default();
+        let ops = WorkspaceOps::default();
+        let before = head(&repo);
+
+        let path = path_of(&inner);
+        assert!(workspace_repo_summary_impl(&path).is_err());
+        let err =
+            workspace_pull_impl(&state, &ops, &path, PullMode::FastForward, None).unwrap_err();
+        assert!(err.contains("not a git repository"), "{err}");
+        assert_eq!(head(&repo), before, "the parent repo was pulled");
     }
 
     #[test]
@@ -405,5 +526,81 @@ mod tests {
             .map(|p| Path::new(p).file_name().unwrap().to_str().unwrap())
             .collect();
         assert_eq!(names, ["a", "b"]);
+    }
+
+    fn name_of(p: &str) -> &str {
+        Path::new(p).file_name().unwrap().to_str().unwrap()
+    }
+
+    /// `app/` with linked worktrees `app-feat/` beside it and `gone/`, whose
+    /// folder was deleted, plus an unrelated `lib/`. Returns (root, app path).
+    fn repo_with_worktrees() -> (tempfile::TempDir, String) {
+        let root = tempfile::tempdir().unwrap();
+        let app = root.path().join("app");
+        std::fs::create_dir(&app).unwrap();
+        make_repo(&app, &["c1"]);
+        git(
+            &app,
+            &["worktree", "add", "-q", "-b", "feat", "../app-feat"],
+        );
+        git(&app, &["worktree", "add", "-q", "--detach", "../gone"]);
+        std::fs::remove_dir_all(root.path().join("gone")).unwrap();
+        let lib = root.path().join("lib");
+        std::fs::create_dir(&lib).unwrap();
+        make_repo(&lib, &["c1"]);
+        (root, path_of(&app))
+    }
+
+    #[test]
+    fn adding_a_repo_brings_its_worktrees_once() {
+        let (root, app) = repo_with_worktrees();
+        let names = |paths: Vec<String>| -> Vec<String> {
+            paths.iter().map(|p| name_of(p).to_string()).collect()
+        };
+
+        // Add Folder…: the repo, then its live linked worktree.
+        let added = workspace_with_worktrees_impl(&[], std::slice::from_ref(&app));
+        assert_eq!(names(added), ["app", "app-feat"]);
+
+        // Add All in Folder…: the scan finds the worktree as a folder of its
+        // own too, but it is added once, under the scan's spelling.
+        let found = workspace_scan_folder_impl(&path_of(root.path())).unwrap();
+        assert_eq!(names(found.clone()), ["app", "app-feat", "lib"]);
+        let added = workspace_with_worktrees_impl(&[], &found);
+        assert_eq!(names(added.clone()), ["app", "app-feat", "lib"]);
+        assert_eq!(added, found);
+
+        // Add Worktrees of… a repo already in the workspace: just the
+        // worktrees, and from a linked worktree its main one counts too.
+        let feat = path_of(&root.path().join("app-feat"));
+        assert_eq!(
+            names(workspace_with_worktrees_impl(
+                std::slice::from_ref(&app),
+                std::slice::from_ref(&app)
+            )),
+            ["app-feat"]
+        );
+        assert_eq!(
+            names(workspace_with_worktrees_impl(
+                std::slice::from_ref(&feat),
+                std::slice::from_ref(&feat)
+            )),
+            ["app"]
+        );
+        assert!(workspace_with_worktrees_impl(&found, &[app]).is_empty());
+    }
+
+    #[test]
+    fn a_worktree_row_names_its_repo_and_shares_its_common_dir() {
+        let (root, app) = repo_with_worktrees();
+        let feat = workspace_repo_summary_impl(&path_of(&root.path().join("app-feat"))).unwrap();
+        let main = workspace_repo_summary_impl(&app).unwrap();
+        let lib = workspace_repo_summary_impl(&path_of(&root.path().join("lib"))).unwrap();
+
+        assert_eq!(feat.branch.as_deref(), Some("feat"));
+        assert_eq!(feat.worktree_of.as_deref().map(name_of), Some("app"));
+        assert_eq!(main.worktree_of, None);
+        assert_eq!(feat.common_dir, main.common_dir);
+        assert_ne!(lib.common_dir, main.common_dir);
     }
 }

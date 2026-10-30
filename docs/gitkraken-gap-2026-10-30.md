@@ -136,3 +136,14 @@ The keyboard-shortcut pack was offered and left out on purpose.
 |---|---------|-----------|------|
 | 48 | **Profiles** | several identities (name, email, optional signing key); switching changes the identity used for commits (repo or global, by choice) and keeps settings and open tabs per profile; optionally keep the global `.gitconfig` in sync | M |
 | 49 | **Local workspaces** | named groups of repos; a workspace screen with checkboxes and bulk Fetch / Pull / Open / Reveal / Remove | M |
+
+## Round 3 (chosen 2026-10-30)
+
+| # | Feature | What it means | Size |
+|---|---------|---------------|------|
+| 50 | **Known gaps** | push a tag to / delete a tag from any remote (not only `origin`); stage and discard single blocks and lines in files that aren't UTF-8 (patches as bytes); Git Flow finish of a hotfix merges into an open release branch instead of develop, as git-flow does; a profile can set the signing format (`gpg.format` openpgp / ssh / x509) with its key | M |
+| 51 | **Pull requests via `gh`** | sidebar section of the repo's GitHub pull requests (open / mine / review requested); a PR view with title, description, author, labels, checks, reviews, the conversation, changed files and their diffs; check out a PR (to a branch, or into a new worktree); comment on the PR, reply, approve / request changes / comment as a review, and comment on a diff line; uses the user's `gh` login, no tokens stored by gitp; clear message when `gh` is missing or not logged in | L |
+| 52 | **Large-repo speed check** | measure the graph, paging, search, hover fade, ghost branch, column redraw, syntax highlighting and status refresh on a large repository (100k+ commits, many refs); fix what is slow without changing behaviour | M |
+| 53 | **Worktrees in the graph** | a WIP row for each worktree with uncommitted changes (labelled with the worktree), and a worktree icon on branch badges checked out in another worktree; double-click opens that worktree's tab | M |
+| 54 | **Worktree panel and safety** | sidebar rows show each worktree's branch, changed-file count and ahead/behind; drag a branch onto the Worktrees section to create one; New Worktree from a commit or tag; Move Worktree; removing a worktree with uncommitted or unpushed work warns and offers to open it first; force-remove only after an explicit confirm; Prune lists what it will remove | M |
+| 55 | **Worktrees with other features** | Workspaces can add a repo's worktrees; the terminal opens in the active worktree's folder; Stash & Switch / Checkout of a branch checked out in another worktree offers "Open its worktree"; (PR check-out into a worktree is part of #51) | S |

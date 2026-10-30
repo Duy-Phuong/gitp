@@ -48,11 +48,7 @@ fn reveal_folder_impl(path: String) -> Result<(), String> {
 /// Falls back to the OS default application otherwise.
 fn open_in_editor_impl(state: &RepoState, path: String) -> Result<(), String> {
     let full = repo_path(state, &path)?;
-    if std::process::Command::new("code")
-        .arg(&full)
-        .spawn()
-        .is_ok()
-    {
+    if launch(std::process::Command::new("code").arg(&full)).is_ok() {
         return Ok(());
     }
     open_in_default_app(&full)
@@ -209,7 +205,7 @@ fn open_repo_in_editor_impl(state: &RepoState, id: String) -> Result<(), String>
         }
         Launcher::Cli(cli) => std::process::Command::new(cli),
     };
-    cmd.arg(&dir).spawn().map(|_| ()).map_err(to_message)
+    launch(cmd.arg(&dir)).map_err(to_message)
 }
 
 /// Open `url` in the OS default browser. Only web URLs: `open` would just as
@@ -229,7 +225,15 @@ pub(crate) fn open_in_browser(url: &str) -> std::io::Result<()> {
     } else {
         "xdg-open"
     };
-    std::process::Command::new(program).arg(url).spawn()?;
+    launch(std::process::Command::new(program).arg(url))
+}
+
+/// Start `cmd` and leave it running, reaping it on a thread of its own once
+/// it exits: a dropped `Child` is never waited for, so every launch would
+/// leave a zombie process behind for as long as gitp runs.
+fn launch(cmd: &mut std::process::Command) -> std::io::Result<()> {
+    let mut child = cmd.spawn()?;
+    std::thread::spawn(move || drop(child.wait()));
     Ok(())
 }
 
@@ -237,7 +241,7 @@ pub(crate) fn open_in_browser(url: &str) -> std::io::Result<()> {
 /// Explorer), falling back to opening its parent directory elsewhere.
 fn reveal_in_file_manager(full: &Path) -> Result<(), String> {
     use std::process::Command;
-    let spawn = |mut cmd: Command| cmd.spawn().map(|_| ()).map_err(to_message);
+    let spawn = |mut cmd: Command| launch(&mut cmd).map_err(to_message);
     if cfg!(target_os = "macos") {
         let mut cmd = Command::new("open");
         cmd.arg("-R").arg(full);
@@ -257,7 +261,7 @@ fn reveal_in_file_manager(full: &Path) -> Result<(), String> {
 /// Open `full` with the OS default application for its file type.
 fn open_in_default_app(full: &Path) -> Result<(), String> {
     use std::process::Command;
-    let spawn = |mut cmd: Command| cmd.spawn().map(|_| ()).map_err(to_message);
+    let spawn = |mut cmd: Command| launch(&mut cmd).map_err(to_message);
     if cfg!(target_os = "macos") {
         let mut cmd = Command::new("open");
         cmd.arg(full);

@@ -69,18 +69,22 @@ import {
 } from "./commit-actions";
 import { openFormDialog } from "./views/form-dialog";
 import { showComparison } from "./compare";
-import { checkoutInNewWorktreeItem, worktreeOf } from "./worktree-actions";
+import { checkoutInNewWorktreeItem, newWorktreeAtAction, offerWorktreeWith, worktreeOf } from "./worktree-actions";
+import { localBranchForRemote } from "./branch-worktree";
 import { worktreeName } from "./views/sidebar";
 import { allRefsAt } from "./commit-refs";
 import { pushTargets } from "./push-targets";
-import { dropActions, isAncestorInRows, type DragRef, type DropRef } from "./ref-drop";
+import { dropActions, isAncestorInRows, pushDropQuestion, type DragRef, type DropRef } from "./ref-drop";
 import { finishFlowItem, gitflowMenuItem } from "./gitflow-actions";
+import { addRemoteAction } from "./remote-actions";
 import { askSwitchWithChanges, reportStashSwitch } from "./stash-switch";
 
 // Double-click a branch: check it out, then reload history + sidebar from the new
 // HEAD. With uncommitted changes, asks first: Stash & Switch, or carry them.
+// A branch another worktree has checked out offers that worktree instead.
 export async function checkoutBranchAction(b: BranchRef): Promise<void> {
   if (b.is_head) return;
+  if (await offerWorktreeWith(b.name)) return;
   const how = state.localChanges > 0 ? await askSwitchWithChanges(`"${b.name}"`) : "switch";
   if (how === "cancel") {
     setStatus("Checkout cancelled.");
@@ -267,9 +271,17 @@ export function onRefDrop(srcRef: DragRef, dstRef: DragRef, x: number, y: number
       case "push": {
         const remote = state.refs.remotes.find((r) => r.name === dst.name)?.remote ?? "origin";
         const branch = dst.name.slice(remote.length + 1);
+        const question = pushDropQuestion(src.name, remote, branch);
         items.push({
           label: `Push ${src.name} to ${dst.name}`,
-          run: () => void runBranchOp(`Pushing ${src.name} to ${dst.name}`, () => pushBranchTo(src.name, remote, branch), false, src.name),
+          run: () =>
+            void (async () => {
+              if (question && !(await confirmDialog(question))) {
+                setStatus("Push cancelled.");
+                return;
+              }
+              await runBranchOp(`Pushing ${src.name} to ${dst.name}`, () => pushBranchTo(src.name, remote, branch), false, src.name);
+            })(),
         });
         break;
       }
@@ -307,7 +319,7 @@ function visibilityItems(refname: string): MenuItem[] {
 
 // Right-click the Branches, Remotes or Tags header: hide or show every ref in
 // it at once (the checked-out branch stays: HEAD is always walked). Branches'
-// also has the Git Flow submenu.
+// also has the Git Flow submenu, Remotes' Add Remote….
 export function onSectionMenu(key: string, x: number, y: number): void {
   const refnames =
     key === "sec:branches"
@@ -330,6 +342,10 @@ export function onSectionMenu(key: string, x: number, y: number): void {
   if (key === "sec:branches" && state.repoPath) {
     if (items.length) items.push({ separator: true });
     items.push(gitflowMenuItem());
+  }
+  if (key === "sec:remotes") {
+    if (items.length) items.push({ separator: true });
+    items.push({ label: "Add Remote…", run: addRemoteAction });
   }
   if (!items.length) return;
   showContextMenu(x, y, items);
@@ -507,6 +523,14 @@ export function onMoreRefsMenu(id: string, x: number, y: number): void {
   showContextMenu(x, y, items);
 }
 
+// The remotes a tag can be pushed to or deleted from. With none configured
+// (or the list unreadable) it is origin, as before remotes could be chosen, so
+// git gives its own error.
+function tagRemotes(): string[] {
+  const names = state.remoteList.map((r) => r.name);
+  return names.length ? names : ["origin"];
+}
+
 // Right-click a tag. A tag names a commit, so most of these are the commit
 // operations aimed at that commit, plus the tag-only ones (details, push,
 // delete). Nothing here moves the tag itself — retagging is a delete plus a
@@ -514,13 +538,21 @@ export function onMoreRefsMenu(id: string, x: number, y: number): void {
 export function onTagMenu(name: string, target: string, x: number, y: number): void {
   const current = state.refs.head;
   const short = target.slice(0, 7);
+  const remotes = tagRemotes();
+  const push = (remote: string) => void runTagOp(`Pushing ${name} to ${remote}`, () => pushTag(name, remote));
   const items: MenuItem[] = [
     { label: "Checkout Commit…", run: () => void checkoutCommitAction(target, `${name} (${short})`) },
     { label: "Show Tag Details…", run: () => openTagDetailsModal(name, fetchTagDetail(name)) },
     compareWithHeadItem(name),
     compareWithWorkdirItem(name),
     { separator: true },
-    { label: "Push to 'origin'…", run: () => void runTagOp(`Pushing ${name}`, () => pushTag(name)) },
+    // One remote: one click, as always. Several: pick one.
+    remotes.length === 1
+      ? { label: `Push to '${remotes[0]}'…`, run: () => push(remotes[0]) }
+      : {
+          label: "Push to",
+          submenu: [{ heading: `Push ${name} to` }, ...remotes.map((r) => ({ label: r, run: () => push(r) }))],
+        },
   ];
 
   if (current) {
@@ -551,6 +583,7 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
     },
   });
   items.push({ label: "New Tag…", run: () => newTagAction(target, short) });
+  items.push({ label: "New Worktree here…", run: () => newWorktreeAtAction(target, name) });
   // Only a lightweight tag: re-annotating would replace the original tagger
   // and date along with the message.
   if (state.refs.tags.find((t) => t.name === name)?.message === null) {
@@ -561,7 +594,26 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
   items.push(...visibilityItems(tagRefName(name)));
 
   items.push({ separator: true });
-  items.push({ label: "Delete…", danger: true, run: () => deleteTagAction(name) });
+  items.push({ label: "Delete…", danger: true, run: () => deleteTagAction(name, remotes) });
+  // With one remote, Delete… offers it; with several, each is its own choice.
+  if (remotes.length > 1) {
+    items.push({
+      label: "Delete from",
+      submenu: [
+        { heading: `Delete ${name} from` },
+        ...remotes.map((r) => ({
+          label: r,
+          danger: true,
+          run: () =>
+            void confirmThenRunTag(
+              `Delete tag ${name} from ${r}?\n\nThe local tag is kept.`,
+              `Deleting ${name} on ${r}`,
+              () => deleteRemoteTag(name, r),
+            ),
+        })),
+      ],
+    });
+  }
 
   items.push({ separator: true });
   items.push({ label: "Copy Tag Name", run: () => void copyText(name, `Copied ${name}`) });
@@ -611,16 +663,18 @@ async function runTagOp(label: string, op: () => Promise<string>): Promise<void>
   }
 }
 
-// Delete a tag, offering to remove it from origin too when it's actually there
-// (probed live), the same flow as deleting a branch.
-function deleteTagAction(name: string): void {
-  const probe = remoteTagExists(name).catch(() => false);
-  openDeleteTagModal(name, probe, (deleteRemote) => {
-    void runDeleteTag(name, deleteRemote);
+// Delete a tag, offering to remove it from the remote too when there is only
+// one and the tag is actually there (probed live), the same flow as deleting a
+// branch. With several remotes the menu's Delete from ▸ covers them.
+function deleteTagAction(name: string, remotes: string[]): void {
+  const remote = remotes[0];
+  const probe = remotes.length === 1 ? remoteTagExists(name, remote).catch(() => false) : Promise.resolve(false);
+  openDeleteTagModal(name, remote, probe, (deleteRemote) => {
+    void runDeleteTag(name, deleteRemote, remote);
   });
 }
 
-async function runDeleteTag(name: string, deleteRemote: boolean): Promise<void> {
+async function runDeleteTag(name: string, deleteRemote: boolean, remote: string): Promise<void> {
   setStatus(`Deleting tag ${name}…`);
   try {
     await deleteTag(name);
@@ -632,11 +686,11 @@ async function runDeleteTag(name: string, deleteRemote: boolean): Promise<void> 
   let note = `Deleted tag ${name}`;
   if (deleteRemote) {
     try {
-      await deleteRemoteTag(name);
-      note += " (local and origin)";
+      await deleteRemoteTag(name, remote);
+      note += ` (local and ${remote})`;
     } catch (err) {
       await loadSidebar();
-      opFailed(`Deleted local tag ${name}, but deleting it on origin failed`, err);
+      opFailed(`Deleted local tag ${name}, but deleting it on ${remote} failed`, err);
       return;
     }
   }
@@ -661,8 +715,11 @@ export function onRemoteMenu(name: string, target: string, x: number, y: number)
 }
 
 // Check out a remote branch, creating/switching to a local tracking branch.
-// Asks first about uncommitted changes, like branch checkout.
+// Asks first about uncommitted changes, like branch checkout — unless that
+// local branch is checked out in another worktree, which is offered instead.
 export async function checkoutRemoteAction(name: string): Promise<void> {
+  const local = localBranchForRemote(name, state.remoteList.map((r) => r.name));
+  if (await offerWorktreeWith(local)) return;
   const how = state.localChanges > 0 ? await askSwitchWithChanges(`"${name}"`) : "switch";
   if (how === "cancel") {
     setStatus("Checkout cancelled.");

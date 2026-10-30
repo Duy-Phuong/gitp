@@ -1153,6 +1153,7 @@ dependencies = [
  "git2",
  "libc",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.20",
 ]

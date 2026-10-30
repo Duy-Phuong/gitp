@@ -3,7 +3,7 @@
 //!
 //! The patch for one hunk is produced by libgit2 (`Patch::to_buf`) rather than
 //! reconstructed by hand, so git's own header/context/"no newline at end of
-//! file" formatting is preserved. That text is then fed to `git apply`, which
+//! file" formatting is preserved. That patch is then fed to `git apply`, which
 //! handles `--cached` (index) and `--reverse` correctly:
 //!   - stage:   apply the unstaged hunk to the index
 //!   - unstage: reverse-apply the staged hunk on the index
@@ -14,6 +14,10 @@
 //! Every operation takes the `context_lines` the diff was shown with: the
 //! context size decides where one hunk ends and the next begins, so the hunk
 //! the user clicked is only "hunk N" at that same size.
+//!
+//! The patch stays bytes from libgit2 to `git apply`. A file's text is in
+//! whatever encoding the repo's files are (see encoding.rs), and the encoding
+//! is only for showing it: the lines applied must be the file's own bytes.
 
 use crate::error::{Error, Result};
 use crate::repo::Repo;
@@ -64,7 +68,7 @@ impl Repo {
         let diff = self.commit_diff(&commit, &mut opts)?;
         let mut patch = path_patch(&diff, path)?;
         let buf = patch.to_buf()?;
-        let hunk = single_hunk_patch(&without_rename(patch_text(&buf)?), hunk_index)?;
+        let hunk = single_hunk_patch(&without_rename(&buf), hunk_index)?;
         self.apply_hunk(&["--reverse"], context_lines, &hunk)
             .map_err(|e| {
                 Error::Message(format!(
@@ -77,7 +81,7 @@ impl Repo {
     /// `git apply <mode> <patch>`. A patch with no context lines needs
     /// `--unidiff-zero`: without context git refuses it, since it can't confirm
     /// the hunk lands where the header says.
-    pub(crate) fn apply_hunk(&self, mode: &[&str], context_lines: u32, patch: &str) -> Result<()> {
+    pub(crate) fn apply_hunk(&self, mode: &[&str], context_lines: u32, patch: &[u8]) -> Result<()> {
         let mut args = vec!["apply", "--whitespace=nowarn"];
         args.extend_from_slice(mode);
         if context_lines == 0 {
@@ -95,11 +99,11 @@ impl Repo {
         staged: bool,
         hunk_index: usize,
         context_lines: u32,
-    ) -> Result<String> {
+    ) -> Result<Vec<u8>> {
         let diff = self.staging_diff(path, staged, context_lines, false)?;
         let mut patch = path_patch(&diff, path)?;
         let buf = patch.to_buf()?;
-        single_hunk_patch(patch_text(&buf)?, hunk_index)
+        single_hunk_patch(&buf, hunk_index)
     }
 }
 
@@ -118,53 +122,70 @@ pub(crate) fn path_patch<'d>(diff: &'d git2::Diff, path: &str) -> Result<git2::P
         .ok_or_else(|| Error::Message("file has no textual diff to apply".into()))
 }
 
-pub(crate) fn patch_text(buf: &[u8]) -> Result<&str> {
-    std::str::from_utf8(buf).map_err(|e| Error::Message(format!("patch is not valid UTF-8: {e}")))
+/// A patch's lines, each with its `\n`.
+pub(crate) fn patch_lines(patch: &[u8]) -> impl Iterator<Item = &[u8]> {
+    patch.split_inclusive(|&b| b == b'\n')
 }
 
 /// A rename's (or copy's) patch with its header reduced to a plain edit of the
 /// new path. Reversed as it stands, `git apply` would also move the file back
 /// to its old name — undoing one block must only touch that block's lines.
-fn without_rename(patch: &str) -> String {
-    let Some(plus) = patch.lines().find_map(|l| l.strip_prefix("+++ ")) else {
-        return patch.to_string();
+fn without_rename(patch: &[u8]) -> Vec<u8> {
+    let Some(plus) = patch_lines(patch).find_map(|l| l.strip_prefix(b"+++ ")) else {
+        return patch.to_vec();
     };
-    let is_move = patch
-        .lines()
-        .take_while(|l| !l.starts_with("@@ "))
-        .any(|l| l.starts_with("rename from ") || l.starts_with("copy from "));
+    let plus = plus.strip_suffix(b"\n").unwrap_or(plus);
+    let is_move = patch_lines(patch)
+        .take_while(|l| !l.starts_with(b"@@ "))
+        .any(|l| l.starts_with(b"rename from ") || l.starts_with(b"copy from "));
     if !is_move {
-        return patch.to_string();
+        return patch.to_vec();
     }
     // `b/<path>`, or `"b/<path>"` when git had to quote it.
-    let minus = match plus.strip_prefix('"') {
-        Some(rest) => format!("\"a{}", rest.strip_prefix('b').unwrap_or(rest)),
-        None => format!("a{}", plus.strip_prefix('b').unwrap_or(plus)),
+    let minus = match plus.strip_prefix(b"\"") {
+        Some(rest) => [&b"\"a"[..], rest.strip_prefix(b"b").unwrap_or(rest)].concat(),
+        None => [&b"a"[..], plus.strip_prefix(b"b").unwrap_or(plus)].concat(),
     };
-    let body = patch.find("\n@@ ").map_or("", |i| &patch[i + 1..]);
-    format!("diff --git {minus} {plus}\n--- {minus}\n+++ {plus}\n{body}")
+    let body = patch_lines(patch)
+        .skip_while(|l| !l.starts_with(b"@@ "))
+        .flatten();
+    let header: [&[u8]; 9] = [
+        b"diff --git ",
+        &minus,
+        b" ",
+        plus,
+        b"\n--- ",
+        &minus,
+        b"\n+++ ",
+        plus,
+        b"\n",
+    ];
+    let mut out = header.concat();
+    out.extend(body);
+    out
 }
 
 /// Split a full-file unified patch into its header and hunks, and return the
 /// header followed by only the `hunk_index`-th hunk. Hunk headers are the lines
 /// beginning with `@@ `; content lines never do (they carry a ` `/`+`/`-`
 /// prefix), so the split is unambiguous.
-fn single_hunk_patch(patch: &str, hunk_index: usize) -> Result<String> {
-    let mut header = String::new();
-    let mut hunks: Vec<String> = Vec::new();
+fn single_hunk_patch(patch: &[u8], hunk_index: usize) -> Result<Vec<u8>> {
+    let mut header = Vec::new();
+    let mut hunks: Vec<Vec<u8>> = Vec::new();
 
-    for line in patch.split_inclusive('\n') {
-        if line.starts_with("@@ ") {
-            hunks.push(String::from(line));
+    for line in patch_lines(patch) {
+        if line.starts_with(b"@@ ") {
+            hunks.push(line.to_vec());
         } else if let Some(cur) = hunks.last_mut() {
-            cur.push_str(line);
+            cur.extend_from_slice(line);
         } else {
-            header.push_str(line);
+            header.extend_from_slice(line);
         }
     }
 
     let hunk = hunks
         .get(hunk_index)
         .ok_or_else(|| Error::Message(format!("hunk {hunk_index} not found in diff")))?;
-    Ok(format!("{header}{hunk}"))
+    header.extend_from_slice(hunk);
+    Ok(header)
 }

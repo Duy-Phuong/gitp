@@ -65,7 +65,10 @@ fn plan_reorders_picks_rewords_squashes_and_drops() {
     for kept in ["f1.txt", "f2.txt", "f3.txt"] {
         assert!(fx.path().join(kept).exists(), "{kept} applied");
     }
-    assert!(!fx.path().join("f4.txt").exists(), "dropped commit not applied");
+    assert!(
+        !fx.path().join("f4.txt").exists(),
+        "dropped commit not applied"
+    );
     assert_eq!(repo.refs().unwrap().head.as_deref(), Some(main.as_str()));
 }
 
@@ -123,7 +126,10 @@ fn aborting_the_conflict_cancels_the_rest_of_the_plan() {
     fx.commit_file("a.txt", "main\n", "main change");
 
     let out = repo
-        .cherry_pick_plan(&[step(c1, PickAction::Pick, None), step(c2, PickAction::Pick, None)])
+        .cherry_pick_plan(&[
+            step(c1, PickAction::Pick, None),
+            step(c2, PickAction::Pick, None),
+        ])
         .unwrap();
     assert!(out.paused);
     repo.abort_conflict().unwrap();
@@ -142,7 +148,10 @@ fn a_plan_starting_with_a_squash_or_with_an_option_is_refused() {
     repo.checkout_branch(&main).unwrap();
 
     assert!(repo
-        .cherry_pick_plan(&[step(c1, PickAction::Drop, None), step(c2, PickAction::Squash, None)])
+        .cherry_pick_plan(&[
+            step(c1, PickAction::Drop, None),
+            step(c2, PickAction::Squash, None)
+        ])
         .is_err());
     let err = repo
         .cherry_pick_plan(&[PickStep {

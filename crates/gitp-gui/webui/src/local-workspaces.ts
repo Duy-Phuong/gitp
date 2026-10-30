@@ -91,6 +91,33 @@ export function folderName(path: string): string {
   return path.split("/").filter(Boolean).pop() ?? path;
 }
 
+// A row's name: the folder's, or "<repo> · <worktree folder>" for a linked
+// worktree, so it reads as part of its repository.
+export function repoLabel(path: string, worktreeOf: string | null | undefined): string {
+  return worktreeOf ? `${folderName(worktreeOf)} · ${folderName(path)}` : folderName(path);
+}
+
+// `paths` grouped by the repository they belong to (the same `commonDir`), in
+// order of first appearance; a path whose common dir isn't known is a group of
+// its own. Worktrees share their repository's objects and remote-tracking
+// refs, so a bulk fetch fetches each group once, from its first path.
+export function groupBySharedRepo(paths: string[], commonDir: (path: string) => string | undefined): string[][] {
+  const groups: string[][] = [];
+  const byDir = new Map<string, string[]>();
+  for (const p of paths) {
+    const dir = commonDir(p);
+    const group = dir ? byDir.get(dir) : undefined;
+    if (group) {
+      group.push(p);
+      continue;
+    }
+    const fresh = [p];
+    groups.push(fresh);
+    if (dir) byDir.set(dir, fresh);
+  }
+  return groups;
+}
+
 // A repo's state in a few characters: "↑2 ↓1 · 3 changed", "in sync",
 // "no upstream".
 export function summaryText(s: RepoSummary): string {

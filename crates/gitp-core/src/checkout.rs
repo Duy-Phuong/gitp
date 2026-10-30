@@ -14,6 +14,9 @@ pub struct StashSwitch {
     /// Re-applying the work on the new HEAD conflicted: the files carry
     /// conflict markers and the auto-stash is still on the stack (`stash@{0}`).
     pub stash_kept: bool,
+    /// What was staged couldn't be staged again on the new HEAD, so the work
+    /// came back all unstaged.
+    pub staging_lost: bool,
 }
 
 impl Repo {
@@ -136,8 +139,9 @@ impl Repo {
 
     /// Stash & Switch: put the uncommitted work (untracked files included)
     /// away as "Auto-stash before switching to <target>", run `switch`, then
-    /// pop the stash on the new HEAD — so local changes that would clash with
-    /// `target` no longer block the switch.
+    /// pop the stash on the new HEAD — staged and unstaged apart, as they were
+    /// — so local changes that would clash with `target` no longer block the
+    /// switch.
     ///
     /// The work is never left only in the stash without saying so: when the
     /// switch itself fails, the stash goes straight back onto the original
@@ -177,18 +181,33 @@ impl Repo {
             return Ok(StashSwitch {
                 output,
                 stash_kept: false,
+                staging_lost: false,
             });
         }
-        match self.run_git(&["stash", "pop"]) {
+        // `--index` stages again what was staged. When that part won't apply
+        // to the new HEAD's index, git refuses before touching anything
+        // ("Try without --index"; LC_ALL=C keeps that matchable), and a plain
+        // pop still brings the work back — all unstaged, which is reported.
+        let mut staging_lost = false;
+        let popped = match self.run_git_env(&["stash", "pop", "--index"], &[("LC_ALL", "C")]) {
+            Err(e) if e.to_string().contains("Try without --index") => {
+                staging_lost = true;
+                self.run_git(&["stash", "pop"])
+            }
+            other => other,
+        };
+        match popped {
             Ok(pop) => Ok(StashSwitch {
                 output: format!("{output}\n{pop}").trim().to_string(),
                 stash_kept: false,
+                staging_lost,
             }),
             // HEAD has moved, so this is still a switch: report the pop's
             // trouble alongside it rather than as a failure of the switch.
             Err(pop) => Ok(StashSwitch {
                 output: pop.to_string(),
                 stash_kept: self.stash_top() != before,
+                staging_lost,
             }),
         }
     }
@@ -198,8 +217,8 @@ impl Repo {
         self.inner.refname_to_id("refs/stash").ok()
     }
 
-    /// Refuse to move HEAD while a merge, rebase, cherry-pick or revert is
-    /// paused, as `git switch` does. git2's checkout (and `git checkout`) would
+    /// Refuse to move HEAD while a merge (squash included), rebase,
+    /// cherry-pick or revert is paused, as `git switch` does. git2's checkout (and `git checkout`) would
     /// switch anyway when the files happen not to clash: the pending merge then
     /// commits onto the new branch, and a continued rebase rewrites the branch
     /// switched to.
@@ -213,6 +232,8 @@ impl Repo {
             "a cherry-pick"
         } else if git_dir.join("REVERT_HEAD").exists() {
             "a revert"
+        } else if self.squash_pending() {
+            "a squash merge"
         } else {
             return Ok(());
         };

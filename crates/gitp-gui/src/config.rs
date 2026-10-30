@@ -31,7 +31,10 @@ fn unset_config_impl(state: &RepoState, scope: ConfigScope, name: String) -> Res
 // the first-run "Default" profile is read from it, and a profile switch can
 // write it with every tab closed.
 
-fn apply_local_identity_impl(state: &RepoState, identity: Identity) -> Result<bool, String> {
+fn apply_local_identity_impl(
+    state: &RepoState,
+    identity: Identity,
+) -> Result<Option<Identity>, String> {
     with_repo(state, |repo| repo.apply_local_identity(&identity))
 }
 
@@ -127,14 +130,25 @@ pub(crate) fn set_global_identity(identity: Identity) -> Result<(), String> {
     gitp_core::set_global_identity(&identity).map_err(to_message)
 }
 
-/// Write the profile's identity into the active repo's local config; true when
-/// it wasn't already there.
+/// Write the profile's identity into the active repo's local config; what was
+/// there before when it changed anything, so it can be restored.
 #[tauri::command(async)]
 pub(crate) fn apply_local_identity(
     identity: Identity,
     state: State<RepoState>,
-) -> Result<bool, String> {
+) -> Result<Option<Identity>, String> {
     apply_local_identity_impl(&state, identity)
+}
+
+/// Give the repo at `path` (open or not) back the identity it had before a
+/// profile's was applied there.
+#[tauri::command(async)]
+pub(crate) fn restore_local_identity(
+    path: String,
+    wrote: Identity,
+    previous: Identity,
+) -> Result<(), String> {
+    gitp_core::restore_local_identity(Path::new(&path), &wrote, &previous).map_err(to_message)
 }
 
 #[tauri::command(async)]

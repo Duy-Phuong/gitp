@@ -100,6 +100,20 @@ function focusDetailPane(): void {
   target.focus();
 }
 
+// Cmd/Ctrl+K opens Quick Launch. Deliberately live while typing in an input
+// too — the point of a palette is that it's always one keystroke away — but
+// not inside the embedded terminal or the conflict editor, where the key
+// belongs to what's focused, and not over a dialog: the Stash and Init / Clone
+// dialogs take any Enter as theirs, so the palette's Enter would run both.
+export function opensQuickLaunch(e: KeyboardEvent): boolean {
+  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return false;
+  // `e.target` is only an Element when something focusable has focus; with
+  // focus on the document itself there is nothing to defer to.
+  const t = e.target instanceof HTMLElement ? e.target : null;
+  if (t?.isContentEditable || t?.closest("#terminal-host")) return false;
+  return !document.querySelector(".modal-overlay");
+}
+
 // Cmd+Shift+] / [ only mean "next / previous tab" on a Mac.
 const IS_MAC = navigator.userAgent.includes("Mac");
 
@@ -121,16 +135,8 @@ export function setupShortcuts(): void {
     if (key === "y" || e.shiftKey) void redoAction();
     else void undoAction();
   });
-  // Cmd/Ctrl+K opens Quick Launch. Deliberately live while typing in an input
-  // too — the point of a palette is that it's always one keystroke away — but
-  // not inside the embedded terminal or the conflict editor, where the key
-  // belongs to what's focused.
   document.addEventListener("keydown", (e) => {
-    if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
-    // `e.target` is only an Element when something focusable has focus; with
-    // focus on the document itself there is nothing to defer to.
-    const t = e.target instanceof HTMLElement ? e.target : null;
-    if (t?.isContentEditable || t?.closest("#terminal-host")) return;
+    if (!opensQuickLaunch(e)) return;
     e.preventDefault();
     openQuickLaunch();
   });

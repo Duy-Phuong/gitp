@@ -374,6 +374,10 @@ pub(crate) fn with_recorded_files(
         .iter()
         .map(|p| session.repo.read_workfile(p))
         .collect();
+    let before_modes: Vec<Option<u32>> = paths
+        .iter()
+        .map(|p| session.repo.workfile_mode(p))
+        .collect();
     let index_before = session.repo.snapshot_index(&before_slot).ok().flatten();
     if let Err(e) = f(&session.repo) {
         remove_snapshot(index_before.as_ref());
@@ -386,12 +390,18 @@ pub(crate) fn with_recorded_files(
         .map(|p| session.repo.read_workfile(p))
         .collect();
     let mut files = Vec::with_capacity(paths.len());
-    for (path, (before, after)) in paths.iter().zip(befores.into_iter().zip(afters)) {
+    for ((path, before_mode), (before, after)) in paths
+        .iter()
+        .zip(before_modes)
+        .zip(befores.into_iter().zip(afters))
+    {
         match (before, after) {
             (Ok(before), Ok(after)) => files.push(FileBlob {
                 path: path.clone(),
                 before,
                 after,
+                before_mode,
+                after_mode: session.repo.workfile_mode(path),
             }),
             _ => {
                 remove_snapshot(index_before.as_ref());
@@ -815,17 +825,27 @@ mod tests {
 
         std::fs::write(dir.path().join("f.txt"), "resolved\n").unwrap();
         git(dir.path(), &["add", "f.txt"]);
-        git(dir.path(), &["-c", "core.editor=true", "cherry-pick", "--continue"]);
+        git(
+            dir.path(),
+            &["-c", "core.editor=true", "cherry-pick", "--continue"],
+        );
         let out = continue_cherry_pick_plan_impl(&state).unwrap();
         assert!(!out.paused);
-        assert!(dir.path().join("g.txt").exists(), "s2 applied after the pause");
+        assert!(
+            dir.path().join("g.txt").exists(),
+            "s2 applied after the pause"
+        );
         assert_eq!(
             undo_state_impl(&state).unwrap().undo.as_deref(),
             Some("Cherry-pick")
         );
 
         undo_impl(&state).expect("undo");
-        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), start, "both picks undone");
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "HEAD"]),
+            start,
+            "both picks undone"
+        );
     }
 
     #[test]
@@ -1028,7 +1048,10 @@ mod tests {
         reset_impl(&state, "HEAD~1".into(), ResetMode::Hard).expect("hard reset");
         let f = std::fs::read_to_string(dir.path().join("f.txt")).unwrap();
         assert_eq!(f, "line 0\n", "the edit is gone");
-        assert_eq!(undo_state_impl(&state).unwrap().undo.as_deref(), Some("Reset"));
+        assert_eq!(
+            undo_state_impl(&state).unwrap().undo.as_deref(),
+            Some("Reset")
+        );
 
         undo_impl(&state).expect("undo hard reset");
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), c2);

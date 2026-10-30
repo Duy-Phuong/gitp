@@ -35,6 +35,7 @@ import { copyText } from "./clipboard";
 import { combinedDiffEnds, showComparison } from "./compare";
 import { refLabelsAt } from "./commit-refs";
 import { askSwitchWithChanges, reportStashSwitch } from "./stash-switch";
+import { newWorktreeAtAction } from "./worktree-actions";
 import {
   bisectStep,
   clearCommitSelection,
@@ -405,6 +406,7 @@ export function onCommitContextMenu(row: CommitRow, x: number, y: number): void 
     checkoutCommit: () => void checkoutCommitAction(rev, short),
     newBranch: (name) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
     newTag: () => newTagAction(rev, short),
+    newWorktree: () => newWorktreeAtAction(rev, short),
     cherryPick: () => void runCommitOp(`Cherry-picking ${short}`, () => cherryPick(rev)),
     revert: () => void runCommitOp(`Reverting ${short}`, () => revertCommit(rev)),
     reset: (mode) => void resetAction(rev, short, mode),
@@ -524,8 +526,9 @@ export async function resetAction(rev: string, short: string, mode: ResetMode): 
   const question =
     mode === "Hard"
       ? `Hard reset the current branch to ${short}?\n\n` +
-        "Uncommitted changes and any commits after it on this branch will be discarded. " +
-        "gitp saves the uncommitted changes first, so Undo can bring them back along with the commits."
+        "Uncommitted changes to tracked files and any commits after it on this branch will be " +
+        "discarded; untracked files are left alone. gitp saves those changes first, staged and " +
+        "unstaged, so Undo can bring them back along with the commits."
       : `${mode} reset the current branch to ${short}?`;
   await confirmThenRun(question, `Resetting (${mode.toLowerCase()}) to ${short}`, () =>
     resetTo(rev, mode),

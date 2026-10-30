@@ -48,14 +48,15 @@ import {
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
-import { setAuthorFilter, setOnGhostCheckout, setOnMoreRefs, setOnOpenWip, setStashHandlers } from "./views/log";
+import { setAuthorFilter, setOnGhostCheckout, setOnMoreRefs, setOnOpenWip, setStashHandlers, setWorktreeHandlers } from "./views/log";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
-import { authorsOf, authorTerm, withAuthorTerm } from "./log-columns";
+import { authorsOf, authorSearchValue, authorTerm, withAuthorTerm } from "./log-columns";
 import { setupBranchHover } from "./branch-hover";
 import { setupChanges } from "./views/changes";
 import { setupConflict } from "./views/conflict";
 import { setupReflog } from "./views/reflog";
 import { setupActivity } from "./views/activity";
+import { setupPullRequestView } from "./views/pull-request";
 import { copyText } from "./clipboard";
 import { state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus, watchNetwork, watchPending } from "./report";
@@ -127,9 +128,17 @@ import {
   resumeCherryPickPlan,
   runNextCherryPick,
 } from "./commit-actions";
-import { onWorktreeMenu } from "./worktree-actions";
-import { addRemoteAction, onRemoteFolderMenu, onRemotesMenu } from "./remote-actions";
+import { onWorktreeDrop, onWorktreeMenu, openWorktreeWip } from "./worktree-actions";
+import { addRemoteAction, onRemoteFolderMenu } from "./remote-actions";
 import { addSubmoduleAction, onSubmoduleMenu, openSubmodule } from "./submodule-actions";
+import {
+  loadPullRequests,
+  onPrMenu,
+  pullRequestCallbacks,
+  refreshPullRequests,
+  setPrFilter,
+  signInToGitHub,
+} from "./pr-actions";
 import { createFileAction, editFileAction } from "./editor-actions";
 import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
@@ -245,7 +254,7 @@ function openAuthorFilterMenu(x: number, y: number): void {
   ];
   for (const a of authorsOf(state.rows).slice(0, AUTHOR_MENU_CAP)) {
     // By email where there is one: a name can be part of someone else's.
-    const value = a.email || a.name;
+    const value = authorSearchValue(a.email || a.name);
     const on = value.toLowerCase() === current;
     items.push({ label: `${on ? "✓ " : ""}${a.name} (${a.commits})`, run: () => apply(on ? null : value) });
   }
@@ -277,6 +286,7 @@ async function init(): Promise<void> {
   // rows live in modules built on top of it, so they are plugged in from here.
   setOnMoreRefs(onMoreRefsMenu);
   setOnOpenWip(() => showView("changes"));
+  setWorktreeHandlers({ wip: (row) => void openWorktreeWip(row), open: (path) => void loadRepo(path) });
   setAuthorFilter({ active: authorFilterActive, open: openAuthorFilterMenu });
   setOnGhostCheckout((name) => {
     const b = state.refs.branches.find((x) => x.name === name);
@@ -292,16 +302,21 @@ async function init(): Promise<void> {
     onStashMenu,
     onRemoteMenu,
     onAddRemote: addRemoteAction,
-    onRemotesMenu,
     onRemoteFolderMenu,
     onTagMenu,
     onCommitContextMenu,
     onWorktreeMenu,
+    onWorktreeDrop,
     onSubmoduleOpen: openSubmodule,
     onSubmoduleMenu,
     onAddSubmodule: addSubmoduleAction,
     createBranchAt: (name, rev) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
     onSectionMenu,
+    loadPullRequests: () => void loadPullRequests(),
+    onPrMenu,
+    onPrFilter: setPrFilter,
+    onPrRefresh: refreshPullRequests,
+    onGitHubSignIn: () => void signInToGitHub(),
   });
   applyTheme(currentTheme());
   void applyZoom(loadZoom());
@@ -446,6 +461,7 @@ async function init(): Promise<void> {
     onMenu: onReflogMenu,
     reportError: readFailed,
   });
+  ui.prView = setupPullRequestView($("#pr-view"), pullRequestCallbacks);
   ui.activityView = setupActivity($("#activity-view"), {
     fetch: fetchActivityLog,
     clear: clearActivityLog,

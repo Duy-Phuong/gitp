@@ -174,6 +174,8 @@ fn undo_discard_restores_the_file_content() {
             path: "a.txt".into(),
             before,
             after,
+            before_mode: None,
+            after_mode: None,
         }],
         index_before: None,
         index_after: None,
@@ -207,6 +209,8 @@ fn undo_discard_of_a_new_file_recreates_and_removes_it() {
             path: "new.txt".into(),
             before,
             after,
+            before_mode: None,
+            after_mode: None,
         }],
         index_before: None,
         index_after: None,
@@ -643,6 +647,8 @@ fn stale_index_and_discard_snapshots_are_detected() {
             path: "a.txt".into(),
             before: Some(b"edited\n".to_vec()),
             after: Some(b"one\n".to_vec()),
+            before_mode: None,
+            after_mode: None,
         }],
         index_before: None,
         index_after: None,
@@ -823,6 +829,8 @@ fn undo_of_a_discard_restores_the_staged_part_too() {
             path: "a.txt".into(),
             before,
             after,
+            before_mode: None,
+            after_mode: None,
         }],
         index_before,
         index_after,
@@ -1023,6 +1031,74 @@ fn hard_reset_undo_restores_the_commits_and_the_exact_uncommitted_work() {
     assert_eq!(porcelain(&fx), work);
 }
 
+/// `git <args>` output in the fixture repo (test helper).
+fn git_out(fx: &FixtureRepo, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .current_dir(fx.path())
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
+// The staging area is work too: a file staged at one version and edited to
+// another must come back split the same way, and a staged new file that is no
+// longer on disk exists only in the index.
+#[test]
+fn hard_reset_undo_restores_the_staged_and_unstaged_split() {
+    let fx = FixtureRepo::init();
+    let c1 = fx.commit_file("f.txt", "v1\n", "c1").to_string();
+    let c2 = fx.commit_file("g.txt", "g\n", "c2").to_string();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    std::fs::write(fx.path().join("f.txt"), "v2\n").unwrap();
+    std::fs::write(fx.path().join("s.txt"), "staged, then deleted\n").unwrap();
+    std::fs::write(fx.path().join("t.txt"), "staged new\n").unwrap();
+    git_out(&fx, &["add", "f.txt", "s.txt", "t.txt"]);
+    std::fs::write(fx.path().join("f.txt"), "v3\n").unwrap();
+    std::fs::remove_file(fx.path().join("s.txt")).unwrap();
+    // Untracked: a hard reset leaves it alone, so it isn't backed up.
+    std::fs::write(fx.path().join("u.txt"), "untracked\n").unwrap();
+    let work = porcelain(&fx);
+    let index = git_out(&fx, &["ls-files", "-s"]);
+    assert_eq!(work, "?? u.txt\nA  t.txt\nAD s.txt\nMM f.txt");
+
+    let backup = repo
+        .backup_uncommitted_work()
+        .unwrap()
+        .expect("work to save");
+    let saved = git_out(&fx, &["ls-tree", "-r", "--name-only", &backup]);
+    assert!(
+        !saved.contains("u.txt"),
+        "untracked files stay out: {saved}"
+    );
+    repo.reset(&c1, ResetMode::Hard).unwrap();
+    let action = head_moved(&c2, &c1, HeadMoveMode::Keep, Some(backup));
+
+    repo.undo(&action).unwrap();
+    assert_eq!(repo.head_commit_id().unwrap(), c2);
+    assert_eq!(porcelain(&fx), work);
+    assert_eq!(
+        git_out(&fx, &["ls-files", "-s"]),
+        index,
+        "the index exactly"
+    );
+    assert_eq!(git_out(&fx, &["show", ":f.txt"]), "v2\n");
+    assert_eq!(read(&fx, "f.txt").as_deref(), Some("v3\n"));
+
+    repo.redo(&action).unwrap();
+    assert_eq!(repo.head_commit_id().unwrap(), c1);
+    assert_eq!(porcelain(&fx), "?? u.txt");
+    repo.undo(&action).unwrap();
+    assert_eq!(porcelain(&fx), work);
+    assert_eq!(git_out(&fx, &["ls-files", "-s"]), index);
+}
+
 #[test]
 fn hard_reset_undo_refuses_to_overwrite_work_done_since() {
     let fx = FixtureRepo::init();
@@ -1061,6 +1137,9 @@ fn no_backup_without_uncommitted_work_and_old_backups_are_pruned() {
         None,
         "ignored files don't count"
     );
+    // Nor untracked ones: a hard reset leaves them where they are.
+    std::fs::write(fx.path().join("untracked.txt"), "x\n").unwrap();
+    assert_eq!(repo.backup_uncommitted_work().unwrap(), None);
 
     std::fs::write(fx.path().join("a.txt"), "edited\n").unwrap();
     for _ in 0..22 {

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { activityText, exitText, formatDuration, mergeActivity } from "./activity";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { activityText, exitText, formatDuration, mergeActivity, setupActivity } from "./activity";
 import type { ActivityEntry } from "../types";
 
 function entry(id: number, over: Partial<ActivityEntry> = {}): ActivityEntry {
@@ -62,5 +62,75 @@ describe("activityText", () => {
 
   it("says when git was stopped rather than exiting", () => {
     expect(exitText(entry(1, { exit_code: null, success: false }))).toMatch(/^stopped/);
+  });
+});
+
+// Just enough DOM for setupActivity to build its toolbar and list in node.
+class FakeNode {
+  children: FakeNode[] = [];
+  textContent = "";
+  className = "";
+  checked = false;
+  scrollTop = 0;
+  private listeners = new Map<string, () => void>();
+  setAttribute(): void {}
+  append(...nodes: FakeNode[]): void {
+    this.children.push(...nodes);
+  }
+  replaceChildren(): void {
+    this.children = [];
+  }
+  addEventListener(type: string, fn: () => void): void {
+    this.listeners.set(type, fn);
+  }
+  fire(type: string): void {
+    this.listeners.get(type)?.();
+  }
+  find(text: string): FakeNode | undefined {
+    if (this.textContent === text) return this;
+    for (const c of this.children) {
+      const hit = c.find(text);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+}
+
+describe("setupActivity", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("doesn't start polling again when Clear finishes after the view was left", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("document", {
+      createElement: () => new FakeNode(),
+      createTextNode: (text: string) => Object.assign(new FakeNode(), { textContent: text }),
+    });
+    vi.stubGlobal("window", {
+      setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
+      clearTimeout: (id: number) => clearTimeout(id),
+    });
+    let finishClear = () => {};
+    const fetch = vi.fn(async () => [] as ActivityEntry[]);
+    const host = new FakeNode();
+    const view = setupActivity(host as unknown as HTMLElement, {
+      fetch,
+      clear: () => new Promise<void>((resolve) => (finishClear = resolve)),
+      copy: () => {},
+      reportError: () => {},
+    });
+
+    view.start();
+    await vi.advanceTimersByTimeAsync(0);
+    host.find("Clear")!.fire("click");
+    view.stop(); // the user moved to another view while Clear was on its way
+    finishClear();
+    await vi.advanceTimersByTimeAsync(0);
+    const calls = fetch.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(fetch.mock.calls.length).toBe(calls);
   });
 });

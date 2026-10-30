@@ -1,13 +1,26 @@
 // Left sidebar: repo header, the Local Changes / All Commits / Reflog / Activity nav, a filter box,
-// and a collapsible ref tree (Branches, Remotes, Tags, Stashes).
+// and a collapsible ref tree (Branches, Remotes, Pull Requests, Tags, Stashes).
 //
 // Rendered as a pure function of state + callbacks; main.ts owns the state
 // (filter text, which sections/folders are collapsed) and re-renders on change.
 
-import { chevronIcon, clear, el, svg } from "../dom";
+import { chevronIcon, clear, el, githubIcon, svg } from "../dom";
+import { PR_FILTERS, prMatches, reviewDecisionLabel } from "../pull-requests";
 import { branchRefName, refShown, remoteRefName, tagRefName, type RefFilter } from "../ref-visibility";
-import { refDragHandle } from "./ref-drag";
-import type { BranchRef, Refs, RemoteInfo, StashRef, Submodule, Worktree } from "../types";
+import { refDragHandle, refDropZone } from "./ref-drag";
+import type { DragRef } from "../ref-drop";
+import type {
+  BranchRef,
+  GhAccount,
+  PrFilter,
+  PullRequest,
+  Refs,
+  RemoteInfo,
+  StashRef,
+  Submodule,
+  Worktree,
+  WorktreeSummary,
+} from "../types";
 
 export type SidebarView = "history" | "changes" | "reflog" | "activity";
 
@@ -16,7 +29,7 @@ export interface SidebarState {
   localChanges: number;
   repoName: string;
   // "config" (or anything not matching a nav row) leaves both nav rows unhighlighted.
-  activeView: SidebarView | "config";
+  activeView: SidebarView | "config" | "pr";
   filter: string;
   collapsed: Set<string>;
   // Cmd/Shift-click multi-selection, Local Branches only (bulk delete is the
@@ -30,9 +43,12 @@ export interface SidebarState {
   // a slow fetch is visibly in progress where the user started it rather than
   // only in the status bar.
   busyRefs: Set<string>;
-  // The repo's worktrees, main first. The section shows only when there's a
-  // linked one beside the main worktree.
+  // The repo's worktrees, main first. The section always shows, so a branch
+  // can be dragged onto it to add one.
   worktrees: Worktree[];
+  // Each worktree's changed-file count and ahead/behind, by path; arrives
+  // after the rest of the sidebar (empty until then, and with one worktree).
+  worktreeSummaries: WorktreeSummary[];
   // The repo's submodules. The section always shows, for its "+" (Add).
   submodules: Submodule[];
   // The configured remotes, listed in Remotes even before any branch of
@@ -42,6 +58,25 @@ export interface SidebarState {
   pinned: string | null;
   // The refs hidden from or soloed in the graph: their rows are dimmed.
   visibility: RefFilter;
+  prs: PrSectionState;
+}
+
+// The Pull Requests section, loaded through the user's `gh` (see
+// pr-actions.ts). Shown only for a repository with a GitHub remote.
+export interface PrSectionState {
+  // The repo it was loaded for; a tab switch loads it again.
+  repoPath: string;
+  // The repo's GitHub repository ("owner/name"); null hides the section.
+  repo: string | null;
+  // gh's account; null until known. App-wide: gh has one login per machine.
+  account: GhAccount | null;
+  filter: PrFilter;
+  // null until the first list arrives.
+  list: PullRequest[] | null;
+  loading: boolean;
+  error: string | null;
+  // The pull request the PR view shows: its row is highlighted.
+  open: number | null;
 }
 
 export interface SidebarCallbacks {
@@ -67,8 +102,6 @@ export interface SidebarCallbacks {
   onRemoteMenu: (name: string, target: string, x: number, y: number) => void;
   // The "+" on the Remotes header: add a remote.
   onAddRemote: () => void;
-  // Right-click the Remotes header.
-  onRemotesMenu: (x: number, y: number) => void;
   // Right-click a remote's folder row: edit, rename, remove, fetch it.
   onRemoteFolderMenu: (remote: string, x: number, y: number) => void;
   // Right-click a tag: open its actions menu at the cursor.
@@ -77,6 +110,8 @@ export interface SidebarCallbacks {
   onWorktreeOpen: (w: Worktree) => void;
   // Right-click a worktree: open its actions menu at the cursor.
   onWorktreeMenu: (w: Worktree, x: number, y: number) => void;
+  // A branch dropped on the Worktrees header: add a worktree for it.
+  onWorktreeDrop: (src: DragRef) => void;
   // Double-click a submodule: open it as a repo tab.
   onSubmoduleOpen: (sm: Submodule) => void;
   // Right-click a submodule: open its actions menu at the cursor.
@@ -88,6 +123,14 @@ export interface SidebarCallbacks {
   onSectionMenu: (key: string, x: number, y: number) => void;
   // The Submodules header's "+": add one.
   onAddSubmodule: () => void;
+  // Click a pull request: open it in the pull request view.
+  onPrOpen: (pr: PullRequest) => void;
+  // Right-click a pull request: check out, open on GitHub, copy.
+  onPrMenu: (pr: PullRequest, x: number, y: number) => void;
+  onPrFilter: (filter: PrFilter) => void;
+  // The Pull Requests header's refresh: the account and the list again.
+  onPrRefresh: () => void;
+  onGitHubSignIn: () => void;
 }
 
 export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCallbacks): void {
@@ -126,6 +169,7 @@ export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCal
   buildRecent(tree, s, cb, match);
   buildBranches(tree, s, cb, match, filtering);
   buildRemotes(tree, s, cb, match, filtering);
+  buildPullRequests(tree, s, cb, match);
   buildTags(tree, s, cb, match, filtering);
   buildStashes(tree, s, cb, match);
   buildWorktrees(tree, s, cb, match);
@@ -457,10 +501,6 @@ function buildRemotes(
     cb.onAddRemote();
   });
   row.append(add);
-  row.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    cb.onRemotesMenu(e.clientX, e.clientY);
-  });
   tree.append(row);
   if (collapsed) return;
 
@@ -494,6 +534,94 @@ function buildRemotes(
       }
     }
   }
+}
+
+// The repo's open GitHub pull requests: who gh is signed in as in the header,
+// the All / Created by me / Review requested filter, then one row each. In
+// place of the list, how to install gh or a Sign In button when it can't be
+// had.
+function buildPullRequests(
+  tree: HTMLElement,
+  s: SidebarState,
+  cb: SidebarCallbacks,
+  match: (t: string) => boolean,
+): void {
+  const p = s.prs;
+  if (!p.repo) return;
+  const { row, collapsed } = sectionHeader("sec:prs", "Pull Requests", s, cb);
+  const account = p.account;
+  if (account?.installed) {
+    const who = el("span", {
+      class: `sb-pr-account${account.signed_in ? "" : " off"}`,
+      title: account.signed_in ? `Signed in to GitHub as ${account.login} (through gh)` : "gh is not signed in to GitHub",
+    });
+    who.append(githubIcon(), document.createTextNode(account.signed_in ? (account.login ?? "") : "Not signed in"));
+    row.append(who);
+  }
+  const refresh = el("button", { class: "sb-section-add", text: "⟳", title: `Refresh pull requests of ${p.repo}` });
+  refresh.addEventListener("click", (e) => {
+    e.stopPropagation(); // not a collapse toggle
+    cb.onPrRefresh();
+  });
+  row.append(refresh);
+  tree.append(row);
+  if (collapsed) return;
+
+  const note = (text: string, cls = "") => tree.append(el("div", { class: `sb-note ${cls}`.trim(), text }));
+  if (!account) return note("Checking GitHub…");
+  if (!account.installed) return note("Install the GitHub CLI to see pull requests: brew install gh");
+  if (!account.signed_in) {
+    const signIn = el("button", { class: "btn small", text: "Sign in to GitHub" });
+    signIn.addEventListener("click", () => cb.onGitHubSignIn());
+    tree.append(el("div", { class: "sb-pr-signin" }, [signIn]));
+    if (account.message) note(account.message, "sb-pr-error");
+    return;
+  }
+
+  const filters = el("div", { class: "seg-toggle sb-pr-filters", role: "group" });
+  for (const f of PR_FILTERS) {
+    const b = el("button", { class: f.value === p.filter ? "seg active" : "seg", text: f.label });
+    b.addEventListener("click", () => cb.onPrFilter(f.value));
+    filters.append(b);
+  }
+  tree.append(filters);
+  if (p.error) note(p.error, "sb-pr-error");
+  if (!p.list) return void (p.loading && note("Loading…"));
+  const shown = p.list.filter((pr) => prMatches(pr, match));
+  if (shown.length === 0) note(p.list.length ? "No matches" : "No open pull requests");
+  for (const pr of shown) tree.append(prLeaf(pr, p.open === pr.number && s.activeView === "pr", cb));
+}
+
+// A pull request: its checks as a dot, number and title, draft and review
+// badges, and its author. Click opens it, right-click its menu.
+function prLeaf(pr: PullRequest, open: boolean, cb: SidebarCallbacks): HTMLElement {
+  const review = reviewDecisionLabel(pr.review_decision);
+  const row = el("div", {
+    class: `sb-leaf indent sb-pr${open ? " head" : ""}`,
+    title: [
+      `#${pr.number} ${pr.title}`,
+      `${pr.author} · ${pr.base} ← ${pr.head}`,
+      [pr.is_draft ? "draft" : null, review, pr.checks ? `checks: ${pr.checks}` : null].filter(Boolean).join(" · "),
+      "Click: open · Right-click: actions",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  });
+  row.append(
+    el("span", { class: `sb-pr-checks ${pr.checks ?? "none"}` }),
+    el("span", { class: "sb-leaf-label", text: `#${pr.number} ${pr.title}` }),
+  );
+  if (pr.is_draft) row.append(el("span", { class: "sb-badge", text: "draft" }));
+  if (review && pr.review_decision !== "REVIEW_REQUIRED") {
+    row.append(el("span", { class: `sb-badge review-${pr.review_decision!.toLowerCase()}`, text: review }));
+  }
+  row.append(el("span", { class: "sb-ab", text: pr.author }));
+  row.addEventListener("click", () => cb.onPrOpen(pr));
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    cb.onPrMenu(pr, e.clientX, e.clientY);
+  });
+  return row;
 }
 
 // Tags fold on `/` the same way branches and remotes do, so a repo that names
@@ -581,26 +709,29 @@ export function siblingWorktreePath(mainPath: string, branch: string): string {
   return `../${repo}-${branch.replace(/\//g, "-")}`;
 }
 
-// Linked worktrees, each by folder name with what it has checked out. Hidden
-// when the main worktree is the only one, which is nearly every repo.
+// The worktrees, each by folder name with what it has checked out. The header
+// takes a dropped branch, to add a worktree for it.
 function buildWorktrees(
   tree: HTMLElement,
   s: SidebarState,
   cb: SidebarCallbacks,
   match: (t: string) => boolean,
 ): void {
-  if (s.worktrees.length < 2) return;
   const { row, collapsed } = sectionHeader("sec:worktrees", "Worktrees", s, cb);
+  row.title = "Drop a branch here: add a worktree for it";
+  refDropZone(row, cb.onWorktreeDrop);
   tree.append(row);
   if (collapsed) return;
+  const summaries = new Map(s.worktreeSummaries.map((x) => [x.path, x]));
   for (const w of s.worktrees) {
-    if (match(worktreeName(w)) || match(w.branch ?? "")) tree.append(worktreeLeaf(w, cb));
+    if (match(worktreeName(w)) || match(w.branch ?? "")) tree.append(worktreeLeaf(w, summaries.get(w.path), cb));
   }
 }
 
 // A worktree: click jumps to its commit, double-click opens it as a tab,
 // right-click opens its menu. The current one is accented like HEAD's branch.
-function worktreeLeaf(w: Worktree, cb: SidebarCallbacks): HTMLElement {
+// `sum`: its changed-file count and ahead/behind, once known.
+function worktreeLeaf(w: Worktree, sum: WorktreeSummary | undefined, cb: SidebarCallbacks): HTMLElement {
   const checkedOut = w.branch ?? (w.head ? `detached ${w.head.slice(0, 7)}` : "");
   const notes = [
     w.is_main ? "main worktree" : null,
@@ -614,7 +745,15 @@ function worktreeLeaf(w: Worktree, cb: SidebarCallbacks): HTMLElement {
   row.append(el("span", { class: "sb-leaf-label", text: worktreeName(w) }));
   if (w.locked) row.append(el("span", { class: "sb-badge", text: "locked" }));
   if (w.prunable) row.append(el("span", { class: "sb-badge", text: "missing" }));
+  if (sum?.changed) {
+    const title = `${sum.changed} uncommitted change${sum.changed === 1 ? "" : "s"}`;
+    row.append(el("span", { class: "sb-badge wt-changes", text: `✎ ${sum.changed}`, title }));
+  }
   if (checkedOut) row.append(el("span", { class: "sb-ab", text: checkedOut }));
+  const ab: string[] = [];
+  if (sum?.behind) ab.push(`${sum.behind}↓`);
+  if (sum?.ahead) ab.push(`${sum.ahead}↑`);
+  if (ab.length) row.append(el("span", { class: "sb-ab", text: ab.join(" "), title: "Behind / ahead of its upstream" }));
 
   let clickTimer: number | undefined;
   row.addEventListener("click", () => {

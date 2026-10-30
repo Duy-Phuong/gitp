@@ -114,9 +114,39 @@ describe("branchReach", () => {
     expect(state.rows.filter((r) => on(r.id)).map((r) => r.id)).toEqual(["base"]);
   });
 
+  it("answers a remote branch's rows in any order", () => {
+    // The walk goes only as far down as asked: a deep row first, then one
+    // above it, must give what a full walk would.
+    state.rows = [commit("x", ["a"]), commit("a", ["b"]), commit("y", ["c"]), commit("b", ["c"]), commit("c", [])];
+    state.refs = { ...EMPTY_REFS, remotes: [{ remote: "origin", name: "origin/a", target: "a" }] };
+    rebuildCommitRefs();
+    const on = branchReach({ kind: "remote", name: "origin/a" })!;
+    expect(on("c")).toBe(true);
+    expect(on("x")).toBe(false);
+    expect(on("y")).toBe(false);
+    expect(on("b")).toBe(true);
+    expect(on("a")).toBe(true);
+  });
+
   it("never fades a commit outside the loaded log", () => {
     loadGraph();
     expect(branchReach({ kind: "local", name: "feature" })!("elsewhere")).toBe(true);
+  });
+
+  it("follows the refs as they are rebuilt while the branch stays hovered", () => {
+    loadGraph();
+    const remote = branchReach({ kind: "remote", name: "origin/feature" })!;
+    const local = branchReach({ kind: "local", name: "feature" })!;
+    // A fetch brings origin/feature up to f1; a new branch ahead of feature in
+    // the list shifts feature's containment bit.
+    state.refs = {
+      ...state.refs,
+      branches: [branch("main", "m2", true), branch("aaa", "m1"), branch("feature", "f1")],
+      remotes: [{ remote: "origin", name: "origin/feature", target: "f1" }],
+    };
+    expect(rebuildCommitRefs()).toBe(true);
+    expect(state.rows.filter((r) => remote(r.id)).map((r) => r.id)).toEqual(["f1", "base"]);
+    expect(state.rows.filter((r) => local(r.id)).map((r) => r.id)).toEqual(["f1", "base"]);
   });
 
   it("fades every loaded commit for a branch whose tip isn't loaded", () => {

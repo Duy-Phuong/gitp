@@ -29,6 +29,7 @@ import {
   bisectMark,
   bisectReset,
   listWorktrees,
+  worktreeSummaries,
   listSubmodules,
   listRemotes,
   gitflowConfig,
@@ -36,7 +37,8 @@ import {
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el, $ } from "./dom";
-import { logRowTop, renderLog, setBisectMarks, setLogColumnsRepo, setStashNodes, setWipRow } from "./views/log";
+import { logRowTop, renderLog, setBisectMarks, setLogColumnsRepo, setOtherWipRows, setStashNodes, setWipRow, setWorktreeBranches } from "./views/log";
+import { branchesElsewhere, otherWipRows } from "./worktree-wip";
 import { bisectBannerText } from "./bisect-text";
 import { closeCommitMenu } from "./views/commit-menu";
 import { showContextMenu, showPrompt } from "./views/context-menu";
@@ -65,7 +67,7 @@ import { rebuildCommitRefs, refLabelsAt } from "./commit-refs";
 import { refreshConfig } from "./config-panel";
 import { refreshActionButtons } from "./toolbar";
 import { cancelComparison, compareSelectedCommits, showComparison } from "./compare";
-import { cycledTabIndex } from "./tab-order";
+import { tabCycler } from "./tab-order";
 import { applyProfileIdentityHere } from "./profile-menu";
 
 // What a ref or commit row does when it's right-clicked (or, for a branch,
@@ -77,17 +79,24 @@ interface RefActions {
   onStashMenu: SidebarCallbacks["onStashMenu"];
   onRemoteMenu: SidebarCallbacks["onRemoteMenu"];
   onAddRemote: SidebarCallbacks["onAddRemote"];
-  onRemotesMenu: SidebarCallbacks["onRemotesMenu"];
   onRemoteFolderMenu: SidebarCallbacks["onRemoteFolderMenu"];
   onTagMenu: SidebarCallbacks["onTagMenu"];
   onCommitContextMenu: (row: CommitRow, x: number, y: number) => void;
   onWorktreeMenu: SidebarCallbacks["onWorktreeMenu"];
+  onWorktreeDrop: SidebarCallbacks["onWorktreeDrop"];
   onSubmoduleOpen: SidebarCallbacks["onSubmoduleOpen"];
   onSubmoduleMenu: SidebarCallbacks["onSubmoduleMenu"];
   onAddSubmodule: SidebarCallbacks["onAddSubmodule"];
   // The detached-HEAD banner's "Create Branch Here…".
   createBranchAt: (name: string, rev: string) => void;
   onSectionMenu: SidebarCallbacks["onSectionMenu"];
+  // The Pull Requests section: (re)load it for the active repo, and its rows'
+  // and header's actions.
+  loadPullRequests: () => void;
+  onPrMenu: SidebarCallbacks["onPrMenu"];
+  onPrFilter: SidebarCallbacks["onPrFilter"];
+  onPrRefresh: SidebarCallbacks["onPrRefresh"];
+  onGitHubSignIn: SidebarCallbacks["onGitHubSignIn"];
 }
 
 let refActions: RefActions;
@@ -170,6 +179,9 @@ function resetRepoViews(): void {
   ui.conflictView?.reset();
   ui.reflogView?.reset();
   ui.activityView?.reset();
+  ui.prView?.reset();
+  // The account is gh's, the same in every repo; the rest is this repo's.
+  state.prs = { ...state.prs, repoPath: "", repo: null, list: null, loading: false, error: null, open: null };
   ui.pendingCherryPicks = [];
   ui.pickPlanRepo = "";
   conflictPrefill = null;
@@ -243,11 +255,9 @@ async function moveRepoTab(path: string, to: number): Promise<void> {
 }
 
 // Ctrl+Tab / Ctrl+Shift+Tab: the next or previous tab, wrapping around.
+const cycleTabs = tabCycler(() => state.repoPath, switchRepo);
 export function cycleRepoTab(step: 1 | -1): void {
-  const n = state.repos.length;
-  if (n < 2) return;
-  const i = state.repos.findIndex((r) => r.path === state.repoPath);
-  void switchRepo(state.repos[cycledTabIndex(n, Math.max(i, 0), step)].path);
+  cycleTabs(state.repos.map((r) => r.path), step);
 }
 
 export async function switchRepo(path: string): Promise<void> {
@@ -275,6 +285,7 @@ export async function closeRepoTab(path: string): Promise<void> {
       state.selectedId = null;
       state.refs = EMPTY_REFS;
       state.worktrees = [];
+      state.worktreeSummaries = [];
       state.submodules = [];
       state.gitflow = null;
       state.lfs = null;
@@ -286,6 +297,8 @@ export async function closeRepoTab(path: string): Promise<void> {
       state.bisect = null;
       setBisectMarks(null);
       setWipRow(0, null);
+      setOtherWipRows([]);
+      setWorktreeBranches(new Map());
       ui.undoLabels = { undo: null, redo: null };
       renderRebaseBanner();
       renderConflictBanner();
@@ -655,6 +668,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   $("#config-view").classList.toggle("hidden", view !== "config");
   $("#conflict-view").classList.toggle("hidden", view !== "conflict");
   $("#activity-view").classList.toggle("hidden", view !== "activity");
+  $("#pr-view").classList.toggle("hidden", view !== "pr");
   // The Reflog lists in the log's place and shares History's detail pane.
   $("#log-col").classList.toggle("hidden", view === "reflog");
   $("#reflog-col").classList.toggle("hidden", view !== "reflog");
@@ -698,6 +712,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
   let marksChanged = false;
   let wipChanged = false;
   let stashesChanged = false;
+  let worktreesChanged = false;
   try {
     // Worktrees, submodules and remotes are separate, cheap reads; failing one
     // only hides its section (or, for remotes, the never-fetched ones).
@@ -717,6 +732,12 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     if (opts.abortIfBusy && operationInFlight()) return;
     state.refs = snap.refs;
     state.worktrees = worktrees;
+    // The cached counts, re-joined to the new list at once, so a removed
+    // worktree's row (or another repo's, after a tab switch) doesn't wait for
+    // the fresh counts to go.
+    worktreesChanged = setWorktreeBranches(branchesElsewhere(worktrees));
+    worktreesChanged = setWorktreeWipRows() || worktreesChanged;
+    refreshWorktreeSummaries();
     state.submodules = submodules;
     state.remoteList = remoteList;
     state.gitflow = gitflow;
@@ -738,6 +759,9 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     // Whatever moved a ref (an action, undo, a terminal command) added a reflog
     // entry the open Reflog should list.
     if (state.view === "reflog") void ui.reflogView?.reload();
+    // Pull requests come from GitHub, so only once per repo, not on every
+    // refresh; the section's own button reloads them.
+    if (state.prs.repoPath !== state.repoPath) refActions.loadPullRequests();
   } catch (err) {
     state.refs = EMPTY_REFS;
     readFailed("Failed to load refs", err);
@@ -747,7 +771,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
   // log so the branch chips appear on every commit.
   ui.detailView?.refresh();
   const chipsChanged = rebuildCommitRefs();
-  const needsRepaint = chipsChanged || marksChanged || wipChanged || stashesChanged || lastPaintedRows !== state.rows || lastPaintedSelection !== state.selectedId;
+  const needsRepaint = chipsChanged || marksChanged || wipChanged || stashesChanged || worktreesChanged || lastPaintedRows !== state.rows || lastPaintedSelection !== state.selectedId;
   if (state.view === "history" && state.rows.length && needsRepaint) {
     const pane = $("#log-pane");
     const keep = pane.scrollTop;
@@ -759,6 +783,40 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     lastPaintedRows = state.rows;
     lastPaintedSelection = state.selectedId;
   }
+}
+
+// Each worktree's changed-file count and ahead/behind for its sidebar row:
+// a `git status` per worktree, so fetched after the sidebar's own refresh
+// rather than holding it up, and painted when it lands. Only with a linked
+// worktree — the main one alone already shows its changes in Local Changes.
+let summariesSeq = 0;
+function refreshWorktreeSummaries(): void {
+  const seq = ++summariesSeq;
+  if (state.worktrees.length < 2) {
+    state.worktreeSummaries = [];
+    return;
+  }
+  worktreeSummaries()
+    .then((list) => {
+      // A newer refresh (or a tab switch) has asked again since.
+      if (seq !== summariesSeq) return;
+      state.worktreeSummaries = list;
+      renderSidebarNow();
+      if (!setWorktreeWipRows() || !state.rows.length || logSearchQuery()) return;
+      const pane = $("#log-pane");
+      const keep = pane.scrollTop;
+      ui.logView = renderLog(pane, state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, refActions.onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
+      pane.scrollTop = keep;
+    })
+    .catch(() => {}); // rows without counts
+}
+
+// The other worktrees' WIP rows in the graph (see worktree-wip.ts), from the
+// summaries' change counts; true when they changed.
+function setWorktreeWipRows(): boolean {
+  return setOtherWipRows(
+    otherWipRows(state.worktrees, state.worktreeSummaries.map((s) => ({ path: s.path, changes: s.changed }))),
+  );
 }
 
 // The change count moved without a workspace snapshot (Local Changes staged,
@@ -818,12 +876,28 @@ function sidebarSignature(repoName: string): string {
     state.branchSelectionAnchor ?? "",
     [...state.busyRefs].sort().join(","),
     state.worktrees.map((w) => `${w.path}:${w.head}:${w.branch}:${w.is_current}:${w.locked}:${w.lock_reason}:${w.prunable}`).join(","),
+    state.worktreeSummaries.map((w) => `${w.path}:${w.changed}:${w.ahead}:${w.behind}`).join(","),
     state.submodules.map((m) => `${m.path}:${m.url}:${m.recorded}:${m.checked_out}:${m.state}`).join(","),
     state.remoteList.map((rm) => `${rm.name}:${rm.url}`).join(","),
     state.graph.pinned ?? "",
     state.graph.hidden.join(","),
     state.graph.solo.join(","),
+    prsSignature(),
   ].join("|");
+}
+
+function prsSignature(): string {
+  const p = state.prs;
+  const a = p.account;
+  return [
+    p.repo,
+    a ? `${a.installed}:${a.signed_in}:${a.login}:${a.message}` : "",
+    p.filter,
+    p.loading,
+    p.error,
+    p.open,
+    p.list?.map((pr) => `${pr.number}:${pr.updated_at}:${pr.title}:${pr.checks}:${pr.review_decision}:${pr.is_draft}`).join(","),
+  ].join(";");
 }
 
 let lastSidebarSig: string | null = null;
@@ -855,10 +929,12 @@ export function renderSidebarNow(): void {
       branchSelectionAnchor: state.branchSelectionAnchor,
       busyRefs: state.busyRefs,
       worktrees: state.worktrees,
+      worktreeSummaries: state.worktreeSummaries,
       submodules: state.submodules,
       remoteList: state.remoteList,
       pinned: state.graph.pinned,
       visibility: refFilter(state.graph),
+      prs: state.prs,
     },
     {
       onSelectView: (v: SidebarView) => (v === "reflog" ? showReflog() : showView(v)),
@@ -893,18 +969,30 @@ export function renderSidebarNow(): void {
       onStashMenu: (s, x, y) => refActions.onStashMenu(s, x, y),
       onRemoteMenu: (name, target, x, y) => refActions.onRemoteMenu(name, target, x, y),
       onAddRemote: () => refActions.onAddRemote(),
-      onRemotesMenu: (x, y) => refActions.onRemotesMenu(x, y),
       onRemoteFolderMenu: (remote, x, y) => refActions.onRemoteFolderMenu(remote, x, y),
       onTagMenu: (name, target, x, y) => refActions.onTagMenu(name, target, x, y),
       onWorktreeOpen: (w) => void loadRepo(w.path),
       onWorktreeMenu: (w, x, y) => refActions.onWorktreeMenu(w, x, y),
+      onWorktreeDrop: (src) => refActions.onWorktreeDrop(src),
       onSubmoduleOpen: (sm) => refActions.onSubmoduleOpen(sm),
       onSubmoduleMenu: (sm, x, y) => refActions.onSubmoduleMenu(sm, x, y),
       onToggleHidden: (refname) => updateGraphPrefs(withHidden(state.graph, [refname], !state.graph.hidden.includes(refname))),
       onSectionMenu: (key, x, y) => refActions.onSectionMenu(key, x, y),
       onAddSubmodule: () => refActions.onAddSubmodule(),
+      onPrOpen: (pr) => showPullRequest(pr.number),
+      onPrMenu: (pr, x, y) => refActions.onPrMenu(pr, x, y),
+      onPrFilter: (filter) => refActions.onPrFilter(filter),
+      onPrRefresh: () => refActions.onPrRefresh(),
+      onGitHubSignIn: () => refActions.onGitHubSignIn(),
     },
   );
+}
+
+// Open pull request `number` in the pull request view.
+export function showPullRequest(number: number): void {
+  state.prs.open = number;
+  ui.prView?.show(number);
+  showView("pr");
 }
 
 // "N refs hidden · Show all" above the log while Hide or Solo leaves refs out

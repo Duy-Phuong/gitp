@@ -1,13 +1,14 @@
 mod common;
 
 use common::FixtureRepo;
-use gitp_core::{Identity, Repo};
+use gitp_core::{restore_local_identity, Identity, Repo};
 
 fn work() -> Identity {
     Identity {
         name: "Ada Work".into(),
         email: "ada@work.example".into(),
         signing_key: String::new(),
+        signing_format: String::new(),
     }
 }
 
@@ -16,7 +17,7 @@ fn commits_after_applying_a_local_identity_are_authored_by_it() {
     let fixture = FixtureRepo::init();
     let repo = Repo::open(fixture.path()).unwrap();
 
-    assert!(repo.apply_local_identity(&work()).unwrap());
+    assert!(repo.apply_local_identity(&work()).unwrap().is_some());
 
     std::fs::write(fixture.path().join("a.txt"), "a\n").unwrap();
     let mut index = fixture.repo.index().unwrap();
@@ -36,7 +37,7 @@ fn applying_the_same_local_identity_again_changes_nothing() {
     let repo = Repo::open(fixture.path()).unwrap();
     repo.apply_local_identity(&work()).unwrap();
 
-    assert!(!repo.apply_local_identity(&work()).unwrap());
+    assert!(repo.apply_local_identity(&work()).unwrap().is_none());
 }
 
 #[test]
@@ -58,4 +59,204 @@ fn a_local_identity_without_a_key_drops_the_previous_profiles_key() {
         .open_level(git2::ConfigLevel::Local)
         .unwrap();
     assert!(cfg.get_string("user.signingkey").is_err());
+}
+
+fn local_config(fixture: &FixtureRepo) -> git2::Config {
+    fixture
+        .repo
+        .config()
+        .unwrap()
+        .open_level(git2::ConfigLevel::Local)
+        .unwrap()
+        .snapshot()
+        .unwrap()
+}
+
+fn local(fixture: &FixtureRepo, key: &str) -> Option<String> {
+    local_config(fixture).get_string(key).ok()
+}
+
+#[test]
+fn applying_a_local_identity_returns_what_the_repo_had_before() {
+    let fixture = FixtureRepo::init();
+    let repo = Repo::open(fixture.path()).unwrap();
+
+    let previous = repo.apply_local_identity(&work()).unwrap();
+
+    assert_eq!(
+        previous,
+        Some(Identity {
+            name: "Fixture Author".into(),
+            email: "author@example.com".into(),
+            signing_key: String::new(),
+            signing_format: String::new(),
+        })
+    );
+}
+
+#[test]
+fn restoring_gives_the_repo_its_own_identity_back() {
+    let fixture = FixtureRepo::init();
+    let repo = Repo::open(fixture.path()).unwrap();
+    let signed = Identity {
+        signing_key: "WORKKEY".into(),
+        signing_format: "ssh".into(),
+        ..work()
+    };
+    let previous = repo.apply_local_identity(&signed).unwrap().unwrap();
+
+    restore_local_identity(fixture.path(), &signed, &previous).unwrap();
+
+    assert_eq!(
+        local(&fixture, "user.name").as_deref(),
+        Some("Fixture Author")
+    );
+    assert_eq!(
+        local(&fixture, "user.email").as_deref(),
+        Some("author@example.com")
+    );
+    assert_eq!(
+        local(&fixture, "user.signingkey"),
+        None,
+        "a key gitp added is unset"
+    );
+    assert_eq!(
+        local(&fixture, "gpg.format"),
+        None,
+        "a format gitp added is unset"
+    );
+}
+
+#[test]
+fn restoring_puts_back_the_repos_own_signing_format() {
+    let fixture = FixtureRepo::init();
+    fixture
+        .repo
+        .config()
+        .unwrap()
+        .open_level(git2::ConfigLevel::Local)
+        .unwrap()
+        .set_str("gpg.format", "x509")
+        .unwrap();
+    let repo = Repo::open(fixture.path()).unwrap();
+    let ssh = Identity {
+        signing_key: "/home/ada/.ssh/id_ed25519.pub".into(),
+        signing_format: "ssh".into(),
+        ..work()
+    };
+    let previous = repo.apply_local_identity(&ssh).unwrap().unwrap();
+    assert_eq!(previous.signing_format, "x509");
+    assert_eq!(local(&fixture, "gpg.format").as_deref(), Some("ssh"));
+
+    restore_local_identity(fixture.path(), &ssh, &previous).unwrap();
+
+    assert_eq!(local(&fixture, "gpg.format").as_deref(), Some("x509"));
+}
+
+#[test]
+fn restoring_unsets_what_the_repo_did_not_set_itself() {
+    let fixture = FixtureRepo::init();
+    {
+        let mut cfg = fixture
+            .repo
+            .config()
+            .unwrap()
+            .open_level(git2::ConfigLevel::Local)
+            .unwrap();
+        cfg.remove("user.name").unwrap();
+        cfg.remove("user.email").unwrap();
+    }
+    let repo = Repo::open(fixture.path()).unwrap();
+    let previous = repo.apply_local_identity(&work()).unwrap().unwrap();
+
+    restore_local_identity(fixture.path(), &work(), &previous).unwrap();
+
+    assert_eq!(local(&fixture, "user.name"), None);
+    assert_eq!(local(&fixture, "user.email"), None);
+}
+
+#[test]
+fn restoring_leaves_a_value_changed_since_alone() {
+    let fixture = FixtureRepo::init();
+    let repo = Repo::open(fixture.path()).unwrap();
+    let previous = repo.apply_local_identity(&work()).unwrap().unwrap();
+    fixture
+        .repo
+        .config()
+        .unwrap()
+        .open_level(git2::ConfigLevel::Local)
+        .unwrap()
+        .set_str("user.email", "mine@example.org")
+        .unwrap();
+
+    restore_local_identity(fixture.path(), &work(), &previous).unwrap();
+
+    assert_eq!(
+        local(&fixture, "user.name").as_deref(),
+        Some("Fixture Author")
+    );
+    assert_eq!(
+        local(&fixture, "user.email").as_deref(),
+        Some("mine@example.org")
+    );
+}
+
+#[test]
+fn restoring_a_repo_that_is_gone_is_nothing_to_do() {
+    let dir = tempfile::tempdir().unwrap();
+    let gone = dir.path().join("gone");
+
+    restore_local_identity(&gone, &work(), &Identity::default()).unwrap();
+}
+
+#[test]
+fn a_local_identity_writes_its_signing_format_and_an_empty_one_removes_it() {
+    let fixture = FixtureRepo::init();
+    let repo = Repo::open(fixture.path()).unwrap();
+    let ssh = Identity {
+        signing_key: "/home/ada/.ssh/id_ed25519.pub".into(),
+        signing_format: "ssh".into(),
+        ..work()
+    };
+
+    assert!(repo.apply_local_identity(&ssh).unwrap().is_some());
+    assert!(
+        repo.apply_local_identity(&ssh).unwrap().is_none(),
+        "already there"
+    );
+
+    assert_eq!(local(&fixture, "gpg.format").as_deref(), Some("ssh"));
+
+    // A profile with no format removes it again.
+    repo.apply_local_identity(&work()).unwrap();
+    assert_eq!(local(&fixture, "gpg.format"), None);
+}
+
+#[test]
+fn an_identity_without_a_name_or_email_is_refused() {
+    let fixture = FixtureRepo::init();
+    let repo = Repo::open(fixture.path()).unwrap();
+    repo.apply_local_identity(&work()).unwrap();
+
+    for blank in [
+        Identity {
+            name: String::new(),
+            ..work()
+        },
+        Identity {
+            email: " ".into(),
+            ..work()
+        },
+    ] {
+        assert!(repo.apply_local_identity(&blank).is_err(), "{blank:?}");
+    }
+
+    let cfg = fixture
+        .repo
+        .config()
+        .unwrap()
+        .open_level(git2::ConfigLevel::Local)
+        .unwrap();
+    assert_eq!(cfg.get_string("user.name").unwrap(), "Ada Work");
+    assert_eq!(cfg.get_string("user.email").unwrap(), "ada@work.example");
 }

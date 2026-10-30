@@ -17,6 +17,8 @@ export interface CommitMenuHandlers {
   savePatch: () => void;
   newBranch: (name: string) => void;
   newTag: () => void;
+  // A worktree at this commit: detached, or on a new branch.
+  newWorktree: () => void;
   cherryPick: () => void;
   revert: () => void;
   reset: (mode: ResetMode) => void;
@@ -125,6 +127,7 @@ function buildRoot(menu: HTMLElement, row: CommitRow, h: CommitMenuHandlers): vo
     sep(),
     submenuItem("New Branch here…", () => promptName(menu, row, h, "New branch name", h.newBranch)),
     item("New Tag here…", h.newTag),
+    item("New Worktree here…", h.newWorktree),
     sep(),
     item("Cherry-pick Commit", h.cherryPick),
     item("Revert Commit", h.revert),

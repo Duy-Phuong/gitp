@@ -301,6 +301,9 @@ export interface StashSwitch {
   // Popping on the new HEAD conflicted: markers are in the files and the
   // auto-stash is still stash@{0}.
   stash_kept: boolean;
+  // What was staged couldn't be staged again on the new HEAD: the work came
+  // back all unstaged.
+  staging_lost: boolean;
 }
 
 export interface ConflictSides {
@@ -343,6 +346,10 @@ export interface RepoSummary {
   behind: number;
   has_upstream: boolean;
   changes: number;
+  // The main worktree's folder when this is a linked worktree of it.
+  worktree_of: string | null;
+  // The git directory shared with the repo's other worktrees ("" when missing).
+  common_dir: string;
 }
 
 // Git's progress for one repo of a Workspaces bulk fetch or pull.
@@ -463,12 +470,13 @@ export interface SigningConfig {
   sign_by_default: boolean;
 }
 
-// The user.name / user.email / user.signingkey a profile commits as (mirrors
-// gitp-core's Identity). An empty field is an unset key.
+// The user.name / user.email / user.signingkey / gpg.format a profile commits
+// as (mirrors gitp-core's Identity). An empty field is an unset key.
 export interface Identity {
   name: string;
   email: string;
   signing_key: string;
+  signing_format: string;
 }
 
 // One working tree of the repository (mirrors gitp-core's Worktree): the main
@@ -485,6 +493,31 @@ export interface Worktree {
   lock_reason: string | null;
   // Its folder is gone; Prune Worktrees would forget it.
   prunable: boolean;
+}
+
+// A worktree's state at a glance, for its sidebar row (mirrors gitp-core's
+// WorktreeSummary). ahead / behind are against its branch's upstream, 0
+// without one.
+export interface WorktreeSummary {
+  path: string;
+  changed: number;
+  ahead: number;
+  behind: number;
+}
+
+// What removing a worktree would lose or strand (mirrors gitp-core's
+// WorktreeUnsavedWork). `unpushed`: commits only its branch has — ahead of the
+// upstream, or on no remote branch; on a detached HEAD, on no branch at all.
+export interface WorktreeUnsavedWork {
+  changed: string[];
+  untracked: number;
+  unpushed: number;
+}
+
+// A worktree entry Prune would forget (mirrors gitp-core's StaleWorktree).
+export interface StaleWorktree {
+  name: string;
+  reason: string;
 }
 
 // The optional parts of a clone (mirrors gitp-core's CloneOptions).
@@ -541,4 +574,123 @@ export interface LfsStatus {
   // The LFS filters are configured (`git lfs install`).
   initialized: boolean;
   patterns: string[];
+}
+
+// --- GitHub pull requests (mirrors gitp-core's gh module) ---------------------
+
+// The `gh` account signed in to github.com. gitp holds no token: gh does.
+export interface GhAccount {
+  installed: boolean;
+  signed_in: boolean;
+  login: string | null;
+  scopes: string[];
+  // Why it is signed out, when that's more than "never signed in".
+  message: string | null;
+}
+
+export type PrFilter = "all" | "mine" | "review_requested";
+
+export interface PrLabel {
+  name: string;
+  // Hex, without the `#`.
+  color: string;
+}
+
+// A pull request as the sidebar lists it.
+export interface PullRequest {
+  number: number;
+  title: string;
+  author: string;
+  is_draft: boolean;
+  // APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED, or null.
+  review_decision: string | null;
+  // All checks in one word: success / failure / pending; null without checks.
+  checks: string | null;
+  head: string;
+  base: string;
+  updated_at: string;
+  url: string;
+  labels: PrLabel[];
+}
+
+export interface PrCheck {
+  name: string;
+  // success / failure / pending / neutral / skipped
+  state: string;
+  url: string | null;
+}
+
+export interface PrReview {
+  author: string;
+  // APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED
+  state: string;
+  body: string;
+  submitted_at: string;
+}
+
+// A comment on the pull request itself.
+export interface PrComment {
+  id: string;
+  author: string;
+  body: string;
+  created_at: string;
+  url: string;
+}
+
+// A comment on a diff line: a thread's first, or a reply in it.
+export interface PrReviewComment {
+  id: number;
+  author: string;
+  body: string;
+  path: string;
+  // Its line in the current diff; null once outdated.
+  line: number | null;
+  original_line: number | null;
+  side: "LEFT" | "RIGHT";
+  created_at: string;
+  // The thread's first comment, for a reply.
+  in_reply_to: number | null;
+  url: string;
+  diff_hunk: string;
+}
+
+export interface PullRequestDetail {
+  number: number;
+  title: string;
+  body: string;
+  // OPEN / CLOSED / MERGED
+  state: string;
+  is_draft: boolean;
+  author: string;
+  base: string;
+  head: string;
+  head_oid: string;
+  url: string;
+  created_at: string;
+  review_decision: string | null;
+  labels: PrLabel[];
+  checks: PrCheck[];
+  reviews: PrReview[];
+  comments: PrComment[];
+  review_comments: PrReviewComment[];
+  additions: number;
+  deletions: number;
+  changed_files: number;
+}
+
+export type ReviewVerdict = "approve" | "request_changes" | "comment";
+
+// A new comment on one diff line.
+export interface LineComment {
+  path: string;
+  line: number;
+  side: "LEFT" | "RIGHT";
+  commit_id: string;
+  body: string;
+}
+
+// What the GitHub sign-in dialog shows: the one-time code, and where to enter it.
+export interface DeviceCode {
+  code: string;
+  url: string;
 }

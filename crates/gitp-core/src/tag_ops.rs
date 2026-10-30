@@ -91,9 +91,11 @@ impl Repo {
         ])
     }
 
-    /// Push tag `name` to `origin` (`git push origin <tag>`).
-    pub fn push_tag(&self, name: &str) -> Result<String> {
-        self.run_git_network(&["push", "origin", ref_arg(name)?])
+    /// Push tag `name` to `remote` (`git push <remote> refs/tags/<tag>`). The
+    /// full ref keeps a branch of the same name from being pushed instead.
+    pub fn push_tag(&self, name: &str, remote: &str) -> Result<String> {
+        let refspec = format!("refs/tags/{}", ref_arg(name)?);
+        self.run_git_network(&["push", ref_arg(remote)?, &refspec])
     }
 
     /// Delete the local tag `name` (`git tag -d <name>`). Leaves any tag of the
@@ -102,21 +104,22 @@ impl Repo {
         self.run_git(&["tag", "-d", ref_arg(name)?])
     }
 
-    /// Delete tag `name` on `origin` (`git push origin --delete <tag>`).
-    pub fn delete_remote_tag(&self, name: &str) -> Result<String> {
-        self.run_git_network(&["push", "origin", "--delete", ref_arg(name)?])
+    /// Delete tag `name` on `remote` (`git push <remote> --delete refs/tags/<tag>`).
+    pub fn delete_remote_tag(&self, name: &str, remote: &str) -> Result<String> {
+        let refspec = format!("refs/tags/{}", ref_arg(name)?);
+        self.run_git_network(&["push", ref_arg(remote)?, "--delete", &refspec])
     }
 
-    /// Whether `origin` has a tag called `name`, probed live with
+    /// Whether `remote` has a tag called `name`, probed live with
     /// `git ls-remote`. Used to decide whether the delete dialog should offer to
     /// remove it from the remote too. A failure to reach the remote is reported
     /// as an error rather than a `false`, so the caller can tell "no such tag"
     /// apart from "couldn't ask".
-    pub fn remote_tag_exists(&self, name: &str) -> Result<bool> {
+    pub fn remote_tag_exists(&self, name: &str, remote: &str) -> Result<bool> {
         let out = self.run_git(&[
             "ls-remote",
             "--tags",
-            "origin",
+            ref_arg(remote)?,
             &format!("refs/tags/{name}"),
         ])?;
         Ok(!out.trim().is_empty())

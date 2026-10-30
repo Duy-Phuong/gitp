@@ -30,15 +30,52 @@ pub(crate) fn get_log_page_impl(
     limit: usize,
     scope: impl Into<LogScope>,
 ) -> Result<LogPage, String> {
+    let scope = scope.into();
+    walk_first_log_unlocked(state, &scope)?;
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
-    let log = ensure_log(session, &scope.into())?;
+    let log = ensure_log(session, &scope)?;
     let total = log.len();
     let end = offset.saturating_add(limit).min(total);
     let rows = log.get(offset..end).map(<[_]>::to_vec).unwrap_or_default();
     let head = session.repo.resolve_commit("HEAD").ok();
     Ok(LogPage { rows, total, head })
+}
+
+/// The first walk of a repository's log, run without the workspace lock.
+///
+/// On a 100k-commit repository that walk takes a second or more, and the app
+/// asks for the first page and the workspace snapshot at the same moment:
+/// under the lock, whichever came second waited for the other, and so did every
+/// other read (the sidebar's worktrees, remotes, …). Walked on a handle of its
+/// own, like a fetch (see `with_repo_networked`), the two overlap. The cache is
+/// stored with the fingerprint taken before the walk, so refs that moved
+/// meanwhile only make the next `ensure_log` bring it up to date. Later walks
+/// (a refresh after the refs move) are short, and stay under the lock.
+fn walk_first_log_unlocked(state: &RepoState, scope: &LogScope) -> Result<(), String> {
+    let path = {
+        let guard = state.0.lock().map_err(to_message)?;
+        let idx = guard.active.ok_or("no repository is open")?;
+        let session = &guard.sessions[idx];
+        if session.log.is_some() {
+            return Ok(());
+        }
+        session.path.clone()
+    };
+    let repo = Repo::open(&path).map_err(to_message)?;
+    let sig = repo.state_fingerprint().map_err(to_message)?;
+    let cache = repo.log_cache_scoped(scope).map_err(to_message)?;
+    // Re-found by path: the user may have switched or closed tabs meanwhile.
+    // A walk that finished first (two pages asked for at once) is kept.
+    let mut guard = state.0.lock().map_err(to_message)?;
+    if let Some(session) = guard.sessions.iter_mut().find(|s| s.path == path) {
+        if session.log.is_none() {
+            session.log = Some(cache);
+            session.log_sig = sig;
+        }
+    }
+    Ok(())
 }
 
 /// A cheap stand-in for "has history changed?", for callers that would
@@ -533,6 +570,57 @@ mod tests {
         assert!(
             summaries("author:").is_empty(),
             "a bare key searches nothing"
+        );
+    }
+
+    /// Opening a large repository the way the app does: the first page of the
+    /// log and the workspace snapshot asked for at once. Prints when each is
+    /// back. Needs a large repository: see scripts/gen-large-repo.py.
+    ///
+    /// GITP_BENCH_REPO=/path/to/big cargo test -p gitp-gui --release
+    ///   first_page_after_open -- --ignored --nocapture
+    #[test]
+    #[ignore = "needs GITP_BENCH_REPO; run explicitly"]
+    fn first_page_after_open_timing() {
+        let Ok(path) = std::env::var("GITP_BENCH_REPO") else {
+            return;
+        };
+        let state = std::sync::Arc::new(RepoState::default());
+        let start = std::time::Instant::now();
+        open_repo_impl(&state, path).expect("open");
+        println!(
+            "open                {:>8.1} ms",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+        let page = {
+            let state = std::sync::Arc::clone(&state);
+            std::thread::spawn(move || {
+                get_log_page_impl(&state, 0, 1000, true).expect("page");
+                start.elapsed()
+            })
+        };
+        let snapshot = {
+            let state = std::sync::Arc::clone(&state);
+            std::thread::spawn(move || {
+                crate::workspace::workspace_snapshot_impl(&state).expect("snapshot");
+                start.elapsed()
+            })
+        };
+        let snapshot = snapshot.join().unwrap();
+        let page = page.join().unwrap();
+        println!(
+            "snapshot back       {:>8.1} ms",
+            snapshot.as_secs_f64() * 1000.0
+        );
+        println!(
+            "first page back     {:>8.1} ms",
+            page.as_secs_f64() * 1000.0
+        );
+        let t = std::time::Instant::now();
+        get_log_page_impl(&state, 1000, 1000, true).expect("page 2");
+        println!(
+            "second page         {:>8.1} ms",
+            t.elapsed().as_secs_f64() * 1000.0
         );
     }
 }

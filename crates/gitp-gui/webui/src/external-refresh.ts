@@ -50,7 +50,9 @@ function refreshFromDisk(force: boolean, history = true, diff = true): void {
   lastDiskRefreshAt = now;
   void (async () => {
     await loadSidebar({ abortIfBusy: true });
-    if (diff) void ui.changesView?.recheckDiff();
+    // A binary image is re-read only on these deliberate signals (see
+    // keepRecheckedDiff), not on every throttled click.
+    if (diff) void ui.changesView?.recheckDiff(force);
     // Commits made outside gitp change history too. This is the passive mode:
     // it compares the first page and returns without touching anything when
     // history is unchanged, which is the common case.

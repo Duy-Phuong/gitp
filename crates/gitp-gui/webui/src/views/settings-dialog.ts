@@ -47,6 +47,7 @@ import {
   ZOOM_LEVELS,
 } from "../prefs";
 import type { DetailTab } from "./detail";
+import type { GhAccount } from "../types";
 
 export interface SettingsActions {
   // Apply and persist a theme, redrawing whatever CSS alone can't restyle.
@@ -70,6 +71,11 @@ export interface SettingsActions {
   setEncoding: (label: string) => Promise<void>;
   // Leave the dialog for one of the Config view's tabs.
   openConfig: (tab: "git" | "dotfiles") => void;
+  // The GitHub CLI's account (gitp signs in through gh and keeps no token),
+  // and signing it in and out.
+  githubAccount: () => Promise<GhAccount>;
+  githubSignIn: () => Promise<void>;
+  githubSignOut: () => Promise<void>;
 }
 
 interface Section {
@@ -280,6 +286,12 @@ export function openSettingsDialog(actions: SettingsActions): void {
           encodingSelect(actions),
           "inline",
           "How the open repository's files are read and saved: diffs, blame, the file editor and the conflict resolver. Kept in its config as gitp.encoding. UTF-16 files stay binary in diffs, as git sees them.",
+        ),
+        row(
+          "GitHub account",
+          githubAccountField(actions),
+          "inline",
+          "Pull requests come through the GitHub CLI (gh), signed in as you. gitp stores no token.",
         ),
         row("Git configuration", linkButton("Open Git Config", () => actions.openConfig("git"))),
         row("Dotfiles", linkButton("Open Dotfiles", () => actions.openConfig("dotfiles"))),
@@ -510,6 +522,24 @@ function hooksField(actions: SettingsActions): HTMLElement {
     () => (input.placeholder = "Couldn't read the repository's config"),
   );
   return el("div", { class: "settings-path-row" }, [input, browse]);
+}
+
+// Who gh is signed in as, with Sign In or Sign Out — or how to install gh.
+function githubAccountField(actions: SettingsActions): HTMLElement {
+  const host = el("div", { class: "settings-gh-account" }, [el("span", { class: "settings-row-hint", text: "Checking…" })]);
+  const show = (account: GhAccount) => {
+    const action = (label: string, run: () => Promise<void>) =>
+      linkButton(label, () => void run().then(() => actions.githubAccount().then(show, () => {})));
+    if (!account.installed) {
+      host.replaceChildren(el("span", { class: "settings-row-hint", text: "GitHub CLI not installed: brew install gh" }));
+    } else if (account.signed_in) {
+      host.replaceChildren(el("span", { text: account.login ?? "Signed in" }), action("Sign Out", actions.githubSignOut));
+    } else {
+      host.replaceChildren(el("span", { class: "settings-row-hint", text: "Not signed in" }), action("Sign In", actions.githubSignIn));
+    }
+  };
+  actions.githubAccount().then(show, () => host.replaceChildren(el("span", { class: "settings-row-hint", text: "Couldn't ask gh" })));
+  return host;
 }
 
 function segToggle<T>(options: { value: T; label: string }[], current: T, onChange: (v: T) => void): HTMLElement {

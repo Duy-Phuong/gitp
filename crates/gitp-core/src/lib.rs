@@ -20,6 +20,7 @@ mod file_content;
 mod file_edit;
 mod file_ops;
 mod filelog;
+mod gh;
 mod git_bin;
 mod gitflow;
 mod graph;
@@ -65,8 +66,12 @@ pub use external_tool::DiffToolTarget;
 pub use file_content::{FileContent, FileSide, PREVIEW_MAX_BYTES};
 pub use file_edit::{TextFile, EDIT_MAX_BYTES};
 pub use filelog::FileCommit;
+pub use gh::{
+    DiffSide, Gh, GhAccount, GhLogin, LineComment, PrCheck, PrComment, PrFilter, PrLabel, PrReview,
+    PrReviewComment, PullRequest, PullRequestDetail, ReviewVerdict, LOGIN_TIMEOUT,
+};
 pub use gitflow::{FlowKind, GitFlowConfig};
-pub use identity::{global_identity, set_global_identity, Identity};
+pub use identity::{global_identity, restore_local_identity, set_global_identity, Identity};
 pub use lfs::LfsStatus;
 pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope};
 pub use pick_plan::{PickAction, PickPlanOutcome, PickStep};
@@ -83,4 +88,6 @@ pub use status::StatusLists;
 pub use submodule_ops::{Submodule, SubmoduleState};
 pub use tag_ops::TagDetail;
 pub use undo::{DeletedBranch, FileBlob, HeadMoveMode, Undoable};
-pub use worktree_ops::{Worktree, WorktreeTarget};
+pub use worktree_ops::{
+    StaleWorktree, Worktree, WorktreeSummary, WorktreeTarget, WorktreeUnsavedWork,
+};

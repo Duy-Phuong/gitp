@@ -1,4 +1,4 @@
-//! Tags: create, annotate, inspect, push, and delete (locally and on origin).
+//! Tags: create, annotate, inspect, push, and delete (locally and on a remote).
 
 use gitp_core::{TagDetail, Undoable};
 use tauri::State;
@@ -48,9 +48,9 @@ fn tag_detail_impl(state: &RepoState, name: String) -> Result<TagDetail, String>
     with_repo(state, |repo| repo.tag_detail(&name))
 }
 
-/// Push tag `name` to origin. Nothing local changes.
-fn push_tag_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_repo_networked(state, "push", |repo| repo.push_tag(&name), |_| {})
+/// Push tag `name` to `remote`. Nothing local changes.
+fn push_tag_impl(state: &RepoState, name: String, remote: String) -> Result<String, String> {
+    with_repo_networked(state, "push", |repo| repo.push_tag(&name, &remote), |_| {})
 }
 
 /// Delete the local tag `name`. HEAD doesn't move and no commit is lost (the
@@ -75,14 +75,23 @@ pub(crate) fn delete_tag_impl(state: &RepoState, name: String) -> Result<String,
     Ok(out)
 }
 
-/// Delete tag `name` on origin.
-fn delete_remote_tag_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_repo_networked(state, "push", |repo| repo.delete_remote_tag(&name), |_| {})
+/// Delete tag `name` on `remote`.
+fn delete_remote_tag_impl(
+    state: &RepoState,
+    name: String,
+    remote: String,
+) -> Result<String, String> {
+    with_repo_networked(
+        state,
+        "push",
+        |repo| repo.delete_remote_tag(&name, &remote),
+        |_| {},
+    )
 }
 
-/// Whether origin has a tag called `name` (live `git ls-remote` probe).
-fn remote_tag_exists_impl(state: &RepoState, name: String) -> Result<bool, String> {
-    with_repo(state, |repo| repo.remote_tag_exists(&name))
+/// Whether `remote` has a tag called `name` (live `git ls-remote` probe).
+fn remote_tag_exists_impl(state: &RepoState, name: String, remote: String) -> Result<bool, String> {
+    with_repo(state, |repo| repo.remote_tag_exists(&name, &remote))
 }
 
 // --- Tauri commands --------------------------------------------------------
@@ -112,8 +121,12 @@ pub(crate) fn tag_detail(name: String, state: State<RepoState>) -> Result<TagDet
 }
 
 #[tauri::command(async)]
-pub(crate) fn push_tag(name: String, state: State<RepoState>) -> Result<String, String> {
-    push_tag_impl(&state, name)
+pub(crate) fn push_tag(
+    name: String,
+    remote: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    push_tag_impl(&state, name, remote)
 }
 
 #[tauri::command(async)]
@@ -122,11 +135,19 @@ pub(crate) fn delete_tag(name: String, state: State<RepoState>) -> Result<String
 }
 
 #[tauri::command(async)]
-pub(crate) fn delete_remote_tag(name: String, state: State<RepoState>) -> Result<String, String> {
-    delete_remote_tag_impl(&state, name)
+pub(crate) fn delete_remote_tag(
+    name: String,
+    remote: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    delete_remote_tag_impl(&state, name, remote)
 }
 
 #[tauri::command(async)]
-pub(crate) fn remote_tag_exists(name: String, state: State<RepoState>) -> Result<bool, String> {
-    remote_tag_exists_impl(&state, name)
+pub(crate) fn remote_tag_exists(
+    name: String,
+    remote: String,
+    state: State<RepoState>,
+) -> Result<bool, String> {
+    remote_tag_exists_impl(&state, name, remote)
 }

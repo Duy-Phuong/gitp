@@ -61,6 +61,9 @@ export interface GraphLayout {
   /// reserved on rows that need 60. This lets the renderer indent to the lanes
   /// actually on screen instead. Indexed by row.
   occupiedLane: Int32Array;
+  /// The lowest and highest y touched by each run of EDGE_BLOCK edges, in
+  /// `edges` order, as [min0, max0, min1, max1, …]. See visibleEdges.
+  edgeBlocks: Float64Array;
 }
 
 function rowY(index: number, metrics: GraphMetrics): number {
@@ -113,7 +116,57 @@ export function layoutGraph(
   const width = laneX(maxLane) + metrics.marginX;
   const height = rows.length * metrics.rowHeight;
 
-  return { nodes, edges, width, height, occupiedLane: occupiedLanes(rows, indexById, maxLane) };
+  return {
+    nodes,
+    edges,
+    width,
+    height,
+    occupiedLane: occupiedLanes(rows, indexById, maxLane),
+    edgeBlocks: edgeBlocks(edges),
+  };
+}
+
+// Edges per block of the visibleEdges index.
+const EDGE_BLOCK = 64;
+
+function edgeBlocks(edges: GraphEdge[]): Float64Array {
+  const blocks = new Float64Array(2 * Math.ceil(edges.length / EDGE_BLOCK));
+  for (let b = 0; b * EDGE_BLOCK < edges.length; b++) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (let k = b * EDGE_BLOCK; k < Math.min(edges.length, (b + 1) * EDGE_BLOCK); k++) {
+      const e = edges[k];
+      min = Math.min(min, e.fromY, e.toY);
+      max = Math.max(max, e.fromY, e.toY);
+    }
+    blocks[2 * b] = min;
+    blocks[2 * b + 1] = max;
+  }
+  return blocks;
+}
+
+/**
+ * The edges that reach into the band `top`..`bottom`, in `layout.edges` order.
+ *
+ * Each repaint of the log — every scroll event, and every hover that fades a
+ * branch — draws only the edges on screen, but testing every edge of the loaded
+ * log to find them is ~100k tests per event on a large repository. Edges come
+ * in row order, so a block of them spans a short stretch of rows, and a block
+ * that can't reach the band is skipped whole. A long edge (a branch running
+ * past the screen) only keeps its own block in play.
+ */
+export function visibleEdges(layout: GraphLayout, top: number, bottom: number): GraphEdge[] {
+  const { edges, edgeBlocks: blocks } = layout;
+  const out: GraphEdge[] = [];
+  for (let b = 0; b * EDGE_BLOCK < edges.length; b++) {
+    if (blocks[2 * b + 1] < top || blocks[2 * b] > bottom) continue;
+    for (let k = b * EDGE_BLOCK; k < Math.min(edges.length, (b + 1) * EDGE_BLOCK); k++) {
+      const e = edges[k];
+      if (Math.max(e.fromY, e.toY) < top || Math.min(e.fromY, e.toY) > bottom) continue;
+      out.push(e);
+    }
+  }
+  return out;
 }
 
 /**

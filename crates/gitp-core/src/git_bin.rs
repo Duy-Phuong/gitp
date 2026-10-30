@@ -13,17 +13,31 @@ use std::sync::OnceLock;
 
 /// A `Command` for the resolved git binary. Every git spawn goes through here.
 pub(crate) fn git_command() -> Command {
-    static GIT: OnceLock<(PathBuf, Option<OsString>)> = OnceLock::new();
-    let (git, path) = GIT.get_or_init(|| {
-        let git = resolve();
-        let path = search_path(&git);
-        (git, path)
-    });
+    let (git, path) = resolved();
     let mut cmd = Command::new(git);
     if let Some(path) = path {
         cmd.env("PATH", path);
     }
     cmd
+}
+
+/// The PATH git's spawns get (see `search_path`), for the other tools gitp
+/// runs from the same folders — `gh`, which Homebrew installs there and which
+/// runs git itself.
+pub(crate) fn spawn_path() -> OsString {
+    resolved()
+        .1
+        .clone()
+        .unwrap_or_else(|| std::env::var_os("PATH").unwrap_or_default())
+}
+
+fn resolved() -> &'static (PathBuf, Option<OsString>) {
+    static GIT: OnceLock<(PathBuf, Option<OsString>)> = OnceLock::new();
+    GIT.get_or_init(|| {
+        let git = resolve();
+        let path = search_path(&git);
+        (git, path)
+    })
 }
 
 /// PATH with git's own folder and Homebrew's added at the end, or `None` when

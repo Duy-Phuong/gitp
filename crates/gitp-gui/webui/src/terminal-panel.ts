@@ -78,26 +78,29 @@ function layout(focus = false): void {
   });
 }
 
-// Start a shell in `path`'s folder as a new tab, and make it the active one.
-function newTab(path: string): TermTab {
+// Start a shell as a new tab of repo `path`, and make it the active one. It
+// starts in the repo's folder unless `cwd` says otherwise (another worktree's,
+// say), and then the tab is titled with that folder.
+function newTab(path: string, cwd = path): TermTab {
   const terms = termsOf(path);
   const num = tabNumber(terms.tabs.map((t) => t.num));
+  const where = cwd === path ? "" : ` · ${cwd.split("/").filter(Boolean).pop() ?? cwd}`;
   const box = el("div", { class: "terminal-tab-host" });
   $("#terminal-host").append(box);
   // `handle` is set below: its callbacks need `tab`, and may run before
   // setupTerminal returns (the browser preview names the shell at once).
-  const tab: TermTab = { num, title: `${shellName} ${num}`, box, handle: null! };
+  const tab: TermTab = { num, title: `${shellName} ${num}${where}`, box, handle: null! };
   terms.tabs.push(tab);
   terms.active = tab;
   // On screen before xterm opens in it, so it measures a real size — unless
   // it belongs to a repo that isn't.
   for (const other of terms.tabs) other.box.classList.toggle("hidden", path !== shown || other !== tab);
   tab.handle = setupTerminal(box, {
-    cwd: path || ".",
+    cwd: cwd || ".",
     onCommand: onTerminalCommand,
     onShell: (name) => {
       shellName = name;
-      tab.title = `${name} ${num}`;
+      tab.title = `${name} ${num}${where}`;
       if (path === shown) renderTabs();
     },
     // The shell exited (`exit`, Ctrl-D): its tab goes, as in any terminal app.
@@ -221,6 +224,16 @@ export function warmTerminal(): void {
     newTab(state.repoPath);
     renderTabs();
   }
+}
+
+// Open a new terminal tab in `folder` (a worktree's, from the sidebar), among
+// the active repo's tabs, and show the panel.
+export function openTerminalAt(folder: string): void {
+  // Open first, so the new terminal measures the panel it's going into.
+  setPanelOpen(true);
+  newTab(shown, folder);
+  renderTerminalCwd();
+  layout(true);
 }
 
 export function toggleTerminal(): void {

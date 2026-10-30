@@ -246,7 +246,10 @@ fn add_clones_the_submodule_and_stages_it() {
     assert_eq!(added.state, SubmoduleState::UpToDate);
     assert!(s.sup.join("vendor/lib2/lib.txt").exists());
     let staged = git(&s.sup, &["diff", "--cached", "--name-only"]);
-    assert!(staged.contains(".gitmodules") && staged.contains("vendor/lib2"), "{staged}");
+    assert!(
+        staged.contains(".gitmodules") && staged.contains("vendor/lib2"),
+        "{staged}"
+    );
 }
 
 #[test]
@@ -263,7 +266,10 @@ fn add_refuses_option_like_urls_and_paths_outside_the_repo() {
         (url.as_str(), "/tmp/abs"),
         (url.as_str(), " "),
     ] {
-        assert!(repo.add_submodule(url, Some(path)).is_err(), "{url:?} {path:?}");
+        assert!(
+            repo.add_submodule(url, Some(path)).is_err(),
+            "{url:?} {path:?}"
+        );
     }
     assert_eq!(repo.submodules().unwrap().len(), 1, "nothing added");
     assert!(!s.sup.join("pwned").exists());
@@ -277,7 +283,10 @@ fn removed_then_added_again_without_a_path_uses_the_repository_name() {
     // (or silently reuse it) when the same name comes back.
     Repo::open(&s.sup).unwrap().remove_submodule("lib").unwrap();
 
-    Repo::open(&s.sup).unwrap().add_submodule(&url, None).unwrap();
+    Repo::open(&s.sup)
+        .unwrap()
+        .add_submodule(&url, None)
+        .unwrap();
 
     assert!(s.sup.join("lib/lib.txt").exists());
 }
@@ -290,7 +299,10 @@ fn set_url_rewrites_gitmodules_and_the_config() {
     repo.set_submodule_url("lib", "file:///moved/lib").unwrap();
 
     assert_eq!(
-        git(&s.sup, &["config", "-f", ".gitmodules", "submodule.lib.url"]),
+        git(
+            &s.sup,
+            &["config", "-f", ".gitmodules", "submodule.lib.url"]
+        ),
         "file:///moved/lib"
     );
     assert_eq!(

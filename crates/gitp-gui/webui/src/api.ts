@@ -49,14 +49,25 @@ import type {
   Workspace,
   WorkspaceProgress,
   WorkspaceSnapshot,
+  StaleWorktree,
   Worktree,
+  WorktreeSummary,
   WorktreeTarget,
+  WorktreeUnsavedWork,
   Submodule,
   StashOptions,
   StashSwitch,
   FlowKind,
   GitFlowConfig,
   LfsStatus,
+  DeviceCode,
+  GhAccount,
+  LineComment,
+  PrFilter,
+  PrReviewComment,
+  PullRequest,
+  PullRequestDetail,
+  ReviewVerdict,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -197,7 +208,18 @@ export async function workspaceRepoSummary(path: string): Promise<RepoSummary> {
   if (!isTauri()) {
     // Something different per path, so the table has some variety to show.
     const n = path.length;
-    return { missing: path.includes("missing"), branch: "main", ahead: n % 2, behind: n % 3, has_upstream: true, changes: n % 4 };
+    // The mock repo's linked worktree reads as one, sharing the main's git dir.
+    const main = path === MOCK_LINKED_WORKTREE.path ? MOCK_WORKTREES[0].path : null;
+    return {
+      missing: path.includes("missing"),
+      branch: main ? MOCK_LINKED_WORKTREE.branch : "main",
+      ahead: n % 2,
+      behind: n % 3,
+      has_upstream: true,
+      changes: n % 4,
+      worktree_of: main,
+      common_dir: `${main ?? path}/.git`,
+    };
   }
   return invoke<RepoSummary>("workspace_repo_summary", { path });
 }
@@ -206,6 +228,21 @@ export async function workspaceRepoSummary(path: string): Promise<RepoSummary> {
 export async function workspaceScanFolder(folder: string): Promise<string[]> {
   if (!isTauri()) return [`${folder}/alpha`, `${folder}/beta`];
   return invoke<string[]>("workspace_scan_folder", { folder });
+}
+
+// What adding `paths` to a workspace that has `known` adds: each path and its
+// repository's other worktrees, minus anything already there (compared as
+// folders on disk, not as spellings).
+export async function workspaceWithWorktrees(known: string[], paths: string[]): Promise<string[]> {
+  if (!isTauri()) {
+    const out = [...known];
+    for (const p of paths) {
+      const worktrees = MOCK_WORKTREES.some((w) => w.path === p) ? MOCK_WORKTREES.map((w) => w.path) : [];
+      for (const q of [p, ...worktrees]) if (!out.includes(q)) out.push(q);
+    }
+    return out.slice(known.length);
+  }
+  return invoke<string[]>("workspace_with_worktrees", { known, paths });
 }
 
 // The mocks take a moment, so the screen's per-row progress can be seen.
@@ -683,7 +720,7 @@ export async function stashAndSwitch(kind: "branch" | "remote" | "commit", targe
     if (kind === "branch") await checkoutBranch(target);
     else if (kind === "remote") output = await checkoutRemoteBranch(target);
     else output = await checkoutCommit(target);
-    return { output, stash_kept: false };
+    return { output, stash_kept: false, staging_lost: false };
   }
   return invoke<StashSwitch>("stash_and_switch", { kind, target });
 }
@@ -747,9 +784,9 @@ export async function fetchTagDetail(name: string): Promise<TagDetail> {
   return invoke<TagDetail>("tag_detail", { name });
 }
 
-export async function pushTag(name: string): Promise<string> {
-  if (!isTauri()) return `Pushed ${name} to origin (preview mock)`;
-  return invokeNetwork<string>("push_tag", { name });
+export async function pushTag(name: string, remote: string): Promise<string> {
+  if (!isTauri()) return `Pushed ${name} to ${remote} (preview mock)`;
+  return invokeNetwork<string>("push_tag", { name, remote });
 }
 
 export async function deleteTag(name: string): Promise<string> {
@@ -760,14 +797,14 @@ export async function deleteTag(name: string): Promise<string> {
   return invoke<string>("delete_tag", { name });
 }
 
-export async function deleteRemoteTag(name: string): Promise<string> {
-  if (!isTauri()) return `Deleted ${name} on origin (preview mock)`;
-  return invokeNetwork<string>("delete_remote_tag", { name });
+export async function deleteRemoteTag(name: string, remote: string): Promise<string> {
+  if (!isTauri()) return `Deleted ${name} on ${remote} (preview mock)`;
+  return invokeNetwork<string>("delete_remote_tag", { name, remote });
 }
 
-export async function remoteTagExists(name: string): Promise<boolean> {
+export async function remoteTagExists(name: string, remote: string): Promise<boolean> {
   if (!isTauri()) return name.endsWith("0");
-  return invoke<boolean>("remote_tag_exists", { name });
+  return invoke<boolean>("remote_tag_exists", { name, remote });
 }
 
 export async function cherryPick(rev: string): Promise<string> {
@@ -1422,16 +1459,17 @@ export async function createFile(path: string): Promise<void> {
   await invoke<void>("create_file", { path });
 }
 
-// Delete the working-tree file `path`; the index is left alone.
-export async function deleteFile(path: string): Promise<void> {
+// Delete the working-tree file `path`; the index is left alone. False when
+// the file was too large to keep for Undo.
+export async function deleteFile(path: string): Promise<boolean> {
   if (!isTauri()) {
     MOCK_FILES.delete(path);
     mockMove(MOCK_STATUS.unstaged, [], path);
     mockMove(MOCK_STATUS.staged, [], path);
     mockRecord(`Delete ${path}`);
-    return;
+    return true;
   }
-  await invoke<void>("delete_file", { path });
+  return invoke<boolean>("delete_file", { path });
 }
 
 // Every tracked and untracked (not ignored) file in the working tree, sorted.
@@ -1534,7 +1572,7 @@ export async function unsetConfig(scope: ConfigScope, name: string): Promise<voi
 // The identity git commits as outside any repo (global config, else system),
 // read without an open repo — the first-run "Default" profile starts from it.
 export async function fetchGlobalIdentity(): Promise<Identity> {
-  if (!isTauri()) return { name: "Ada Lovelace", email: "ada@example.com", signing_key: "" };
+  if (!isTauri()) return { name: "Ada Lovelace", email: "ada@example.com", signing_key: "", signing_format: "" };
   return invoke<Identity>("get_global_identity", {});
 }
 
@@ -1544,11 +1582,19 @@ export async function setGlobalIdentity(identity: Identity): Promise<void> {
   await invoke<void>("set_global_identity", { identity });
 }
 
-// Write a profile's identity into the active repo's local config; true when it
-// wasn't already there.
-export async function applyLocalIdentity(identity: Identity): Promise<boolean> {
-  if (!isTauri()) return false;
-  return invoke<boolean>("apply_local_identity", { identity });
+// Write a profile's identity into the active repo's local config; what was
+// there before when that changed anything (null when it was already there).
+export async function applyLocalIdentity(identity: Identity): Promise<Identity | null> {
+  if (!isTauri()) return null;
+  return invoke<Identity | null>("apply_local_identity", { identity });
+}
+
+// Give the repo at `path` (open or not) back the identity it had before
+// `wrote` was applied: each key still holding what was written goes back to
+// `previous`, or is unset where that is empty.
+export async function restoreLocalIdentity(path: string, wrote: Identity, previous: Identity): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("restore_local_identity", { path, wrote, previous });
 }
 
 // The path each DotfileKind resolves to, purely for display — the backend
@@ -1587,6 +1633,28 @@ export async function listWorktrees(): Promise<Worktree[]> {
   return invoke<Worktree[]>("list_worktrees", {});
 }
 
+// Each worktree's changed-file count and ahead/behind (one `git status` per
+// worktree, off the backend lock). A worktree whose folder is gone is left out.
+export async function worktreeSummaries(): Promise<WorktreeSummary[]> {
+  if (!isTauri()) {
+    return MOCK_WORKTREES.filter((w) => !w.prunable).map((w) =>
+      w.is_main ? { path: w.path, changed: 0, ahead: 0, behind: 2 } : { path: w.path, changed: 3, ahead: 1, behind: 0 },
+    );
+  }
+  return invoke<WorktreeSummary[]>("worktree_summaries", {});
+}
+
+// What removing the worktree at `path` would lose: uncommitted files and
+// commits only its branch has.
+export async function worktreeUnsavedWork(path: string): Promise<WorktreeUnsavedWork> {
+  if (!isTauri()) {
+    return MOCK_WORKTREES.find((w) => w.path === path)?.is_main === false
+      ? { changed: ["src/dashboard.ts", "src/widgets/chart.ts", "notes.md"], untracked: 1, unpushed: 1 }
+      : { changed: [], untracked: 0, unpushed: 0 };
+  }
+  return invoke<WorktreeUnsavedWork>("worktree_unsaved_work", { path });
+}
+
 // `git worktree add`; a relative `path` resolves against the repo's folder.
 // Returns the new worktree's absolute path.
 export async function addWorktree(path: string, target: WorktreeTarget): Promise<string> {
@@ -1610,6 +1678,20 @@ export async function removeWorktree(path: string, force: boolean): Promise<stri
     return "";
   }
   return invoke<string>("remove_worktree", { path, force });
+}
+
+// `git worktree move`; a relative `to` resolves against the repo's folder.
+// Refused for the main worktree and a locked one. Returns the new absolute path.
+export async function moveWorktree(path: string, to: string): Promise<string> {
+  if (!isTauri()) {
+    const w = MOCK_WORKTREES.find((x) => x.path === path);
+    if (!w || w.is_main) throw "The main worktree is the repository's own folder and can't be moved.";
+    if (w.locked) throw `${path} is locked. Unlock it before moving it.`;
+    const parent = path.split("/").slice(0, -1).join("/");
+    w.path = to.startsWith("/") ? to : `${parent}/${to.split("/").filter((p) => p && p !== "..").join("/")}`;
+    return w.path;
+  }
+  return invoke<string>("move_worktree", { path, to });
 }
 
 export async function lockWorktree(path: string, reason: string): Promise<string> {
@@ -1638,6 +1720,17 @@ export async function pruneWorktrees(): Promise<string> {
     return gone.map((w) => `Removing worktrees/${w.path.split("/").pop()}: gitdir file points to non-existent location`).join("\n");
   }
   return invoke<string>("prune_worktrees", {});
+}
+
+// What pruneWorktrees would forget (`git worktree prune --dry-run -v`).
+export async function staleWorktrees(): Promise<StaleWorktree[]> {
+  if (!isTauri()) {
+    return MOCK_WORKTREES.filter((w) => w.prunable).map((w) => ({
+      name: w.path.split("/").pop() ?? w.path,
+      reason: "gitdir file points to non-existent location",
+    }));
+  }
+  return invoke<StaleWorktree[]>("stale_worktrees", {});
 }
 
 // --- Submodules -------------------------------------------------------------
@@ -1747,6 +1840,167 @@ export async function lfsFetch(): Promise<string> {
 export async function lfsPull(): Promise<string> {
   if (!isTauri()) return "Downloading LFS objects: 100% (2/2), done. (preview mock)";
   return invokeNetwork<string>("lfs_pull", {});
+}
+
+// --- GitHub pull requests (gh) -----------------------------------------------
+// Everything goes through the user's own `gh` login; gitp stores no token.
+
+// Who gh is signed in to github.com as (asks GitHub, which checks the token).
+export async function ghAccount(): Promise<GhAccount> {
+  if (!isTauri()) return { ...MOCK_GH_ACCOUNT };
+  return invoke<GhAccount>("gh_account", {});
+}
+
+// The open repo's GitHub repository ("owner/name"), or null without a GitHub
+// remote. Local: no network.
+export async function ghRepo(): Promise<string | null> {
+  if (!isTauri()) return "example/mideal";
+  return invoke<string | null>("gh_repo", {});
+}
+
+export async function listPullRequests(filter: PrFilter): Promise<PullRequest[]> {
+  if (!isTauri()) {
+    await mockNetworkDelay();
+    const me = MOCK_GH_ACCOUNT.login;
+    return MOCK_PULL_REQUESTS.filter(
+      (pr) => filter === "all" || (filter === "mine" ? pr.author === me : pr.author !== me && !pr.is_draft),
+    ).map((pr) => ({ ...pr }));
+  }
+  return invoke<PullRequest[]>("gh_pull_requests", { filter });
+}
+
+export async function fetchPullRequest(number: number): Promise<PullRequestDetail> {
+  if (!isTauri()) {
+    const detail = MOCK_PR_DETAILS.get(number) ?? mockPrDetail(MOCK_PULL_REQUESTS.find((p) => p.number === number) ?? MOCK_PULL_REQUESTS[0]);
+    return structuredClone(detail);
+  }
+  return invoke<PullRequestDetail>("gh_pull_request", { number });
+}
+
+// The pull request's changed files and their diffs (`gh pr diff`).
+export async function fetchPullRequestFiles(number: number): Promise<FileDiff[]> {
+  if (!isTauri()) return structuredClone(number === 42 ? MOCK_PR_FILES : MOCK_PR_FILES.slice(0, 1));
+  return invoke<FileDiff[]>("gh_pull_request_files", { number });
+}
+
+// `gh pr checkout`: fetches, so it reports through the network status and can
+// be cancelled.
+export async function checkoutPullRequest(number: number): Promise<string> {
+  if (!isTauri()) {
+    const pr = MOCK_PULL_REQUESTS.find((p) => p.number === number);
+    return `Switched to a new branch '${pr?.head ?? number}' (preview mock)`;
+  }
+  return invokeNetwork<string>("gh_checkout_pull_request", { number });
+}
+
+// A new worktree at `path` (relative to the repo) on the pull request's
+// branch. Returns its absolute path.
+export async function checkoutPullRequestInWorktree(number: number, path: string): Promise<string> {
+  if (!isTauri()) {
+    const full = path.startsWith("/") ? path : `${MOCK_WORKSPACE.repos[0]?.path ?? ""}/${path}`;
+    const pr = MOCK_PULL_REQUESTS.find((p) => p.number === number);
+    MOCK_WORKTREES.push({ ...MOCK_LINKED_WORKTREE, path: full, branch: pr?.head ?? null });
+    return full;
+  }
+  return invokeNetwork<string>("gh_checkout_pull_request_worktree", { number, path });
+}
+
+// Comment on the pull request. Returns the new comment's URL.
+export async function commentOnPullRequest(number: number, body: string): Promise<string> {
+  if (!isTauri()) {
+    mockPrDetailOf(number).comments.push({
+      id: `IC_mock${Date.now()}`,
+      author: MOCK_GH_ACCOUNT.login ?? "you",
+      body,
+      created_at: new Date().toISOString(),
+      url: `https://github.com/example/mideal/pull/${number}#issuecomment-1`,
+    });
+    return `https://github.com/example/mideal/pull/${number}#issuecomment-1`;
+  }
+  return invoke<string>("gh_comment", { number, body });
+}
+
+export async function reviewPullRequest(number: number, verdict: ReviewVerdict, body: string): Promise<string> {
+  if (!isTauri()) {
+    const state = { approve: "APPROVED", request_changes: "CHANGES_REQUESTED", comment: "COMMENTED" }[verdict];
+    mockPrDetailOf(number).reviews.push({ author: MOCK_GH_ACCOUNT.login ?? "you", state, body, submitted_at: new Date().toISOString() });
+    return `✓ Reviewed pull request #${number} (preview mock)`;
+  }
+  return invoke<string>("gh_review", { number, verdict, body });
+}
+
+// Reply in a line comment's thread.
+export async function replyToReviewComment(number: number, commentId: number, body: string): Promise<PrReviewComment> {
+  if (!isTauri()) {
+    const detail = mockPrDetailOf(number);
+    const root = detail.review_comments.find((c) => c.id === commentId)!;
+    const reply = { ...root, id: Date.now(), author: MOCK_GH_ACCOUNT.login ?? "you", body, created_at: new Date().toISOString(), in_reply_to: commentId };
+    detail.review_comments.push(reply);
+    return reply;
+  }
+  return invoke<PrReviewComment>("gh_reply", { number, commentId, body });
+}
+
+// Comment on one line of the pull request's diff.
+export async function commentOnLine(number: number, comment: LineComment): Promise<PrReviewComment> {
+  if (!isTauri()) {
+    const made: PrReviewComment = {
+      id: Date.now(),
+      author: MOCK_GH_ACCOUNT.login ?? "you",
+      body: comment.body,
+      path: comment.path,
+      line: comment.line,
+      original_line: comment.line,
+      side: comment.side,
+      created_at: new Date().toISOString(),
+      in_reply_to: null,
+      url: `https://github.com/example/mideal/pull/${number}#discussion_r1`,
+      diff_hunk: "",
+    };
+    mockPrDetailOf(number).review_comments.push(made);
+    return made;
+  }
+  return invoke<PrReviewComment>("gh_line_comment", { number, comment });
+}
+
+// Start `gh auth login`'s browser sign-in: resolves with the one-time code as
+// soon as gh shows it. `ghLoginWait` then waits for the user to approve it.
+export async function ghLoginStart(): Promise<DeviceCode> {
+  if (!isTauri()) return { code: "ABCD-1234", url: "https://github.com/login/device" };
+  return invoke<DeviceCode>("gh_login_start", {});
+}
+
+export async function ghLoginWait(): Promise<string> {
+  if (!isTauri()) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    MOCK_GH_ACCOUNT.signed_in = true;
+    MOCK_GH_ACCOUNT.login = "you";
+    return "✓ Logged in as you (preview mock)";
+  }
+  return invoke<string>("gh_login_wait", {});
+}
+
+export async function ghLoginCancel(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("gh_login_cancel", {});
+}
+
+export async function ghLogout(login: string | null): Promise<string> {
+  if (!isTauri()) {
+    Object.assign(MOCK_GH_ACCOUNT, { signed_in: false, login: null, scopes: [] });
+    return "✓ Logged out of github.com (preview mock)";
+  }
+  return invoke<string>("gh_logout", { login });
+}
+
+// Open an https page (a pull request, a check, GitHub's sign-in page) in the
+// default browser.
+export async function openGithubUrl(url: string): Promise<void> {
+  if (!isTauri()) {
+    window.open(url, "_blank", "noopener");
+    return;
+  }
+  await invoke<void>("open_github_url", { url });
 }
 
 // ---------------------------------------------------------------------------
@@ -2430,6 +2684,190 @@ let mockGitflow: GitFlowConfig | null = null;
 
 // The mock repo tracks its design files with LFS.
 const MOCK_LFS: LfsStatus = { installed: true, used: true, initialized: true, patterns: ["*.psd"] };
+
+// GitHub, as gh would answer for a signed-in user in a repo with three open
+// pull requests: one approved with failing checks, one draft, one of the
+// user's own waiting on review.
+const MOCK_GH_ACCOUNT: GhAccount = { installed: true, signed_in: true, login: "you", scopes: ["repo", "read:org"], message: null };
+
+const MOCK_PULL_REQUESTS: PullRequest[] = [
+  {
+    number: 42,
+    title: "Retry the identity check when the provider times out",
+    author: "octocat",
+    is_draft: false,
+    review_decision: "APPROVED",
+    checks: "failure",
+    head: "feature/identity-retry",
+    base: "main",
+    updated_at: "2026-10-30T08:12:00Z",
+    url: "https://github.com/example/mideal/pull/42",
+    labels: [{ name: "enhancement", color: "a2eeef" }, { name: "backend", color: "5319e7" }],
+  },
+  {
+    number: 41,
+    title: "WIP: move the onboarding flow to the new form engine",
+    author: "hubot",
+    is_draft: true,
+    review_decision: null,
+    checks: "pending",
+    head: "onboarding-forms",
+    base: "main",
+    updated_at: "2026-10-29T16:40:00Z",
+    url: "https://github.com/example/mideal/pull/41",
+    labels: [],
+  },
+  {
+    number: 39,
+    title: "Fix the date format in exported reports",
+    author: "you",
+    is_draft: false,
+    review_decision: "REVIEW_REQUIRED",
+    checks: "success",
+    head: "fix/report-dates",
+    base: "main",
+    updated_at: "2026-10-28T11:05:00Z",
+    url: "https://github.com/example/mideal/pull/39",
+    labels: [{ name: "bug", color: "d73a4a" }],
+  },
+];
+
+function mockPrDetail(pr: PullRequest): PullRequestDetail {
+  return {
+    number: pr.number,
+    title: pr.title,
+    body: "",
+    state: "OPEN",
+    is_draft: pr.is_draft,
+    author: pr.author,
+    base: pr.base,
+    head: pr.head,
+    head_oid: mockOid("e"),
+    url: pr.url,
+    created_at: pr.updated_at,
+    review_decision: pr.review_decision,
+    labels: pr.labels,
+    checks: [],
+    reviews: [],
+    comments: [],
+    review_comments: [],
+    additions: 2,
+    deletions: 1,
+    changed_files: 1,
+  };
+}
+
+const MOCK_PR_DETAILS = new Map<number, PullRequestDetail>([
+  [
+    42,
+    {
+      ...mockPrDetail(MOCK_PULL_REQUESTS[0]),
+      body:
+        "The identity provider sometimes takes longer than our 5 s timeout, and the check fails outright.\n\n" +
+        "## Changes\n\n- Retry up to **3** times with backoff\n- Log each retry with the `requestId`\n\n" +
+        "Closes #37. <script>alert('escaped')</script>",
+      created_at: "2026-10-27T09:30:00Z",
+      checks: [
+        { name: "build", state: "success", url: "https://github.com/example/mideal/actions/runs/1" },
+        { name: "unit-tests", state: "failure", url: "https://github.com/example/mideal/actions/runs/2" },
+        { name: "lint", state: "skipped", url: null },
+      ],
+      reviews: [
+        { author: "hubot", state: "CHANGES_REQUESTED", body: "The backoff should be capped.", submitted_at: "2026-10-28T10:00:00Z" },
+        { author: "hubot", state: "APPROVED", body: "", submitted_at: "2026-10-29T15:00:00Z" },
+      ],
+      comments: [
+        { id: "IC_1", author: "hubot", body: "Does this also cover the **SMS** provider?", created_at: "2026-10-27T12:00:00Z", url: "https://github.com/example/mideal/pull/42#issuecomment-1" },
+        { id: "IC_2", author: "octocat", body: "Yes — both go through `IdentityClient`.", created_at: "2026-10-27T12:30:00Z", url: "https://github.com/example/mideal/pull/42#issuecomment-2" },
+      ],
+      review_comments: [
+        {
+          id: 501,
+          author: "hubot",
+          body: "Cap this at 30 s?",
+          path: "src/identity/retry.ts",
+          line: 6,
+          original_line: 6,
+          side: "RIGHT",
+          created_at: "2026-10-28T10:00:00Z",
+          in_reply_to: null,
+          url: "https://github.com/example/mideal/pull/42#discussion_r501",
+          diff_hunk: "@@ -1,6 +1,8 @@\n export async function withRetry<T>(run: () => Promise<T>): Promise<T> {\n-  return run();\n+  for (let attempt = 1; ; attempt++) {\n+    const delay = 2 ** attempt * 100;",
+        },
+        {
+          id: 502,
+          author: "octocat",
+          body: "Done in the next push.",
+          path: "src/identity/retry.ts",
+          line: 6,
+          original_line: 6,
+          side: "RIGHT",
+          created_at: "2026-10-28T11:00:00Z",
+          in_reply_to: 501,
+          url: "https://github.com/example/mideal/pull/42#discussion_r502",
+          diff_hunk: "",
+        },
+      ],
+      additions: 9,
+      deletions: 2,
+      changed_files: 2,
+    },
+  ],
+]);
+
+// The mock detail a post on #`number` lands in.
+function mockPrDetailOf(number: number): PullRequestDetail {
+  let detail = MOCK_PR_DETAILS.get(number);
+  if (!detail) {
+    detail = mockPrDetail(MOCK_PULL_REQUESTS.find((p) => p.number === number) ?? MOCK_PULL_REQUESTS[0]);
+    MOCK_PR_DETAILS.set(number, detail);
+  }
+  return detail;
+}
+
+const MOCK_PR_FILES: FileDiff[] = [
+  {
+    path: "src/identity/retry.ts",
+    old_path: null,
+    status: "Modified",
+    truncated: false,
+    hunks: [
+      {
+        header: "@@ -1,6 +1,10 @@",
+        lines: [
+          { origin: " ", old_lineno: 1, new_lineno: 1, content: "export async function withRetry<T>(run: () => Promise<T>): Promise<T> {" },
+          { origin: "-", old_lineno: 2, new_lineno: null, content: "  return run();" },
+          { origin: "+", old_lineno: null, new_lineno: 2, content: "  for (let attempt = 1; ; attempt++) {" },
+          { origin: "+", old_lineno: null, new_lineno: 3, content: "    try {" },
+          { origin: "+", old_lineno: null, new_lineno: 4, content: "      return await run();" },
+          { origin: "+", old_lineno: null, new_lineno: 5, content: "    } catch (err) {" },
+          { origin: "+", old_lineno: null, new_lineno: 6, content: "      if (attempt === 3) throw err;" },
+          { origin: "+", old_lineno: null, new_lineno: 7, content: "      await sleep(2 ** attempt * 100);" },
+          { origin: "+", old_lineno: null, new_lineno: 8, content: "    }" },
+          { origin: "+", old_lineno: null, new_lineno: 9, content: "  }" },
+          { origin: " ", old_lineno: 3, new_lineno: 10, content: "}" },
+        ],
+      },
+    ],
+  },
+  {
+    path: "src/identity/client.ts",
+    old_path: null,
+    status: "Modified",
+    truncated: false,
+    hunks: [
+      {
+        header: "@@ -10,4 +10,4 @@ export class IdentityClient {",
+        lines: [
+          { origin: " ", old_lineno: 10, new_lineno: 10, content: "  async check(id: string): Promise<Result> {" },
+          { origin: "-", old_lineno: 11, new_lineno: null, content: "    return this.http.get(`/check/${id}`);" },
+          { origin: "+", old_lineno: null, new_lineno: 11, content: "    return withRetry(() => this.http.get(`/check/${id}`));" },
+          { origin: " ", old_lineno: 12, new_lineno: 12, content: "  }" },
+        ],
+      },
+    ],
+  },
+];
 
 // One submodule, with an older commit checked out than the repo records.
 const MOCK_SUBMODULES: Submodule[] = [

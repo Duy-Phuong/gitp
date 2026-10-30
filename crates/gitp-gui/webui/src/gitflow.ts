@@ -26,13 +26,28 @@ export function flowTag(cfg: GitFlowConfig, name: string): string {
   return `${cfg.version_tag}${name}`;
 }
 
+// Where a finish of `kind` ends, merging last: develop, except that a hotfix
+// goes into the open release when there is exactly one (among the local
+// `branches`), as git-flow does. Same rule as the backend.
+export function mergeBackTarget(cfg: GitFlowConfig, kind: FlowKind, branches: string[]): string {
+  if (kind !== "Hotfix") return cfg.develop;
+  const releases = branches.filter((b) => flowBranch(cfg, b)?.kind === "Release");
+  return releases.length === 1 ? releases[0] : cfg.develop;
+}
+
 // What finishing `branch` does, in order — for the confirmation.
-export function finishSteps(cfg: GitFlowConfig, kind: FlowKind, branch: string, name: string): string[] {
+export function finishSteps(
+  cfg: GitFlowConfig,
+  kind: FlowKind,
+  branch: string,
+  name: string,
+  branches: string[],
+): string[] {
   if (kind === "Feature") return [`merge ${branch} into ${cfg.develop}`, `delete ${branch}`];
   return [
     `merge ${branch} into ${cfg.production}`,
     `tag it ${flowTag(cfg, name)}`,
-    `merge ${branch} into ${cfg.develop}`,
+    `merge ${branch} into ${mergeBackTarget(cfg, kind, branches)}`,
     `delete ${branch}`,
   ];
 }

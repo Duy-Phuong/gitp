@@ -18,7 +18,7 @@
 // differ — so the diff renderer, context controls and Blame / History (as of
 // the head side) all work unchanged.
 
-import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT, MAX_DIFF_LINES } from "../api";
+import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT, MAX_DIFF_LINES, WORKDIR_REV } from "../api";
 import { clear, copyToClipboard, el, statusBadge, svg } from "../dom";
 import { highlighter, hunkRuns, overlay, type Highlighter, type Run } from "../highlight";
 import { loadDiffWrap, loadIgnoreWhitespace, loadSyntaxHighlight, saveDiffWrap, saveIgnoreWhitespace } from "../prefs";
@@ -187,7 +187,10 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     compare = cmp;
     // The working directory changes under the same key, so a re-diff fetched
     // for it may be stale by now.
-    if (!cmp.base.id || !cmp.head.id) recontexted = null;
+    if (!cmp.base.id || !cmp.head.id) {
+      recontexted = null;
+      images = null;
+    }
     detail = {
       // Blame / History go as of a commit: the base when the head is the
       // working directory (which is no commit).
@@ -450,17 +453,13 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const key = `${viewKey()}:${file.path}`;
     if (images?.key === key) return images.data;
     const d = detail!;
-    const oldRev = compare
-      ? compare.three_dot
-        ? compare.merge_base
-        : compare.base.id
-      : d.parents.length > 0
-        ? `${d.id}^`
-        : null;
-    const at = (rev: string, path: string) => loadOnce(() => cb.fetchFileContent({ Rev: rev }, path));
+    const [from, to]: [FileSide | null, FileSide | null] = compare
+      ? compareImageSides(compare)
+      : [d.parents.length > 0 ? { Rev: `${d.id}^` } : null, { Rev: d.id }];
+    const at = (side: FileSide, path: string) => loadOnce(() => cb.fetchFileContent(side, path));
     const data: [ImageLoad | null, ImageLoad | null] = [
-      file.status !== "Added" && oldRev ? at(oldRev, file.old_path ?? file.path) : null,
-      file.status !== "Deleted" ? at(d.id, file.path) : null,
+      file.status !== "Added" && from ? at(from, file.old_path ?? file.path) : null,
+      file.status !== "Deleted" && to ? at(to, file.path) : null,
     ];
     images = { key, data };
     return data;
@@ -874,6 +873,17 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
 // short id when it was given a commit id.
 export function compareEndLabel(end: CompareEnd): string {
   return end.id.startsWith(end.rev.toLowerCase()) ? end.short_id : end.rev;
+}
+
+// Where a comparison's image diff reads its before / after from: each end's
+// commit (the merge base for a three-dot before), or the files on disk for the
+// working directory — which has no id, so it can't be read as a revision. The
+// empty tree has nothing to read.
+export function compareImageSides(cmp: Comparison): [FileSide | null, FileSide | null] {
+  const side = (end: CompareEnd): FileSide | null =>
+    end.rev === WORKDIR_REV ? "WorkTree" : end.id ? { Rev: end.id } : null;
+  const from = cmp.three_dot ? (cmp.merge_base ? { Rev: cmp.merge_base } : null) : side(cmp.base);
+  return [from, side(cmp.head)];
 }
 
 // --- toolbar controls -------------------------------------------------------

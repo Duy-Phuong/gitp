@@ -84,7 +84,7 @@ export interface ChangesCallbacks {
   editInApp: (path: string) => void;
   createFile: () => void;
   // Delete a working-tree file (undoable, like a discard).
-  deleteFile: (path: string) => Promise<void>;
+  deleteFile: (path: string) => Promise<boolean>;
   // Open the file's staged / unstaged change in `git difftool`.
   openInDiffTool: (target: DiffToolTarget, paths: string[]) => void;
   // Absolute path of the active repo's working directory (for Copy Absolute
@@ -147,7 +147,9 @@ export interface ChangesHandle {
   applyStatus: (status: StatusLists) => void;
   // Re-read the selected file's diff even though its status hasn't changed —
   // it may have been edited outside gitp — and repaint only if it differs.
-  recheckDiff: () => Promise<void>;
+  // `reloadImages` also reloads a binary image, whose diff can't show an edit
+  // (see keepRecheckedDiff).
+  recheckDiff: (reloadImages?: boolean) => Promise<void>;
   // Pre-fill the commit subject/body — e.g. a merge/cherry-pick/revert's
   // pending message, so it's ready to commit here without retyping it. A
   // no-op once the user has typed anything, so it never clobbers real input.
@@ -320,7 +322,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     if (diffHost) renderDiffInto(diffHost);
   }
 
-  async function recheckDiff(): Promise<void> {
+  async function recheckDiff(reloadImages = false): Promise<void> {
     const sel = selected;
     // Nothing shown, a load already in flight (it's fresh), or an operation
     // that reloads on its own when it's done.
@@ -336,9 +338,8 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     );
     if (token !== diffToken) return; // selection moved on; drop this result
     // Unchanged: keep the very same object, so the line selection survives and
-    // nothing is repainted. Not for an image: a binary file's diff has no
-    // lines to compare, so an edit to it on disk would never show.
-    if (sameDiff(file, selectedDiff) && !imageMime(sel.path)) return;
+    // nothing is repainted.
+    if (keepRecheckedDiff(file, selectedDiff, sel.path, reloadImages)) return;
     // A new diff object: renderDiffInto starts the line selection over, as for
     // any other newly loaded diff.
     selectedDiff = file;
@@ -1046,7 +1047,14 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       cb.setStatus("Delete cancelled.");
       return;
     }
-    await run(() => cb.deleteFile(path), () => cb.setStatus(`Deleted ${path}.`), "Delete failed");
+    let undoable = true;
+    await run(
+      async () => {
+        undoable = await cb.deleteFile(path);
+      },
+      () => cb.setStatus(undoable ? `Deleted ${path}.` : `Deleted ${path}. It was too large to keep for Undo.`),
+      "Delete failed",
+    );
   }
 
   async function ignoreAction(rules: string[]): Promise<void> {
@@ -1456,6 +1464,21 @@ export function sameDiff(a: FileDiff | null, b: FileDiff | null): boolean {
       })
     );
   });
+}
+
+// Whether a recheck keeps the diff on screen (see recheckDiff). A binary
+// image's diff has no lines to compare, so an edit to it on disk never shows
+// in it: it's reloaded when the caller asks — a file-watcher or focus refresh,
+// not every throttled click, which would flash it to "Loading…" and download
+// it again each time. An SVG has its text diff, which is compared as usual.
+export function keepRecheckedDiff(
+  fresh: FileDiff | null,
+  current: FileDiff | null,
+  path: string,
+  reloadImages: boolean,
+): boolean {
+  if (!sameDiff(fresh, current)) return false;
+  return !(reloadImages && imageMime(path) && !fresh?.hunks.length);
 }
 
 // The .gitignore rules offered for one file, most specific first: the file

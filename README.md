@@ -12,6 +12,22 @@ crates/gitp-gui    the Tauri app: commands, PTY, window
   └── webui        the frontend (TypeScript + Vite)
 ```
 
+## Features
+
+| Area | What you get |
+|---|---|
+| Repositories | Open, clone (branch, depth, single branch, submodules), init with a `.gitignore` template and default branch; repo tabs you can drag and rename; favorites on Cmd+1…9; local workspaces with bulk fetch / pull / open |
+| Commit graph | Themes (Light, Dark, GitKraken, GitKraken Neon); WIP rows for this and every other worktree; stash nodes; hide / solo / pin branches; drag a branch onto another to merge, rebase, reset or push; branch hover fade and ghost branch; Author / Date / SHA columns you can hide and reorder; author filter; search by message, `author:`, `path:`, `content:` |
+| Committing | Stage / unstage / discard by file, block or line (any text encoding); commit template, skip hooks, push after commit; amend; signing; stash with a message or staged only; Stash & Switch |
+| Diffs | Unified / split, word diff, syntax highlighting, wrap, ignore whitespace, image diff, combined diff of a commit range, compare with the working directory, external diff / merge tools, patches out and in |
+| History tools | Cherry-pick (one or an interactive multi-commit plan), revert, reset, interactive rebase, restore a file or revert a block from a commit, blame, file history, reflog, bisect, activity log |
+| Conflicts | 3-way resolver for merge, rebase, cherry-pick, revert and squash merges; take ours / theirs with a check for hand edits |
+| Undo / redo | One step for commits, resets (a hard reset's uncommitted work comes back), merges, checkouts, branch and tag changes, staging, discards, file edits and stash drops |
+| Branches, tags, remotes | Annotated tags pushed to or deleted from any remote; merge with no-ff / ff-only / squash; add, rename and remove remotes; Git Flow (initialize, start, finish) with plain git; Git LFS track, fetch and pull |
+| Worktrees | Add (also from a commit, tag or by dropping a branch), open as a tab, move, lock, prune with a dry run; changed-file and ahead/behind counts; a warning before removing one with unsaved work |
+| GitHub | Pull requests through the `gh` CLI: list, view the conversation, checks and diff, check out (also into a new worktree), comment, reply, review and comment on a diff line; sign in from the app |
+| Tools | In-app file editor with Markdown preview; terminal tabs; Quick Launch (Cmd+K); profiles with their own identity, settings and tabs; per-repo text encoding; zoom; auto-fetch |
+
 ## Requirements
 
 | | |
@@ -20,6 +36,11 @@ crates/gitp-gui    the Tauri app: commands, PTY, window
 | Node.js | 20 or newer, with npm |
 | Xcode CLT | macOS only: `xcode-select --install` |
 | git | on `PATH` — gitp shells out to it for rebase, cherry-pick, push and friends |
+| gh | optional, for pull requests: `brew install gh` — sign in from Settings → Git or the Pull Requests section |
+| git-lfs | optional, for LFS repositories: `brew install git-lfs` |
+
+gitp also looks in `/opt/homebrew/bin` and `/usr/local/bin` for `git-lfs` and
+`gh`, so they are found when the app is opened from Finder.
 
 macOS is the supported platform today. The Rust side is portable, but the app
 has only been built and run against macOS's system WebKit.
@@ -141,6 +162,23 @@ repositories gitp has opened — gitp only ever reads and writes them through gi
 cargo test                                        # Rust: gitp-core + gitp-gui
 npm --prefix crates/gitp-gui/webui test           # frontend unit tests (Vitest)
 npm --prefix crates/gitp-gui/webui run typecheck   # type-check only
+```
+
+CI also runs `cargo fmt --all --check` and
+`cargo clippy --workspace --all-targets -- -D warnings`.
+
+**Large-repository timings** are opt-in. Generate a test repository (100k
+commits, hundreds of branches and tags) in an empty folder:
+
+```bash
+git init -q -b main big && cd big && python3 ../scripts/gen-large-repo.py 100000 10000 | git fast-import --quiet
+```
+
+then:
+
+```bash
+GITP_BENCH_REPO=/path/to/big cargo test -p gitp-core --release --test large_repo_timing -- --ignored --nocapture
+GITP_PERF=1 npm --prefix crates/gitp-gui/webui test -- large-repo-timing
 ```
 
 ## Frontend-only development

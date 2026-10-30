@@ -17,6 +17,7 @@ mod compare;
 mod config;
 mod conflict;
 mod editor;
+mod gh;
 mod gitflow;
 mod history;
 mod lfs;
@@ -63,6 +64,7 @@ pub fn run() {
         .manage(RepoState::default())
         .manage(TerminalState::default())
         .manage(local_workspaces::WorkspaceOps::default())
+        .manage(gh::GhLoginState::default())
         .setup(|app| {
             // Repository watchers push changes on disk to the frontend (see
             // `watch`); they need the app handle to emit, which exists only now.
@@ -174,10 +176,27 @@ pub fn run() {
             branches::set_upstream,
             branches::unset_upstream,
             remote::create_pull_request,
+            gh::gh_account,
+            gh::gh_repo,
+            gh::gh_pull_requests,
+            gh::gh_pull_request,
+            gh::gh_pull_request_files,
+            gh::gh_checkout_pull_request,
+            gh::gh_checkout_pull_request_worktree,
+            gh::gh_comment,
+            gh::gh_review,
+            gh::gh_reply,
+            gh::gh_line_comment,
+            gh::gh_login_start,
+            gh::gh_login_wait,
+            gh::gh_login_cancel,
+            gh::gh_logout,
+            gh::open_github_url,
             remote::cancel_network_op,
             remote::clone_repository,
             local_workspaces::workspace_repo_summary,
             local_workspaces::workspace_scan_folder,
+            local_workspaces::workspace_with_worktrees,
             local_workspaces::workspace_fetch,
             local_workspaces::workspace_pull,
             local_workspaces::cancel_workspace_ops,
@@ -237,6 +256,7 @@ pub fn run() {
             config::get_global_identity,
             config::set_global_identity,
             config::apply_local_identity,
+            config::restore_local_identity,
             reflog::get_reflog,
             activity::get_activity_log,
             activity::clear_activity_log,
@@ -252,11 +272,15 @@ pub fn run() {
             staging::get_signing_config,
             staging::get_commit_template,
             worktrees::list_worktrees,
+            worktrees::worktree_summaries,
+            worktrees::worktree_unsaved_work,
             worktrees::add_worktree,
+            worktrees::move_worktree,
             worktrees::remove_worktree,
             worktrees::lock_worktree,
             worktrees::unlock_worktree,
             worktrees::prune_worktrees,
+            worktrees::stale_worktrees,
             submodules::list_submodules,
             submodules::update_submodules,
             submodules::sync_submodules,
