@@ -59,7 +59,7 @@ impl Repo {
         context_lines: u32,
         reverse: bool,
     ) -> Result<String> {
-        let diff = self.staging_diff(path, staged, context_lines)?;
+        let diff = self.staging_diff(path, staged, context_lines, false)?;
         let mut patch = path_patch(&diff, path)?;
         let buf = patch.to_buf()?;
         let header: String = patch_text(&buf)?

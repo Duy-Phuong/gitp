@@ -52,8 +52,13 @@ describe("mergeTipRefs", () => {
     const tips = mergeTipRefs(
       [branch("other", "c1"), branch("main", "c1", true)],
       [{ remote: "origin", name: "origin/remote-only", target: "c1" }],
-      [{ name: "v1.0", target: "c1" }],
+      [{ name: "v1.0", target: "c1", message: null }],
     );
     expect(tips.get("c1")?.map((t) => t.name)).toEqual(["main", "other", "remote-only", "v1.0"]);
+  });
+
+  it("carries an annotated tag's message for the badge tooltip", () => {
+    const tips = mergeTipRefs([], [], [{ name: "v2.0", target: "c1", message: "Release 2" }]);
+    expect(tips.get("c1")?.[0]).toMatchObject({ name: "v2.0", kind: "tag", message: "Release 2" });
   });
 });

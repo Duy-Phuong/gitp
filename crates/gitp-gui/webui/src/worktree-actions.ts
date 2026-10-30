@@ -17,6 +17,7 @@ import { state } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
 import { closeRepoTab, loadRepo, loadSidebar } from "./shell";
+import { deleteLocalBranch } from "./ref-actions";
 
 // Right-click a worktree in the sidebar.
 export function onWorktreeMenu(w: Worktree, x: number, y: number): void {
@@ -37,7 +38,16 @@ export function onWorktreeMenu(w: Worktree, x: number, y: number): void {
       });
     }
     // git refuses to remove the worktree it's run from; switch tabs first.
-    if (!w.is_current) items.push({ label: "Remove…", danger: true, run: () => void removeWorktreeAction(w) });
+    if (!w.is_current) {
+      items.push({ label: "Remove…", danger: true, run: () => void removeWorktreeAction(w) });
+      if (w.branch) {
+        items.push({
+          label: "Remove Worktree and Delete Branch…",
+          danger: true,
+          run: () => void removeWorktreeAction(w, true),
+        });
+      }
+    }
   }
   items.push({ separator: true });
   items.push({ label: "Copy Path", run: () => void copyText(w.path, `Copied ${w.path}`) });
@@ -93,10 +103,14 @@ export async function addWorktreeAction(path: string, target: WorktreeTarget): P
 
 // Remove a linked worktree. git refuses one with modified or untracked files;
 // then a second, explicit confirmation forces it, discarding those changes.
-export async function removeWorktreeAction(w: Worktree): Promise<void> {
+// `deleteBranch`: then delete the branch it had checked out too — the branch
+// delete's own flow, so an unmerged one still asks before a force delete.
+export async function removeWorktreeAction(w: Worktree, deleteBranch = false): Promise<void> {
   const name = worktreeName(w);
-  const keeps = w.branch ? ` The branch ${w.branch} is kept.` : "";
-  if (!(await confirmDialog(`Remove the worktree ${name}?\n\n${w.path} will be deleted.${keeps}`))) {
+  const branch = deleteBranch ? w.branch : null;
+  const keeps = branch ? ` The branch ${branch} will be deleted too.` : w.branch ? ` The branch ${w.branch} is kept.` : "";
+  const question = branch ? `Remove the worktree ${name} and delete the branch ${branch}?` : `Remove the worktree ${name}?`;
+  if (!(await confirmDialog(`${question}\n\n${w.path} will be deleted.${keeps}`))) {
     setStatus("Remove cancelled.");
     return;
   }
@@ -124,8 +138,12 @@ export async function removeWorktreeAction(w: Worktree): Promise<void> {
   }
   // A tab still open on the deleted folder would only fail from here on.
   if (state.repos.some((r) => r.path === w.path)) await closeRepoTab(w.path);
+  // No longer checked out anywhere, so git will now let it go. A refusal or a
+  // cancelled force delete has reported itself; the worktree is gone either way.
+  const deleted = branch !== null && (await deleteLocalBranch(branch));
   await loadSidebar();
-  reportDone(`Removed worktree ${name}`);
+  if (deleted) reportDone(`Removed worktree ${name} and deleted ${branch}`);
+  else if (branch === null) reportDone(`Removed worktree ${name}`);
 }
 
 export function pruneWorktreesAction(): Promise<void> {

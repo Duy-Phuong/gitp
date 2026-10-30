@@ -8,6 +8,8 @@
 //!   - stage:   apply the unstaged hunk to the index
 //!   - unstage: reverse-apply the staged hunk on the index
 //!   - discard: reverse-apply the unstaged hunk in the working tree
+//!   - revert a commit's block: reverse-apply that hunk of the commit's own
+//!     diff in the working tree
 //!
 //! Every operation takes the `context_lines` the diff was shown with: the
 //! context size decides where one hunk ends and the next begins, so the hunk
@@ -36,6 +38,42 @@ impl Repo {
         self.apply_hunk(&["--reverse"], context_lines, &patch)
     }
 
+    /// Undo hunk `hunk_index` of commit `rev`'s change to `path` (its diff
+    /// against the first parent, at `context_lines`) in the working tree — a
+    /// `git revert` of just that block, left unstaged. `old_path` is a
+    /// rename's source, as for [`Repo::commit_file_diff`]. Fails, changing
+    /// nothing, when the file no longer has those lines where the block put
+    /// them.
+    pub fn revert_commit_hunk(
+        &self,
+        rev: &str,
+        path: &str,
+        old_path: Option<&str>,
+        hunk_index: usize,
+        context_lines: u32,
+    ) -> Result<()> {
+        let commit = self.inner.revparse_single(rev)?.peel_to_commit()?;
+        let mut opts = git2::DiffOptions::new();
+        opts.patience(true)
+            .context_lines(context_lines)
+            .disable_pathspec_match(true)
+            .pathspec(path);
+        if let Some(old) = old_path {
+            opts.pathspec(old);
+        }
+        let diff = self.commit_diff(&commit, &mut opts)?;
+        let mut patch = path_patch(&diff, path)?;
+        let buf = patch.to_buf()?;
+        let hunk = single_hunk_patch(&without_rename(patch_text(&buf)?), hunk_index)?;
+        self.apply_hunk(&["--reverse"], context_lines, &hunk)
+            .map_err(|e| {
+                Error::Message(format!(
+                    "This block doesn't match {path} in the working tree any more, so it can't \
+                     be reverted. The file was left as it was.\n\n{e}"
+                ))
+            })
+    }
+
     /// `git apply <mode> <patch>`. A patch with no context lines needs
     /// `--unidiff-zero`: without context git refuses it, since it can't confirm
     /// the hunk lands where the header says.
@@ -58,7 +96,7 @@ impl Repo {
         hunk_index: usize,
         context_lines: u32,
     ) -> Result<String> {
-        let diff = self.staging_diff(path, staged, context_lines)?;
+        let diff = self.staging_diff(path, staged, context_lines, false)?;
         let mut patch = path_patch(&diff, path)?;
         let buf = patch.to_buf()?;
         single_hunk_patch(patch_text(&buf)?, hunk_index)
@@ -82,6 +120,29 @@ pub(crate) fn path_patch<'d>(diff: &'d git2::Diff, path: &str) -> Result<git2::P
 
 pub(crate) fn patch_text(buf: &[u8]) -> Result<&str> {
     std::str::from_utf8(buf).map_err(|e| Error::Message(format!("patch is not valid UTF-8: {e}")))
+}
+
+/// A rename's (or copy's) patch with its header reduced to a plain edit of the
+/// new path. Reversed as it stands, `git apply` would also move the file back
+/// to its old name — undoing one block must only touch that block's lines.
+fn without_rename(patch: &str) -> String {
+    let Some(plus) = patch.lines().find_map(|l| l.strip_prefix("+++ ")) else {
+        return patch.to_string();
+    };
+    let is_move = patch
+        .lines()
+        .take_while(|l| !l.starts_with("@@ "))
+        .any(|l| l.starts_with("rename from ") || l.starts_with("copy from "));
+    if !is_move {
+        return patch.to_string();
+    }
+    // `b/<path>`, or `"b/<path>"` when git had to quote it.
+    let minus = match plus.strip_prefix('"') {
+        Some(rest) => format!("\"a{}", rest.strip_prefix('b').unwrap_or(rest)),
+        None => format!("a{}", plus.strip_prefix('b').unwrap_or(plus)),
+    };
+    let body = patch.find("\n@@ ").map_or("", |i| &patch[i + 1..]);
+    format!("diff --git {minus} {plus}\n--- {minus}\n+++ {plus}\n{body}")
 }
 
 /// Split a full-file unified patch into its header and hunks, and return the

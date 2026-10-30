@@ -3,7 +3,7 @@
 mod common;
 
 use common::FixtureRepo;
-use gitp_core::Repo;
+use gitp_core::{MergeMode, Repo};
 
 #[test]
 fn rename_branch_changes_its_name() {
@@ -75,11 +75,159 @@ fn merge_branch_brings_in_another_branchs_commit() {
     fx.commit_file("side.txt", "hi\n", "add side");
     repo.checkout_branch("master").unwrap();
 
-    repo.merge_branch("side").unwrap();
+    repo.merge_branch("side", MergeMode::Default).unwrap();
     assert!(
         fx.path().join("side.txt").exists(),
         "side's file merged into master"
     );
+}
+
+/// master at c1, `side` one commit ahead of it: a merge that could fast-forward.
+fn repo_with_side_ahead() -> (FixtureRepo, Repo) {
+    let fx = FixtureRepo::init();
+    let c1 = fx.commit_file("a.txt", "one\n", "c1");
+    fx.repo
+        .branch("side", &fx.repo.find_commit(c1).unwrap(), false)
+        .unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.checkout_branch("side").unwrap();
+    fx.commit_file("side.txt", "hi\n", "add side");
+    repo.checkout_branch("master").unwrap();
+    (fx, repo)
+}
+
+fn head_parents(fx: &FixtureRepo) -> usize {
+    fx.repo
+        .head()
+        .unwrap()
+        .peel_to_commit()
+        .unwrap()
+        .parent_count()
+}
+
+#[test]
+fn merge_no_ff_records_a_merge_commit_even_when_it_could_fast_forward() {
+    let (fx, repo) = repo_with_side_ahead();
+    repo.merge_branch("side", MergeMode::NoFastForward).unwrap();
+    assert_eq!(head_parents(&fx), 2, "a merge commit, not a fast-forward");
+}
+
+#[test]
+fn merge_ff_only_fast_forwards_and_refuses_a_diverged_branch() {
+    let (fx, repo) = repo_with_side_ahead();
+    repo.merge_branch("side", MergeMode::FastForwardOnly)
+        .unwrap();
+    assert_eq!(head_parents(&fx), 1, "fast-forwarded onto side's commit");
+
+    // Diverge: master gets a commit of its own, side another.
+    fx.commit_file("b.txt", "b\n", "on master");
+    repo.checkout_branch("side").unwrap();
+    fx.commit_file("c.txt", "c\n", "on side");
+    repo.checkout_branch("master").unwrap();
+    assert!(repo
+        .merge_branch("side", MergeMode::FastForwardOnly)
+        .is_err());
+}
+
+#[test]
+fn squash_merge_stages_the_changes_and_prepares_a_message() {
+    let (fx, repo) = repo_with_side_ahead();
+    let before = fx.repo.head().unwrap().peel_to_commit().unwrap().id();
+    assert_eq!(repo.squash_message(), None, "nothing to squash yet");
+
+    repo.merge_branch("side", MergeMode::Squash).unwrap();
+
+    // HEAD hasn't moved; side's change is staged, waiting for one commit.
+    assert_eq!(
+        fx.repo.head().unwrap().peel_to_commit().unwrap().id(),
+        before
+    );
+    assert!(fx.path().join("side.txt").exists());
+    let message = repo.squash_message().expect("SQUASH_MSG written");
+    assert!(message.contains("add side"), "{message}");
+
+    // Committing finishes the squash: git removes SQUASH_MSG.
+    repo.commit("Squash side", "", false, None, false).unwrap();
+    assert_eq!(
+        head_parents(&fx),
+        1,
+        "an ordinary commit, no merge recorded"
+    );
+    assert_eq!(repo.squash_message(), None);
+}
+
+#[test]
+fn fast_forward_branch_to_advances_another_branch_only_when_it_is_behind() {
+    let fx = FixtureRepo::init();
+    let c1 = fx.commit_file("a.txt", "one\n", "c1");
+    let c1 = fx.repo.find_commit(c1).unwrap();
+    fx.repo.branch("behind", &c1, false).unwrap();
+    fx.repo.branch("diverged", &c1, false).unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.checkout_branch("diverged").unwrap();
+    fx.commit_file("d.txt", "d\n", "on diverged");
+    repo.checkout_branch("master").unwrap();
+    let c2 = fx.commit_file("a.txt", "two\n", "c2");
+
+    // Not checked out: moved by a local fetch, the working tree untouched.
+    repo.fast_forward_branch_to("behind", "master").unwrap();
+    assert_eq!(repo.resolve_commit("behind").unwrap(), c2.to_string());
+
+    // A branch with commits of its own can't be fast-forwarded.
+    assert!(repo.fast_forward_branch_to("diverged", "master").is_err());
+    assert_ne!(repo.resolve_commit("diverged").unwrap(), c2.to_string());
+
+    // The checked-out branch goes by `merge --ff-only`.
+    repo.checkout_branch("behind").unwrap();
+    let c3 = fx.commit_file("a.txt", "three\n", "c3");
+    repo.checkout_branch("master").unwrap();
+    repo.fast_forward_branch_to("master", "behind").unwrap();
+    assert_eq!(repo.resolve_commit("HEAD").unwrap(), c3.to_string());
+    assert!(
+        repo.fast_forward_branch_to("-x", "master").is_err(),
+        "flag-like names refused"
+    );
+}
+
+#[test]
+fn push_branch_to_pushes_under_the_remote_branch_name() {
+    use std::process::Command;
+    let fx = FixtureRepo::init();
+    let c1 = fx.commit_file("a.txt", "one\n", "c1");
+    let remote_dir = tempfile::tempdir().unwrap();
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    git(remote_dir.path(), &["init", "--bare", "-q"]);
+    git(
+        fx.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            remote_dir.path().to_str().unwrap(),
+        ],
+    );
+
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.push_branch_to("master", "origin", "review/x").unwrap();
+
+    let heads = git(fx.path(), &["ls-remote", "--heads", "origin"]);
+    assert!(
+        heads.contains(&format!("{c1}\trefs/heads/review/x")),
+        "{heads}"
+    );
+    assert!(repo.push_branch_to("master", "-origin", "x").is_err());
 }
 
 #[test]

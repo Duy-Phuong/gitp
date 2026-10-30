@@ -7,12 +7,22 @@ use tauri::State;
 use crate::state::{to_message, with_repo, with_repo_clearing_undo, RepoState};
 use crate::undo::{clear_undo, set_undo};
 
-/// `git stash` the active repo's local changes. Returns git's output.
-fn stash_impl(state: &RepoState) -> Result<String, String> {
+/// `git stash push` the active repo's local changes, with the Stash dialog's
+/// options (a blank message counts as none). Returns git's output.
+fn stash_impl(
+    state: &RepoState,
+    message: Option<String>,
+    staged: bool,
+    include_untracked: bool,
+) -> Result<String, String> {
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
-    let out = session.repo.stash().map_err(to_message)?;
+    let message = message.as_deref().map(str::trim).filter(|m| !m.is_empty());
+    let out = session
+        .repo
+        .stash_push(message, staged, include_untracked)
+        .map_err(to_message)?;
     clear_undo(session); // the working tree changed under any stored undo
     Ok(out)
 }
@@ -75,8 +85,13 @@ fn stash_files_impl(state: &RepoState, paths: Vec<String>) -> Result<String, Str
 // --- Tauri commands --------------------------------------------------------
 
 #[tauri::command(async)]
-pub(crate) fn stash(state: State<RepoState>) -> Result<String, String> {
-    stash_impl(&state)
+pub(crate) fn stash(
+    message: Option<String>,
+    staged: bool,
+    include_untracked: bool,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    stash_impl(&state, message, staged, include_untracked)
 }
 
 #[tauri::command(async)]

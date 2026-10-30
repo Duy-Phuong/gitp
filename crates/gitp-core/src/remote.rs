@@ -9,6 +9,7 @@ use std::process::Stdio;
 
 use serde::Deserialize;
 
+use crate::activity;
 use crate::error::{Error, Result};
 use crate::git_bin::git_command;
 use crate::repo::Repo;
@@ -223,12 +224,14 @@ impl Repo {
     /// forces signing on (`-S`) or off (`--no-gpg-sign`); `None` leaves it to
     /// `commit.gpgsign`. Signing runs git's configured gpg / ssh-keygen, so a
     /// missing key or a cancelled pinentry fails the commit with git's error.
+    /// `no_verify` skips the pre-commit and commit-msg hooks (`--no-verify`).
     pub fn commit(
         &self,
         subject: &str,
         body: &str,
         amend: bool,
         sign: Option<bool>,
+        no_verify: bool,
     ) -> Result<String> {
         let mut args: Vec<&str> = vec!["commit", "-m", subject];
         let body = body.trim();
@@ -244,6 +247,9 @@ impl Repo {
             Some(false) => args.push("--no-gpg-sign"),
             None => {}
         }
+        if no_verify {
+            args.push("--no-verify");
+        }
         self.run_git(&args)
     }
 
@@ -253,7 +259,33 @@ impl Repo {
     /// `stash` would ignore them and do nothing when only new files exist).
     /// Returns git's output (including "No local changes to save").
     pub fn stash(&self) -> Result<String> {
-        self.run_git(&["stash", "--include-untracked"])
+        self.stash_push(None, false, true)
+    }
+
+    /// `git stash push` with the toolbar Stash dialog's options. `message`
+    /// names the entry (git's own "WIP on <branch>" when `None`); `staged`
+    /// saves only what is staged (`--staged`), leaving the rest of the working
+    /// tree alone; `include_untracked` takes new files too, as [`Repo::stash`]
+    /// does. git refuses `--staged` together with untracked files, so `staged`
+    /// wins over `include_untracked`.
+    pub fn stash_push(
+        &self,
+        message: Option<&str>,
+        staged: bool,
+        include_untracked: bool,
+    ) -> Result<String> {
+        let mut args = vec!["stash", "push"];
+        if staged {
+            args.push("--staged");
+        } else if include_untracked {
+            args.push("--include-untracked");
+        }
+        if let Some(message) = message {
+            // `-m` consumes the next argument whole, so a message that starts
+            // with `-` is still just the message.
+            args.extend(["-m", message]);
+        }
+        self.run_git(&args)
     }
 
     /// `git stash pop` — reapply the most recent stash and drop it. Errors if
@@ -291,12 +323,13 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        let output = git_command()
-            .current_dir(workdir)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .args(args)
-            .output()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        let output = activity::output(
+            git_command()
+                .current_dir(workdir)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .args(args),
+        )
+        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
 
         let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
         combined.push_str(&String::from_utf8_lossy(&output.stderr));
@@ -318,12 +351,13 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        let output = git_command()
-            .current_dir(workdir)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .args(args)
-            .output()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        let output = activity::output(
+            git_command()
+                .current_dir(workdir)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .args(args),
+        )
+        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
         if output.status.success() {
             Ok(output.stdout)
         } else {
@@ -341,26 +375,33 @@ impl Repo {
             .inner
             .workdir()
             .ok_or_else(|| Error::Message("repository has no working directory".into()))?;
-        let mut child = git_command()
-            .current_dir(workdir)
+        let mut cmd = git_command();
+        cmd.current_dir(workdir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
-
-        child
-            .stdin
-            .take()
-            .ok_or_else(|| Error::Message("failed to open git stdin".into()))?
-            .write_all(input.as_bytes())
-            .map_err(|e| Error::Message(format!("failed to write patch to git: {e}")))?;
-
-        let output = child
-            .wait_with_output()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+            .stderr(Stdio::piped());
+        let run = activity::Run::of(&cmd);
+        let output = (|| {
+            let mut child = cmd
+                .spawn()
+                .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+            child
+                .stdin
+                .take()
+                .ok_or_else(|| Error::Message("failed to open git stdin".into()))?
+                .write_all(input.as_bytes())
+                .map_err(|e| Error::Message(format!("failed to write patch to git: {e}")))?;
+            child
+                .wait_with_output()
+                .map_err(|e| Error::Message(format!("failed to run git: {e}")))
+        })();
+        match &output {
+            Ok(out) => run.finish_output(out),
+            Err(e) => run.fail(e),
+        }
+        let output = output?;
 
         let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
         combined.push_str(&String::from_utf8_lossy(&output.stderr));

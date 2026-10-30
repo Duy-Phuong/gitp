@@ -1,7 +1,8 @@
 //! File-level local-changes operations driven by the changes-view right-click
 //! menu, each acting on a set of selected paths: discard whole files, stash
 //! selected files, save selected files as a patch, and add files to
-//! `.gitignore`.
+//! `.gitignore` (untracking committed ones so the rule takes effect). Also
+//! restoring files from a commit, and applying a patch file to them.
 //!
 //! All of these shell out through `run_git`/`run_git_raw` so git's own behavior
 //! (pathspec matching, conflict handling, messages) applies as-is.
@@ -10,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
-use crate::remote::literal_pathspec;
+use crate::remote::{literal_pathspec, ref_arg};
 use crate::repo::Repo;
 
 impl Repo {
@@ -103,6 +104,14 @@ impl Repo {
         Ok(format!("Saved patch to {}", dest.display()))
     }
 
+    /// Apply the patch file at `patch` (`git apply --3way`): what doesn't apply
+    /// cleanly falls back to a three-way merge where the patch names the blobs
+    /// it was made from, leaving conflicts to resolve. The result is staged.
+    pub fn apply_patch(&self, patch: &Path) -> Result<()> {
+        let patch = patch.to_string_lossy();
+        self.run_git(&["apply", "--3way", "--", &patch]).map(|_| ())
+    }
+
     /// Whether `path` is untracked (present in the working tree, absent from the
     /// index) — the files `git diff` alone wouldn't include in a patch.
     fn is_untracked(&self, path: &str) -> bool {
@@ -144,6 +153,28 @@ impl Repo {
         fs::write(&file, out)
             .map_err(|e| Error::Message(format!("can't write .gitignore: {e}")))?;
         Ok(to_add.len())
+    }
+
+    /// Stop tracking `paths` (`git rm --cached`) while keeping them on disk —
+    /// an ignore rule has no effect on a file git already tracks, so "ignore
+    /// and stop tracking" needs both. The removal is staged, for the next
+    /// commit to record.
+    pub fn untrack_files(&self, paths: &[String]) -> Result<()> {
+        let specs: Vec<String> = paths.iter().map(|p| literal_pathspec(p)).collect();
+        let mut args = vec!["rm", "--cached", "-q", "--"];
+        args.extend(specs.iter().map(String::as_str));
+        self.run_git(&args).map(|_| ())
+    }
+
+    /// Put `paths` back to how they are in commit `rev`
+    /// (`git checkout <rev> -- <paths>`): written to the working tree and
+    /// staged, overwriting any local changes to them. Each path must exist in
+    /// `rev`.
+    pub fn restore_files_from(&self, rev: &str, paths: &[String]) -> Result<()> {
+        let specs: Vec<String> = paths.iter().map(|p| literal_pathspec(p)).collect();
+        let mut args = vec!["checkout", "-q", ref_arg(rev)?, "--"];
+        args.extend(specs.iter().map(String::as_str));
+        self.run_git(&args).map(|_| ())
     }
 
     /// The repository's working directory. Errors for a bare repo.

@@ -123,6 +123,28 @@ fn commit_file_diff_keeps_a_rename_paired() {
 }
 
 #[test]
+fn commit_file_diff_can_ignore_whitespace() {
+    let fixture = FixtureRepo::init();
+    fixture.commit_file("f.txt", "fn a() {\n    x();\n}\nkeep\n", "base");
+    // Re-indent one line (whitespace only) and really change another.
+    let c = fixture.commit_file("f.txt", "fn a() {\n\tx();\n}\nKEEP\n", "edit");
+    let repo = Repo::open(fixture.path()).unwrap();
+    let rev = c.to_string();
+
+    let all = repo
+        .commit_file_diff_with(&rev, "f.txt", None, 3, false, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(added_lines(&all), vec!["\tx();", "KEEP"]);
+
+    let no_ws = repo
+        .commit_file_diff_with(&rev, "f.txt", None, 3, true, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(added_lines(&no_ws), vec!["KEEP"], "the re-indent is hidden");
+}
+
+#[test]
 fn a_huge_file_is_truncated_by_default_and_whole_on_request() {
     let fx = FixtureRepo::init();
     fx.commit_file("small.txt", "one\n", "c1");

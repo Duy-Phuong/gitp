@@ -317,6 +317,22 @@ pub(crate) fn with_recorded_discard(
     paths: &[String],
     f: impl FnOnce(&Repo) -> gitp_core::Result<()>,
 ) -> Result<(), String> {
+    let n = paths.len();
+    let label = format!("Discard {n} file{}", if n == 1 { "" } else { "s" });
+    with_recorded_files(state, label, paths, f)
+}
+
+/// Run `f`, which rewrites `paths` in the working tree and the index, recording
+/// it under `label` the way [`with_recorded_discard`] records a discard: each
+/// file's bytes and the index on both sides. Anything that only overwrites
+/// files — restoring them from a commit, reverting a block — undoes the same
+/// way.
+pub(crate) fn with_recorded_files(
+    state: &RepoState,
+    label: String,
+    paths: &[String],
+    f: impl FnOnce(&Repo) -> gitp_core::Result<()>,
+) -> Result<(), String> {
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
@@ -352,11 +368,10 @@ pub(crate) fn with_recorded_discard(
             }
         }
     }
-    let n = paths.len();
     set_undo(
         session,
         Undoable::Discarded {
-            label: format!("Discard {n} file{}", if n == 1 { "" } else { "s" }),
+            label,
             files,
             index_before,
             index_after,
@@ -460,16 +475,16 @@ mod tests {
     use std::path::Path;
     use std::process::Command;
 
-    use gitp_core::{RebaseAction, RebaseStep, ResetMode};
+    use gitp_core::{PickAction, PickStep, RebaseAction, RebaseStep, ResetMode};
 
     use super::{redo_impl, undo_impl, undo_state_impl};
     use crate::branches::{checkout_remote_impl, create_backup_branch_impl, create_branch_at_impl};
-    use crate::commits::reset_impl;
+    use crate::commits::{cherry_pick_plan_impl, continue_cherry_pick_plan_impl, reset_impl};
     use crate::history::get_log_page_impl;
     use crate::rebase::interactive_rebase_impl;
     use crate::staging::{
-        commit_changes_impl, discard_files_impl, discard_lines_impl, stage_all_impl, stage_impl,
-        stage_lines_impl,
+        commit_changes_impl, discard_files_impl, discard_lines_impl,
+        restore_files_from_commit_impl, stage_all_impl, stage_impl, stage_lines_impl,
     };
     use crate::state::RepoState;
     use crate::tags::{create_tag_at_impl, delete_tag_impl};
@@ -580,7 +595,7 @@ mod tests {
             .id
             .clone();
 
-        create_tag_at_impl(&state, "v1.0".into(), head).expect("tag");
+        create_tag_at_impl(&state, "v1.0".into(), head, None).expect("tag");
         assert_eq!(
             undo_state_impl(&state).unwrap().undo.as_deref(),
             Some("Tag v1.0")
@@ -604,6 +619,27 @@ mod tests {
             tag_names(&state).contains(&"v1.0".to_string()),
             "delete undone"
         );
+    }
+
+    #[test]
+    fn an_annotated_tag_comes_back_annotated_after_undo_and_redo() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
+        let head = get_log_page_impl(&state, 0, 1, true).unwrap().rows[0]
+            .id
+            .clone();
+
+        create_tag_at_impl(&state, "v2".into(), head, Some("Release 2\n".into())).expect("tag");
+        undo_impl(&state).expect("undo tag create");
+        assert!(!tag_names(&state).contains(&"v2".to_string()));
+        // Redo restores the ref to the tag object, not to the commit, so the
+        // annotation survives the round trip.
+        redo_impl(&state).expect("redo tag create");
+        let tags = workspace_snapshot_impl(&state).unwrap().refs.tags;
+        let v2 = tags.iter().find(|t| t.name == "v2").expect("tag back");
+        assert_eq!(v2.message.as_deref(), Some("Release 2"));
     }
 
     fn tag_names(state: &RepoState) -> Vec<String> {
@@ -654,7 +690,8 @@ mod tests {
 
         std::fs::write(dir.path().join("f.txt"), "two\n").unwrap();
         stage_impl(&state, "f.txt".into()).unwrap();
-        commit_changes_impl(&state, "c2".into(), String::new(), false, None).expect("commit");
+        commit_changes_impl(&state, "c2".into(), String::new(), false, None, false)
+            .expect("commit");
         assert_eq!(
             undo_state_impl(&state).unwrap().undo.as_deref(),
             Some("Commit")
@@ -686,7 +723,7 @@ mod tests {
         let (c3, c2, c1) = (rows[0].id.clone(), rows[1].id.clone(), rows[2].id.clone());
 
         // Arm the slot with something, so we can see the rebase clear it.
-        create_tag_at_impl(&state, "t".into(), c1.clone()).unwrap();
+        create_tag_at_impl(&state, "t".into(), c1.clone(), None).unwrap();
         assert!(undo_state_impl(&state).unwrap().undo.is_some());
 
         let steps = vec![
@@ -713,6 +750,49 @@ mod tests {
         );
         assert!(undo_impl(&state).is_err(), "nothing to undo mid-rebase");
         git(dir.path(), &["rebase", "--abort"]);
+    }
+
+    #[test]
+    fn a_cherry_pick_plan_resumed_after_a_conflict_undoes_as_one_step() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let main = head_branch(dir.path());
+        git(dir.path(), &["checkout", "-q", "-b", "side"]);
+        std::fs::write(dir.path().join("f.txt"), "side\n").unwrap();
+        git(dir.path(), &["commit", "-q", "-am", "s1"]);
+        let s1 = git_out(dir.path(), &["rev-parse", "HEAD"]);
+        std::fs::write(dir.path().join("g.txt"), "g\n").unwrap();
+        git(dir.path(), &["add", "g.txt"]);
+        git(dir.path(), &["commit", "-q", "-m", "s2"]);
+        let s2 = git_out(dir.path(), &["rev-parse", "HEAD"]);
+        git(dir.path(), &["checkout", "-q", &main]);
+        std::fs::write(dir.path().join("f.txt"), "main\n").unwrap();
+        git(dir.path(), &["commit", "-q", "-am", "c2"]);
+        let start = git_out(dir.path(), &["rev-parse", "HEAD"]);
+        let state = open(dir.path());
+
+        let pick = |sha: &str| PickStep {
+            sha: sha.into(),
+            action: PickAction::Pick,
+            message: None,
+        };
+        let out = cherry_pick_plan_impl(&state, vec![pick(&s1), pick(&s2)]).unwrap();
+        assert!(out.paused, "s1 conflicts");
+        assert_eq!(undo_state_impl(&state).unwrap().undo, None);
+
+        std::fs::write(dir.path().join("f.txt"), "resolved\n").unwrap();
+        git(dir.path(), &["add", "f.txt"]);
+        git(dir.path(), &["-c", "core.editor=true", "cherry-pick", "--continue"]);
+        let out = continue_cherry_pick_plan_impl(&state).unwrap();
+        assert!(!out.paused);
+        assert!(dir.path().join("g.txt").exists(), "s2 applied after the pause");
+        assert_eq!(
+            undo_state_impl(&state).unwrap().undo.as_deref(),
+            Some("Cherry-pick")
+        );
+
+        undo_impl(&state).expect("undo");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), start, "both picks undone");
     }
 
     #[test]
@@ -790,6 +870,32 @@ mod tests {
     }
 
     #[test]
+    fn restoring_a_file_from_a_commit_is_undoable() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c0", "c1"]);
+        let state = open(dir.path());
+        std::fs::write(dir.path().join("f.txt"), "edited\n").unwrap();
+        let read = || std::fs::read_to_string(dir.path().join("f.txt")).unwrap();
+
+        restore_files_from_commit_impl(&state, "HEAD~1".into(), vec!["f.txt".into()])
+            .expect("restore");
+        assert_eq!(read(), "line 0\n");
+        assert_eq!(
+            porcelain(dir.path()),
+            "M  f.txt",
+            "the restored file is staged"
+        );
+        assert_eq!(
+            undo_state_impl(&state).unwrap().undo.as_deref(),
+            Some("Restore 1 file from HEAD~1")
+        );
+        undo_impl(&state).expect("undo");
+        assert_eq!(read(), "edited\n", "the local edit is back");
+        redo_impl(&state).expect("redo");
+        assert_eq!(read(), "line 0\n");
+    }
+
+    #[test]
     fn staging_and_discarding_selected_lines_are_undoable() {
         let dir = tempfile::tempdir().unwrap();
         make_repo(dir.path(), &["c1"]);
@@ -845,7 +951,7 @@ mod tests {
         let state = open(dir.path());
         std::fs::write(dir.path().join("new.txt"), "n\n").unwrap();
         stage_impl(&state, "new.txt".into()).unwrap();
-        commit_changes_impl(&state, "c2".into(), String::new(), false, None).unwrap();
+        commit_changes_impl(&state, "c2".into(), String::new(), false, None, false).unwrap();
         let c2 = git_out(dir.path(), &["rev-parse", "HEAD"]);
 
         reset_impl(&state, "HEAD~1".into(), ResetMode::Soft).expect("soft reset");
@@ -864,7 +970,7 @@ mod tests {
         let state = open(dir.path());
         std::fs::write(dir.path().join("f.txt"), "two\n").unwrap();
         stage_impl(&state, "f.txt".into()).unwrap();
-        commit_changes_impl(&state, "c2".into(), String::new(), false, None).unwrap();
+        commit_changes_impl(&state, "c2".into(), String::new(), false, None, false).unwrap();
         assert!(undo_state_impl(&state).unwrap().undo.is_some());
 
         create_backup_branch_impl(&state, "backup".into()).expect("backup branch");

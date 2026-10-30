@@ -12,9 +12,23 @@ export interface CommitRow {
   color: number;
 }
 
+// What the log covers and how it is laid out (gitp-core's LogScope): the
+// All/Current toggle plus the repo's graph settings.
+export interface LogScope {
+  all_branches: boolean;
+  // The local branch whose first-parent line keeps the leftmost lane.
+  pinned: string | null;
+  // Full ref names the all-branches walk leaves out.
+  hidden: string[];
+  // Full ref names to walk instead (plus HEAD), when any.
+  solo: string[];
+}
+
 export interface LogPage {
   rows: CommitRow[];
   total: number;
+  // HEAD's commit, where the graph's WIP row hangs; null on an unborn branch.
+  head: string | null;
 }
 
 export type ChangeKind =
@@ -56,6 +70,34 @@ export interface StatusLists {
   staged: FileDiff[];
   unstaged: FileDiff[];
 }
+
+// Where to read one side of a file from (mirrors gitp-core's FileSide): a
+// revision's tree, the index, or the working tree.
+export type FileSide = { Rev: string } | "Index" | "WorkTree";
+
+// A file's bytes as base64, or only its size when it's too big to preview.
+export interface FileContent {
+  size: number;
+  base64: string | null;
+}
+
+// A working-tree file as the in-app editor holds it (mirrors gitp-core's
+// TextFile): line breaks as "\n", and the kind the file had, which saving
+// writes back. `mixed` when they weren't all one kind — saving then makes
+// them all the `crlf` kind.
+export interface TextFile {
+  text: string;
+  crlf: boolean;
+  mixed: boolean;
+}
+
+// What `git difftool` compares (mirrors gitp-core's DiffToolTarget): a commit
+// against its parent, two revisions, or the staged / unstaged changes.
+export type DiffToolTarget =
+  | { Commit: string }
+  | { Compare: { base: string; head: string; three_dot: boolean } }
+  | "Staged"
+  | "Unstaged";
 
 export interface CommitDetail {
   id: string;
@@ -102,6 +144,9 @@ export interface BranchRef {
   target: string;
   // False when the branch has no upstream (never pushed / no remote to compare).
   has_upstream: boolean;
+  // The remote it tracks (branch.<name>.remote), where a push or a pull request
+  // goes by default. Always sent by the backend; preview mocks leave it out.
+  upstream_remote?: string | null;
 }
 
 export interface RemoteBranch {
@@ -110,14 +155,32 @@ export interface RemoteBranch {
   target: string;
 }
 
+// A configured remote (mirrors gitp-core's RemoteInfo).
+export interface RemoteInfo {
+  name: string;
+  url: string | null;
+}
+
 export interface TagRef {
   name: string;
   target: string;
+  // An annotated tag's message (signature cut, capped); null for a lightweight tag.
+  message: string | null;
 }
 
 export interface StashRef {
   index: number;
   message: string;
+  // The commit the stash was taken on, where the graph draws it ("" if unknown).
+  base: string;
+}
+
+// What the Stash dialog asks `git stash push` for: an entry name (empty for
+// git's own), only the staged changes, and whether new files go too.
+export interface StashOptions {
+  message: string;
+  staged: boolean;
+  includeUntracked: boolean;
 }
 
 export interface Refs {
@@ -146,6 +209,9 @@ export type ConfigScope = "Local" | "Global" | "System" | "Other";
 // How far a reset moves the branch (mirrors gitp-core's ResetMode).
 export type ResetMode = "Soft" | "Mixed" | "Hard";
 
+// How a merge combines the other branch (mirrors gitp-core's MergeMode).
+export type MergeMode = "Default" | "NoFastForward" | "FastForwardOnly" | "Squash";
+
 // How `pull` reconciles local and remote history (mirrors gitp-core's PullMode).
 export type PullMode = "FastForward" | "FastForwardOnly" | "Rebase";
 
@@ -166,6 +232,14 @@ export interface RebaseStep {
   sha: string;
   action: RebaseAction;
   message: string | null;
+}
+
+// Where an interactive cherry-pick run got to: `paused` on a conflict (the
+// rest resumes through continueCherryPickPlan once it's resolved).
+export interface PickPlanOutcome {
+  output: string;
+  paused: boolean;
+  start_head: string;
 }
 
 export interface RebaseStatus {
@@ -267,6 +341,25 @@ export interface ReflogEntry {
   summary: string | null;
 }
 
+// One git command gitp ran for the repo (the Activity view).
+export interface ActivityEntry {
+  // Increasing; poll with the newest one seen to get only what's new.
+  id: number;
+  // When git started, ms since the epoch.
+  started_at: number;
+  duration_ms: number;
+  // `git …` with credentials masked.
+  command: string;
+  // null when git couldn't start or was stopped (Cancel).
+  exit_code: number | null;
+  success: boolean;
+  // A read-only probe a refresh runs (status, log, …): hidden by default.
+  quiet: boolean;
+  // The last few KB of each stream; stdout only for a failure.
+  stderr: string;
+  stdout: string;
+}
+
 // One side of a comparison: the revision as given (a ref name or an id) and
 // the commit it resolved to.
 export interface CompareEnd {
@@ -347,6 +440,14 @@ export interface Worktree {
   lock_reason: string | null;
   // Its folder is gone; Prune Worktrees would forget it.
   prunable: boolean;
+}
+
+// The optional parts of a clone (mirrors gitp-core's CloneOptions).
+export interface CloneOptions {
+  branch: string | null;
+  single_branch: boolean;
+  depth: number | null;
+  recurse_submodules: boolean;
 }
 
 // What a new worktree checks out (mirrors gitp-core's WorktreeTarget).

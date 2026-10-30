@@ -28,6 +28,28 @@ export function saveDetailTab(tab: DetailTab): void {
   localStorage.setItem(DETAIL_TAB_KEY, tab);
 }
 
+// The diff toolbars' Wrap lines and Ignore whitespace toggles. One setting
+// each, shared by the commit detail and Local Changes: a reader who wants long
+// lines wrapped wants it in both places.
+const DIFF_WRAP_KEY = "gitp-diff-wrap";
+const DIFF_IGNORE_WS_KEY = "gitp-diff-ignore-whitespace";
+
+export function loadDiffWrap(): boolean {
+  return localStorage.getItem(DIFF_WRAP_KEY) === "1";
+}
+
+export function saveDiffWrap(on: boolean): void {
+  localStorage.setItem(DIFF_WRAP_KEY, on ? "1" : "0");
+}
+
+export function loadIgnoreWhitespace(): boolean {
+  return localStorage.getItem(DIFF_IGNORE_WS_KEY) === "1";
+}
+
+export function saveIgnoreWhitespace(on: boolean): void {
+  localStorage.setItem(DIFF_IGNORE_WS_KEY, on ? "1" : "0");
+}
+
 // What the plain Pull button runs. "FetchAll" isn't a real pull (no merge) but
 // is offered alongside the pull strategies, GitKraken-style.
 export type PullDefault = "FetchAll" | PullMode;
@@ -55,6 +77,33 @@ export function updatePullButtonTitle(): void {
   $<HTMLButtonElement>("#pull-btn").title = PULL_DEFAULT_LABEL[loadPullDefault()];
 }
 
+// Fetch all remotes of the open repo every N minutes (Settings → Pull). 0, the
+// default, leaves only the fetch on opening History / Local Changes.
+const AUTO_FETCH_KEY = "gitp-auto-fetch-minutes";
+
+export const AUTO_FETCH_MINUTES = [0, 1, 5, 15, 30];
+
+export function loadAutoFetchMinutes(): number {
+  const v = Number(localStorage.getItem(AUTO_FETCH_KEY));
+  return AUTO_FETCH_MINUTES.includes(v) ? v : 0;
+}
+
+export function saveAutoFetchMinutes(minutes: number): void {
+  localStorage.setItem(AUTO_FETCH_KEY, String(minutes));
+}
+
+// The commit box's "Push after commit" toggle. Off by default: pushing is a
+// network action nobody should get without asking for it.
+const PUSH_AFTER_COMMIT_KEY = "gitp-push-after-commit";
+
+export function loadPushAfterCommit(): boolean {
+  return localStorage.getItem(PUSH_AFTER_COMMIT_KEY) === "1";
+}
+
+export function savePushAfterCommit(on: boolean): void {
+  localStorage.setItem(PUSH_AFTER_COMMIT_KEY, on ? "1" : "0");
+}
+
 // Width of the ref-badge column on the GitKraken themes, dragged in the log
 // header.
 const REF_COLUMN_KEY = "gitp-ref-column";
@@ -68,6 +117,31 @@ export function loadRefColumnWidth(): number {
 
 export function saveRefColumnWidth(width: number): void {
   localStorage.setItem(REF_COLUMN_KEY, String(Math.round(width)));
+}
+
+// Per-repo graph settings, keyed by repo path: the branch pinned to the left,
+// and the refs hidden from or soloed in the graph (full ref names; see
+// ref-visibility.ts).
+const GRAPH_PREFS_KEY = "gitp-graph:";
+
+export interface GraphPrefs {
+  pinned: string | null;
+  hidden: string[];
+  solo: string[];
+}
+
+export function loadGraphPrefs(repo: string): GraphPrefs {
+  const names = (v: unknown) => (Array.isArray(v) ? v.filter((n): n is string => typeof n === "string") : []);
+  try {
+    const raw = JSON.parse(localStorage.getItem(GRAPH_PREFS_KEY + repo) ?? "{}") as Partial<GraphPrefs>;
+    return { pinned: typeof raw.pinned === "string" ? raw.pinned : null, hidden: names(raw.hidden), solo: names(raw.solo) };
+  } catch {
+    return { pinned: null, hidden: [], solo: [] };
+  }
+}
+
+export function saveGraphPrefs(repo: string, prefs: GraphPrefs): void {
+  localStorage.setItem(GRAPH_PREFS_KEY + repo, JSON.stringify(prefs));
 }
 
 // The history toggle, persisted across restarts. Defaults to all branches.
@@ -113,6 +187,38 @@ export function forgetRecentRepo(path: string): void {
     RECENT_REPOS_KEY,
     JSON.stringify(loadRecentRepos().filter((p) => p !== path)),
   );
+}
+
+// Starred repositories, in the order they were starred: Quick Launch lists them
+// above the recent ones, and Cmd/Ctrl+1…9 switch to the first nine. Unlike the
+// recent list nothing ever drops off it — only unstarring removes one.
+const FAVORITE_REPOS_KEY = "gitp-favorite-repos";
+
+export function loadFavoriteRepos(): string[] {
+  try {
+    const raw = localStorage.getItem(FAVORITE_REPOS_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function isFavoriteRepo(path: string): boolean {
+  return loadFavoriteRepos().includes(path);
+}
+
+// Star `path`, or unstar it if it already is. Returns whether it's now starred.
+export function toggleFavoriteRepo(path: string): boolean {
+  const next = withFavoriteToggled(loadFavoriteRepos(), path);
+  localStorage.setItem(FAVORITE_REPOS_KEY, JSON.stringify(next));
+  return next.includes(path);
+}
+
+// A newly starred repo goes last, so the shortcuts of the ones before it
+// don't move.
+export function withFavoriteToggled(favorites: string[], path: string): string[] {
+  return favorites.includes(path) ? favorites.filter((p) => p !== path) : [...favorites, path];
 }
 
 export function loadWorkspace(): { paths: string[]; active: string } | null {

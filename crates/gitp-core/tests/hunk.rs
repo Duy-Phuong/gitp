@@ -230,3 +230,79 @@ fn stage_hunk_on_a_glob_like_path_leaves_the_lookalike_file_alone() {
     assert_eq!(staged, vec!["a[1].txt"], "only the bracket file is staged");
     assert_eq!(unstaged, vec!["a1.txt"], "a1.txt is untouched");
 }
+
+/// Twelve numbered lines, committed, then a commit editing lines 2 and 11 —
+/// two blocks in that commit's diff. Returns the editing commit's id.
+fn two_hunk_commit(fx: &FixtureRepo) -> String {
+    let base: String = (1..=12).map(|n| format!("line {n}\n")).collect();
+    fx.commit_file("f.txt", &base, "base");
+    let edited = base
+        .replace("line 2\n", "LINE 2\n")
+        .replace("line 11\n", "LINE 11\n");
+    fx.commit_file("f.txt", &edited, "edit").to_string()
+}
+
+#[test]
+fn revert_commit_hunk_undoes_one_block_of_a_commit_in_the_working_tree() {
+    let fx = FixtureRepo::init();
+    let edit = two_hunk_commit(&fx);
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.revert_commit_hunk(&edit, "f.txt", None, 1, DEFAULT_CONTEXT_LINES)
+        .unwrap();
+
+    let now = std::fs::read_to_string(fx.path().join("f.txt")).unwrap();
+    assert!(now.contains("LINE 2\n"), "the other block stays");
+    assert!(now.contains("line 11\n") && !now.contains("LINE 11"));
+    let s = repo.status_lists().unwrap();
+    assert!(s.staged.is_empty(), "left unstaged");
+    assert_eq!(s.unstaged.len(), 1);
+}
+
+#[test]
+fn revert_commit_hunk_refuses_a_block_the_file_no_longer_has() {
+    let fx = FixtureRepo::init();
+    let edit = two_hunk_commit(&fx);
+    let changed = std::fs::read_to_string(fx.path().join("f.txt"))
+        .unwrap()
+        .replace("LINE 11\n", "rewritten\n");
+    std::fs::write(fx.path().join("f.txt"), &changed).unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    let err = repo
+        .revert_commit_hunk(&edit, "f.txt", None, 1, DEFAULT_CONTEXT_LINES)
+        .unwrap_err();
+
+    assert!(err.to_string().contains("can't be reverted"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("f.txt")).unwrap(),
+        changed,
+        "nothing applied"
+    );
+}
+
+// Reverting a block of a renamed file edits the file where it is now; it
+// doesn't move it back.
+#[test]
+fn revert_commit_hunk_of_a_renamed_file_keeps_the_new_name() {
+    let fx = FixtureRepo::init();
+    let base: String = (1..=12).map(|n| format!("line {n}\n")).collect();
+    fx.commit_file("old.txt", &base, "base");
+    std::fs::remove_file(fx.path().join("old.txt")).unwrap();
+    let mut index = fx.repo.index().unwrap();
+    index.remove_path(std::path::Path::new("old.txt")).unwrap();
+    index.write().unwrap();
+    let moved = fx
+        .commit_file("new.txt", &base.replace("line 2\n", "LINE 2\n"), "move")
+        .to_string();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.revert_commit_hunk(&moved, "new.txt", Some("old.txt"), 0, DEFAULT_CONTEXT_LINES)
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("new.txt")).unwrap(),
+        base
+    );
+    assert!(!fx.path().join("old.txt").exists());
+}

@@ -2,6 +2,7 @@
 //!
 //! Frontend-agnostic. No UI, no CLI concerns. Returns plain data structures.
 
+mod activity;
 mod bisect;
 mod blame;
 mod branch_ops;
@@ -10,8 +11,12 @@ mod commit_ops;
 mod compare;
 mod config;
 mod conflict_ops;
+mod create;
 mod diff;
 mod error;
+mod external_tool;
+mod file_content;
+mod file_edit;
 mod file_ops;
 mod filelog;
 mod git_bin;
@@ -19,11 +24,13 @@ mod graph;
 mod hunk;
 mod line_staging;
 mod log;
+mod pick_plan;
 mod progress;
 mod rebase;
 mod reflog;
 mod refs;
 mod remote;
+mod remote_config;
 mod repo;
 mod search;
 mod signature;
@@ -35,23 +42,31 @@ mod tree;
 mod undo;
 mod worktree_ops;
 
+pub use activity::ActivityEntry;
 pub use bisect::{BisectMark, BisectStatus};
 pub use blame::BlameLine;
+pub use branch_ops::MergeMode;
 pub use commit_ops::ResetMode;
-pub use compare::{CompareEnd, Comparison};
+pub use compare::{CompareEnd, Comparison, EMPTY_REV, WORKDIR_REV};
 pub use config::{ConfigEntry, ConfigScope};
 pub use conflict_ops::{ConflictSides, ConflictStatus};
+pub use create::{clone_repo, init_repo, CloneOptions};
 pub use diff::{
     ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff, DEFAULT_CONTEXT_LINES, MAX_DIFF_LINES,
 };
 pub use error::{Error, Result};
+pub use external_tool::DiffToolTarget;
+pub use file_content::{FileContent, FileSide, PREVIEW_MAX_BYTES};
+pub use file_edit::{TextFile, EDIT_MAX_BYTES};
 pub use filelog::FileCommit;
-pub use log::{CommitRow, LogCache, LogOptions, LogRefresh};
+pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope};
+pub use pick_plan::{PickAction, PickPlanOutcome, PickStep};
 pub use progress::{NetworkHooks, Progress, ProgressFn};
 pub use rebase::{RebaseAction, RebaseCommit, RebaseStatus, RebaseStep};
 pub use reflog::ReflogEntry;
 pub use refs::{BranchRef, Refs, RemoteBranch, StashRef, TagRef};
 pub use remote::PullMode;
+pub use remote_config::RemoteInfo;
 pub use repo::Repo;
 pub use search::LogSearch;
 pub use signature::{CommitSignature, SignatureStatus, SigningConfig};

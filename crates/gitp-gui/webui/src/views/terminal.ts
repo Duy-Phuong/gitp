@@ -13,12 +13,27 @@ import { isTauri } from "../api";
 
 export interface TerminalHandle {
   fit: () => void;
-  setCwd: (cwd: string) => void;
   // Re-read the palette after the user switches theme — xterm holds its colours
   // as JS values, so a CSS variable change alone doesn't reach it.
   syncTheme: () => void;
   focus: () => void;
   clear: () => void;
+  // Type `text` at the cursor as a paste would (bracketed, if the shell asked
+  // for that), so a dropped path doesn't run anything by itself.
+  paste: (text: string) => void;
+  // Kill the shell and tear the view down.
+  dispose: () => void;
+}
+
+export interface TerminalOptions {
+  // The folder the shell starts in.
+  cwd: string;
+  // Enter was pressed — a command may have changed the repo.
+  onCommand?: () => void;
+  // The shell's name (`zsh`), once it has started.
+  onShell?: (name: string) => void;
+  // The shell exited by itself (`exit`, Ctrl-D).
+  onExit?: () => void;
 }
 
 // ANSI 0-15. The app palette has no opinion on these, so they're spelled out:
@@ -67,7 +82,11 @@ function terminalTheme(): ITheme {
   };
 }
 
-export function setupTerminal(host: HTMLElement, onCommand?: () => void): TerminalHandle {
+// Each session's id, for routing the backend's events; unique for the life of
+// the page.
+let nextId = 1;
+
+export function setupTerminal(host: HTMLElement, opts: TerminalOptions): TerminalHandle {
   const term = new Terminal({
     fontFamily: cssVar("--mono", "ui-monospace, SFMono-Regular, Menlo, monospace"),
     fontSize: 12,
@@ -82,8 +101,6 @@ export function setupTerminal(host: HTMLElement, onCommand?: () => void): Termin
   term.open(host);
   fitAddon.fit();
 
-  let cwd = ".";
-
   const base: Pick<TerminalHandle, "syncTheme" | "focus" | "clear"> = {
     syncTheme: () => {
       term.options.theme = terminalTheme();
@@ -95,45 +112,78 @@ export function setupTerminal(host: HTMLElement, onCommand?: () => void): Termin
   if (!isTauri()) {
     term.writeln("\x1b[90mgitp terminal — available in the desktop app.\x1b[0m");
     term.writeln("\x1b[90mRun `gitp` via Tauri to get a real shell here.\x1b[0m");
-    return { ...base, fit: () => fitAddon.fit(), setCwd: (c) => (cwd = c) };
+    opts.onShell?.("zsh");
+    return {
+      ...base,
+      fit: () => fitAddon.fit(),
+      // No shell to type into: show what would have been typed.
+      paste: (text) => term.write(text),
+      dispose: () => term.dispose(),
+    };
   }
 
-  void wireToBackend(term, () => cwd, onCommand);
+  const id = nextId++;
+  void wireToBackend(term, id, opts);
 
   return {
     ...base,
     fit: () => {
       fitAddon.fit();
-      void resizeBackend(term.cols, term.rows);
+      void invokeBackend("terminal_resize", { id, cols: term.cols, rows: term.rows });
     },
-    setCwd: (c) => (cwd = c),
+    paste: (text) => term.paste(text),
+    dispose: () => {
+      sessions.delete(id);
+      void invokeBackend("terminal_kill", { id });
+      term.dispose();
+    },
   };
 }
 
-async function wireToBackend(
-  term: Terminal,
-  getCwd: () => string,
-  onCommand?: () => void,
-): Promise<void> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  const { listen } = await import("@tauri-apps/api/event");
+// The live sessions by id. One listener per backend event serves them all,
+// rather than every terminal filtering every other's output.
+const sessions = new Map<number, { term: Terminal; onExit?: () => void }>();
+let listening: Promise<unknown> | null = null;
 
-  await listen<string>("terminal-output", (event) => term.write(event.payload));
-  await invoke("terminal_spawn", { cwd: getCwd(), cols: term.cols, rows: term.rows });
+function listenToBackend(): Promise<unknown> {
+  listening ??= import("@tauri-apps/api/event").then(({ listen }) =>
+    Promise.all([
+      listen<{ id: number; data: string }>("terminal-output", (e) => sessions.get(e.payload.id)?.term.write(e.payload.data)),
+      listen<number>("terminal-exit", (e) => {
+        const session = sessions.get(e.payload);
+        sessions.delete(e.payload);
+        session?.onExit?.();
+      }),
+    ]),
+  );
+  return listening;
+}
+
+async function invokeBackend(cmd: string, args: Record<string, unknown>): Promise<unknown> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke(cmd, args);
+}
+
+async function wireToBackend(term: Terminal, id: number, opts: TerminalOptions): Promise<void> {
+  sessions.set(id, { term, onExit: opts.onExit });
+  await listenToBackend();
+  const shell = (await invokeBackend("terminal_spawn", { id, cwd: opts.cwd, cols: term.cols, rows: term.rows })) as string;
+  // Closed while the shell was starting: its kill may have reached the backend
+  // first, so end the session that was just started.
+  if (!sessions.has(id)) {
+    void invokeBackend("terminal_kill", { id });
+    return;
+  }
+  opts.onShell?.(shell);
 
   // Pressing Enter submits a command; after it has had a moment to run, tell the
   // app so it can refresh anything a commit/checkout/stash would have changed.
   let commandTimer: number | undefined;
   term.onData((data) => {
-    void invoke("terminal_write", { data });
-    if (onCommand && (data.includes("\r") || data.includes("\n"))) {
+    void invokeBackend("terminal_write", { id, data });
+    if (opts.onCommand && (data.includes("\r") || data.includes("\n"))) {
       window.clearTimeout(commandTimer);
-      commandTimer = window.setTimeout(onCommand, 700);
+      commandTimer = window.setTimeout(opts.onCommand, 700);
     }
   });
-}
-
-async function resizeBackend(cols: number, rows: number): Promise<void> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("terminal_resize", { cols, rows });
 }

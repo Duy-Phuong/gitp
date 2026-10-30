@@ -68,6 +68,17 @@ pub(crate) fn open_repo_impl(state: &RepoState, path: String) -> Result<Workspac
     Ok(guard.view())
 }
 
+/// `git init` a new repository at `path`, with an optional `.gitignore` body
+/// and README (see `gitp_core::init_repo`). The frontend opens it afterwards
+/// the way it opens any folder, so this doesn't touch the workspace.
+fn init_repository_impl(
+    path: String,
+    gitignore: Option<String>,
+    readme: bool,
+) -> Result<(), String> {
+    gitp_core::init_repo(Path::new(&path), gitignore.as_deref(), readme).map_err(to_message)
+}
+
 fn list_repos_impl(state: &RepoState) -> Result<WorkspaceView, String> {
     Ok(state.0.lock().map_err(to_message)?.view())
 }
@@ -163,6 +174,15 @@ pub(crate) fn open_repo(path: String, state: State<RepoState>) -> Result<Workspa
 }
 
 #[tauri::command(async)]
+pub(crate) fn init_repository(
+    path: String,
+    gitignore: Option<String>,
+    readme: bool,
+) -> Result<(), String> {
+    init_repository_impl(path, gitignore, readme)
+}
+
+#[tauri::command(async)]
 pub(crate) fn list_repos(state: State<RepoState>) -> Result<WorkspaceView, String> {
     list_repos_impl(&state)
 }
@@ -187,10 +207,32 @@ pub(crate) fn workspace_snapshot(state: State<RepoState>) -> Result<WorkspaceSna
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_repo_impl, close_repo_impl, list_repos_impl, open_repo_impl};
+    use super::{
+        activate_repo_impl, close_repo_impl, init_repository_impl, list_repos_impl, open_repo_impl,
+        workspace_snapshot_impl,
+    };
     use crate::history::{get_commit_detail_impl, get_log_page_impl};
     use crate::state::RepoState;
     use crate::test_support::make_repo;
+
+    #[test]
+    fn a_freshly_initialized_repo_opens_with_an_empty_log() {
+        // The frontend opens what Init made straight away: an unborn HEAD with
+        // no commits must load, not fail the first snapshot.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fresh").to_str().unwrap().to_string();
+        init_repository_impl(path.clone(), Some("target/\n".into()), true).expect("init");
+
+        let state = RepoState::default();
+        open_repo_impl(&state, path).expect("open");
+        assert_eq!(get_log_page_impl(&state, 0, 100, true).unwrap().total, 0);
+        let snapshot = workspace_snapshot_impl(&state).expect("snapshot");
+        assert_eq!(
+            snapshot.status.unstaged.len(),
+            2,
+            ".gitignore and README.md"
+        );
+    }
 
     #[test]
     fn switching_repos_shows_the_new_repos_commits_and_diffs() {

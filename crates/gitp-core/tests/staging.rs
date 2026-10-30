@@ -178,6 +178,31 @@ fn file_diff_shows_content_of_untracked_and_deleted_files() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn commit_no_verify_skips_a_failing_pre_commit_hook() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let hook = fx.path().join(".git/hooks/pre-commit");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(&hook, "#!/bin/sh\necho blocked by hook\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(fx.path().join("a.txt"), "two\n").unwrap();
+
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.stage_all().unwrap();
+    let err = repo
+        .commit("change a", "", false, None, false)
+        .expect_err("the hook refuses the commit");
+    assert!(err.to_string().contains("blocked by hook"), "{err}");
+
+    repo.commit("change a", "", false, None, true)
+        .expect("--no-verify skips the hook");
+    assert_eq!(repo.commit_detail("HEAD").unwrap().summary, "change a");
+}
+
 #[test]
 fn commit_records_staged_changes_and_clears_the_staging_area() {
     let fx = FixtureRepo::init();
@@ -186,7 +211,8 @@ fn commit_records_staged_changes_and_clears_the_staging_area() {
 
     let repo = Repo::open(fx.path()).unwrap();
     repo.stage_all().unwrap();
-    repo.commit("change a", "the body", false, None).unwrap();
+    repo.commit("change a", "the body", false, None, false)
+        .unwrap();
 
     // Nothing left staged, and the new commit is HEAD.
     assert!(
@@ -274,4 +300,33 @@ fn status_summary_never_rewrites_the_index() {
         before,
         "status must not write the index"
     );
+}
+
+#[test]
+fn file_diff_can_ignore_whitespace_while_hunk_ops_use_the_real_diff() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\ntwo\n", "c1");
+    std::fs::write(fx.path().join("a.txt"), "one  \ntwo\n").unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    let real = repo
+        .file_diff_with("a.txt", false, DEFAULT_CONTEXT_LINES, false, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(real.hunks.len(), 1);
+    let no_ws = repo
+        .file_diff_with("a.txt", false, DEFAULT_CONTEXT_LINES, true, None)
+        .unwrap()
+        .unwrap();
+    assert!(
+        no_ws.hunks.is_empty(),
+        "a whitespace-only change has no blocks"
+    );
+
+    // Staging block 0 still stages the real (whitespace) change.
+    repo.stage_hunk("a.txt", 0, DEFAULT_CONTEXT_LINES).unwrap();
+    assert!(repo
+        .file_diff("a.txt", false, DEFAULT_CONTEXT_LINES, None)
+        .unwrap()
+        .is_none());
 }

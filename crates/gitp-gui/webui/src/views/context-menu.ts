@@ -5,6 +5,8 @@
 // Items are plain actions (`run`), separators, or name prompts: clicking a
 // prompt item swaps the menu in place for a text input + Create button, so
 // "New Branch…", "New Tag…", and "Rename…" collect a value without a dialog.
+// A `submenu` item swaps the menu in place for its own items plus "‹ Back",
+// the way the commit menu's "Interactive Rebase ▸" does.
 
 import { autoGrowInput, el } from "../dom";
 
@@ -16,6 +18,7 @@ export interface MenuItem {
   heading?: string;
   run?: () => void;
   prompt?: { placeholder: string; value?: string; onSubmit: (value: string) => void };
+  submenu?: MenuItem[];
 }
 
 let openMenu: HTMLElement | null = null;
@@ -69,7 +72,16 @@ export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
   document.addEventListener("scroll", onScroll, true);
 }
 
-function renderItems(menu: HTMLElement, items: MenuItem[]): void {
+// Open straight into a name prompt, for a button whose only job is to ask for
+// one (the detached-HEAD banner's "Create Branch Here…").
+export function showPrompt(x: number, y: number, prompt: NonNullable<MenuItem["prompt"]>): void {
+  const items: MenuItem[] = [{ label: prompt.placeholder, prompt }];
+  showContextMenu(x, y, items);
+  if (openMenu) renderPrompt(openMenu, items, prompt);
+}
+
+// `parent`: the items to go back to, when these are a submenu's.
+function renderItems(menu: HTMLElement, items: MenuItem[], parent?: MenuItem[]): void {
   menu.replaceChildren();
   for (const it of items) {
     if (it.separator) {
@@ -82,10 +94,12 @@ function renderItems(menu: HTMLElement, items: MenuItem[]): void {
     }
     const btn = el("button", {
       class: `menu-item${it.danger ? " danger" : ""}`,
-      text: it.label ?? "",
+      text: it.submenu ? `${it.label ?? ""} ▸` : (it.label ?? ""),
     });
     btn.addEventListener("click", () => {
-      if (it.prompt) {
+      if (it.submenu) {
+        renderItems(menu, it.submenu, items);
+      } else if (it.prompt) {
         renderPrompt(menu, items, it.prompt);
       } else {
         closeContextMenu();
@@ -93,6 +107,11 @@ function renderItems(menu: HTMLElement, items: MenuItem[]): void {
       }
     });
     menu.append(btn);
+  }
+  if (parent) {
+    const back = el("button", { class: "menu-item", text: "‹ Back" });
+    back.addEventListener("click", () => renderItems(menu, parent));
+    menu.append(el("div", { class: "menu-sep" }), back);
   }
 }
 

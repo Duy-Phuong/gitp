@@ -6,7 +6,9 @@ use gitp_core::{FileDiff, Repo, SigningConfig, StatusLists};
 use tauri::State;
 
 use crate::state::{ensure_status, to_message, with_repo, with_repo_clearing_undo, RepoState};
-use crate::undo::{with_recorded_discard, with_recorded_head_move, with_recorded_index};
+use crate::undo::{
+    with_recorded_discard, with_recorded_files, with_recorded_head_move, with_recorded_index,
+};
 
 fn get_working_changes_impl(state: &RepoState) -> Result<Vec<FileDiff>, String> {
     with_repo(state, Repo::working_changes)
@@ -27,10 +29,17 @@ fn get_file_diff_impl(
     path: String,
     staged: bool,
     context_lines: u32,
+    ignore_whitespace: bool,
     full: bool,
 ) -> Result<Option<FileDiff>, String> {
     with_repo(state, |repo| {
-        repo.file_diff(&path, staged, context_lines, diff_cap(full))
+        repo.file_diff_with(
+            &path,
+            staged,
+            context_lines,
+            ignore_whitespace,
+            diff_cap(full),
+        )
     })
 }
 
@@ -133,18 +142,20 @@ fn unstage_all_impl(state: &RepoState) -> Result<(), String> {
 
 /// Commit the staged changes. Invalidates the cached log because HEAD moves.
 /// `sign` is the commit box's Sign toggle; `None` leaves it to git's config.
+/// `no_verify` is its Skip hooks toggle.
 pub(crate) fn commit_changes_impl(
     state: &RepoState,
     subject: String,
     body: String,
     amend: bool,
     sign: Option<bool>,
+    no_verify: bool,
 ) -> Result<String, String> {
     // Recorded soft: undo moves the tip back but keeps the committed changes
     // staged, so a mistaken commit can be reworked rather than lost.
     let label = if amend { "Amend commit" } else { "Commit" };
     with_recorded_head_move(state, label, true, |repo| {
-        repo.commit(&subject, &body, amend, sign)
+        repo.commit(&subject, &body, amend, sign, no_verify)
     })
 }
 
@@ -154,9 +165,49 @@ fn get_signing_config_impl(state: &RepoState) -> Result<SigningConfig, String> {
     with_repo(state, Repo::signing_config)
 }
 
+/// The raw text of the configured `commit.template`, for pre-filling an empty
+/// commit box; `None` when no template is set.
+fn get_commit_template_impl(state: &RepoState) -> Result<Option<String>, String> {
+    with_repo(state, Repo::commit_template)
+}
+
 /// Discard all local changes to `paths` (revert to HEAD; delete new files).
 pub(crate) fn discard_files_impl(state: &RepoState, paths: Vec<String>) -> Result<(), String> {
     with_recorded_discard(state, &paths, |repo| repo.discard_files(&paths))
+}
+
+/// Restore `paths` as they are in commit `rev` (staged), undoable like a
+/// discard.
+pub(crate) fn restore_files_from_commit_impl(
+    state: &RepoState,
+    rev: String,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let n = paths.len();
+    let short = rev.get(..7).unwrap_or(&rev);
+    let label = format!(
+        "Restore {n} file{} from {short}",
+        if n == 1 { "" } else { "s" }
+    );
+    with_recorded_files(state, label, &paths, |repo| {
+        repo.restore_files_from(&rev, &paths)
+    })
+}
+
+/// Undo one block of commit `rev`'s change to `path` in the working tree,
+/// recorded like a discard of that file so Undo restores it exactly.
+fn revert_commit_hunk_impl(
+    state: &RepoState,
+    rev: String,
+    path: String,
+    old_path: Option<String>,
+    hunk_index: usize,
+    context_lines: u32,
+) -> Result<(), String> {
+    let paths = [path.clone()];
+    with_recorded_files(state, format!("Revert block of {path}"), &paths, |repo| {
+        repo.revert_commit_hunk(&rev, &path, old_path.as_deref(), hunk_index, context_lines)
+    })
 }
 
 /// Write a patch of `paths` (staged or working-tree direction) to `dest`.
@@ -171,9 +222,21 @@ fn save_files_patch_impl(
     })
 }
 
+/// Apply the patch file at `path` (`git apply --3way`) to the working tree and
+/// index.
+fn apply_patch_impl(state: &RepoState, path: String) -> Result<(), String> {
+    with_repo_clearing_undo(state, |repo| repo.apply_patch(path.as_ref()))
+}
+
 /// Append `paths` to the repo's `.gitignore`; returns the number added.
 fn add_to_gitignore_impl(state: &RepoState, paths: Vec<String>) -> Result<usize, String> {
     with_repo_clearing_undo(state, |repo| repo.add_to_gitignore(&paths))
+}
+
+/// Stop tracking `paths`, keeping the files (the second half of "Ignore and
+/// Stop Tracking").
+fn untrack_files_impl(state: &RepoState, paths: Vec<String>) -> Result<(), String> {
+    with_repo_clearing_undo(state, |repo| repo.untrack_files(&paths))
 }
 
 // --- Tauri commands --------------------------------------------------------
@@ -198,10 +261,11 @@ pub(crate) fn get_file_diff(
     path: String,
     staged: bool,
     context_lines: u32,
+    ignore_whitespace: bool,
     full: bool,
     state: State<RepoState>,
 ) -> Result<Option<FileDiff>, String> {
-    get_file_diff_impl(&state, path, staged, context_lines, full)
+    get_file_diff_impl(&state, path, staged, context_lines, ignore_whitespace, full)
 }
 
 #[tauri::command(async)]
@@ -290,9 +354,10 @@ pub(crate) fn commit_changes(
     body: String,
     amend: bool,
     sign: Option<bool>,
+    no_verify: bool,
     state: State<RepoState>,
 ) -> Result<String, String> {
-    commit_changes_impl(&state, subject, body, amend, sign)
+    commit_changes_impl(&state, subject, body, amend, sign, no_verify)
 }
 
 #[tauri::command(async)]
@@ -301,8 +366,34 @@ pub(crate) fn get_signing_config(state: State<RepoState>) -> Result<SigningConfi
 }
 
 #[tauri::command(async)]
+pub(crate) fn get_commit_template(state: State<RepoState>) -> Result<Option<String>, String> {
+    get_commit_template_impl(&state)
+}
+
+#[tauri::command(async)]
 pub(crate) fn discard_files(paths: Vec<String>, state: State<RepoState>) -> Result<(), String> {
     discard_files_impl(&state, paths)
+}
+
+#[tauri::command(async)]
+pub(crate) fn restore_files_from_commit(
+    rev: String,
+    paths: Vec<String>,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    restore_files_from_commit_impl(&state, rev, paths)
+}
+
+#[tauri::command(async)]
+pub(crate) fn revert_commit_hunk(
+    rev: String,
+    path: String,
+    old_path: Option<String>,
+    hunk_index: usize,
+    context_lines: u32,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    revert_commit_hunk_impl(&state, rev, path, old_path, hunk_index, context_lines)
 }
 
 #[tauri::command(async)]
@@ -316,9 +407,19 @@ pub(crate) fn save_files_patch(
 }
 
 #[tauri::command(async)]
+pub(crate) fn apply_patch(path: String, state: State<RepoState>) -> Result<(), String> {
+    apply_patch_impl(&state, path)
+}
+
+#[tauri::command(async)]
 pub(crate) fn add_to_gitignore(
     paths: Vec<String>,
     state: State<RepoState>,
 ) -> Result<usize, String> {
     add_to_gitignore_impl(&state, paths)
+}
+
+#[tauri::command(async)]
+pub(crate) fn untrack_files(paths: Vec<String>, state: State<RepoState>) -> Result<(), String> {
+    untrack_files_impl(&state, paths)
 }

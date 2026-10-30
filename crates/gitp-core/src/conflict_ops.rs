@@ -206,13 +206,14 @@ impl Repo {
     /// auto-accepts it — same fix as the interactive-rebase reword handling.
     fn continue_without_editor(&self, args: &[&str]) -> Result<String> {
         let workdir = self.workdir_path()?;
-        let output = crate::git_bin::git_command()
-            .current_dir(workdir)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GIT_EDITOR", "true")
-            .args(args)
-            .output()
-            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        let output = crate::activity::output(
+            crate::git_bin::git_command()
+                .current_dir(workdir)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .env("GIT_EDITOR", "true")
+                .args(args),
+        )
+        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
         let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
         combined.push_str(&String::from_utf8_lossy(&output.stderr));
         let combined = combined.trim().to_string();
@@ -224,7 +225,7 @@ impl Repo {
     }
 
     /// Working-tree paths with unresolved conflicts.
-    fn unmerged_paths(&self) -> Result<Vec<String>> {
+    pub(crate) fn unmerged_paths(&self) -> Result<Vec<String>> {
         Ok(self
             .run_git(&["diff", "--name-only", "--diff-filter=U"])?
             .lines()

@@ -4,7 +4,7 @@
 // The pane draws the comparison and is the one record of which is on screen
 // (`ui.detailView.comparison()`); this only fetches it.
 
-import { compareRevs } from "./api";
+import { compareRevs, EMPTY_REV } from "./api";
 import { state, ui } from "./app-state";
 import { readFailed, setStatus } from "./report";
 import { compareEndLabel } from "./views/detail";
@@ -45,6 +45,18 @@ export function cancelComparison(): void {
 export function compareSelectedCommits(): Promise<boolean> {
   const [base, head] = olderFirst([...state.commitSelection], state.rows);
   return showComparison(base, head, false);
+}
+
+// The ends of the combined diff of `commits` (oldest first): from the oldest
+// one's parent — the empty tree for a root commit — to the newest. Null unless
+// they're one unbroken first-parent run, the only shape whose two-dot diff is
+// exactly what those commits changed together.
+export function combinedDiffEnds(commits: CommitRow[]): { base: string; head: string } | null {
+  if (commits.length < 2) return null;
+  for (let i = 1; i < commits.length; i++) {
+    if (commits[i].parents[0] !== commits[i - 1].id) return null;
+  }
+  return { base: commits[0].parents[0] ?? EMPTY_REV, head: commits[commits.length - 1].id };
 }
 
 // Two commit ids, older first. `rows` is the log — newest-first and paged — so

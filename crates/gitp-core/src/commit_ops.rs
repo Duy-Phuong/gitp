@@ -1,5 +1,6 @@
 //! Commit-scoped history operations, invoked from the log's right-click menu:
-//! checkout, branch/tag creation, cherry-pick, revert, reset, and rebase.
+//! checkout, branch/tag creation, cherry-pick, revert, reset, rebase, and
+//! saving commits as a patch.
 //!
 //! All of these shell out through `run_git` (see remote.rs) rather than going
 //! through libgit2. Operations like cherry-pick, revert, and rebase are far
@@ -7,9 +8,12 @@
 //! conflict handling, hooks, and error messages apply as-is — matching what the
 //! embedded terminal would produce.
 
+use std::fs;
+use std::path::Path;
+
 use serde::Deserialize;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::remote::ref_arg;
 use crate::repo::Repo;
 
@@ -53,6 +57,23 @@ impl Repo {
         self.run_git(&["tag", ref_arg(name)?, ref_arg(rev)?])
     }
 
+    /// Create an annotated tag `name` at `rev` carrying `message`
+    /// (`git tag -a -m <message> <name> <rev>`): a tag object of its own, with
+    /// a tagger and date, rather than a bare ref. `--cleanup=whitespace` keeps a
+    /// line starting with `#` (an issue number, say), which git's default for
+    /// tags would strip as a comment.
+    pub fn create_annotated_tag_at(&self, name: &str, rev: &str, message: &str) -> Result<String> {
+        self.run_git(&[
+            "tag",
+            "-a",
+            "--cleanup=whitespace",
+            "-m",
+            message,
+            ref_arg(name)?,
+            ref_arg(rev)?,
+        ])
+    }
+
     /// Apply `rev` on top of the current branch (`git cherry-pick <rev>`).
     /// Conflicts leave the repo mid-cherry-pick and surface as an error.
     pub fn cherry_pick(&self, rev: &str) -> Result<String> {
@@ -76,5 +97,17 @@ impl Repo {
     /// an error for the user to resolve in the terminal.
     pub fn rebase_onto(&self, rev: &str) -> Result<String> {
         self.run_git(&["rebase", ref_arg(rev)?])
+    }
+
+    /// Write `revs` to `dest` as one patch file: each commit's
+    /// `git format-patch -1 --stdout`, in the order given, so several make an
+    /// mbox that `git am` applies one commit at a time.
+    pub fn save_commits_patch(&self, revs: &[String], dest: &Path) -> Result<String> {
+        let mut patch = Vec::new();
+        for rev in revs {
+            patch.extend(self.run_git_raw(&["format-patch", "-1", "--stdout", ref_arg(rev)?])?);
+        }
+        fs::write(dest, &patch).map_err(|e| Error::Message(format!("can't write patch: {e}")))?;
+        Ok(format!("Saved patch to {}", dest.display()))
     }
 }

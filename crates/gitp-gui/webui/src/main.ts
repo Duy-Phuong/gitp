@@ -11,9 +11,12 @@ import {
   fetchCommitTree,
   fetchCompareFileDiff,
   fetchFileHistory,
+  fetchFileContent,
   fetchFileDiff,
   fetchStatusSummary,
   fetchReflog,
+  fetchActivityLog,
+  clearActivityLog,
   isTauri,
   listRepos,
   stage,
@@ -30,21 +33,27 @@ import {
   stashFiles,
   saveFilesPatch,
   addToGitignore,
+  untrackFiles,
   revealPath,
   openInEditor,
+  deleteFile,
   unstage,
   unstageAll,
   unstageHunk,
   unstageLines,
   fetchCommitSignature,
   fetchSigningConfig,
+  fetchCommitTemplate,
+  createBranchAt,
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
-import { setOnMoreRefs } from "./views/log";
+import { setOnMoreRefs, setOnOpenWip, setStashHandlers } from "./views/log";
 import { setupChanges } from "./views/changes";
 import { setupConflict } from "./views/conflict";
 import { setupReflog } from "./views/reflog";
+import { setupActivity } from "./views/activity";
+import { copyText } from "./clipboard";
 import { state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus, watchNetwork, watchPending } from "./report";
 import { setupFetchAgeIndicator } from "./fetch-age";
@@ -52,9 +61,12 @@ import {
   applyTheme,
   currentTheme,
   loadAllBranches,
+  loadAutoFetchMinutes,
   loadDetailTab,
+  loadPushAfterCommit,
   saveAllBranches,
   saveDetailTab,
+  savePushAfterCommit,
   updatePullButtonTitle,
 } from "./prefs";
 import { refsAt } from "./commit-refs";
@@ -68,11 +80,14 @@ import {
   loadSidebar,
   refreshHistory,
   refreshUndoLabels,
+  refreshWipRow,
   renderSidebarNow,
   restoreWorkspace,
   setRefActions,
   showReflogDetail,
+  showStashDetail,
   showView,
+  startAutoFetch,
   updateLogView,
 } from "./shell";
 import {
@@ -81,7 +96,7 @@ import {
   redoAction,
   refreshAllAction,
   runPullDefault,
-  stashAction,
+  openStashDialogAction,
   undoAction,
 } from "./repo-actions";
 import {
@@ -91,14 +106,29 @@ import {
   onRemoteMenu,
   onStashMenu,
   onMoreRefsMenu,
+  onRefDrop,
+  onSectionMenu,
   onTagMenu,
 } from "./ref-actions";
-import { onCommitContextMenu, onReflogMenu, runNextCherryPick } from "./commit-actions";
+import { setOnRefDrop } from "./views/ref-drag";
+import {
+  onCommitContextMenu,
+  onReflogMenu,
+  restoreFilesAction,
+  revertHunkAction,
+  runCommitOp,
+  resumeCherryPickPlan,
+  runNextCherryPick,
+} from "./commit-actions";
 import { onWorktreeMenu } from "./worktree-actions";
-import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
-import { toggleTerminal, warmTerminal } from "./terminal-panel";
+import { addRemoteAction, onRemoteFolderMenu, onRemotesMenu } from "./remote-actions";
+import { addSubmoduleAction, onSubmoduleMenu, openSubmodule } from "./submodule-actions";
+import { createFileAction, editFileAction } from "./editor-actions";
+import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
 import { openQuickLaunch } from "./quick-launch-commands";
+import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
+import { openInDiffTool, openInMergeTool } from "./external-tools";
 import { setupLogKeyboardNav, setupShortcuts } from "./keyboard";
 import { setupBranchMenu, setupPullMenu, setupSettingsMenu } from "./topbar-menus";
 import { showComparison } from "./compare";
@@ -113,6 +143,8 @@ function wireUi(): void {
     if (path) void loadRepo(path).then(warmTerminal);
     else if (!isTauri()) setStatus("The folder picker is only available in the desktop app.");
   });
+  $("#clone-btn").addEventListener("click", cloneRepoAction);
+  $("#init-btn").addEventListener("click", initRepoAction);
   $<HTMLInputElement>("#repo-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") $("#open-btn").click();
   });
@@ -125,12 +157,13 @@ function wireUi(): void {
   setupPullMenu();
   updatePullButtonTitle();
   $("#push-btn").addEventListener("click", () => void pushAction());
-  $("#stash-btn").addEventListener("click", () => void stashAction());
+  $("#stash-btn").addEventListener("click", openStashDialogAction);
   $("#pop-btn").addEventListener("click", () => void popAction());
   $("#refresh-btn").addEventListener("click", () => void refreshAllAction());
   setupShortcuts();
   setupBranchMenu();
   $("#quick-launch-btn").addEventListener("click", openQuickLaunch);
+  setupTerminalPanel();
   $("#terminal-toggle").addEventListener("click", toggleTerminal);
   $("#terminal-close").addEventListener("click", toggleTerminal);
   $("#terminal-clear").addEventListener("click", () => {
@@ -150,6 +183,7 @@ function wireUi(): void {
   setupExternalChangeRefresh();
   setupLogKeyboardNav();
   setupFetchAgeIndicator();
+  startAutoFetch(loadAutoFetchMinutes());
   setupBranchToggle();
   setupLogSearch();
   setupConfigTabs();
@@ -196,17 +230,26 @@ async function init(): Promise<void> {
   // The shell draws the sidebar and the log; the menus and actions behind their
   // rows live in modules built on top of it, so they are plugged in from here.
   setOnMoreRefs(onMoreRefsMenu);
+  setOnOpenWip(() => showView("changes"));
+  setStashHandlers((s) => void showStashDetail(s), onStashMenu);
+  setOnRefDrop(onRefDrop);
   setRefActions({
     checkoutBranchAction,
     onBranchMenu,
     onBranchBulkMenu,
     onStashMenu,
     onRemoteMenu,
+    onAddRemote: addRemoteAction,
+    onRemotesMenu,
+    onRemoteFolderMenu,
     onTagMenu,
     onCommitContextMenu,
     onWorktreeMenu,
     onSubmoduleOpen: openSubmodule,
     onSubmoduleMenu,
+    onAddSubmodule: addSubmoduleAction,
+    createBranchAt: (name, rev) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
+    onSectionMenu,
   });
   applyTheme(currentTheme());
   state.allBranches = loadAllBranches(); // before wireUi so the toggle reflects it
@@ -217,11 +260,15 @@ async function init(): Promise<void> {
     fetchTree: fetchCommitTree,
     fetchBlame,
     fetchFileHistory,
-    fetchFileDiff: (id, file, contextLines, full) =>
-      fetchCommitFileDiff(id, file.path, file.old_path, contextLines, full),
+    fetchFileDiff: (id, file, contextLines, ignoreWhitespace, full) =>
+      fetchCommitFileDiff(id, file.path, file.old_path, contextLines, ignoreWhitespace, full),
     fetchCompareFileDiff,
     onCompare: (base, head, threeDot) => void showComparison(base, head, threeDot),
+    fetchFileContent,
+    openInDiffTool: (target, paths) => void openInDiffTool(target, paths),
     onCloseCompare: () => void leaveComparison(),
+    restoreFiles: (id, paths) => void restoreFilesAction(id, paths),
+    revertHunk: (id, file, hunkIndex, contextLines) => void revertHunkAction(id, file, hunkIndex, contextLines),
     fetchSignature: fetchCommitSignature,
     initialTab: loadDetailTab(),
     onTabChange: saveDetailTab,
@@ -229,6 +276,7 @@ async function init(): Promise<void> {
   ui.changesView = setupChanges($("#changes-pane"), {
     fetchStatus: fetchStatusSummary,
     fetchFileDiff,
+    fetchFileContent,
     stage,
     unstage,
     stageAll,
@@ -243,8 +291,13 @@ async function init(): Promise<void> {
     stashFiles,
     saveFilesPatch,
     addToGitignore,
+    untrackFiles,
     revealPath,
     openInEditor,
+    editInApp: editFileAction,
+    createFile: createFileAction,
+    deleteFile,
+    openInDiffTool: (target, paths) => void openInDiffTool(target, paths),
     repoRoot: () => state.repoPath || null,
     confirm: confirmDialog,
     fetchHead: async () => {
@@ -256,6 +309,10 @@ async function init(): Promise<void> {
     },
     commit: commitChanges,
     fetchSigningConfig,
+    fetchCommitTemplate,
+    pushAfterCommit: loadPushAfterCommit,
+    setPushAfterCommit: savePushAfterCommit,
+    push: () => void pushAction(),
     // Staging doesn't change refs or history, so just update the badge — no ref
     // walk or log rebuild (that's what made each stage/unstage feel slow).
     onChanged: (count) => {
@@ -264,6 +321,7 @@ async function init(): Promise<void> {
       if (state.localChanges === count) return;
       state.localChanges = count;
       renderSidebarNow();
+      refreshWipRow();
     },
     onCommitted: () => {
       void loadSidebar();
@@ -281,6 +339,7 @@ async function init(): Promise<void> {
     resolve: resolveConflict,
     resolveSide: resolveConflictSide,
     openInEditor,
+    openInMergeTool: (path) => void openInMergeTool(path),
     abort: abortConflict,
     finish: finishConflict,
     confirm: confirmDialog,
@@ -291,7 +350,10 @@ async function init(): Promise<void> {
       // An abort mid-batch cancels the rest — resolving that one commit's
       // conflict clearly wasn't wanted, so continuing to apply the remaining
       // queued commits without asking would be surprising.
-      if (aborted) ui.pendingCherryPicks = [];
+      if (aborted) {
+        ui.pendingCherryPicks = [];
+        ui.pickPlanRepo = "";
+      }
       // Resume only the batch this session paused: same repo, and the session
       // that just finished was its cherry-pick (not some later merge the
       // leftovers would otherwise be applied on top of). Decided now, because
@@ -302,6 +364,9 @@ async function init(): Promise<void> {
         queued.length > 0 &&
         ui.pendingCherryPicksRepo === state.repoPath &&
         state.conflict?.kind === "cherry-pick";
+      // An interactive cherry-pick plan paused here resumes the same way.
+      const planRepo = ui.pickPlanRepo;
+      const resumePlan = !aborted && planRepo === state.repoPath && state.conflict?.kind === "cherry-pick";
       showView("history");
       try {
         await Promise.all([refreshHistory(), loadSidebar()]);
@@ -315,12 +380,22 @@ async function init(): Promise<void> {
         ui.pendingCherryPicks = queued;
         await runNextCherryPick();
       }
+      if (resumePlan && planRepo === state.repoPath) {
+        ui.pickPlanRepo = "";
+        await resumeCherryPickPlan();
+      }
     },
   });
   ui.reflogView = setupReflog($("#reflog-col"), {
     fetch: fetchReflog,
     onSelect: (entry) => void showReflogDetail(entry),
     onMenu: onReflogMenu,
+    reportError: readFailed,
+  });
+  ui.activityView = setupActivity($("#activity-view"), {
+    fetch: fetchActivityLog,
+    clear: clearActivityLog,
+    copy: (text) => void copyText(text, "Copied the command and its output."),
     reportError: readFailed,
   });
   if (isTauri()) {

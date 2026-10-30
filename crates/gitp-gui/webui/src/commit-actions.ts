@@ -2,30 +2,40 @@
 // multi-select), the history-rewriting rebase shortcuts, and batch cherry-pick.
 
 import {
+  WORKDIR_REV,
   bisectStart,
   checkoutCommit,
   cherryPick,
+  cherryPickPlan,
   confirmDialog,
+  continueCherryPickPlan,
   createBranchAt,
   createTagAt,
   createBackupBranch,
   fetchRebaseTodo,
+  fetchStatusSummary,
   interactiveRebase,
   resetTo,
+  restoreFilesFromCommit,
   revertCommit,
+  revertCommitHunk,
+  saveCommitsPatch,
 } from "./api";
 import { $ } from "./dom";
-import { logRowHeight, renderLog } from "./views/log";
+import { logRowTop, renderLog } from "./views/log";
 import { showCommitMenu } from "./views/commit-menu";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
-import { openRebaseModal, type RebaseOptions } from "./views/rebase";
-import type { CommitRow, RebaseAction, RebaseStep, ReflogEntry, ResetMode } from "./types";
+import { openCherryPickModal, openRebaseModal, type RebaseOptions } from "./views/rebase";
+import { openFormDialog } from "./views/form-dialog";
+import type { CommitRow, FileDiff, PickPlanOutcome, RebaseAction, RebaseStep, ReflogEntry, ResetMode } from "./types";
 import { state, ui } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
+import { combinedDiffEnds, showComparison } from "./compare";
 import { refLabelsAt } from "./commit-refs";
 import {
   bisectStep,
+  clearCommitSelection,
   loadMoreCommits,
   loadSidebar,
   onCommitMultiSelect,
@@ -188,6 +198,82 @@ async function squashSelectedCommits(commits: CommitRow[]): Promise<void> {
   }
 }
 
+// "Show Combined Diff": what a run of consecutive commits changed together,
+// in the compare view. The selection goes first — two selected commits would
+// otherwise re-compare themselves on the next refresh (newest against oldest,
+// leaving out the oldest one's own changes).
+async function showCombinedDiff(base: string, head: string, n: number): Promise<void> {
+  await clearCommitSelection();
+  setStatus(`Combining the changes of ${n} commits…`);
+  await showComparison(base, head, false);
+}
+
+// "Compare with Working Directory": everything between `rev` and the files on
+// disk, committed since or not — two-dot, like `git diff <rev>`. Shown in the
+// History view's detail pane, the same way Compare with Current Branch is.
+export async function compareWithWorkdirAction(rev: string, label: string): Promise<void> {
+  if (state.view !== "history") showView("history", { refreshHistory: false });
+  await clearCommitSelection();
+  setStatus(`Comparing ${label} with the working directory…`);
+  await showComparison(rev, WORKDIR_REV, false);
+}
+
+// "Restore File from This Commit": put `paths` back to how they are in `rev`,
+// staged in Local Changes. Asks first when that overwrites local changes to
+// any of them; Undo brings those back either way.
+export async function restoreFilesAction(rev: string, paths: string[]): Promise<void> {
+  const short = rev.slice(0, 7);
+  const what = paths.length > 1 ? `${paths.length} files` : paths[0];
+  try {
+    const status = await fetchStatusSummary();
+    const changed = new Set([...status.staged, ...status.unstaged].map((f) => f.path));
+    const dirty = paths.filter((p) => changed.has(p));
+    if (dirty.length) {
+      const which = dirty.length === 1 ? `${dirty[0]} has` : `${dirty.length} of these files have`;
+      if (!(await confirmDialog(`${which} local changes.\n\nReplace with the version from ${short}?`))) {
+        setStatus("Restore cancelled.");
+        return;
+      }
+    }
+    setStatus(`Restoring ${what} from ${short}…`);
+    await restoreFilesFromCommit(rev, paths);
+    await loadSidebar(); // the Local Changes count and the Undo button
+    reportDone(`Restored ${what} from ${short} — staged in Local Changes.`);
+  } catch (err) {
+    opFailed("Restore failed", err);
+  }
+}
+
+// A diff block's "Revert": undo just that block of commit `rev` in the working
+// tree, for Local Changes to commit. Undo takes it back.
+export async function revertHunkAction(rev: string, file: FileDiff, hunkIndex: number, contextLines: number): Promise<void> {
+  setStatus(`Reverting a block of ${file.path}…`);
+  try {
+    await revertCommitHunk(rev, file, hunkIndex, contextLines);
+    await loadSidebar(); // the Local Changes count and the Undo button
+    reportDone(`Reverted a block of ${file.path} from ${rev.slice(0, 7)} — the change is in Local Changes.`);
+  } catch (err) {
+    opFailed("Revert Hunk failed", err);
+  }
+}
+
+// "Save as Patch…": `commits` (oldest first, so `git am` replays them in
+// order) as one patch file, wherever the user picks.
+async function saveCommitsPatchAction(commits: CommitRow[]): Promise<void> {
+  const name = commits.length === 1 ? `${commits[0].short_id}.patch` : `${commits.length}-commits.patch`;
+  setStatus("Saving patch…");
+  try {
+    const out = await saveCommitsPatch(commits.map((c) => c.id), name);
+    if (out === null) {
+      setStatus("Save cancelled.");
+      return;
+    }
+    reportDone(out || "Saved patch.");
+  } catch (err) {
+    opFailed("Save as Patch failed", err);
+  }
+}
+
 // Cherry-pick every selected commit, oldest first. A conflict pauses the
 // batch on the normal conflict resolver; finishing it resumes with whatever
 // is left in `pendingCherryPicks`, aborting cancels the rest (see the
@@ -229,6 +315,47 @@ export async function runNextCherryPick(): Promise<void> {
   }
 }
 
+// "Cherry-pick N Commits (Interactive)…": plan the selected commits (oldest
+// first) in the rebase editor — reorder, pick / reword / squash / drop — and
+// run the plan onto HEAD. The backend runs it step by step; a conflict pauses
+// it on the normal resolver, and finishing there resumes the rest (the
+// conflictView onDone hook in init()), the same as the queued batch above.
+function cherryPickInteractive(commits: CommitRow[]): void {
+  const current = state.refs.head ?? "HEAD";
+  const planned = commits.map((c) => ({ sha: c.id, short_sha: c.short_id, subject: c.summary }));
+  openCherryPickModal(current, planned, (steps) => {
+    const n = steps.filter((s) => s.action !== "drop").length;
+    void runCherryPickPlan(`Cherry-picking ${n} commits onto ${current}`, () => cherryPickPlan(steps));
+  });
+}
+
+// Pick a paused plan back up once its conflict is resolved and committed.
+export async function resumeCherryPickPlan(): Promise<void> {
+  await runCherryPickPlan("Continuing the cherry-pick", continueCherryPickPlan);
+}
+
+async function runCherryPickPlan(label: string, run: () => Promise<PickPlanOutcome>): Promise<void> {
+  setStatus(`${label}…`);
+  try {
+    const out = await run();
+    if (out.paused) {
+      await Promise.all([refreshConflictStatus(), refreshRebaseStatus()]);
+      ui.pickPlanRepo = state.repoPath;
+      showView("conflict");
+      setStatus("A commit conflicted — resolve it to continue the cherry-pick.");
+      return;
+    }
+    showView("history");
+    await Promise.all([refreshHistory(), loadSidebar()]);
+    reportDone(out.output.trim() || "Cherry-pick done.");
+  } catch (err) {
+    // Whatever stopped it, show where the repo ended up (some steps may have
+    // landed) and any conflict it left behind.
+    await Promise.all([refreshHistory(), loadSidebar(), refreshConflictStatus(), refreshRebaseStatus()]);
+    opFailed("Cherry-pick failed", err);
+  }
+}
+
 // --- Commit right-click menu ------------------------------------------------
 
 // Open the context menu for a right-clicked commit, wiring each item to the
@@ -236,9 +363,13 @@ export async function runNextCherryPick(): Promise<void> {
 function onCommitBulkContextMenu(x: number, y: number): void {
   const commits = selectedCommitsOldestFirst();
   const n = commits.length;
+  const combined = combinedDiffEnds(commits);
   const items: MenuItem[] = [
+    ...(combined ? [{ label: "Show Combined Diff", run: () => void showCombinedDiff(combined.base, combined.head, n) }] : []),
     { label: `Cherry-pick ${n} Commits`, run: () => void cherryPickSelectedCommits(commits) },
+    { label: `Cherry-pick ${n} Commits (Interactive)…`, run: () => cherryPickInteractive(commits) },
     { label: `Copy ${n} SHAs`, run: () => void copySelectedShasAction(commits) },
+    { label: `Save ${n} Commits as Patch…`, run: () => void saveCommitsPatchAction(commits) },
     { separator: true },
     { label: `Squash ${n} Commits…`, run: () => void squashSelectedCommits(commits) },
     {
@@ -267,9 +398,11 @@ export function onCommitContextMenu(row: CommitRow, x: number, y: number): void 
   showCommitMenu(x, y, row, {
     currentBranch: state.refs.head ?? "HEAD",
     copySha: () => void copySha(rev),
+    compareWithWorkdir: () => void compareWithWorkdirAction(rev, short),
+    savePatch: () => void saveCommitsPatchAction([row]),
     checkoutCommit: () => void checkoutCommitAction(rev, short),
     newBranch: (name) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
-    newTag: (name) => void tagAction(name, rev, short),
+    newTag: () => newTagAction(rev, short),
     cherryPick: () => void runCommitOp(`Cherry-picking ${short}`, () => cherryPick(rev)),
     revert: () => void runCommitOp(`Reverting ${short}`, () => revertCommit(rev)),
     reset: (mode) => void resetAction(rev, short, mode),
@@ -344,7 +477,7 @@ async function landOnCommit(rev: string): Promise<void> {
   ui.logView = renderLog($("#log-pane"), state.rows, state.selectedId, selectCommit, loadMoreCommits, refLabelsAt, onCommitContextMenu, state.commitSelection, onCommitMultiSelect);
   if (idx >= 0) {
     const pane = $("#log-pane");
-    pane.scrollTop = Math.max(0, idx * logRowHeight() - pane.clientHeight / 2);
+    pane.scrollTop = Math.max(0, logRowTop(idx) - pane.clientHeight / 2);
   }
   await selectCommit(rev);
 }
@@ -390,12 +523,29 @@ export async function resetAction(rev: string, short: string, mode: ResetMode): 
   );
 }
 
+// "New Tag here…" from any menu: a name and an optional annotation. Leaving
+// the message empty makes a lightweight tag, as plain `git tag` does.
+export function newTagAction(rev: string, short: string): void {
+  openFormDialog(
+    {
+      title: `New Tag at ${short}`,
+      sub: "Add a message to create an annotated tag; leave it empty for a lightweight one.",
+      fields: [
+        { label: "Name:", placeholder: "v1.0.0", required: true },
+        { label: "Message:", placeholder: "Optional (Cmd/Ctrl+Enter to create)", multiline: true },
+      ],
+      submitLabel: "Create Tag",
+    },
+    ([name, message]) => void tagAction(name, rev, short, message),
+  );
+}
+
 // Tagging doesn't move HEAD, so it only refreshes the sidebar (to show the tag)
 // and leaves the current view/scroll alone.
-export async function tagAction(name: string, rev: string, short: string): Promise<void> {
+export async function tagAction(name: string, rev: string, short: string, message = ""): Promise<void> {
   setStatus(`Tagging ${short} as ${name}…`);
   try {
-    await createTagAt(name, rev);
+    await createTagAt(name, rev, message);
     await loadSidebar();
     reportDone(`Tagged ${short} as ${name}`);
   } catch (err) {

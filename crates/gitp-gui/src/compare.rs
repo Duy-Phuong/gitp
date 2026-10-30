@@ -24,16 +24,18 @@ fn get_compare_file_diff_impl(
     path: String,
     old_path: Option<String>,
     context_lines: u32,
+    ignore_whitespace: bool,
     full: bool,
 ) -> Result<Option<FileDiff>, String> {
     with_repo(state, |repo| {
-        repo.compare_file_diff(
+        repo.compare_file_diff_with(
             &base,
             &head,
             three_dot,
             &path,
             old_path.as_deref(),
             context_lines,
+            ignore_whitespace,
             crate::staging::diff_cap(full),
         )
     })
@@ -60,6 +62,7 @@ pub(crate) fn get_compare_file_diff(
     path: String,
     old_path: Option<String>,
     context_lines: u32,
+    ignore_whitespace: bool,
     full: bool,
     state: State<RepoState>,
 ) -> Result<Option<FileDiff>, String> {
@@ -71,6 +74,7 @@ pub(crate) fn get_compare_file_diff(
         path,
         old_path,
         context_lines,
+        ignore_whitespace,
         full,
     )
 }
@@ -104,6 +108,7 @@ mod tests {
             "f.txt".into(),
             None,
             0,
+            false,
             false,
         )
         .expect("file diff");

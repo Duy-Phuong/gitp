@@ -17,6 +17,8 @@ export interface ConflictCallbacks {
   resolveSide: (path: string, ours: boolean) => Promise<void>;
   // Open the file in the OS default application (e.g. the user's editor).
   openInEditor: (path: string) => Promise<void>;
+  // Open the file in the user's `git mergetool`.
+  openInMergeTool: (path: string) => void;
   abort: () => Promise<string>;
   finish: (message: string) => Promise<string>;
   confirm: (message: string) => Promise<boolean>;
@@ -468,10 +470,13 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     const box = el("div", { class: "conflict-editor" });
     const editBtn = el("button", { class: "btn ghost small", text: "Edit File" });
     editBtn.addEventListener("click", () => void cb.openInEditor(selected!));
+    const toolBtn = el("button", { class: "btn ghost small", text: "Open in Merge Tool" });
+    toolBtn.addEventListener("click", () => cb.openInMergeTool(selected!));
     box.append(
       el("div", { class: "conflict-editor-head" }, [
         el("span", { text: `${selected} — binary conflict` }),
         editBtn,
+        toolBtn,
       ]),
     );
     const take = (glyph: string, title: string, ours: boolean) => {
@@ -593,6 +598,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
           txtBtn("Accept All Theirs", () => acceptAll(false)),
           txtBtn("Cancel", () => cancelFile(), !touched),
           txtBtn("Edit File", () => void cb.openInEditor(selected!)),
+          txtBtn("Open in Merge Tool", () => cb.openInMergeTool(selected!)),
           txtBtn("Mark Resolved", () => void markFileResolved()),
           save,
         ]),

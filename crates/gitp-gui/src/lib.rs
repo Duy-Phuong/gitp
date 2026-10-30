@@ -8,6 +8,7 @@
 //! below (`state` holds the shared session state and caches); each module ends
 //! with its Tauri command wrappers, which `run` registers.
 
+mod activity;
 mod askpass;
 mod bisect;
 mod branches;
@@ -15,6 +16,7 @@ mod commits;
 mod compare;
 mod config;
 mod conflict;
+mod editor;
 mod history;
 mod os;
 mod rebase;
@@ -84,6 +86,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             workspace::open_repo,
+            workspace::init_repository,
             workspace::list_repos,
             workspace::activate_repo,
             workspace::close_repo,
@@ -92,6 +95,7 @@ pub fn run() {
             history::log_index_of,
             history::get_commit_detail,
             history::get_commit_file_diff,
+            history::get_file_content,
             compare::compare_revs,
             compare::get_compare_file_diff,
             history::get_refs,
@@ -119,6 +123,7 @@ pub fn run() {
             commits::checkout_commit,
             branches::create_branch_at,
             tags::create_tag_at,
+            tags::annotate_tag,
             history::history_fingerprint,
             tags::tag_detail,
             tags::push_tag,
@@ -126,8 +131,11 @@ pub fn run() {
             tags::delete_remote_tag,
             tags::remote_tag_exists,
             commits::cherry_pick,
+            commits::cherry_pick_plan,
+            commits::continue_cherry_pick_plan,
             commits::revert,
             commits::reset,
+            commits::save_commits_patch,
             rebase::rebase_onto,
             branches::rename_branch,
             branches::rename_remote_branch,
@@ -136,18 +144,27 @@ pub fn run() {
             branches::delete_remote_branch,
             branches::remote_branch_exists,
             branches::merge_branch,
+            branches::squash_message,
             remote::push_branch,
+            remote::push_branch_to,
             remote::fetch_branch,
             remote::fetch_all,
             remote::fetch_remote,
+            remote::list_remotes,
+            remote::add_remote,
+            remote::set_remote_url,
+            remote::rename_remote,
+            remote::remove_remote,
             branches::gone_branches,
             branches::delete_branches,
             remote::fetch_and_update_branch,
             branches::fast_forward_branch,
+            branches::fast_forward_branch_to,
             branches::set_upstream,
             branches::unset_upstream,
             remote::create_pull_request,
             remote::cancel_network_op,
+            remote::clone_repository,
             rebase::get_rebase_todo,
             rebase::interactive_rebase,
             rebase::rebase_status,
@@ -164,12 +181,23 @@ pub fn run() {
             stash::stash_rename,
             stash::save_stash_patch,
             staging::discard_files,
+            staging::restore_files_from_commit,
+            staging::revert_commit_hunk,
             stash::stash_files,
             staging::save_files_patch,
+            staging::apply_patch,
             staging::add_to_gitignore,
+            staging::untrack_files,
             os::reveal_path,
             workspace::workspace_snapshot,
             os::open_in_editor,
+            editor::read_text_file,
+            editor::write_text_file,
+            editor::create_file,
+            editor::delete_file,
+            editor::list_work_files,
+            os::open_difftool,
+            os::open_mergetool,
             config::read_dotfile,
             config::write_dotfile,
             config::export_config_template,
@@ -185,16 +213,21 @@ pub fn run() {
             history::get_file_history,
             config::get_config,
             config::set_config,
+            config::unset_config,
             reflog::get_reflog,
+            activity::get_activity_log,
+            activity::clear_activity_log,
             terminal::terminal_spawn,
             terminal::terminal_write,
             terminal::terminal_resize,
+            terminal::terminal_kill,
             bisect::bisect_status,
             bisect::bisect_start,
             bisect::bisect_mark,
             bisect::bisect_reset,
             history::get_commit_signature,
             staging::get_signing_config,
+            staging::get_commit_template,
             worktrees::list_worktrees,
             worktrees::add_worktree,
             worktrees::remove_worktree,
@@ -204,6 +237,9 @@ pub fn run() {
             submodules::list_submodules,
             submodules::update_submodules,
             submodules::sync_submodules,
+            submodules::add_submodule,
+            submodules::set_submodule_url,
+            submodules::remove_submodule,
         ])
         .run(tauri::generate_context!())
         .expect("error while running gitp");

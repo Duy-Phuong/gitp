@@ -4,6 +4,7 @@
 import type { RefLabel, RefLabels, TipRef } from "./views/log";
 import type { BranchRef, CommitRow, RemoteBranch, TagRef } from "./types";
 import { state } from "./app-state";
+import { branchRefName, refFilter, refShown, remoteRefName, tagRefName } from "./ref-visibility";
 
 // Labels of refs whose tip is this commit — shown as chips in the Commit tab.
 export function refsAt(id: string): string[] {
@@ -49,8 +50,12 @@ function refsSignature(): string {
   const r = state.refs;
   return [
     r.branches.map((b) => `${b.name}:${b.target}:${b.is_head ? 1 : 0}`).join(","),
-    r.tags.map((t) => `${t.name}:${t.target}`).join(","),
+    // Annotating a tag keeps its commit, so whether it has a message is part
+    // of what the chips show.
+    r.tags.map((t) => `${t.name}:${t.target}:${t.message === null ? 0 : 1}`).join(","),
     r.remotes.map((rm) => `${rm.name}:${rm.target}`).join(","),
+    state.graph.hidden.join(","),
+    state.graph.solo.join(","),
   ].join("|");
 }
 
@@ -89,12 +94,15 @@ export function rebuildCommitRefs(): boolean {
   const index = new Map<string, number>();
   for (let i = 0; i < rows.length; i++) index.set(rows[i].id, i);
 
+  // Refs hidden from the graph (or not soloed) get no chips either.
+  const f = refFilter(state.graph);
+  const shownBranches = state.refs.branches.filter((b) => refShown(f, branchRefName(b.name), b.is_head));
+  const shownRemotes = state.refs.remotes.filter((r) => refShown(f, remoteRefName(r.name)));
+  const shownTags = state.refs.tags.filter((t) => refShown(f, tagRefName(t.name)));
+
   // Non-current branches first so they win ties over the current branch, which
   // otherwise labels most of history with itself.
-  const branches = [
-    ...state.refs.branches.filter((b) => !b.is_head),
-    ...state.refs.branches.filter((b) => b.is_head),
-  ];
+  const branches = [...shownBranches.filter((b) => !b.is_head), ...shownBranches.filter((b) => b.is_head)];
 
   const top: (Cand[] | undefined)[] = new Array(rows.length);
   const words = Math.ceil(Math.max(1, branches.length) / 32);
@@ -155,10 +163,10 @@ export function rebuildCommitRefs(): boolean {
     if (ri === undefined) return;
     if (push(ri, label, 0, order++)) tipTotals[ri] += 1;
   };
-  for (const t of state.refs.tags) addTip(t.target, { name: t.name, kind: "tag" });
-  for (const r of state.refs.remotes) addTip(r.target, { name: r.name, kind: "remote" });
+  for (const t of shownTags) addTip(t.target, { name: t.name, kind: "tag", message: t.message });
+  for (const r of shownRemotes) addTip(r.target, { name: r.name, kind: "remote" });
 
-  const tips = mergeTipRefs(state.refs.branches, state.refs.remotes, state.refs.tags);
+  const tips = mergeTipRefs(shownBranches, shownRemotes, shownTags);
   const labels = new Map<string, RefLabels>();
   for (let i = 0; i < rows.length; i++) {
     const list = top[i];
@@ -207,7 +215,7 @@ export function mergeTipRefs(
     else list.push({ name: short, kind: "branch", head: false, local: false, remotes: [r.name] });
   }
   for (const t of tags) {
-    listAt(t.target).push({ name: t.name, kind: "tag", head: false, local: false, remotes: [] });
+    listAt(t.target).push({ name: t.name, kind: "tag", head: false, local: false, remotes: [], message: t.message });
   }
   const rank = (t: TipRef) => (t.head ? 0 : t.kind === "tag" ? 3 : t.local ? 1 : 2);
   for (const list of byCommit.values()) list.sort((a, b) => rank(a) - rank(b));

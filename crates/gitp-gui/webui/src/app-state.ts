@@ -8,11 +8,23 @@ import type { LogHandle } from "./views/log";
 import type { DetailHandle } from "./views/detail";
 import type { ChangesHandle } from "./views/changes";
 import type { ConflictHandle } from "./views/conflict";
-import type { TerminalHandle } from "./views/terminal";
 import type { ReflogHandle } from "./views/reflog";
-import type { BisectStatus, CommitRow, ConflictStatus, RebaseStatus, Refs, RepoTab, UndoState, Submodule, Worktree } from "./types";
+import type { GraphPrefs } from "./prefs";
+import type { ActivityHandle } from "./views/activity";
+import type {
+  BisectStatus,
+  CommitRow,
+  ConflictStatus,
+  RebaseStatus,
+  Refs,
+  RemoteInfo,
+  RepoTab,
+  UndoState,
+  Submodule,
+  Worktree,
+} from "./types";
 
-export type View = "history" | "changes" | "config" | "conflict" | "reflog";
+export type View = "history" | "changes" | "config" | "conflict" | "reflog" | "activity";
 
 export const EMPTY_REFS: Refs = { head: null, branches: [], remotes: [], tags: [], stashes: [], recent: [] };
 
@@ -25,6 +37,8 @@ interface State {
   repos: RepoTab[];
   rows: CommitRow[];
   total: number;
+  // HEAD's commit as of the last log page — where the graph's WIP row hangs.
+  headId: string | null;
   selectedId: string | null;
   view: View;
   refs: Refs;
@@ -36,6 +50,8 @@ interface State {
   bisect: BisectStatus | null;
   // History graph shows all branches (true) or just the current branch (false).
   allBranches: boolean;
+  // The active repo's graph settings: pinned branch, hidden and soloed refs.
+  graph: GraphPrefs;
   // Cmd/Shift-click multi-selection, for bulk actions — see log.ts / sidebar.ts.
   // Separate from `selectedId` (the one commit the detail pane follows).
   commitSelection: Set<string>;
@@ -49,6 +65,9 @@ interface State {
   worktrees: Worktree[];
   // The repo's submodules, refreshed with the sidebar.
   submodules: Submodule[];
+  // The repo's configured remotes, refreshed with the sidebar — including ones
+  // never fetched, which have no remote branches in `refs` to show them by.
+  remoteList: RemoteInfo[];
 }
 
 export const state: State = {
@@ -56,6 +75,7 @@ export const state: State = {
   repos: [],
   rows: [],
   total: 0,
+  headId: null,
   selectedId: null,
   view: "history",
   refs: EMPTY_REFS,
@@ -67,23 +87,40 @@ export const state: State = {
   // default view. Keeping them shut is what makes the first paint cheap.
   sbCollapsed: new Set(["sec:recent", "sec:remotes", "sec:tags"]),
   allBranches: true,
+  graph: { pinned: null, hidden: [], solo: [] },
   commitSelection: new Set(),
   branchSelection: new Set(),
   branchSelectionAnchor: null,
   busyRefs: new Set(),
   worktrees: [],
   submodules: [],
+  remoteList: [],
   rebase: null,
   conflict: null,
   bisect: null,
 };
 
+// The terminal panel (terminal-panel.ts): a strip of shell tabs per repo.
+export interface TerminalPanel {
+  // The tab on screen.
+  fit: () => void;
+  focus: () => void;
+  clear: () => void;
+  // Every tab, the ones in the background included.
+  syncTheme: () => void;
+  // Put `path`'s tabs on screen — the active repo changed.
+  showRepo: (path: string) => void;
+  // Kill `path`'s shells — its repo tab was closed.
+  closeRepo: (path: string) => void;
+}
+
 export const ui = {
-  terminal: null as TerminalHandle | null,
+  terminal: null as TerminalPanel | null,
   detailView: null as DetailHandle | null,
   changesView: null as ChangesHandle | null,
   conflictView: null as ConflictHandle | null,
   reflogView: null as ReflogHandle | null,
+  activityView: null as ActivityHandle | null,
   // The live log's handle, from the most recent renderLog — the log view owns
   // keyboard movement through the rows it has on screen (see LogHandle).
   logView: null as LogHandle | null,
@@ -96,4 +133,7 @@ export const ui = {
   // The repo a conflicted batch paused in — the resolver's onDone resumes only
   // a batch that belongs to the repo and session that just finished.
   pendingCherryPicksRepo: "",
+  // The repo an interactive cherry-pick plan paused in on a conflict (its
+  // remaining steps are kept by the backend); "" when none is waiting.
+  pickPlanRepo: "",
 };

@@ -34,6 +34,20 @@ fn repo_with_one_stash() -> (FixtureRepo, Repo) {
 }
 
 #[test]
+fn a_stash_knows_the_commit_it_was_taken_on() {
+    let (fx, repo) = repo_with_one_stash();
+    let head = repo.resolve_commit("HEAD").unwrap();
+    // A second commit, so the stash's base is no longer HEAD.
+    fx.commit_file("b.txt", "b\n", "c2");
+
+    let stashes = repo.refs().unwrap().stashes;
+    assert_eq!(
+        stashes[0].base, head,
+        "the graph hangs the stash off this commit"
+    );
+}
+
+#[test]
 fn apply_without_drop_restores_the_change_and_keeps_the_entry() {
     let (fx, repo) = repo_with_one_stash();
 
@@ -176,4 +190,60 @@ fn save_stash_patch_includes_untracked_files() {
         "untracked file present in the patch: {text}"
     );
     assert!(text.ends_with('\n'));
+}
+
+#[test]
+fn stash_push_names_the_entry_with_the_message() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    std::fs::write(fx.path().join("a.txt"), "two\n").unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.stash_push(Some("-- half-done login"), false, true)
+        .unwrap();
+
+    let messages = stash_messages(fx.path());
+    assert_eq!(messages.len(), 1);
+    assert!(
+        messages[0].ends_with(": -- half-done login"),
+        "message kept verbatim, even with a leading dash: {messages:?}"
+    );
+}
+
+#[test]
+fn stash_push_staged_only_leaves_unstaged_and_untracked_changes() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    fx.commit_file("b.txt", "one\n", "c2");
+    std::fs::write(fx.path().join("a.txt"), "staged\n").unwrap();
+    std::fs::write(fx.path().join("b.txt"), "unstaged\n").unwrap();
+    std::fs::write(fx.path().join("new.txt"), "untracked\n").unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.stage("a.txt").unwrap();
+
+    // include_untracked is ignored with staged: git refuses the combination.
+    repo.stash_push(None, true, true).unwrap();
+
+    let read = |name: &str| std::fs::read_to_string(fx.path().join(name)).unwrap();
+    assert_eq!(read("a.txt"), "one\n", "the staged change was stashed");
+    assert_eq!(read("b.txt"), "unstaged\n", "the unstaged change stayed");
+    assert_eq!(read("new.txt"), "untracked\n", "the untracked file stayed");
+    assert_eq!(stash_messages(fx.path()).len(), 1);
+}
+
+#[test]
+fn stash_push_without_untracked_leaves_new_files() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    std::fs::write(fx.path().join("a.txt"), "two\n").unwrap();
+    std::fs::write(fx.path().join("new.txt"), "untracked\n").unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.stash_push(None, false, false).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "one\n"
+    );
+    assert!(fx.path().join("new.txt").exists(), "new file not stashed");
 }

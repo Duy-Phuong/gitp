@@ -19,7 +19,7 @@ fn undo_commit_moves_the_tip_back_but_keeps_the_change_staged() {
     std::fs::write(fx.path().join("a.txt"), "two\n").unwrap();
     repo.stage("a.txt").unwrap();
     let before = repo.head_commit_id().unwrap();
-    repo.commit("c2", "", false, None).unwrap();
+    repo.commit("c2", "", false, None, false).unwrap();
     let after = repo.head_commit_id().unwrap();
     assert_ne!(before, after);
 

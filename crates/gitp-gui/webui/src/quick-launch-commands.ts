@@ -11,7 +11,6 @@ import {
   fetchCommitTree,
   fetchRemote,
   fetchFileHistory,
-  mergeBranch,
   pushBranch,
   rebaseOnto,
   revertCommit,
@@ -34,9 +33,26 @@ import {
 import type { BranchRef, ResetMode, StashRef, WorktreeTarget } from "./types";
 import { state, ui } from "./app-state";
 import { cancelNetworkAction, canCancelNetwork, readFailed, setStatus } from "./report";
-import { forgetRecentRepo, loadRecentRepos, PULL_DEFAULT_LABEL, PULL_DEFAULTS } from "./prefs";
-import { bisectStep, closeRepoTab, loadRepo, selectCommit, showReflog, showView, switchRepo } from "./shell";
 import {
+  forgetRecentRepo,
+  isFavoriteRepo,
+  loadFavoriteRepos,
+  loadRecentRepos,
+  PULL_DEFAULT_LABEL,
+  PULL_DEFAULTS,
+} from "./prefs";
+import {
+  bisectStep,
+  closeRepoTab,
+  loadRepo,
+  selectCommit,
+  showReflog,
+  showView,
+  switchRepo,
+  toggleFavorite,
+} from "./shell";
+import {
+  applyPatchAction,
   cleanUpAction,
   createBranchAction,
   popAction,
@@ -46,7 +62,7 @@ import {
   refreshAllAction,
   runPullMethod,
   stageAllAction,
-  stashAction,
+  openStashDialogAction,
   undoAction,
   unstageAllAction,
 } from "./repo-actions";
@@ -57,6 +73,8 @@ import {
   createPullRequestAction,
   deleteBranchAction,
   deleteStashAction,
+  MERGE_MODES,
+  mergeAction,
   renameBranchAction,
   runBranchOp,
   runStashOp,
@@ -72,11 +90,14 @@ import {
   resetAction,
   runCommitOp,
   startBisect,
-  tagAction,
+  newTagAction,
 } from "./commit-actions";
 import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
-import { syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
+import { addSubmoduleAction, syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
+import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
+import { addRemoteAction } from "./remote-actions";
+import { createFileAction, editFileStage } from "./editor-actions";
 
 // --- Quick Launch -----------------------------------------------------------
 
@@ -95,7 +116,9 @@ export function openQuickLaunch(): void {
   showQuickLaunch({
     placeholder: state.repoPath ? "Command" : "Open a repository",
     sections: [
-      { title: "Recent Repositories", items: recentRepoItems() },
+      { title: "Favorites", items: favoriteRepoItems() },
+      // A favorite is already listed above; once is enough.
+      { title: "Recent Repositories", items: recentRepoItems({ skipFavorites: true }) },
       { title: "Commands", items: state.repoPath ? repoCommands() : openOnlyCommands() },
     ],
   });
@@ -110,18 +133,30 @@ function tildePath(path: string): string {
   return path.replace(/^\/(?:Users|home)\/[^/]+\//, "~/");
 }
 
-function recentRepoItems(opts: { skipActive?: boolean } = {}): QuickItem[] {
+function recentRepoItems(opts: { skipActive?: boolean; skipFavorites?: boolean } = {}): QuickItem[] {
+  const favorites = opts.skipFavorites ? loadFavoriteRepos() : [];
   return loadRecentRepos()
-    .filter((path) => !(opts.skipActive && path === state.repoPath))
-    .map((path) => ({
-      kind: "repo" as const,
-      label: path.split("/").filter(Boolean).pop() ?? path,
-      detail: tildePath(path),
-      run: () => void openRecentRepo(path),
-    }));
+    .filter((path) => !(opts.skipActive && path === state.repoPath) && !favorites.includes(path))
+    .map((path) => repoItem(path, tildePath(path)));
 }
 
-async function openRecentRepo(path: string): Promise<void> {
+// The first nine carry their Cmd/Ctrl+N shortcut, which is otherwise only
+// discoverable by accident.
+function favoriteRepoItems(): QuickItem[] {
+  return loadFavoriteRepos().map((path, i) => repoItem(path, i < 9 ? `⌘${i + 1} · ${tildePath(path)}` : tildePath(path)));
+}
+
+function repoItem(path: string, detail: string): QuickItem {
+  return {
+    kind: "repo",
+    label: path.split("/").filter(Boolean).pop() ?? path,
+    detail,
+    run: () => void openRecentRepo(path),
+  };
+}
+
+// Switch to `path`'s tab, or open it as a new one.
+export async function openRecentRepo(path: string): Promise<void> {
   if (path === state.repoPath) {
     setStatus(`Already in ${path}.`);
     return;
@@ -144,6 +179,8 @@ async function openRecentRepo(path: string): Promise<void> {
 function openOnlyCommands(): QuickItem[] {
   return [
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
+    { kind: "command", label: "Clone Repository…", run: cloneRepoAction },
+    { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Terminal", run: toggleTerminal },
   ];
 }
@@ -256,22 +293,22 @@ function repoCommands(): QuickItem[] {
       label: "Create Branch…",
       run: () => promptFor("New branch name", (name) => void createBranchAction(name)),
     },
+    { kind: "command", label: "Create File…", run: createFileAction },
     {
       kind: "command",
-      label: "Create Pull Request on 'origin'",
+      label: "Create Pull Request…",
       next: () => branchStage("Create Pull Request", (b) => void createPullRequestAction(b)),
     },
     {
       kind: "command",
       label: "Create Tag…",
-      run: () =>
-        promptFor("New tag name", (name) => {
-          // Tag the selected commit, or the branch tip when nothing is selected
-          // (opening the palette straight after launch, say).
-          const rev = state.selectedId ?? headTarget();
-          if (!rev) return setStatus("Nothing to tag — no commit is selected.");
-          void tagAction(name, rev, rev.slice(0, 7));
-        }),
+      run: () => {
+        // Tag the selected commit, or the branch tip when nothing is selected
+        // (opening the palette straight after launch, say).
+        const rev = state.selectedId ?? headTarget();
+        if (!rev) return setStatus("Nothing to tag — no commit is selected.");
+        newTagAction(rev, rev.slice(0, 7));
+      },
     },
     {
       kind: "command",
@@ -282,6 +319,7 @@ function repoCommands(): QuickItem[] {
           deleteBranchAction(b);
         }, true),
     },
+    { kind: "command", label: "Edit File…", next: editFileStage },
     {
       kind: "command",
       label: "Fast-forward",
@@ -336,11 +374,20 @@ function repoCommands(): QuickItem[] {
     },
     { kind: "command", label: "Repository Settings…", run: () => showView("config") },
     { kind: "command", label: "Reveal in Finder", run: () => void revealRepo() },
-    { kind: "command", label: "Save Stash", run: () => void stashAction() },
+    { kind: "command", label: "Save Stash…", run: openStashDialogAction },
     { kind: "command", label: "Show Reflog", run: () => showReflog() },
+    { kind: "command", label: "Show Activity Log", run: () => showView("activity") },
     { kind: "command", label: "Switch Repository", next: () => repoStage() },
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
+    { kind: "command", label: "Clone Repository…", run: cloneRepoAction },
+    { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Close Repository", run: () => void closeRepoTab(state.repoPath) },
+    {
+      kind: "command",
+      label: "Toggle Favorite",
+      detail: isFavoriteRepo(state.repoPath) ? "remove this repository from Favorites" : "add this repository to Favorites",
+      run: () => toggleFavorite(state.repoPath),
+    },
     { kind: "command", label: "Terminal", run: toggleTerminal },
     {
       kind: "command",
@@ -390,7 +437,9 @@ function repoCommands(): QuickItem[] {
         ),
     },
     { kind: "command", label: "Add Worktree…", next: () => addWorktreeStage() },
+    { kind: "command", label: "Add Remote…", run: addRemoteAction },
     { kind: "command", label: "Prune Worktrees", run: () => void pruneWorktreesAction() },
+    { kind: "command", label: "Apply Patch…", run: () => void applyPatchAction() },
     { kind: "command", label: "Stage All Changes", run: () => void stageAllAction() },
     { kind: "command", label: "Unstage All Changes", run: () => void unstageAllAction() },
     ...commitCommands(),
@@ -401,14 +450,7 @@ function repoCommands(): QuickItem[] {
     // meaning to offer.
     return items.filter((i) => !i.label.startsWith("Rebase") && !i.label.startsWith("Merge"));
   }
-  items.push({
-    kind: "command",
-    label: `Merge into ${head}`,
-    next: () =>
-      branchStage(`Merge into ${head}`, (b) =>
-        void runBranchOp(`Merging ${b.name} into ${head}`, () => mergeBranch(b.name), true, b.name),
-      true),
-  });
+  items.push({ kind: "command", label: `Merge into ${head}…`, next: () => mergeStage(head) });
   if (state.refs.stashes.length) {
     items.push(
       { kind: "command", label: "Apply Stash…", next: () => stashStage("Apply Stash", applyStashPicked) },
@@ -443,6 +485,7 @@ function repoCommands(): QuickItem[] {
       },
     );
   }
+  items.push({ kind: "command", label: "Add Submodule…", run: addSubmoduleAction });
   if (state.submodules.length) {
     items.push(
       { kind: "command", label: "Update All Submodules", run: () => void updateSubmodulesAction(null) },
@@ -451,7 +494,7 @@ function repoCommands(): QuickItem[] {
   }
   if (ui.undoLabels.undo) items.push({ kind: "command", label: `Undo ${ui.undoLabels.undo}`, run: () => void undoAction() });
   if (ui.undoLabels.redo) items.push({ kind: "command", label: `Redo ${ui.undoLabels.redo}`, run: () => void redoAction() });
-  if (canCancelNetwork()) items.push({ kind: "command", label: "Cancel Fetch / Pull / Push", run: cancelNetworkAction });
+  if (canCancelNetwork()) items.push({ kind: "command", label: "Cancel Fetch / Pull / Push / Clone", run: cancelNetworkAction });
   items.sort((a, b) => a.label.localeCompare(b.label));
   return items;
 }
@@ -674,6 +717,40 @@ function bisectCommands(): QuickItem[] {
   ];
 }
 
+// Pick the branch to merge into `head`, then how (the branch menu's modes).
+function mergeStage(head: string): QuickStage {
+  return {
+    chip: `Merge into ${head}`,
+    placeholder: "branch",
+    emptyNote: "No other local branches — this repository has only the one you're on.",
+    sections: [
+      {
+        title: "Local Branches",
+        items: state.refs.branches
+          .filter((b) => !b.is_head)
+          .map((b) => ({ kind: "branch" as const, label: b.name, next: () => mergeModeStage(b.name, head) })),
+      },
+    ],
+  };
+}
+
+function mergeModeStage(name: string, head: string): QuickStage {
+  return {
+    chip: `Merge ${name} into ${head}`,
+    placeholder: "how",
+    sections: [
+      {
+        title: "Merge",
+        items: MERGE_MODES.map(({ mode, label }) => ({
+          kind: "option" as const,
+          label,
+          run: () => void mergeAction(name, mode, name),
+        })),
+      },
+    ],
+  };
+}
+
 function resetStage(rev: string, short: string): QuickStage {
   const modes: [ResetMode, string][] = [
     ["Soft", "Soft — keep the working tree and the index"],
@@ -717,9 +794,7 @@ function pullStage(): QuickStage {
 
 function openFetchOptions(): void {
   setStatus("Choose what to fetch…");
-  // Remote *names* aren't a field of their own — derive them from the
-  // remote-tracking branches the sidebar already has.
-  const names = [...new Set(state.refs.remotes.map((r) => r.remote))].sort();
+  const names = state.remoteList.map((r) => r.name);
   openFetchDialog(names, (remote) => {
     if (remote === null) void refreshAllAction();
     else void runBranchOp(`Fetching ${remote}`, () => fetchRemote(remote), true, remote);

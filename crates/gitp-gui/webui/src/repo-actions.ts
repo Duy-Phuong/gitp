@@ -2,6 +2,7 @@
 // Pop / Refresh, plus creating a branch, Clean up, and stage / unstage all.
 
 import {
+  applyPatchFile,
   confirmDialog,
   createBranch,
   deleteBranches,
@@ -17,12 +18,13 @@ import {
   stashPop,
   unstageAll,
 } from "./api";
-import type { PullMode } from "./types";
+import type { PullMode, StashOptions } from "./types";
 import { state, ui } from "./app-state";
 import { opFailed, reportDone, setStatus } from "./report";
 import { markRemoteFetched } from "./fetch-age";
 import { loadPullDefault, type PullDefault } from "./prefs";
 import { setActionsBusy } from "./toolbar";
+import { openStashDialog } from "./views/stash-dialog";
 import {
   loadChanges,
   loadSidebar,
@@ -67,6 +69,30 @@ export async function redoAction(): Promise<void> {
     opFailed("Redo failed", err);
   } finally {
     setActionsBusy(false);
+  }
+}
+
+// Quick Launch's "Apply Patch…": pick a patch file and apply it to the working
+// tree, staged — three-way where it doesn't apply cleanly, which can leave
+// conflicts to resolve.
+export async function applyPatchAction(): Promise<void> {
+  if (!state.repoPath) return;
+  try {
+    const path = await applyPatchFile();
+    if (path === null) {
+      setStatus("Apply cancelled.");
+      return;
+    }
+    await loadSidebar();
+    if (state.view === "changes") await loadChanges();
+    reportDone(`Applied ${path.split("/").pop()} — the changes are staged in Local Changes.`);
+  } catch (err) {
+    if (state.view === "changes") await loadChanges();
+    await opFailedMaybeConflict(
+      "Apply Patch failed",
+      "The patch doesn't apply to these files as they are now — it may have been made from " +
+        `other versions of them. Anything git could merge with conflicts is left to resolve.\n\n${String(err)}`,
+    );
   }
 }
 
@@ -142,12 +168,19 @@ export async function pushForceAction(): Promise<void> {
   }
 }
 
-export async function stashAction(): Promise<void> {
+// The toolbar's Stash button and Quick Launch's "Save Stash": ask for the
+// message and options first.
+export function openStashDialogAction(): void {
+  if (!state.repoPath) return;
+  openStashDialog((opts) => void stashAction(opts));
+}
+
+export async function stashAction(opts: StashOptions): Promise<void> {
   if (!state.repoPath) return;
   setActionsBusy(true, "#stash-btn");
   setStatus("Stashing…");
   try {
-    const out = await stash();
+    const out = await stash(opts);
     if (state.view === "changes") await loadChanges();
     await loadSidebar();
     reportDone(out || "Stashed.");

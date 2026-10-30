@@ -3,9 +3,11 @@
 // UI is fully explorable without the desktop shell.
 
 import type {
+  ActivityEntry,
   BisectMark,
   BisectStatus,
   BlameLine,
+  CloneOptions,
   CommitDetail,
   CommitRow,
   CommitSignature,
@@ -17,27 +19,36 @@ import type {
   ConflictStatus,
   DotfileKind,
   FileCommit,
+  FileContent,
   FileDiff,
+  FileSide,
   GitProgress,
   DeleteBranchesResult,
+  DiffToolTarget,
   LogPage,
+  MergeMode,
+  LogScope,
+  PickPlanOutcome,
   PullMode,
   RebaseCommit,
   RebaseStatus,
   RebaseStep,
   ReflogEntry,
   Refs,
+  RemoteInfo,
   RepoChanged,
   ResetMode,
   SigningConfig,
   StatusLists,
   TagDetail,
+  TextFile,
   UndoState,
   Workspace,
   WorkspaceSnapshot,
   Worktree,
   WorktreeTarget,
   Submodule,
+  StashOptions,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -150,10 +161,32 @@ export async function closeRepo(path: string): Promise<Workspace> {
 // Show a native folder picker. Returns the chosen directory, or null if the
 // user cancelled (or if running outside the Tauri shell, where no picker exists).
 export async function browseForRepo(): Promise<string | null> {
+  return browseForFolder("Open Repository");
+}
+
+// The same picker under another title — where to init or clone a repository.
+export async function browseForFolder(title: string): Promise<string | null> {
   if (!isTauri()) return null;
   const { open } = await import("@tauri-apps/plugin-dialog");
-  const selected = await open({ directory: true, multiple: false, title: "Open Repository" });
+  const selected = await open({ directory: true, multiple: false, title });
   return typeof selected === "string" ? selected : null;
+}
+
+// `git clone` `url` into `dest`, a new folder, as `options` say. A network
+// operation: progress and Cancel as for a fetch, credentials asked for in a
+// dialog. Returns git's output; open `dest` with openRepo afterwards. In
+// preview mode it simply succeeds.
+export async function cloneRepository(url: string, dest: string, options: CloneOptions): Promise<string> {
+  if (!isTauri()) return `Cloning into '${dest}'... (preview mock)`;
+  return invokeNetwork<string>("clone_repository", { url, dest, options });
+}
+
+// `git init` a new repository at `path` (created if missing), writing a
+// `.gitignore` with `gitignore` and a README.md when asked. Open it afterwards
+// with openRepo. In preview mode it simply succeeds.
+export async function initRepository(path: string, gitignore: string | null, readme: boolean): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("init_repository", { path, gitignore, readme });
 }
 
 // A cheap "has history changed?" probe. Pulling a page to find out costs ~264 KB
@@ -176,29 +209,29 @@ export async function historyFingerprint(): Promise<string> {
 export async function fetchLogPage(
   offset: number,
   limit: number,
-  allBranches: boolean,
+  scope: LogScope,
 ): Promise<LogPage> {
   if (!isTauri()) {
-    return { rows: MOCK_LOG.slice(offset, offset + limit), total: MOCK_LOG.length };
+    return { rows: MOCK_LOG.slice(offset, offset + limit), total: MOCK_LOG.length, head: MOCK_LOG[0].id };
   }
-  return invoke<LogPage>("get_log_page", { offset, limit, allBranches });
+  return invoke<LogPage>("get_log_page", { offset, limit, scope });
 }
 
 // Where `rev` sits in the full log, or null when it isn't in it. The frontend
 // only holds the pages it has scrolled through, so this is how a sidebar click
 // finds out how far down a tag or an older branch actually is.
-export async function logIndexOf(rev: string, allBranches: boolean): Promise<number | null> {
+export async function logIndexOf(rev: string, scope: LogScope): Promise<number | null> {
   if (!isTauri()) return null;
-  return invoke<number | null>("log_index_of", { rev, allBranches });
+  return invoke<number | null>("log_index_of", { rev, scope });
 }
 
 // Commits matching a search query, in log order — GitKraken-style commit search
 // over the full loaded graph. Words match the message, author or id; author:,
 // path:, content: (-S:), after: and before: narrow it (see LogSearch in gitp-core).
-export async function searchLog(query: string, allBranches: boolean): Promise<CommitRow[]> {
+export async function searchLog(query: string, scope: LogScope): Promise<CommitRow[]> {
   if (!query.trim()) return [];
   if (!isTauri()) return mockSearch(query);
-  return invoke<CommitRow[]>("search_log", { query, allBranches });
+  return invoke<CommitRow[]>("search_log", { query, scope });
 }
 
 // Preview-mode stand-in for LogSearch: bare words (ANDed), author:, after: and
@@ -255,17 +288,31 @@ export const FULL_FILE_CONTEXT = 1_000_000_000;
 export const MAX_DIFF_LINES = 5_000;
 
 // One file of a commit re-diffed with `contextLines` of context — the diff
-// pane's show more / show less / full file. `oldPath` keeps a rename paired.
+// pane's show more / show less / full file — and optionally ignoring
+// whitespace (`git diff -w`). `oldPath` keeps a rename paired.
 // `full` lifts the line cap for a file that came back `truncated`.
 export async function fetchCommitFileDiff(
   rev: string,
   path: string,
   oldPath: string | null,
   contextLines: number,
+  ignoreWhitespace: boolean,
   full = false,
 ): Promise<FileDiff | null> {
   if (!isTauri()) return mockDetail(rev).files.find((f) => f.path === path) ?? null;
-  return invoke<FileDiff | null>("get_commit_file_diff", { rev, path, oldPath, contextLines, full });
+  return invoke<FileDiff | null>("get_commit_file_diff", { rev, path, oldPath, contextLines, ignoreWhitespace, full });
+}
+
+// `path` as it is on `side`, for the image diff. Null when the file doesn't
+// exist there; `base64` is null when it's too big to preview. In preview mode,
+// a coloured square: blue for a revision, green for the index / working tree.
+export async function fetchFileContent(side: FileSide, path: string): Promise<FileContent | null> {
+  if (!isTauri()) {
+    const fill = typeof side === "object" ? "#5b8cff" : "#3fb950";
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64"><rect width="96" height="64" rx="8" fill="${fill}"/></svg>`;
+    return { size: svg.length, base64: btoa(svg) };
+  }
+  return invoke<FileContent | null>("get_file_content", { side, path });
 }
 
 export async function fetchRefs(): Promise<Refs> {
@@ -316,6 +363,27 @@ export async function onRepoChanged(cb: (ev: RepoChanged) => void): Promise<void
   await listen<RepoChanged>("repo-changed", (event) => cb(event.payload));
 }
 
+// Files dragged onto the window from Finder: `over` while they hover, `drop`
+// with their absolute paths, `leave` if they're taken away. The desktop
+// webview takes file drops itself, so no HTML5 drop event (which wouldn't
+// carry a path anyway) fires. The position is in CSS pixels: on macOS wry
+// reports it in points, despite the "physical" in the type. There's nothing
+// to drag in from in preview mode.
+export type FileDragEvent =
+  | { type: "over"; x: number; y: number }
+  | { type: "drop"; paths: string[]; x: number; y: number }
+  | { type: "leave" };
+
+export async function onFileDragDrop(cb: (ev: FileDragEvent) => void): Promise<void> {
+  if (!isTauri()) return;
+  const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+  await getCurrentWebview().onDragDropEvent(({ payload: p }) => {
+    if (p.type === "leave") cb({ type: "leave" });
+    else if (p.type === "drop") cb({ type: "drop", paths: p.paths, x: p.position.x, y: p.position.y });
+    else cb({ type: "over", x: p.position.x, y: p.position.y });
+  });
+}
+
 // Staging trees: paths + statuses only (no hunks), so refreshing after each
 // stage/unstage stays fast even with many changed files. The selected file's
 // hunks come from fetchFileDiff.
@@ -332,18 +400,21 @@ export async function fetchStatusSummary(): Promise<StatusLists> {
 
 // The diff (with hunks) for one file, in the staged (HEAD→index) or
 // unstaged (index→worktree) direction. Null when the path has no such change.
+// A whitespace-ignoring diff is for reading only — its blocks aren't the
+// file's real changes, so never stage or discard by them.
 // `full` lifts the line cap for a file that came back `truncated`.
 export async function fetchFileDiff(
   path: string,
   staged: boolean,
   contextLines: number,
+  ignoreWhitespace: boolean,
   full = false,
 ): Promise<FileDiff | null> {
   if (!isTauri()) {
     const list = staged ? MOCK_STATUS.staged : MOCK_STATUS.unstaged;
     return list.find((f) => f.path === path) ?? null;
   }
-  return invoke<FileDiff | null>("get_file_diff", { path, staged, contextLines, full });
+  return invoke<FileDiff | null>("get_file_diff", { path, staged, contextLines, ignoreWhitespace, full });
 }
 
 export async function stage(path: string): Promise<void> {
@@ -441,19 +512,27 @@ export async function commitChanges(
   body: string,
   amend: boolean,
   sign: boolean | null,
+  noVerify: boolean,
 ): Promise<string> {
   if (!isTauri()) {
     const n = MOCK_STATUS.staged.length;
     MOCK_STATUS.staged.splice(0);
     mockRecord(amend ? "Amend commit" : "Commit");
-    return `[preview ${amend ? "amend" : "commit"}${sign ? ", signed" : ""}] ${subject} — ${n} file(s)`;
+    const flags = `${sign ? ", signed" : ""}${noVerify ? ", no hooks" : ""}`;
+    return `[preview ${amend ? "amend" : "commit"}${flags}] ${subject} — ${n} file(s)`;
   }
-  return invoke<string>("commit_changes", { subject, body, amend, sign });
+  return invoke<string>("commit_changes", { subject, body, amend, sign, noVerify });
 }
 
 export async function fetchSigningConfig(): Promise<SigningConfig> {
   if (!isTauri()) return { can_sign: true, sign_by_default: false };
   return invoke<SigningConfig>("get_signing_config", {});
+}
+
+// The raw text of the file commit.template names; null when it isn't set.
+export async function fetchCommitTemplate(): Promise<string | null> {
+  if (!isTauri()) return null; // the preview repo has no template configured
+  return invoke<string | null>("get_commit_template", {});
 }
 
 export async function fetchWorkingChanges(): Promise<FileDiff[]> {
@@ -537,9 +616,20 @@ export async function createBranchAt(name: string, rev: string): Promise<string>
   return invoke<string>("create_branch_at", { name, rev });
 }
 
-export async function createTagAt(name: string, rev: string): Promise<string> {
+// A non-empty `message` makes an annotated tag; without one it's lightweight.
+export async function createTagAt(name: string, rev: string, message = ""): Promise<string> {
   if (!isTauri()) return `Tagged ${rev.slice(0, 10)} as ${name} (preview mock)`;
-  return invoke<string>("create_tag_at", { name, rev });
+  return invoke<string>("create_tag_at", { name, rev, message: message || null });
+}
+
+// Recreate lightweight tag `name` as an annotated one at the same commit.
+export async function annotateTag(name: string, message: string): Promise<string> {
+  if (!isTauri()) {
+    const tag = MOCK_REFS.tags.find((t) => t.name === name);
+    if (tag) tag.message = message;
+    return `Annotated ${name} (preview mock)`;
+  }
+  return invoke<string>("annotate_tag", { name, message });
 }
 
 export async function fetchTagDetail(name: string): Promise<TagDetail> {
@@ -588,6 +678,21 @@ export async function remoteTagExists(name: string): Promise<boolean> {
 export async function cherryPick(rev: string): Promise<string> {
   if (!isTauri()) return `Cherry-picked ${rev.slice(0, 10)} (preview mock)`;
   return invoke<string>("cherry_pick", { rev });
+}
+
+// Cherry-pick an edited plan (pick / reword / squash / drop, in order) onto
+// HEAD. Only those four actions are valid here.
+export async function cherryPickPlan(steps: RebaseStep[]): Promise<PickPlanOutcome> {
+  if (!isTauri()) {
+    const n = steps.filter((s) => s.action !== "drop").length;
+    return { output: `Cherry-picked ${n} commits (preview mock)`, paused: false, start_head: "" };
+  }
+  return invoke<PickPlanOutcome>("cherry_pick_plan", { steps });
+}
+
+export async function continueCherryPickPlan(): Promise<PickPlanOutcome> {
+  if (!isTauri()) return { output: "Finished the cherry-pick plan (preview mock)", paused: false, start_head: "" };
+  return invoke<PickPlanOutcome>("continue_cherry_pick_plan");
 }
 
 export async function revertCommit(rev: string): Promise<string> {
@@ -666,14 +771,28 @@ export async function remoteBranchExists(name: string): Promise<string | null> {
   return invoke<string | null>("remote_branch_exists", { name });
 }
 
-export async function mergeBranch(name: string): Promise<string> {
-  if (!isTauri()) return `Merged ${name} (preview mock)`;
-  return invoke<string>("merge_branch", { name });
+export async function mergeBranch(name: string, mode: MergeMode = "Default"): Promise<string> {
+  if (!isTauri()) return `Merged ${name} (${mode}, preview mock)`;
+  return invoke<string>("merge_branch", { name, mode });
 }
 
-export async function pushBranch(name: string): Promise<string> {
-  if (!isTauri()) return `Pushed ${name} to origin (preview mock)`;
-  return invokeNetwork<string>("push_branch", { name });
+// The commit message a squash merge prepared, or null when none is pending.
+export async function squashMessage(): Promise<string | null> {
+  if (!isTauri()) return "Squashed commit of the following:\n\ncommit 1111111\n\n    feat: add widget (preview mock)";
+  return invoke<string | null>("squash_message", {});
+}
+
+// `remote`: where to push; by default the remote the branch tracks, else origin.
+export async function pushBranch(name: string, remote?: string): Promise<string> {
+  if (!isTauri()) return `Pushed ${name} to ${remote ?? "origin"} (preview mock)`;
+  return invokeNetwork<string>("push_branch", { name, remote: remote ?? null });
+}
+
+// Push local branch `name` to `remoteBranch` on `remote`, whatever its name
+// there — a branch dropped on a remote branch in the graph.
+export async function pushBranchTo(name: string, remote: string, remoteBranch: string): Promise<string> {
+  if (!isTauri()) return `Pushed ${name} to ${remote}/${remoteBranch} (preview mock)`;
+  return invokeNetwork<string>("push_branch_to", { name, remote, remoteBranch });
 }
 
 export async function fetchBranch(name: string): Promise<string> {
@@ -694,6 +813,54 @@ export async function fetchRemote(remote: string): Promise<string> {
   return invokeNetwork<string>("fetch_remote", { remote });
 }
 
+// Preview mode's configured remotes: origin plus one never fetched, so the
+// sidebar shows an empty remote and the branch menu offers a choice of push.
+const MOCK_REMOTES: RemoteInfo[] = [
+  { name: "origin", url: "git@github.com:ada/gitp.git" },
+  { name: "upstream", url: "https://github.com/gitp-org/gitp.git" },
+];
+
+export async function listRemotes(): Promise<RemoteInfo[]> {
+  if (!isTauri()) return MOCK_REMOTES.map((r) => ({ ...r }));
+  return invoke<RemoteInfo[]>("list_remotes", {});
+}
+
+export async function addRemote(name: string, url: string): Promise<string> {
+  if (!isTauri()) {
+    MOCK_REMOTES.push({ name, url });
+    MOCK_REMOTES.sort((a, b) => a.name.localeCompare(b.name));
+    return "";
+  }
+  return invoke<string>("add_remote", { name, url });
+}
+
+export async function setRemoteUrl(name: string, url: string): Promise<string> {
+  if (!isTauri()) {
+    const r = MOCK_REMOTES.find((m) => m.name === name);
+    if (r) r.url = url;
+    return "";
+  }
+  return invoke<string>("set_remote_url", { name, url });
+}
+
+export async function renameRemote(old: string, name: string): Promise<string> {
+  if (!isTauri()) {
+    const r = MOCK_REMOTES.find((m) => m.name === old);
+    if (r) r.name = name;
+    return "";
+  }
+  return invoke<string>("rename_remote", { old, new: name });
+}
+
+export async function removeRemote(name: string): Promise<string> {
+  if (!isTauri()) {
+    const i = MOCK_REMOTES.findIndex((m) => m.name === name);
+    if (i !== -1) MOCK_REMOTES.splice(i, 1);
+    return "";
+  }
+  return invoke<string>("remove_remote", { name });
+}
+
 // `background`: the periodic refresh nobody asked for, which must never pop a
 // credential dialog — it fails quietly instead.
 export async function fetchAll(opts: { background?: boolean } = {}): Promise<string> {
@@ -711,6 +878,13 @@ export async function fastForwardBranch(name: string): Promise<string> {
   return invoke<string>("fast_forward_branch", { name });
 }
 
+// Fast-forward local branch `name` to `to` (a branch or remote branch); git
+// refuses it unless `name` is behind `to`.
+export async function fastForwardBranchTo(name: string, to: string): Promise<string> {
+  if (!isTauri()) return `Fast-forwarded ${name} to ${to} (preview mock)`;
+  return invoke<string>("fast_forward_branch_to", { name, to });
+}
+
 export async function setUpstream(branch: string, upstream: string): Promise<string> {
   if (!isTauri()) return `${branch} now tracks ${upstream} (preview mock)`;
   return invoke<string>("set_upstream", { branch, upstream });
@@ -721,9 +895,10 @@ export async function unsetUpstream(branch: string): Promise<string> {
   return invoke<string>("unset_upstream", { branch });
 }
 
-export async function createPullRequest(branch: string): Promise<string> {
-  if (!isTauri()) return `https://example.com/compare/${branch} (preview mock)`;
-  return invoke<string>("create_pull_request", { branch });
+// `remote`: whose web UI to open it on; by default the remote the branch tracks.
+export async function createPullRequest(branch: string, remote?: string): Promise<string> {
+  if (!isTauri()) return `https://example.com/${remote ?? "origin"}/compare/${branch} (preview mock)`;
+  return invoke<string>("create_pull_request", { branch, remote: remote ?? null });
 }
 
 export async function fetchRebaseTodo(onto: string): Promise<RebaseCommit[]> {
@@ -838,13 +1013,20 @@ export async function pushForce(): Promise<string> {
   return invokeNetwork<string>("push_force", {});
 }
 
-export async function stash(): Promise<string> {
+// `git stash push` with the Stash dialog's options; an empty message lets git
+// name the entry ("WIP on <branch>").
+export async function stash(opts: StashOptions): Promise<string> {
   if (!isTauri()) {
-    MOCK_REFS.stashes.unshift({ index: 0, message: "WIP on develop (preview mock)" });
+    const message = opts.message ? `On develop: ${opts.message}` : "WIP on develop (preview mock)";
+    MOCK_REFS.stashes.unshift({ index: 0, message, base: MOCK_LOG[0].id });
     MOCK_REFS.stashes.forEach((s, i) => (s.index = i));
-    return "Saved working directory (preview mock)";
+    return `Saved ${opts.staged ? "index state" : "working directory"} (preview mock)`;
   }
-  return invoke<string>("stash", {});
+  return invoke<string>("stash", {
+    message: opts.message || null,
+    staged: opts.staged,
+    includeUntracked: opts.includeUntracked,
+  });
 }
 
 export async function stashPop(): Promise<string> {
@@ -913,6 +1095,46 @@ export async function discardFiles(paths: string[]): Promise<void> {
   await invoke<void>("discard_files", { paths });
 }
 
+// Put `paths` back to how they are in commit `rev` — written and staged
+// (`git checkout <rev> -- <paths>`). Undoable like a discard.
+export async function restoreFilesFromCommit(rev: string, paths: string[]): Promise<void> {
+  if (!isTauri()) {
+    for (const p of paths) {
+      mockMove(MOCK_STATUS.unstaged, [], p);
+      if (!MOCK_STATUS.staged.some((f) => f.path === p)) {
+        MOCK_STATUS.staged.push({ path: p, old_path: null, status: "Modified", hunks: [] });
+      }
+    }
+    mockRecord(`Restore ${paths.length} file${paths.length === 1 ? "" : "s"} from ${rev.slice(0, 7)}`);
+    return;
+  }
+  await invoke<void>("restore_files_from_commit", { rev, paths });
+}
+
+// Undo block `hunkIndex` of commit `rev`'s diff of `file` (at `contextLines`,
+// as drawn) in the working tree. Fails when the file has moved on there.
+export async function revertCommitHunk(
+  rev: string,
+  file: FileDiff,
+  hunkIndex: number,
+  contextLines: number,
+): Promise<void> {
+  if (!isTauri()) {
+    if (!MOCK_STATUS.unstaged.some((f) => f.path === file.path)) {
+      MOCK_STATUS.unstaged.push({ path: file.path, old_path: null, status: "Modified", hunks: [] });
+    }
+    mockRecord(`Revert block of ${file.path}`);
+    return;
+  }
+  await invoke<void>("revert_commit_hunk", {
+    rev,
+    path: file.path,
+    oldPath: file.old_path,
+    hunkIndex,
+    contextLines,
+  });
+}
+
 // Stash only `paths` away (`git stash push -u -- <paths>`).
 export async function stashFiles(paths: string[]): Promise<string> {
   if (!isTauri()) {
@@ -920,7 +1142,7 @@ export async function stashFiles(paths: string[]): Promise<string> {
       mockMove(MOCK_STATUS.unstaged, [], p);
       mockMove(MOCK_STATUS.staged, [], p);
     }
-    MOCK_REFS.stashes.unshift({ index: 0, message: `WIP: ${paths.length} file(s) (preview mock)` });
+    MOCK_REFS.stashes.unshift({ index: 0, message: `WIP: ${paths.length} file(s) (preview mock)`, base: MOCK_LOG[0].id });
     MOCK_REFS.stashes.forEach((s, i) => (s.index = i));
     return `Stashed ${paths.length} file(s) (preview mock)`;
   }
@@ -941,10 +1163,45 @@ export async function saveFilesPatch(
   return invoke<string>("save_files_patch", { paths, staged, path: dest });
 }
 
+// Prompt for a destination and write `revs` (in that order) there as one patch
+// file. Returns a status string, or null if the user cancelled.
+export async function saveCommitsPatch(revs: string[], defaultName: string): Promise<string | null> {
+  if (!isTauri()) return `Saved patch for ${revs.length} commit(s) (preview mock)`;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const dest = await save({ title: "Save as Patch", defaultPath: defaultName });
+  if (!dest) return null;
+  return invoke<string>("save_commits_patch", { revs, path: dest });
+}
+
+// Pick a .patch / .diff file and apply it to the working tree and index
+// (`git apply --3way`). Resolves to the file applied, or null if the user
+// cancelled the picker.
+export async function applyPatchFile(): Promise<string | null> {
+  if (!isTauri()) return "changes.patch";
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const path = await open({
+    title: "Apply Patch",
+    multiple: false,
+    filters: [{ name: "Patch", extensions: ["patch", "diff"] }],
+  });
+  if (typeof path !== "string") return null;
+  await invoke<void>("apply_patch", { path });
+  return path;
+}
+
 // Append `paths` to the repo's .gitignore; returns the number actually added.
 export async function addToGitignore(paths: string[]): Promise<number> {
   if (!isTauri()) return paths.length;
   return invoke<number>("add_to_gitignore", { paths });
+}
+
+// Stop tracking `paths` (`git rm --cached`), keeping the files on disk.
+export async function untrackFiles(paths: string[]): Promise<void> {
+  if (!isTauri()) {
+    for (const p of paths) mockMove(MOCK_STATUS.unstaged, [], p);
+    return;
+  }
+  await invoke<void>("untrack_files", { paths });
 }
 
 // Reveal the repo-relative `path` in the OS file manager.
@@ -958,6 +1215,80 @@ export async function revealPath(path: string): Promise<void> {
 export async function openInEditor(path: string): Promise<void> {
   if (!isTauri()) return;
   await invoke<void>("open_in_editor", { path });
+}
+
+// --- In-app file editor ------------------------------------------------------
+// Working-tree files as text. Saving, creating and deleting are undoable. In
+// preview mode the files live in MOCK_FILES.
+
+// `path` as text, null when it doesn't exist. Binary, non-UTF-8 and >2 MB
+// files are refused with an error.
+export async function readTextFile(path: string): Promise<TextFile | null> {
+  if (!isTauri()) {
+    const text = MOCK_FILES.get(path);
+    return text === undefined ? null : { text, crlf: false, mixed: false };
+  }
+  return invoke<TextFile | null>("read_text_file", { path });
+}
+
+// Save `text` ("\n" line breaks) to `path`, as "\r\n" when `crlf`.
+export async function writeTextFile(path: string, text: string, crlf: boolean): Promise<void> {
+  if (!isTauri()) {
+    MOCK_FILES.set(path, text);
+    mockMarkModified(path);
+    mockRecord(`Edit ${path}`);
+    return;
+  }
+  await invoke<void>("write_text_file", { path, text, crlf });
+}
+
+// Create `path` (repo-relative) as an empty file, with its folders. Refuses an
+// existing file and anything outside the working tree.
+export async function createFile(path: string): Promise<void> {
+  if (!isTauri()) {
+    if (MOCK_FILES.has(path)) throw new Error(`${path} already exists`);
+    if (path.startsWith("/") || path.split("/").includes("..")) {
+      throw new Error(`not a path inside the repository: ${path}`);
+    }
+    MOCK_FILES.set(path, "");
+    MOCK_STATUS.unstaged.push({ path, old_path: null, status: "Untracked", hunks: [] });
+    mockRecord(`Create ${path}`);
+    return;
+  }
+  await invoke<void>("create_file", { path });
+}
+
+// Delete the working-tree file `path`; the index is left alone.
+export async function deleteFile(path: string): Promise<void> {
+  if (!isTauri()) {
+    MOCK_FILES.delete(path);
+    mockMove(MOCK_STATUS.unstaged, [], path);
+    mockMove(MOCK_STATUS.staged, [], path);
+    mockRecord(`Delete ${path}`);
+    return;
+  }
+  await invoke<void>("delete_file", { path });
+}
+
+// Every tracked and untracked (not ignored) file in the working tree, sorted.
+export async function listWorkFiles(): Promise<string[]> {
+  if (!isTauri()) return [...MOCK_FILES.keys()].sort();
+  return invoke<string[]>("list_work_files", {});
+}
+
+// Open `paths` of `target` in the user's `git difftool` (diff.tool), without
+// waiting for it to close. False when no diff tool is configured — always, in
+// preview mode, where there's nothing to launch.
+export async function openDiffTool(target: DiffToolTarget, paths: string[]): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("open_difftool", { target, paths });
+}
+
+// Open the conflicted `path` in the user's `git mergetool` (merge.tool). False
+// when no merge tool is configured (always, in preview mode).
+export async function openMergeTool(path: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("open_mergetool", { path });
 }
 
 // --- Conflict resolution (merge/rebase conflict resolver view) -------------
@@ -1024,6 +1355,16 @@ export async function saveConfig(
     return;
   }
   await invoke<void>("set_config", { scope, name, value });
+}
+
+// Remove `name` from `scope`'s config file; a key that isn't there is fine.
+export async function unsetConfig(scope: ConfigScope, name: string): Promise<void> {
+  if (!isTauri()) {
+    const i = MOCK_CONFIG.findIndex((e) => e.name === name && e.scope === scope);
+    if (i !== -1) MOCK_CONFIG.splice(i, 1);
+    return;
+  }
+  await invoke<void>("unset_config", { scope, name });
 }
 
 // The path each DotfileKind resolves to, purely for display — the backend
@@ -1144,6 +1485,39 @@ export async function syncSubmodules(path: string | null): Promise<string> {
   return invoke<string>("sync_submodules", { path });
 }
 
+// `git submodule add -- <url> [<path>]` (no path: git names the folder after
+// the repository): clones, so it reports progress and
+// can be cancelled like update. The new submodule is left staged.
+export async function addSubmodule(url: string, path: string | null): Promise<string> {
+  if (!isTauri()) {
+    path ??= url.replace(/\/+$/, "").split("/").pop()!.replace(/\.git$/, "");
+    MOCK_SUBMODULES.push({ name: path, path, url, recorded: mockOid("d"), checked_out: mockOid("d"), state: "up_to_date" });
+    return `Cloning into '${path}'... (preview mock)`;
+  }
+  return invokeNetwork<string>("add_submodule", { url, path });
+}
+
+// `git submodule set-url`: a new URL in .gitmodules, synced into the config.
+export async function setSubmoduleUrl(path: string, url: string): Promise<string> {
+  if (!isTauri()) {
+    const m = MOCK_SUBMODULES.find((m) => m.path === path);
+    if (m) m.url = url;
+    return "";
+  }
+  return invoke<string>("set_submodule_url", { path, url });
+}
+
+// Deinit, `git rm` and delete its clone under .git/modules; the removal is
+// left staged for the user to commit.
+export async function removeSubmodule(path: string): Promise<string> {
+  if (!isTauri()) {
+    const i = MOCK_SUBMODULES.findIndex((m) => m.path === path);
+    if (i !== -1) MOCK_SUBMODULES.splice(i, 1);
+    return `rm '${path}' (preview mock)`;
+  }
+  return invoke<string>("remove_submodule", { path });
+}
+
 // ---------------------------------------------------------------------------
 // Mock data (browser-only)
 // ---------------------------------------------------------------------------
@@ -1255,6 +1629,8 @@ function mockDetail(rev: string): CommitDetail {
           },
         ],
       },
+      // No hunks, like any binary file — shown by the image diff.
+      { path: "assets/logo.svg", old_path: null, status: "Modified", hunks: [] },
       {
         path: "README.md",
         old_path: null,
@@ -1303,14 +1679,15 @@ export const MOCK_REFS: Refs = {
     { remote: "origin", name: "origin/develop/3.33.0", target: mockOid("f") },
     { remote: "origin", name: "origin/feature/dashboard", target: mockOid("e") },
   ],
+  // Same annotated/lightweight split as the fetchTagDetail mock.
   tags: [
-    { name: "v3.31.2", target: mockOid("b") },
-    { name: "v3.32.0", target: mockOid("d") },
-    { name: "v3.33.0", target: mockOid("g") },
+    { name: "v3.31.2", target: mockOid("b"), message: null },
+    { name: "v3.32.0", target: mockOid("d"), message: "Release v3.32.0\n\nMock annotation shown in preview mode." },
+    { name: "v3.33.0", target: mockOid("g"), message: "Release v3.33.0\n\nMock annotation shown in preview mode." },
   ],
   stashes: [
-    { index: 0, message: "config 3.31.2" },
-    { index: 1, message: "config 3.31 for mock" },
+    { index: 0, message: "config 3.31.2", base: mockOid("d") },
+    { index: 1, message: "config 3.31 for mock", base: mockOid("b") },
   ],
   recent: [
     "feature/dashboard",
@@ -1337,6 +1714,20 @@ export const MOCK_TREE: string[] = [
   "src/views/log.ts",
   "src/views/sidebar.ts",
 ];
+
+// The working tree's files as text, for the in-app editor in preview mode.
+const MOCK_FILES = new Map<string, string>([
+  ...MOCK_TREE.map((p): [string, string] => [p, `// ${p}\n`]),
+  ["notes.md", "# Notes\n\nSome *emphasis*, `code` and a [link](https://example.com).\n\n- one\n- two\n"],
+]);
+
+// Show a saved file as modified in Local Changes, as git status would.
+function mockMarkModified(path: string): void {
+  const all = [...MOCK_STATUS.unstaged, ...MOCK_STATUS.staged];
+  if (!all.some((f) => f.path === path)) {
+    MOCK_STATUS.unstaged.push({ path, old_path: null, status: "Modified", hunks: [] });
+  }
+}
 
 // Per-line blame for the blame view in preview mode. Commit ids are full (as
 // the backend returns) so clicking a line can navigate to that commit.
@@ -1571,7 +1962,67 @@ function mkReflog(to: string, from: string, message: string, time: number): Omit
   };
 }
 
+// --- Activity log -----------------------------------------------------------
+
+// The git commands gitp ran for the active repo, newest first; with `since`,
+// only those after that entry id.
+export async function fetchActivityLog(since: number | null = null): Promise<ActivityEntry[]> {
+  if (!isTauri()) return MOCK_ACTIVITY.filter((e) => since === null || e.id > since);
+  return invoke<ActivityEntry[]>("get_activity_log", { since });
+}
+
+export async function clearActivityLog(): Promise<void> {
+  if (!isTauri()) {
+    MOCK_ACTIVITY.length = 0;
+    return;
+  }
+  await invoke<void>("clear_activity_log", {});
+}
+
+// Preview mode: a push, a commit a pre-commit hook rejected, and the quiet
+// probes a refresh runs around them.
+const MOCK_ACTIVITY: ActivityEntry[] = (() => {
+  const now = Date.now();
+  const at = (secondsAgo: number) => now - secondsAgo * 1000;
+  const ok = { exit_code: 0, success: true, stderr: "", stdout: "" };
+  return [
+    { id: 9, started_at: at(5), duration_ms: 31, command: "git --no-optional-locks status --porcelain=v1 -z --untracked-files=all", quiet: true, ...ok },
+    {
+      id: 8,
+      started_at: at(8),
+      duration_ms: 1840,
+      command: "git push --progress -u origin feature/widget",
+      quiet: false,
+      ...ok,
+      stderr: "To github.com:ada/gitp.git\n * [new branch]      feature/widget -> feature/widget\nbranch 'feature/widget' set up to track 'origin/feature/widget'.",
+    },
+    { id: 7, started_at: at(40), duration_ms: 212, command: "git commit -m 'feat: add dashboard widget'", quiet: false, ...ok },
+    { id: 6, started_at: at(41), duration_ms: 9, command: "git config --get commit.gpgsign", quiet: true, exit_code: 1, success: false, stderr: "", stdout: "" },
+    {
+      id: 5,
+      started_at: at(95),
+      duration_ms: 3120,
+      command: "git commit -m 'feat: add dashboard widget'",
+      quiet: false,
+      exit_code: 1,
+      success: false,
+      stderr: "eslint.....................................................Failed\n- hook id: eslint\n- exit code: 1\n\nsrc/widget.ts\n  12:7  error  'unused' is assigned a value but never used  no-unused-vars\n\n✖ 1 problem (1 error, 0 warnings)",
+      stdout: "",
+    },
+    { id: 4, started_at: at(120), duration_ms: 14, command: "git add -- :(literal)src/widget.ts", quiet: false, ...ok },
+    { id: 3, started_at: at(122), duration_ms: 27, command: "git diff -- src/widget.ts", quiet: true, ...ok },
+    { id: 2, started_at: at(300), duration_ms: 2410, command: "git fetch --progress --all --prune", quiet: false, ...ok, stderr: "From github.com:ada/gitp\n   b5b31e4..ec1daa1  main       -> origin/main" },
+    { id: 1, started_at: at(302), duration_ms: 18, command: "git worktree list --porcelain -z", quiet: true, ...ok },
+  ];
+})();
+
 // --- Comparing two revisions ------------------------------------------------
+
+// The revs naming the empty tree and the working directory as a side of a
+// comparison — gitp-core's EMPTY_REV and WORKDIR_REV. Their ends come back
+// with no id.
+export const EMPTY_REV = "Empty Tree";
+export const WORKDIR_REV = "Working Directory";
 
 // What differs between `base` and `head` (ref names or ids). `threeDot` diffs
 // from their merge base — only what `head` added since they diverged.
@@ -1586,6 +2037,7 @@ export async function fetchCompareFileDiff(
   cmp: Comparison,
   file: FileDiff,
   contextLines: number,
+  ignoreWhitespace: boolean,
   full = false,
 ): Promise<FileDiff | null> {
   if (!isTauri()) return cmp.files.find((f) => f.path === file.path) ?? null;
@@ -1596,6 +2048,7 @@ export async function fetchCompareFileDiff(
     path: file.path,
     oldPath: file.old_path,
     contextLines,
+    ignoreWhitespace,
     full,
   });
 }
@@ -1605,6 +2058,7 @@ export async function fetchCompareFileDiff(
 // three-dot mode, so the toggle visibly does something.
 function mockCompare(base: string, head: string, threeDot: boolean): Comparison {
   const resolve = (rev: string): CompareEnd => {
+    if (rev === EMPTY_REV || rev === WORKDIR_REV) return { rev, id: "", short_id: "", summary: "" };
     const target =
       [...MOCK_REFS.branches, ...MOCK_REFS.remotes, ...MOCK_REFS.tags].find((r) => r.name === rev)?.target ??
       (rev === "HEAD" ? MOCK_LOG[0].id : rev);
@@ -1614,7 +2068,10 @@ function mockCompare(base: string, head: string, threeDot: boolean): Comparison 
   };
   const b = resolve(base);
   const h = resolve(head);
-  const distance = MOCK_LOG.findIndex((r) => r.id === b.id) - MOCK_LOG.findIndex((r) => r.id === h.id);
+  // The empty tree sits below the oldest commit; the working directory is HEAD.
+  const depth = (end: CompareEnd) =>
+    end.id ? MOCK_LOG.findIndex((r) => r.id === end.id) : end.rev === WORKDIR_REV ? 0 : MOCK_LOG.length;
+  const distance = depth(b) - depth(h);
   const files = b.id === h.id ? [] : mockDetail(h.id).files;
   return {
     base: b,

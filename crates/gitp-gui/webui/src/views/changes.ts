@@ -5,9 +5,19 @@
 
 import { DEFAULT_CONTEXT_LINES } from "../api";
 import { autoGrowTextarea, clear, copyToClipboard, el } from "../dom";
-import type { ChangeKind, CommitDetail, FileDiff, SigningConfig, StatusLists } from "../types";
+import type {
+  ChangeKind,
+  CommitDetail,
+  DiffToolTarget,
+  FileContent,
+  FileDiff,
+  FileSide,
+  SigningConfig,
+  StatusLists,
+} from "../types";
 import { type MenuItem, showContextMenu } from "./context-menu";
-import { contextControls, renderFile, renderSplitDiff, truncatedNotice } from "./detail";
+import { contextControls, diffToggles, renderFile, renderSplitDiff, truncatedNotice } from "./detail";
+import { loadDiffWrap, loadIgnoreWhitespace } from "../prefs";
 import {
   changedLines,
   dragOver,
@@ -18,7 +28,9 @@ import {
   selectedPairs,
   type LineKey,
 } from "./line-selection";
+import { imageMime, loadOnce, renderImageDiff, type ImageLoad } from "./image-diff";
 import { renderFileTree } from "./tree";
+import { pathDragHandle } from "./path-drag";
 import { describeSubmoduleChange, parseSubmoduleDiff } from "../submodule-diff";
 
 export type Panel = "unstaged" | "staged";
@@ -27,10 +39,19 @@ export interface ChangesCallbacks {
   // Staging trees: paths + statuses only, no hunks (cheap to refresh).
   fetchStatus: () => Promise<StatusLists>;
   // The selected file's full diff (with hunks), fetched on demand with
-  // `contextLines` of unchanged context around each change.
-  // `full` lifts the backend's line cap once the user asks for a truncated
-  // file's whole diff.
-  fetchFileDiff: (path: string, staged: boolean, contextLines: number, full: boolean) => Promise<FileDiff | null>;
+  // `contextLines` of unchanged context around each change, optionally
+  // ignoring whitespace (for reading only — see selectedDiffWs). `full` lifts
+  // the backend's line cap once the user asks for a truncated file's whole
+  // diff.
+  fetchFileDiff: (
+    path: string,
+    staged: boolean,
+    contextLines: number,
+    ignoreWhitespace: boolean,
+    full: boolean,
+  ) => Promise<FileDiff | null>;
+  // One side of an image file, for the image diff.
+  fetchFileContent: (side: FileSide, path: string) => Promise<FileContent | null>;
   stage: (path: string) => Promise<void>;
   unstage: (path: string) => Promise<void>;
   stageAll: () => Promise<void>;
@@ -52,9 +73,19 @@ export interface ChangesCallbacks {
   stashFiles: (paths: string[]) => Promise<string>;
   saveFilesPatch: (paths: string[], staged: boolean, defaultName: string) => Promise<string | null>;
   addToGitignore: (paths: string[]) => Promise<number>;
+  // Stop tracking `paths` but keep the files (`git rm --cached`).
+  untrackFiles: (paths: string[]) => Promise<void>;
   revealPath: (path: string) => Promise<void>;
   // Open the file in the OS default application (e.g. the user's editor).
   openInEditor: (path: string) => Promise<void>;
+  // The in-app editor (views/file-editor.ts): edit a working-tree file, or
+  // ask for a path and create one.
+  editInApp: (path: string) => void;
+  createFile: () => void;
+  // Delete a working-tree file (undoable, like a discard).
+  deleteFile: (path: string) => Promise<void>;
+  // Open the file's staged / unstaged change in `git difftool`.
+  openInDiffTool: (target: DiffToolTarget, paths: string[]) => void;
   // Absolute path of the active repo's working directory (for Copy Absolute
   // Path). Null when no repo is open.
   repoRoot: () => string | null;
@@ -64,10 +95,23 @@ export interface ChangesCallbacks {
   // showing the commit being amended. Null when the branch has no commits.
   fetchHead: () => Promise<CommitDetail | null>;
   // `sign` is the Sign toggle: force signing on / off, or null to leave it to
-  // git's commit.gpgsign (no signing key configured).
-  commit: (subject: string, body: string, amend: boolean, sign: boolean | null) => Promise<string>;
+  // git's commit.gpgsign (no signing key configured). `noVerify` is Skip hooks.
+  commit: (
+    subject: string,
+    body: string,
+    amend: boolean,
+    sign: boolean | null,
+    noVerify: boolean,
+  ) => Promise<string>;
   // Whether commits can be signed here, and the default (commit.gpgsign).
   fetchSigningConfig: () => Promise<SigningConfig>;
+  // The raw text of the configured commit.template, or null when none is set.
+  fetchCommitTemplate: () => Promise<string | null>;
+  // The persisted "Push after commit" toggle, and the push it runs once a
+  // commit lands.
+  pushAfterCommit: () => boolean;
+  setPushAfterCommit: (on: boolean) => void;
+  push: () => void;
   // After every reload: the number of distinct changed paths, for the sidebar
   // badge — cheap enough to pass along instead of a separate backend scan.
   onChanged: (localChangeCount: number) => void;
@@ -129,6 +173,13 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let selectedDiffSummary: FileDiff | null = null;
   // The context size selectedDiff was fetched with (what its blocks are cut at).
   let selectedDiffContext = DEFAULT_CONTEXT_LINES;
+  // Whether selectedDiff ignores whitespace. Its blocks and lines then aren't
+  // the file's real changes — block N of a `-w` diff can be a different block
+  // than the backend's block N, and a whitespace-only edit inside a shown
+  // block isn't in it at all — so staging or discarding by them would act on
+  // the wrong text. Block / line operations are disabled while it's set; whole
+  // files can still be staged or discarded from the list.
+  let selectedDiffWs = false;
   // Whether selectedDiff was fetched without the line cap, and whether the
   // user wants the current file that way (reset on each selection).
   let selectedDiffFull = false;
@@ -157,6 +208,13 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let signing: SigningConfig | null = null;
   let sign = false;
   let signingToken = 0;
+  // "Skip hooks" (--no-verify). Deliberately not remembered: it's a one-off
+  // escape hatch, so it switches itself off after the commit it was for.
+  let skipHooks = false;
+  // The repo's commit.template as a subject/body, filled into an empty commit
+  // box. Reloaded per repo by reset(); the token drops a superseded load.
+  let template: { subject: string; body: string } | null = null;
+  let templateToken = 0;
   let busy = false;
   let splitView = false;
   // Unchanged lines shown around each change (toolbar: fewer / more / full).
@@ -171,6 +229,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   let lineOrder: LineKey[] = [];
   // Repaints the selection highlight and action bar of the diff on screen.
   let paintLines: (() => void) | null = null;
+  // The selected image's before / after loaders, kept while the same diff
+  // object is on screen (a re-read diff, or another file, loads afresh).
+  let images: { diff: FileDiff | null; path: string; loads: [ImageLoad | null, ImageLoad | null] } | null = null;
 
   // Esc drops the line selection — unless something layered on top (a dialog,
   // Quick Launch, a menu) is what the Escape is for.
@@ -236,21 +297,24 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       summary &&
       sameSummary(summary, selectedDiffSummary) &&
       selectedDiffContext === contextLines &&
+      selectedDiffWs === loadIgnoreWhitespace() &&
       selectedDiffFull === fullDiff
     ) {
       return; // status for this file is unchanged — the hunks we have are still current
     }
     const token = ++diffToken;
     const ctx = contextLines;
+    const ws = loadIgnoreWhitespace();
     const full = fullDiff;
     selectedDiff = null;
     diffLoaded = false;
-    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", ctx, full);
+    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", ctx, ws, full);
     if (token !== diffToken) return; // selection moved on; drop this result
     selectedDiff = file;
     diffLoaded = true;
     selectedDiffSummary = summary;
     selectedDiffContext = ctx;
+    selectedDiffWs = ws;
     selectedDiffFull = full;
     if (diffHost) renderDiffInto(diffHost);
   }
@@ -262,11 +326,18 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     if (!sel || !diffLoaded || !selectedDiff || busy) return;
     if (sel.panel === "staged" && amendOnly(sel.path)) return;
     const token = ++diffToken;
-    const file = await cb.fetchFileDiff(sel.path, sel.panel === "staged", selectedDiffContext, selectedDiffFull);
+    const file = await cb.fetchFileDiff(
+      sel.path,
+      sel.panel === "staged",
+      selectedDiffContext,
+      selectedDiffWs,
+      selectedDiffFull,
+    );
     if (token !== diffToken) return; // selection moved on; drop this result
     // Unchanged: keep the very same object, so the line selection survives and
-    // nothing is repainted.
-    if (sameDiff(file, selectedDiff)) return;
+    // nothing is repainted. Not for an image: a binary file's diff has no
+    // lines to compare, so an edit to it on disk would never show.
+    if (sameDiff(file, selectedDiff) && !imageMime(sel.path)) return;
     // A new diff object: renderDiffInto starts the line selection over, as for
     // any other newly loaded diff.
     selectedDiff = file;
@@ -429,9 +500,12 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     // stage piecemeal, only the whole entry (from the file list).
     const submodule = selectedDiff ? parseSubmoduleDiff(selectedDiff) : null;
     const hasDiff = selectedDiff != null && selectedDiff.hunks.length > 0 && !submodule;
+    const mime = submodule ? null : imageMime(selected.path);
     const truncated = selectedDiff?.truncated === true && !submodule;
-    pane.append(diffToolbar(hasDiff));
-    const body = el("div", { class: "staging-diff-body" });
+    // A deleted file has nothing on disk to edit, and a submodule is a folder.
+    const status = (selected.panel === "staged" ? stagedDisplay() : unstaged).find((f) => f.path === selected!.path)?.status;
+    pane.append(diffToolbar(hasDiff, !submodule && status !== "Deleted"));
+    const body = el("div", { class: `staging-diff-body${loadDiffWrap() ? " wrap-lines" : ""}` });
     // The selected-lines action bar, under the diff (not scrolled with it).
     const bar = el("div", { class: "line-actions hidden" });
     if (submodule) {
@@ -460,16 +534,37 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
           }),
         );
       }
-      if (hasDiff) body.append(splitView ? renderSplitDiff(selectedDiff!) : renderFile(selectedDiff!));
-      attachHunkMenus(body);
-      // Amend-only files (shown while amending) aren't in the index — their
-      // blocks can't be staged/unstaged, so skip the per-hunk controls.
-      if (!amendOnly(selected.path)) {
-        attachHunkControls(body);
-        attachLineSelection(body, bar);
+      if (hasDiff) {
+        const diff = splitView ? renderSplitDiff(selectedDiff!) : renderFile(selectedDiff!);
+        // An SVG is text as well: its image goes above the text diff.
+        if (mime) diff.querySelector(".file-head")?.after(imagePanel(selected, mime));
+        body.append(diff);
+      } else if (mime) {
+        body.append(imagePanel(selected, mime));
+      }
+      if (selectedDiffWs) {
+        // Not the real blocks (see selectedDiffWs): show the controls, disabled.
+        attachHunkControls(body, WS_BLOCKED);
+      } else {
+        attachHunkMenus(body);
+        // Amend-only files (shown while amending) aren't in the index — their
+        // blocks can't be staged/unstaged, so skip the per-hunk controls.
+        if (!amendOnly(selected.path)) {
+          attachHunkControls(body);
+          attachLineSelection(body, bar);
+        }
       }
     } else if (!diffLoaded) {
       body.append(el("div", { class: "detail-empty", text: "Loading changes…" }));
+    } else if (mime) {
+      body.append(imagePanel(selected, mime));
+    } else if (selectedDiffWs) {
+      body.append(
+        el("div", {
+          class: "detail-empty",
+          text: "Nothing to show with Ignore whitespace on — only whitespace changed, or it's a binary file.",
+        }),
+      );
     } else {
       // Loaded, but no textual diff — a binary or Git-LFS-tracked file. It still
       // appears in the list and can be staged/committed like any change.
@@ -480,9 +575,37 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     pane.append(body, bar);
   }
 
-  // Unified / Split toggle (when there's a diff to show) plus an always-present
-  // Edit File shortcut, above the diff.
-  function diffToolbar(hasDiff: boolean): HTMLElement {
+  function imagePanel(sel: { panel: Panel; path: string }, mime: string): HTMLElement {
+    if (images?.diff !== selectedDiff || images.path !== sel.path) {
+      images = { diff: selectedDiff, path: sel.path, loads: imageLoads(sel) };
+    }
+    return renderImageDiff(mime, ...images.loads);
+  }
+
+  // Where the two sides of the selected image live: unstaged is the index vs
+  // the working tree, staged is HEAD vs the index, and an amend-only file is
+  // the amended commit itself. A new file has no before, a deleted one no
+  // after.
+  function imageLoads(sel: { panel: Panel; path: string }): [ImageLoad | null, ImageLoad | null] {
+    const file = (sel.panel === "staged" ? stagedDisplay() : unstaged).find((f) => f.path === sel.path);
+    const [from, to]: [FileSide, FileSide] = amendOnly(sel.path)
+      ? [{ Rev: "HEAD^" }, { Rev: "HEAD" }]
+      : sel.panel === "staged"
+        ? [{ Rev: "HEAD" }, "Index"]
+        : ["Index", "WorkTree"];
+    const at = (side: FileSide, path: string) => loadOnce(() => cb.fetchFileContent(side, path));
+    const isNew = file?.status === "Added" || file?.status === "Untracked";
+    return [
+      isNew ? null : at(from, file?.old_path ?? sel.path),
+      file?.status === "Deleted" ? null : at(to, sel.path),
+    ];
+  }
+
+  // Unified / Split toggle and context controls (when there's a diff to show),
+  // the Wrap / Ignore whitespace toggles — always, so a file whose changes are
+  // all whitespace can still be switched back — and Edit File shortcuts: in
+  // gitp (when `canEdit`) and in the OS app.
+  function diffToolbar(hasDiff: boolean, canEdit: boolean): HTMLElement {
     const mk = (label: string, on: boolean, set: boolean) => {
       const b = el("button", { class: `btn ghost small${on ? " active" : ""}`, text: label });
       b.addEventListener("click", () => {
@@ -498,25 +621,31 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       title: "Edit File",
     });
     editBtn.addEventListener("click", () => void cb.openInEditor(selected!.path));
+    const inAppBtn = el("button", { class: "btn ghost small", text: "Edit", title: "Edit in gitp" });
+    inAppBtn.addEventListener("click", () => cb.editInApp(selected!.path));
     const context = contextControls(contextLines, !hasDiff, (next) => {
       contextLines = next;
       if (diffHost) renderDiffInto(diffHost);
       void loadSelectedDiff();
     });
+    const toggles = diffToggles(splitView, false, (what) => {
+      if (diffHost) renderDiffInto(diffHost);
+      if (what === "ws") void loadSelectedDiff();
+    });
     return el("div", { class: "diff-toolbar" }, [
-      el(
-        "div",
-        { class: "diff-toolbar-group" },
-        hasDiff ? [mk("Unified", !splitView, false), mk("Split", splitView, true), ...context] : [],
-      ),
-      editBtn,
+      el("div", { class: "diff-toolbar-group" }, [
+        ...(hasDiff ? [mk("Unified", !splitView, false), mk("Split", splitView, true), ...context] : []),
+        ...toggles,
+      ]),
+      el("div", { class: "diff-toolbar-group" }, [...(canEdit ? [inAppBtn] : []), editBtn]),
     ]);
   }
 
   // Per-block action buttons on each hunk header, revealed on hover: Stage /
   // Discard for unstaged blocks, Unstage for staged ones. The same operations
-  // are also on the block's right-click menu (attachHunkMenus).
-  function attachHunkControls(body: HTMLElement): void {
+  // are also on the block's right-click menu (attachHunkMenus). With `blocked`
+  // the buttons are drawn disabled, with that as their tooltip.
+  function attachHunkControls(body: HTMLElement, blocked: string | null = null): void {
     const sel = selected;
     if (!sel) return;
     const ctx = selectedDiffContext;
@@ -527,6 +656,11 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       const actions = el("div", { class: "hunk-actions" });
       const btn = (label: string, danger: boolean, onClick: () => void) => {
         const b = el("button", { class: `hunk-btn${danger ? " danger" : ""}`, text: label });
+        if (blocked) {
+          (b as HTMLButtonElement).disabled = true;
+          b.title = blocked;
+          return b;
+        }
         b.addEventListener("click", (e) => {
           e.stopPropagation();
           onClick();
@@ -740,6 +874,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         { label: "Resolve Conflicts…", run: () => cb.openConflicts?.() },
         { separator: true },
         { label: "Edit File", run: () => void cb.openInEditor(path) },
+        { label: "Edit in gitp", run: () => cb.editInApp(path) },
         { label: "Show in Finder", run: () => void cb.revealPath(path) },
       ];
       showContextMenu(e.clientX, e.clientY, items);
@@ -757,7 +892,29 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     // Checked conflicted rows don't ride along on a bulk stage/discard.
     paths = paths.filter((p) => isActionable(statusOf.get(p)));
     if (paths.length === 0) return;
-    const allUntracked = paths.every((p) => statusOf.get(p) === "Untracked");
+    // git difftool only knows tracked files — an untracked one has no diff.
+    const diffTool: MenuItem[] =
+      statusOf.get(path) === "Untracked"
+        ? []
+        : [
+            {
+              label: "Open in External Diff Tool",
+              run: () => cb.openInDiffTool(which === "staged" ? "Staged" : "Unstaged", [path]),
+            },
+          ];
+    // An ignore rule doesn't apply to a file git already tracks, so a tracked
+    // selection is offered the rule plus untracking instead of rules alone.
+    const tracked = paths.filter((p) => statusOf.get(p) !== "Untracked");
+    const ignoreMenu: MenuItem[] = tracked.length
+      ? [{ label: `${many ? `Ignore ${n} Files` : "Ignore"} and Stop Tracking…`, run: () => void ignoreAndUntrackAction(paths, tracked) }]
+      : many
+        ? [{ label: `Ignore ${n} Files`, run: () => void ignoreAction(paths.map(ignorePattern)) }]
+        : ignoreRules(paths[0]).map((r) => ({ label: r.label, run: () => void ignoreAction([r.rule]) }));
+
+    // The in-app editor and Delete act on the file on disk, which a deleted
+    // one no longer has.
+    const onDisk = statusOf.get(path) !== "Deleted";
+    const editInApp: MenuItem[] = onDisk ? [{ label: "Edit in gitp", run: () => cb.editInApp(path) }] : [];
 
     const copy = (abs: boolean) => {
       const root = cb.repoRoot();
@@ -778,6 +935,9 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         ? [
             { label: label("Stage"), run: () => stageEach(paths) },
             { label: `${label("Discard")}…`, danger: true, run: () => void discardFilesAction(paths) },
+            ...(onDisk && !many
+              ? [{ label: "Delete File…", danger: true, run: () => void deleteFileAction(path) }]
+              : []),
             { separator: true },
             {
               label: `${label("Stash")}…`,
@@ -786,12 +946,12 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
             { label: "Save as Patch…", run: patch },
             { separator: true },
             { label: "Edit File", run: () => void cb.openInEditor(path) },
+            ...editInApp,
+            ...diffTool,
             { label: "Show in Finder", run: () => void cb.revealPath(path) },
             { label: "Copy Relative Path", run: () => copy(false) },
             { label: "Copy Absolute Path", run: () => copy(true) },
-            ...(allUntracked
-              ? [{ label: "Add to .gitignore", run: () => void ignoreAction(paths) }]
-              : []),
+            { label: "Add to .gitignore", submenu: ignoreMenu },
             { separator: true },
             { label: "Stage All", run: stageAllAction },
           ]
@@ -801,6 +961,8 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
             { label: "Save as Patch…", run: patch },
             { separator: true },
             { label: "Edit File", run: () => void cb.openInEditor(path) },
+            ...editInApp,
+            ...diffTool,
             { label: "Show in Finder", run: () => void cb.revealPath(path) },
             { label: "Copy Relative Path", run: () => copy(false) },
             { label: "Copy Absolute Path", run: () => copy(true) },
@@ -871,12 +1033,42 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     await run(() => cb.discardFiles(paths));
   }
 
-  async function ignoreAction(paths: string[]): Promise<void> {
+  async function deleteFileAction(path: string): Promise<void> {
+    const ok = await cb.confirm(
+      `Delete ${path} from the working tree?\n\nUndo brings it back, until the next action that can be undone.`,
+    );
+    if (!ok) {
+      cb.setStatus("Delete cancelled.");
+      return;
+    }
+    await run(() => cb.deleteFile(path), () => cb.setStatus(`Deleted ${path}.`), "Delete failed");
+  }
+
+  async function ignoreAction(rules: string[]): Promise<void> {
     await run(async () => {
-      const added = await cb.addToGitignore(paths);
+      const added = await cb.addToGitignore(rules);
       cb.setStatus(
         added > 0 ? `Added ${added} entr${added > 1 ? "ies" : "y"} to .gitignore.` : "Already ignored.",
       );
+    });
+  }
+
+  // Ignore every one of `paths` and stop tracking the `tracked` ones. The files
+  // stay on disk; the removal from the repository is staged for the next commit.
+  async function ignoreAndUntrackAction(paths: string[], tracked: string[]): Promise<void> {
+    const what = paths.length > 1 ? `${paths.length} files` : paths[0];
+    const ok = await cb.confirm(
+      `Ignore ${what} and stop tracking ${paths.length > 1 ? "them" : "it"}?\n\n` +
+        "The files stay on disk; their removal from the repository is staged for your next commit.",
+    );
+    if (!ok) {
+      cb.setStatus("Ignore cancelled.");
+      return;
+    }
+    await run(async () => {
+      await cb.addToGitignore(paths.map(ignorePattern));
+      await cb.untrackFiles(tracked);
+      cb.setStatus(`Ignored ${what} and stopped tracking ${tracked.length > 1 ? `${tracked.length} files` : tracked[0]}.`);
     });
   }
 
@@ -894,10 +1086,21 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     allBtn.addEventListener("click", () =>
       which === "unstaged" ? stageAllAction() : unstageAllAction(),
     );
+    if (which === "unstaged") {
+      const newBtn = el("button", { class: "btn ghost small icon-btn", text: "+", title: "Create File…" });
+      newBtn.addEventListener("click", () => cb.createFile());
+      head.append(newBtn);
+    }
     head.append(allBtn);
     box.append(head);
 
     const tree = el("div", { class: "stage-tree" });
+    // Right-click between the rows (a file row shows its own menu first).
+    tree.addEventListener("contextmenu", (e) => {
+      if (e.defaultPrevented) return;
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, [{ label: "Create File…", run: () => cb.createFile() }]);
+    });
     const status = new Map(files.map((f) => [f.path, f.status]));
     if (files.length === 0) {
       tree.append(el("div", { class: "stage-empty", text: `No ${which} changes` }));
@@ -930,6 +1133,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
           render();
         },
       });
+    }
+    // Any file row can be dragged onto the terminal to type its path.
+    for (const row of tree.querySelectorAll<HTMLElement>(".tree-file")) {
+      pathDragHandle(row, row.getAttribute("title") ?? "");
     }
     // Conflicted rows get a "Resolve" link to the conflict view in place of
     // staging (see isActionable); the badge class marks them in CSS.
@@ -969,6 +1176,14 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       subject = subjectInput.value;
       commitBtn.disabled = !canCommit();
     });
+    // Cmd/Ctrl+Enter commits from either field, as in most commit boxes. A
+    // disabled button ignores click(), so nothing to commit means no-op.
+    const commitOnShortcut = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || !(e.metaKey || e.ctrlKey)) return;
+      e.preventDefault();
+      commitBtn.click();
+    };
+    subjectInput.addEventListener("keydown", commitOnShortcut);
 
     const bodyInput = el("textarea", {
       class: "commit-body",
@@ -982,6 +1197,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     bodyInput.addEventListener("input", () => {
       body = bodyInput.value;
     });
+    bodyInput.addEventListener("keydown", commitOnShortcut);
     autoGrowTextarea(bodyInput);
 
     const amendBox = el("input", { type: "checkbox" }) as HTMLInputElement;
@@ -989,6 +1205,24 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     amendBox.addEventListener("change", () => void toggleAmend(amendBox.checked));
     const amendLabel = el("label", { class: "commit-amend" }, [amendBox, "Amend"]);
     const signLabel = signToggle();
+
+    const skipBox = el("input", { type: "checkbox" }) as HTMLInputElement;
+    skipBox.checked = skipHooks;
+    skipBox.addEventListener("change", () => {
+      skipHooks = skipBox.checked;
+    });
+    const skipLabel = el(
+      "label",
+      { class: "commit-amend", title: "Skip the pre-commit and commit-msg hooks (git commit --no-verify)" },
+      [skipBox, "Skip hooks"],
+    );
+    const pushBox = el("input", { type: "checkbox" }) as HTMLInputElement;
+    pushBox.checked = cb.pushAfterCommit();
+    pushBox.addEventListener("change", () => cb.setPushAfterCommit(pushBox.checked));
+    const pushLabel = el("label", { class: "commit-amend", title: "Push the branch after committing" }, [
+      pushBox,
+      "Push after commit",
+    ]);
 
     const commitBtn = el("button", { class: "btn commit-btn", text: "Commit" }) as HTMLButtonElement;
     commitBtn.disabled = !canCommit();
@@ -998,24 +1232,27 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       const bdy = body;
       const am = amend;
       const sg = signing?.can_sign ? sign : null;
+      const noVerify = skipHooks;
+      const pushAfter = cb.pushAfterCommit();
       run(
         async () => {
-          const out = await cb.commit(subj, bdy, am, sg);
+          const out = await cb.commit(subj, bdy, am, sg, noVerify);
           cb.reportDone(out || "Committed.");
         },
         () => {
-          subject = "";
-          body = "";
+          resetMessage();
           amend = false;
           amendFiles = [];
           amendPrefill = null;
+          skipHooks = false;
           cb.onCommitted();
+          if (pushAfter) cb.push();
         },
         "Commit failed",
       );
     });
 
-    const toggles = signLabel ? [amendLabel, signLabel] : [amendLabel];
+    const toggles = [amendLabel, ...(signLabel ? [signLabel] : []), skipLabel, pushLabel];
     const controls = el("div", { class: "commit-controls" }, [...toggles, commitBtn]);
     box.append(subjectInput, bodyInput, controls);
     return box;
@@ -1035,6 +1272,36 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       : "No signing key configured — set user.signingkey to sign commits";
     const cls = `commit-amend${signing.can_sign ? "" : " disabled"}`;
     return el("label", { class: cls, title }, [box, "Sign"]);
+  }
+
+  // Read the repo's commit.template and, if the box is still empty, fill it in.
+  function loadTemplate(): void {
+    const token = ++templateToken;
+    template = null;
+    cb.fetchCommitTemplate()
+      .then((raw) => {
+        if (token !== templateToken) return;
+        const wasEmpty = subject.trim() === "" && body.trim() === "";
+        template = raw === null ? null : templateMessage(raw);
+        if (template && wasEmpty) {
+          resetMessage();
+          render();
+        }
+      })
+      .catch(() => {}); // unreadable template file: just no pre-fill
+  }
+
+  // Whether the box holds nothing the user wrote: empty, or still exactly the
+  // template — which other pre-fills (amend, a merge message) may replace.
+  function messageUntouched(): boolean {
+    if (subject.trim() === "" && body.trim() === "") return true;
+    return template !== null && subject === template.subject && body === template.body;
+  }
+
+  // Empty the box — back to the template, when there is one.
+  function resetMessage(): void {
+    subject = template?.subject ?? "";
+    body = template?.body ?? "";
   }
 
   function loadSigning(): void {
@@ -1062,7 +1329,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       if (head) {
         amendFiles = head.files;
         // Only pre-fill an empty box, so we never clobber a typed message.
-        if (subject.trim() === "" && body.trim() === "") {
+        if (messageUntouched()) {
           subject = head.summary;
           const rest = head.message.startsWith(head.summary)
             ? head.message.slice(head.summary.length)
@@ -1075,8 +1342,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       amendFiles = [];
       // Clear the message only if it's still exactly what we pre-filled.
       if (amendPrefill && subject === amendPrefill.subject && body === amendPrefill.body) {
-        subject = "";
-        body = "";
+        resetMessage();
       }
       amendPrefill = null;
     }
@@ -1104,7 +1370,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   }
 
   function prefillMessage(newSubject: string, newBody: string): void {
-    if (subject.trim() !== "" || body.trim() !== "") return; // don't clobber what's already typed
+    if (!messageUntouched()) return; // don't clobber what's already typed
     subject = newSubject;
     body = newBody;
     render();
@@ -1112,8 +1378,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
 
   function clearPrefill(oldSubject: string, oldBody: string): void {
     if (subject !== oldSubject || body !== oldBody) return; // the user changed it; keep it
-    subject = "";
-    body = "";
+    resetMessage();
     render();
   }
 
@@ -1134,13 +1399,34 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     amend = false;
     amendFiles = [];
     amendPrefill = null;
+    skipHooks = false;
     loadSigning();
+    loadTemplate();
     render();
   }
 
   render();
   return { reload, isBusy: () => busy, applyStatus, recheckDiff, prefillMessage, clearPrefill, reset };
 }
+
+// A commit.template's text as a subject and body: lines starting with `#` are
+// dropped (git strips them from the final message anyway), the first line is
+// the subject and the rest, past any blank lines, the body. Null when nothing
+// but comments and whitespace is left.
+export function templateMessage(raw: string): { subject: string; body: string } | null {
+  const text = raw
+    .split(/\r?\n/)
+    .filter((line) => !line.startsWith("#"))
+    .join("\n")
+    .trimEnd();
+  if (text.trim() === "") return null;
+  const [subject, ...rest] = text.split("\n");
+  return { subject, body: rest.join("\n").replace(/^\s*\n/, "") };
+}
+
+// Why block / line staging is off while whitespace is ignored (selectedDiffWs).
+const WS_BLOCKED =
+  "Turn off Ignore whitespace to stage or discard single blocks or lines — the blocks shown leave out whitespace changes, so they aren't the file's real changes.";
 
 // Whether two fetched diffs show exactly the same thing: same file, same
 // hunks, same lines with the same numbers.
@@ -1165,6 +1451,38 @@ export function sameDiff(a: FileDiff | null, b: FileDiff | null): boolean {
       })
     );
   });
+}
+
+// The .gitignore rules offered for one file, most specific first: the file
+// itself, every file with its extension, then its folder and that folder's
+// parent. Paths are anchored to the repo root ("/"), since a bare `name` or
+// `dir/` would match at every level of the tree.
+export function ignoreRules(path: string): { label: string; rule: string }[] {
+  const parts = path.split("/");
+  const name = parts[parts.length - 1];
+  const rules = [{ label: "Ignore this file", rule: ignorePattern(path) }];
+  const dot = name.lastIndexOf(".");
+  // `.env` is a name, not an extension.
+  if (dot > 0 && dot < name.length - 1) {
+    const ext = name.slice(dot + 1);
+    rules.push({ label: `Ignore all *.${ext} files`, rule: `*.${escapeGlob(ext)}` });
+  }
+  for (let depth = parts.length - 1; depth >= Math.max(1, parts.length - 2); depth--) {
+    const dir = parts.slice(0, depth).join("/");
+    rules.push({ label: `Ignore folder ${dir}/`, rule: `${ignorePattern(dir)}/` });
+  }
+  return rules;
+}
+
+// A .gitignore line matching exactly the repo-relative `path`.
+export function ignorePattern(path: string): string {
+  return `/${escapeGlob(path)}`;
+}
+
+// Escape what .gitignore would read as a glob (`a[1].txt` must not also match
+// `a1.txt`) and trailing spaces, which it would otherwise strip.
+function escapeGlob(text: string): string {
+  return text.replace(/[\\*?[]/g, "\\$&").replace(/ +$/, (m) => m.replace(/ /g, "\\ "));
 }
 
 // Whether a file row can be staged/unstaged/discarded from Local Changes. An

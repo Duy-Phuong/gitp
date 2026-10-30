@@ -1,13 +1,15 @@
-//! Network operations — pull, push, fetch, and cancelling them — plus opening
-//! a pull request.
+//! Network operations — pull, push, fetch, clone, and cancelling them — plus
+//! opening a pull request and managing the configured remotes.
 
-use gitp_core::{PullMode, Repo};
+use std::path::Path;
+
+use gitp_core::{CloneOptions, PullMode, RemoteInfo, Repo};
 use tauri::State;
 
 use crate::os::open_in_browser;
 use crate::state::{
-    to_message, with_repo, with_repo_networked, with_repo_networked_background,
-    with_repo_networked_prepared, RepoState,
+    run_networked_unopened, to_message, with_repo, with_repo_networked,
+    with_repo_networked_background, with_repo_networked_prepared, RepoState,
 };
 use crate::undo::{clear_undo, record_pull};
 
@@ -39,9 +41,35 @@ fn push_force_impl(state: &RepoState) -> Result<String, String> {
     with_repo_networked(state, "push", Repo::push_force, |_| ())
 }
 
-/// Push branch `name` to origin. No local change to the log.
-fn push_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_repo_networked(state, "push", |repo| repo.push_branch(&name), |_| {})
+/// Push branch `name` to `remote`, or by default to the remote it tracks (else
+/// origin). No local change to the log.
+fn push_branch_impl(
+    state: &RepoState,
+    name: String,
+    remote: Option<String>,
+) -> Result<String, String> {
+    with_repo_networked(
+        state,
+        "push",
+        |repo| repo.push_branch(&name, remote.as_deref()),
+        |_| {},
+    )
+}
+
+/// Push local branch `name` to `remote_branch` on `remote` (a branch dropped
+/// on a remote branch in the graph). No local change to the log.
+fn push_branch_to_impl(
+    state: &RepoState,
+    name: String,
+    remote: String,
+    remote_branch: String,
+) -> Result<String, String> {
+    with_repo_networked(
+        state,
+        "push",
+        |repo| repo.push_branch_to(&name, &remote, &remote_branch),
+        |_| {},
+    )
 }
 
 /// Fetch `name`'s remote. Updates remote-tracking refs only, so the local log
@@ -79,25 +107,90 @@ fn fetch_and_update_branch_impl(state: &RepoState, name: String) -> Result<Strin
     )
 }
 
-/// Cancel whatever network operation is running on the active repo: its `git`
-/// is killed and the operation's command returns "operation cancelled". A
-/// no-op when nothing is running.
+/// Cancel whatever network operation is running on the active repo, and any
+/// clone: its `git` is killed and the operation's command returns "operation
+/// cancelled". A no-op when nothing is running.
+///
+/// A clone has no tab of its own — the status bar's Cancel is the only way to
+/// stop it, whichever tab is active — so an operation on a path that isn't an
+/// open tab is taken to be one.
 pub(crate) fn cancel_network_op_impl(state: &RepoState) -> Result<(), String> {
-    let path = {
+    let (active, open): (Option<String>, Vec<String>) = {
         let guard = state.0.lock().map_err(to_message)?;
-        let idx = guard.active.ok_or("no repository is open")?;
-        guard.sessions[idx].path.clone()
+        let active = guard.active.map(|i| guard.sessions[i].path.clone());
+        (
+            active,
+            guard.sessions.iter().map(|s| s.path.clone()).collect(),
+        )
     };
-    state.1.cancel(&path);
+    state
+        .1
+        .cancel(|path| active.as_deref() == Some(path) || !open.iter().any(|p| p == path));
     Ok(())
 }
 
-/// Compute the pull/merge-request URL for `branch` and open it in the default
-/// browser. Returns the URL for display.
-fn create_pull_request_impl(state: &RepoState, branch: String) -> Result<String, String> {
-    let url = with_repo(state, |repo| repo.pull_request_url(&branch))?;
+/// `git clone` `url` into `dest` as `options` say (see `gitp_core::clone_repo`),
+/// reporting progress and offering Cancel like a fetch. The frontend opens the
+/// result as a tab the way it opens any folder.
+pub(crate) fn clone_repository_impl(
+    state: &RepoState,
+    url: String,
+    dest: String,
+    options: CloneOptions,
+) -> Result<String, String> {
+    run_networked_unopened(state, "clone", &dest, |hooks| {
+        gitp_core::clone_repo(&url, Path::new(&dest), &options, hooks)
+    })
+}
+
+/// Compute the pull/merge-request URL for `branch` on `remote` (by default the
+/// one it tracks) and open it in the default browser. Returns the URL for display.
+fn create_pull_request_impl(
+    state: &RepoState,
+    branch: String,
+    remote: Option<String>,
+) -> Result<String, String> {
+    let url = with_repo(state, |repo| {
+        repo.pull_request_url(&branch, remote.as_deref())
+    })?;
     open_in_browser(&url).map_err(|e| e.to_string())?;
     Ok(url)
+}
+
+/// Every configured remote with its URL, for the sidebar's Remotes section.
+fn list_remotes_impl(state: &RepoState) -> Result<Vec<RemoteInfo>, String> {
+    with_repo(state, Repo::list_remotes)
+}
+
+fn add_remote_impl(state: &RepoState, name: String, url: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.add_remote(&name, &url))
+}
+
+fn set_remote_url_impl(state: &RepoState, name: String, url: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.set_remote_url(&name, &url))
+}
+
+/// Rename or remove a remote. Either rewrites the `branch.<name>.remote` lines
+/// naming it — config, which the refs cache (keyed on refs alone) can't see
+/// change — so the cache is dropped.
+fn change_remote(
+    state: &RepoState,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<String>,
+) -> Result<String, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let out = f(&session.repo).map_err(to_message)?;
+    session.refs_cache = None;
+    Ok(out)
+}
+
+fn rename_remote_impl(state: &RepoState, old: String, new: String) -> Result<String, String> {
+    change_remote(state, |repo| repo.rename_remote(&old, &new))
+}
+
+fn remove_remote_impl(state: &RepoState, name: String) -> Result<String, String> {
+    change_remote(state, |repo| repo.remove_remote(&name))
 }
 
 // --- Tauri commands --------------------------------------------------------
@@ -118,8 +211,22 @@ pub(crate) fn push_force(state: State<RepoState>) -> Result<String, String> {
 }
 
 #[tauri::command(async)]
-pub(crate) fn push_branch(name: String, state: State<RepoState>) -> Result<String, String> {
-    push_branch_impl(&state, name)
+pub(crate) fn push_branch(
+    name: String,
+    remote: Option<String>,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    push_branch_impl(&state, name, remote)
+}
+
+#[tauri::command(async)]
+pub(crate) fn push_branch_to(
+    name: String,
+    remote: String,
+    remote_branch: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    push_branch_to_impl(&state, name, remote, remote_branch)
 }
 
 #[tauri::command(async)]
@@ -149,6 +256,16 @@ pub(crate) fn fetch_and_update_branch(
 }
 
 #[tauri::command(async)]
+pub(crate) fn clone_repository(
+    url: String,
+    dest: String,
+    options: CloneOptions,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    clone_repository_impl(&state, url, dest, options)
+}
+
+#[tauri::command(async)]
 pub(crate) fn cancel_network_op(state: State<RepoState>) -> Result<(), String> {
     cancel_network_op_impl(&state)
 }
@@ -156,7 +273,45 @@ pub(crate) fn cancel_network_op(state: State<RepoState>) -> Result<(), String> {
 #[tauri::command(async)]
 pub(crate) fn create_pull_request(
     branch: String,
+    remote: Option<String>,
     state: State<RepoState>,
 ) -> Result<String, String> {
-    create_pull_request_impl(&state, branch)
+    create_pull_request_impl(&state, branch, remote)
+}
+
+#[tauri::command(async)]
+pub(crate) fn list_remotes(state: State<RepoState>) -> Result<Vec<RemoteInfo>, String> {
+    list_remotes_impl(&state)
+}
+
+#[tauri::command(async)]
+pub(crate) fn add_remote(
+    name: String,
+    url: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    add_remote_impl(&state, name, url)
+}
+
+#[tauri::command(async)]
+pub(crate) fn set_remote_url(
+    name: String,
+    url: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    set_remote_url_impl(&state, name, url)
+}
+
+#[tauri::command(async)]
+pub(crate) fn rename_remote(
+    old: String,
+    new: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    rename_remote_impl(&state, old, new)
+}
+
+#[tauri::command(async)]
+pub(crate) fn remove_remote(name: String, state: State<RepoState>) -> Result<String, String> {
+    remove_remote_impl(&state, name)
 }
