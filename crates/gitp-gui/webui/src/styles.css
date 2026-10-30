@@ -2156,6 +2156,11 @@ body {
 .file-item.active {
   background: var(--row-sel);
 }
+/* Cmd/Shift-click multi-selection — the log's accent tint. */
+.file-item.multi-selected {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 .file-item-path {
   overflow: hidden;
   text-overflow: ellipsis;

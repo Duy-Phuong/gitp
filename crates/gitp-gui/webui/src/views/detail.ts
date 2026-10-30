@@ -10,6 +10,9 @@
 // history / re-contexted diff (each cached). Wrap and ignore-whitespace are
 // persisted preferences shared with Local Changes (see prefs.ts).
 //
+// A commit's file lists take Cmd/Shift-click multi-selection; right-clicking
+// offers to restore the files from that commit.
+//
 // The same pane also shows a comparison of two revisions (showCompare): a
 // compare header in place of the tabs, over the Changes view of the files that
 // differ — so the diff renderer, context controls and Blame / History (as of
@@ -32,7 +35,7 @@ import type {
   SignatureStatus,
 } from "../types";
 import { hunkWordDiffs, type Seg } from "../worddiff";
-import { showContextMenu } from "./context-menu";
+import { showContextMenu, type MenuItem } from "./context-menu";
 import { imageMime, loadOnce, renderImageDiff, type ImageLoad } from "./image-diff";
 import { renderFileTree } from "./tree";
 
@@ -71,6 +74,11 @@ export interface DetailCallbacks {
   // A changed file's right-click "Open in External Diff Tool" (git difftool).
   openInDiffTool: (target: DiffToolTarget, paths: string[]) => void;
   onCloseCompare: () => void;
+  // Put `paths` back to how they are in commit `id` (staged in Local Changes).
+  restoreFiles: (id: string, paths: string[]) => void;
+  // Undo block `hunkIndex` of commit `id`'s diff of `file`, as drawn at
+  // `contextLines`, in the working tree.
+  revertHunk: (id: string, file: FileDiff, hunkIndex: number, contextLines: number) => void;
   // Verify the commit's signature (null when unsigned). Can be slow — it runs
   // gpg / ssh-keygen — so the Commit tab fills its badge in when this lands.
   fetchSignature: (id: string) => Promise<CommitSignature | null>;
@@ -130,6 +138,10 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   // The selected image's before / after loaders, kept across repaints.
   let images: Cached<[ImageLoad | null, ImageLoad | null]> | null = null;
   const collapsed = new Set<string>(); // collapsed folders in the File Tree
+  // The Cmd/Shift-clicked files of the commit's file lists, and the row a
+  // Shift-click ranges from (the last one clicked).
+  let multi = new Set<string>();
+  let anchor: number | null = null;
   // The last commit whose signature was verified, and the one being verified.
   let signature: { id: string; sig: CommitSignature | null } | null = null;
   let signatureInFlight: string | null = null;
@@ -146,6 +158,8 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
       currentHunk = 0;
       tree = null;
       collapsed.clear();
+      multi = new Set();
+      anchor = null;
     }
     render();
   }
@@ -153,8 +167,13 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   function showCompare(cmp: Comparison): void {
     const before = compare ? viewKey() : null;
     compare = cmp;
+    // The working directory changes under the same key, so a re-diff fetched
+    // for it may be stale by now.
+    if (!cmp.base.id || !cmp.head.id) recontexted = null;
     detail = {
-      id: cmp.head.id,
+      // Blame / History go as of a commit: the base when the head is the
+      // working directory (which is no commit).
+      id: cmp.head.id || cmp.base.id,
       summary: cmp.head.summary,
       message: cmp.head.summary,
       author_name: "",
@@ -284,7 +303,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     }
     const list = el("div", { class: "file-list" });
     d.files.forEach((f, idx) =>
-      list.append(fileRow(f, false, () => {
+      list.append(fileRow(f, idx, false, () => {
         selectedFile = idx;
         currentHunk = 0;
         fileMode = "diff";
@@ -309,7 +328,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const split = el("div", { class: "changes-split" });
     const listCol = el("div", { class: "changes-list" });
     d.files.forEach((f, idx) =>
-      listCol.append(fileRow(f, idx === selectedFile, () => {
+      listCol.append(fileRow(f, idx, idx === selectedFile, () => {
         selectedFile = idx;
         currentHunk = 0;
         render();
@@ -366,6 +385,30 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     view.append(diff);
     if (shown.hunks.length === 0 && file.hunks.length > 0) {
       view.append(el("div", { class: "detail-empty", text: "Only whitespace changed — Ignore whitespace is on." }));
+    }
+    // A comparison's blocks belong to no one commit to revert, and with
+    // whitespace ignored the blocks drawn aren't the commit's real blocks.
+    if (!compare && !loadIgnoreWhitespace()) attachRevertButtons(view, file);
+  }
+
+  // A "Revert" button on each block's header, revealed on hover like Local
+  // Changes' staging controls. The block index is the one drawn, so it goes
+  // with the context it was drawn at.
+  function attachRevertButtons(view: HTMLElement, file: FileDiff): void {
+    const id = detail!.id;
+    const ctx = contextLines;
+    for (const hunkEl of view.querySelectorAll<HTMLElement>(".hunk[data-hunk]")) {
+      const index = Number(hunkEl.dataset.hunk);
+      const btn = el("button", {
+        class: "hunk-btn danger",
+        text: "Revert",
+        title: "Undo this block of the commit in your working directory",
+      });
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        cb.revertHunk(id, file, index, ctx);
+      });
+      hunkEl.querySelector(".hunk-header")?.append(el("div", { class: "hunk-actions" }, [btn]));
     }
   }
 
@@ -618,7 +661,9 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   }
 
   function compareChip(end: CompareEnd): HTMLElement {
-    return el("span", { class: "ref-chip compare-end", text: compareEndLabel(end), title: `${end.short_id} — ${end.summary}` });
+    // The empty tree (and any other end that isn't a commit) has no id to show.
+    const title = end.id ? `${end.short_id} — ${end.summary}` : compareEndLabel(end);
+    return el("span", { class: "ref-chip compare-end", text: compareEndLabel(end), title });
   }
 
   // --- File Tree tab --------------------------------------------------------
@@ -695,25 +740,72 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
 
   // --- small builders -------------------------------------------------------
 
-  function fileRow(file: FileDiff, active: boolean, onClick: () => void): HTMLElement {
-    const row = el("div", { class: `file-item${active ? " active" : ""}`, title: file.path });
+  function fileRow(file: FileDiff, idx: number, active: boolean, onClick: () => void): HTMLElement {
+    const picked = multi.has(file.path) ? " multi-selected" : "";
+    const row = el("div", { class: `file-item${active ? " active" : ""}${picked}`, title: file.path });
+    row.dataset.path = file.path;
     row.append(statusBadge(file.status));
     const label =
       file.old_path && file.old_path !== file.path ? `${file.old_path} → ${file.path}` : file.path;
     row.append(el("span", { class: "file-item-path", text: label }));
-    row.addEventListener("click", onClick);
-    row.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      const target: DiffToolTarget = compare
-        ? { Compare: { base: compare.base.rev, head: compare.head.rev, three_dot: compare.three_dot } }
-        : { Commit: detail!.id };
-      // Both names of a rename, so git pairs them up.
-      const paths = file.old_path && file.old_path !== file.path ? [file.old_path, file.path] : [file.path];
-      showContextMenu(e.clientX, e.clientY, [
-        { label: "Open in External Diff Tool", run: () => cb.openInDiffTool(target, paths) },
-      ]);
+    row.addEventListener("click", (e) => {
+      // A comparison's files belong to no one commit: nothing to restore.
+      if (!compare && (e.shiftKey || e.metaKey || e.ctrlKey)) return pickFile(idx, e.shiftKey);
+      multi = new Set();
+      anchor = idx;
+      onClick();
     });
+    row.addEventListener("contextmenu", (e) => openFileMenu(file, e));
     return row;
+  }
+
+  // Cmd-click toggles a file in the multi-selection, Shift-click selects the
+  // run from the last clicked file — the log's rules. Repainted in place, so
+  // a long Commit-tab list keeps its scroll position.
+  function pickFile(idx: number, range: boolean): void {
+    const files = detail!.files;
+    if (range) {
+      const from = anchor ?? idx;
+      multi = new Set(files.slice(Math.min(from, idx), Math.max(from, idx) + 1).map((f) => f.path));
+    } else {
+      // The first Cmd-click starts from the file last clicked, as in the log.
+      if (!multi.size && anchor !== null) multi.add(files[anchor].path);
+      const path = files[idx].path;
+      if (multi.has(path)) multi.delete(path);
+      else multi.add(path);
+      anchor = idx;
+    }
+    host.querySelectorAll<HTMLElement>(".file-item").forEach((row) => {
+      row.classList.toggle("multi-selected", multi.has(row.dataset.path ?? ""));
+    });
+  }
+
+  // Right-click a file of the commit: restore it — or the whole multi-selection,
+  // when the click lands inside one — as it is in this commit. A file the
+  // commit deleted has no version here to restore.
+  function openFileMenu(file: FileDiff, e: MouseEvent): void {
+    e.preventDefault();
+    const d = detail!;
+    const target: DiffToolTarget = compare
+      ? { Compare: { base: compare.base.rev, head: compare.head.rev, three_dot: compare.three_dot } }
+      : { Commit: d.id };
+    // Both names of a rename, so git pairs them up.
+    const toolPaths = file.old_path && file.old_path !== file.path ? [file.old_path, file.path] : [file.path];
+    const items: MenuItem[] = [{ label: "Open in External Diff Tool", run: () => cb.openInDiffTool(target, toolPaths) }];
+    // A comparison's files belong to no one commit: nothing to restore.
+    if (!compare) {
+      const many = multi.has(file.path) && multi.size > 1;
+      const files = many ? d.files.filter((f) => multi.has(f.path)) : [file];
+      const paths = files.filter((f) => f.status !== "Deleted").map((f) => f.path);
+      const label = many ? `Restore ${paths.length} Selected Files` : "Restore File from This Commit";
+      items.push(
+        { separator: true },
+        paths.length === 0
+          ? { label: "Deleted in this commit — nothing to restore" }
+          : { label, run: () => cb.restoreFiles(d.id, paths) },
+      );
+    }
+    showContextMenu(e.clientX, e.clientY, items);
   }
 
   showEmpty();

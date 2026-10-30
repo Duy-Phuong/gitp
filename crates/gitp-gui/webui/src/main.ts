@@ -31,6 +31,7 @@ import {
   stashFiles,
   saveFilesPatch,
   addToGitignore,
+  untrackFiles,
   revealPath,
   openInEditor,
   unstage,
@@ -100,7 +101,14 @@ import {
   onMoreRefsMenu,
   onTagMenu,
 } from "./ref-actions";
-import { onCommitContextMenu, onReflogMenu, runCommitOp, runNextCherryPick } from "./commit-actions";
+import {
+  onCommitContextMenu,
+  onReflogMenu,
+  restoreFilesAction,
+  revertHunkAction,
+  runCommitOp,
+  runNextCherryPick,
+} from "./commit-actions";
 import { onWorktreeMenu } from "./worktree-actions";
 import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { toggleTerminal, warmTerminal } from "./terminal-panel";
@@ -237,6 +245,8 @@ async function init(): Promise<void> {
     fetchFileContent,
     openInDiffTool: (target, paths) => void openInDiffTool(target, paths),
     onCloseCompare: () => void leaveComparison(),
+    restoreFiles: (id, paths) => void restoreFilesAction(id, paths),
+    revertHunk: (id, file, hunkIndex, contextLines) => void revertHunkAction(id, file, hunkIndex, contextLines),
     fetchSignature: fetchCommitSignature,
     initialTab: loadDetailTab(),
     onTabChange: saveDetailTab,
@@ -259,6 +269,7 @@ async function init(): Promise<void> {
     stashFiles,
     saveFilesPatch,
     addToGitignore,
+    untrackFiles,
     revealPath,
     openInEditor,
     openInDiffTool: (target, paths) => void openInDiffTool(target, paths),

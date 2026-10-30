@@ -69,6 +69,8 @@ export interface ChangesCallbacks {
   stashFiles: (paths: string[]) => Promise<string>;
   saveFilesPatch: (paths: string[], staged: boolean, defaultName: string) => Promise<string | null>;
   addToGitignore: (paths: string[]) => Promise<number>;
+  // Stop tracking `paths` but keep the files (`git rm --cached`).
+  untrackFiles: (paths: string[]) => Promise<void>;
   revealPath: (path: string) => Promise<void>;
   // Open the file in the OS default application (e.g. the user's editor).
   openInEditor: (path: string) => Promise<void>;
@@ -847,7 +849,6 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     // Checked conflicted rows don't ride along on a bulk stage/discard.
     paths = paths.filter((p) => isActionable(statusOf.get(p)));
     if (paths.length === 0) return;
-    const allUntracked = paths.every((p) => statusOf.get(p) === "Untracked");
     // git difftool only knows tracked files — an untracked one has no diff.
     const diffTool: MenuItem[] =
       statusOf.get(path) === "Untracked"
@@ -858,6 +859,14 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
               run: () => cb.openInDiffTool(which === "staged" ? "Staged" : "Unstaged", [path]),
             },
           ];
+    // An ignore rule doesn't apply to a file git already tracks, so a tracked
+    // selection is offered the rule plus untracking instead of rules alone.
+    const tracked = paths.filter((p) => statusOf.get(p) !== "Untracked");
+    const ignoreMenu: MenuItem[] = tracked.length
+      ? [{ label: `${many ? `Ignore ${n} Files` : "Ignore"} and Stop Tracking…`, run: () => void ignoreAndUntrackAction(paths, tracked) }]
+      : many
+        ? [{ label: `Ignore ${n} Files`, run: () => void ignoreAction(paths.map(ignorePattern)) }]
+        : ignoreRules(paths[0]).map((r) => ({ label: r.label, run: () => void ignoreAction([r.rule]) }));
 
     const copy = (abs: boolean) => {
       const root = cb.repoRoot();
@@ -890,9 +899,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
             { label: "Show in Finder", run: () => void cb.revealPath(path) },
             { label: "Copy Relative Path", run: () => copy(false) },
             { label: "Copy Absolute Path", run: () => copy(true) },
-            ...(allUntracked
-              ? [{ label: "Add to .gitignore", run: () => void ignoreAction(paths) }]
-              : []),
+            { label: "Add to .gitignore", submenu: ignoreMenu },
             { separator: true },
             { label: "Stage All", run: stageAllAction },
           ]
@@ -973,12 +980,31 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     await run(() => cb.discardFiles(paths));
   }
 
-  async function ignoreAction(paths: string[]): Promise<void> {
+  async function ignoreAction(rules: string[]): Promise<void> {
     await run(async () => {
-      const added = await cb.addToGitignore(paths);
+      const added = await cb.addToGitignore(rules);
       cb.setStatus(
         added > 0 ? `Added ${added} entr${added > 1 ? "ies" : "y"} to .gitignore.` : "Already ignored.",
       );
+    });
+  }
+
+  // Ignore every one of `paths` and stop tracking the `tracked` ones. The files
+  // stay on disk; the removal from the repository is staged for the next commit.
+  async function ignoreAndUntrackAction(paths: string[], tracked: string[]): Promise<void> {
+    const what = paths.length > 1 ? `${paths.length} files` : paths[0];
+    const ok = await cb.confirm(
+      `Ignore ${what} and stop tracking ${paths.length > 1 ? "them" : "it"}?\n\n` +
+        "The files stay on disk; their removal from the repository is staged for your next commit.",
+    );
+    if (!ok) {
+      cb.setStatus("Ignore cancelled.");
+      return;
+    }
+    await run(async () => {
+      await cb.addToGitignore(paths.map(ignorePattern));
+      await cb.untrackFiles(tracked);
+      cb.setStatus(`Ignored ${what} and stopped tracking ${tracked.length > 1 ? `${tracked.length} files` : tracked[0]}.`);
     });
   }
 
@@ -1346,6 +1372,38 @@ export function sameDiff(a: FileDiff | null, b: FileDiff | null): boolean {
       })
     );
   });
+}
+
+// The .gitignore rules offered for one file, most specific first: the file
+// itself, every file with its extension, then its folder and that folder's
+// parent. Paths are anchored to the repo root ("/"), since a bare `name` or
+// `dir/` would match at every level of the tree.
+export function ignoreRules(path: string): { label: string; rule: string }[] {
+  const parts = path.split("/");
+  const name = parts[parts.length - 1];
+  const rules = [{ label: "Ignore this file", rule: ignorePattern(path) }];
+  const dot = name.lastIndexOf(".");
+  // `.env` is a name, not an extension.
+  if (dot > 0 && dot < name.length - 1) {
+    const ext = name.slice(dot + 1);
+    rules.push({ label: `Ignore all *.${ext} files`, rule: `*.${escapeGlob(ext)}` });
+  }
+  for (let depth = parts.length - 1; depth >= Math.max(1, parts.length - 2); depth--) {
+    const dir = parts.slice(0, depth).join("/");
+    rules.push({ label: `Ignore folder ${dir}/`, rule: `${ignorePattern(dir)}/` });
+  }
+  return rules;
+}
+
+// A .gitignore line matching exactly the repo-relative `path`.
+export function ignorePattern(path: string): string {
+  return `/${escapeGlob(path)}`;
+}
+
+// Escape what .gitignore would read as a glob (`a[1].txt` must not also match
+// `a1.txt`) and trailing spaces, which it would otherwise strip.
+function escapeGlob(text: string): string {
+  return text.replace(/[\\*?[]/g, "\\$&").replace(/ +$/, (m) => m.replace(/ /g, "\\ "));
 }
 
 // Whether a file row can be staged/unstaged/discarded from Local Changes. An

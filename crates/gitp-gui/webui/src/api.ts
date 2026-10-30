@@ -965,6 +965,46 @@ export async function discardFiles(paths: string[]): Promise<void> {
   await invoke<void>("discard_files", { paths });
 }
 
+// Put `paths` back to how they are in commit `rev` — written and staged
+// (`git checkout <rev> -- <paths>`). Undoable like a discard.
+export async function restoreFilesFromCommit(rev: string, paths: string[]): Promise<void> {
+  if (!isTauri()) {
+    for (const p of paths) {
+      mockMove(MOCK_STATUS.unstaged, [], p);
+      if (!MOCK_STATUS.staged.some((f) => f.path === p)) {
+        MOCK_STATUS.staged.push({ path: p, old_path: null, status: "Modified", hunks: [] });
+      }
+    }
+    mockRecord(`Restore ${paths.length} file${paths.length === 1 ? "" : "s"} from ${rev.slice(0, 7)}`);
+    return;
+  }
+  await invoke<void>("restore_files_from_commit", { rev, paths });
+}
+
+// Undo block `hunkIndex` of commit `rev`'s diff of `file` (at `contextLines`,
+// as drawn) in the working tree. Fails when the file has moved on there.
+export async function revertCommitHunk(
+  rev: string,
+  file: FileDiff,
+  hunkIndex: number,
+  contextLines: number,
+): Promise<void> {
+  if (!isTauri()) {
+    if (!MOCK_STATUS.unstaged.some((f) => f.path === file.path)) {
+      MOCK_STATUS.unstaged.push({ path: file.path, old_path: null, status: "Modified", hunks: [] });
+    }
+    mockRecord(`Revert block of ${file.path}`);
+    return;
+  }
+  await invoke<void>("revert_commit_hunk", {
+    rev,
+    path: file.path,
+    oldPath: file.old_path,
+    hunkIndex,
+    contextLines,
+  });
+}
+
 // Stash only `paths` away (`git stash push -u -- <paths>`).
 export async function stashFiles(paths: string[]): Promise<string> {
   if (!isTauri()) {
@@ -993,10 +1033,45 @@ export async function saveFilesPatch(
   return invoke<string>("save_files_patch", { paths, staged, path: dest });
 }
 
+// Prompt for a destination and write `revs` (in that order) there as one patch
+// file. Returns a status string, or null if the user cancelled.
+export async function saveCommitsPatch(revs: string[], defaultName: string): Promise<string | null> {
+  if (!isTauri()) return `Saved patch for ${revs.length} commit(s) (preview mock)`;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const dest = await save({ title: "Save as Patch", defaultPath: defaultName });
+  if (!dest) return null;
+  return invoke<string>("save_commits_patch", { revs, path: dest });
+}
+
+// Pick a .patch / .diff file and apply it to the working tree and index
+// (`git apply --3way`). Resolves to the file applied, or null if the user
+// cancelled the picker.
+export async function applyPatchFile(): Promise<string | null> {
+  if (!isTauri()) return "changes.patch";
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const path = await open({
+    title: "Apply Patch",
+    multiple: false,
+    filters: [{ name: "Patch", extensions: ["patch", "diff"] }],
+  });
+  if (typeof path !== "string") return null;
+  await invoke<void>("apply_patch", { path });
+  return path;
+}
+
 // Append `paths` to the repo's .gitignore; returns the number actually added.
 export async function addToGitignore(paths: string[]): Promise<number> {
   if (!isTauri()) return paths.length;
   return invoke<number>("add_to_gitignore", { paths });
+}
+
+// Stop tracking `paths` (`git rm --cached`), keeping the files on disk.
+export async function untrackFiles(paths: string[]): Promise<void> {
+  if (!isTauri()) {
+    for (const p of paths) mockMove(MOCK_STATUS.unstaged, [], p);
+    return;
+  }
+  await invoke<void>("untrack_files", { paths });
 }
 
 // Reveal the repo-relative `path` in the OS file manager.
@@ -1652,6 +1727,12 @@ function mkReflog(to: string, from: string, message: string, time: number): Omit
 
 // --- Comparing two revisions ------------------------------------------------
 
+// The revs naming the empty tree and the working directory as a side of a
+// comparison — gitp-core's EMPTY_REV and WORKDIR_REV. Their ends come back
+// with no id.
+export const EMPTY_REV = "Empty Tree";
+export const WORKDIR_REV = "Working Directory";
+
 // What differs between `base` and `head` (ref names or ids). `threeDot` diffs
 // from their merge base — only what `head` added since they diverged.
 export async function compareRevs(base: string, head: string, threeDot: boolean): Promise<Comparison> {
@@ -1684,6 +1765,7 @@ export async function fetchCompareFileDiff(
 // three-dot mode, so the toggle visibly does something.
 function mockCompare(base: string, head: string, threeDot: boolean): Comparison {
   const resolve = (rev: string): CompareEnd => {
+    if (rev === EMPTY_REV || rev === WORKDIR_REV) return { rev, id: "", short_id: "", summary: "" };
     const target =
       [...MOCK_REFS.branches, ...MOCK_REFS.remotes, ...MOCK_REFS.tags].find((r) => r.name === rev)?.target ??
       (rev === "HEAD" ? MOCK_LOG[0].id : rev);
@@ -1693,7 +1775,10 @@ function mockCompare(base: string, head: string, threeDot: boolean): Comparison 
   };
   const b = resolve(base);
   const h = resolve(head);
-  const distance = MOCK_LOG.findIndex((r) => r.id === b.id) - MOCK_LOG.findIndex((r) => r.id === h.id);
+  // The empty tree sits below the oldest commit; the working directory is HEAD.
+  const depth = (end: CompareEnd) =>
+    end.id ? MOCK_LOG.findIndex((r) => r.id === end.id) : end.rev === WORKDIR_REV ? 0 : MOCK_LOG.length;
+  const distance = depth(b) - depth(h);
   const files = b.id === h.id ? [] : mockDetail(h.id).files;
   return {
     base: b,

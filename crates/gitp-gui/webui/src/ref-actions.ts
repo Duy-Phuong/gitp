@@ -53,7 +53,7 @@ import {
   showReflog,
   showView,
 } from "./shell";
-import { checkoutCommitAction, confirmThenRun, openInteractiveRebase } from "./commit-actions";
+import { checkoutCommitAction, compareWithWorkdirAction, confirmThenRun, openInteractiveRebase } from "./commit-actions";
 import { showComparison } from "./compare";
 import { checkoutInNewWorktreeItem, worktreeOf } from "./worktree-actions";
 import { worktreeName } from "./views/sidebar";
@@ -107,6 +107,7 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
 
   if (!b.is_head) items.push({ label: "Checkout", run: () => void checkoutBranchAction(b) });
   if (!b.is_head) items.push(compareWithHeadItem(b.name));
+  items.push(compareWithWorkdirItem(b.name));
   // A branch can be checked out in only one worktree: where another has it,
   // offer that worktree instead of a second checkout.
   const wt = worktreeOf(b.name);
@@ -313,6 +314,7 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
     { label: "Checkout Commit…", run: () => void checkoutCommitAction(target, `${name} (${short})`) },
     { label: "Show Tag Details…", run: () => openTagDetailsModal(name, fetchTagDetail(name)) },
     compareWithHeadItem(name),
+    compareWithWorkdirItem(name),
     { separator: true },
     { label: "Push to 'origin'…", run: () => void runTagOp(`Pushing ${name}`, () => pushTag(name)) },
   ];
@@ -418,6 +420,7 @@ export function onRemoteMenu(name: string, target: string, x: number, y: number)
   const items: MenuItem[] = [
     { label: "Checkout…", run: () => void checkoutRemoteAction(name) },
     compareWithHeadItem(name),
+    compareWithWorkdirItem(name),
     { separator: true },
     { label: "Copy Branch Name", run: () => void copyText(name, `Copied ${name}`) },
   ];
@@ -645,6 +648,11 @@ function compareWithHeadItem(ref: string): MenuItem {
     label: current ? "Compare with Current Branch" : "Compare with HEAD",
     run: () => void compareRefsAction(current ?? "HEAD", ref),
   };
+}
+
+// "Compare with Working Directory": `ref` against the files on disk.
+function compareWithWorkdirItem(ref: string): MenuItem {
+  return { label: "Compare with Working Directory", run: () => void compareWithWorkdirAction(ref, ref) };
 }
 
 // Show the three-dot comparison of `base` with `head` in the History view's

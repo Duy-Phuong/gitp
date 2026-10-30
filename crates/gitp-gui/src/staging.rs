@@ -6,7 +6,9 @@ use gitp_core::{FileDiff, Repo, SigningConfig, StatusLists};
 use tauri::State;
 
 use crate::state::{ensure_status, to_message, with_repo, with_repo_clearing_undo, RepoState};
-use crate::undo::{with_recorded_discard, with_recorded_head_move, with_recorded_index};
+use crate::undo::{
+    with_recorded_discard, with_recorded_files, with_recorded_head_move, with_recorded_index,
+};
 
 fn get_working_changes_impl(state: &RepoState) -> Result<Vec<FileDiff>, String> {
     with_repo(state, Repo::working_changes)
@@ -161,6 +163,40 @@ pub(crate) fn discard_files_impl(state: &RepoState, paths: Vec<String>) -> Resul
     with_recorded_discard(state, &paths, |repo| repo.discard_files(&paths))
 }
 
+/// Restore `paths` as they are in commit `rev` (staged), undoable like a
+/// discard.
+pub(crate) fn restore_files_from_commit_impl(
+    state: &RepoState,
+    rev: String,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let n = paths.len();
+    let short = rev.get(..7).unwrap_or(&rev);
+    let label = format!(
+        "Restore {n} file{} from {short}",
+        if n == 1 { "" } else { "s" }
+    );
+    with_recorded_files(state, label, &paths, |repo| {
+        repo.restore_files_from(&rev, &paths)
+    })
+}
+
+/// Undo one block of commit `rev`'s change to `path` in the working tree,
+/// recorded like a discard of that file so Undo restores it exactly.
+fn revert_commit_hunk_impl(
+    state: &RepoState,
+    rev: String,
+    path: String,
+    old_path: Option<String>,
+    hunk_index: usize,
+    context_lines: u32,
+) -> Result<(), String> {
+    let paths = [path.clone()];
+    with_recorded_files(state, format!("Revert block of {path}"), &paths, |repo| {
+        repo.revert_commit_hunk(&rev, &path, old_path.as_deref(), hunk_index, context_lines)
+    })
+}
+
 /// Write a patch of `paths` (staged or working-tree direction) to `dest`.
 fn save_files_patch_impl(
     state: &RepoState,
@@ -173,9 +209,21 @@ fn save_files_patch_impl(
     })
 }
 
+/// Apply the patch file at `path` (`git apply --3way`) to the working tree and
+/// index.
+fn apply_patch_impl(state: &RepoState, path: String) -> Result<(), String> {
+    with_repo_clearing_undo(state, |repo| repo.apply_patch(path.as_ref()))
+}
+
 /// Append `paths` to the repo's `.gitignore`; returns the number added.
 fn add_to_gitignore_impl(state: &RepoState, paths: Vec<String>) -> Result<usize, String> {
     with_repo_clearing_undo(state, |repo| repo.add_to_gitignore(&paths))
+}
+
+/// Stop tracking `paths`, keeping the files (the second half of "Ignore and
+/// Stop Tracking").
+fn untrack_files_impl(state: &RepoState, paths: Vec<String>) -> Result<(), String> {
+    with_repo_clearing_undo(state, |repo| repo.untrack_files(&paths))
 }
 
 // --- Tauri commands --------------------------------------------------------
@@ -314,6 +362,27 @@ pub(crate) fn discard_files(paths: Vec<String>, state: State<RepoState>) -> Resu
 }
 
 #[tauri::command(async)]
+pub(crate) fn restore_files_from_commit(
+    rev: String,
+    paths: Vec<String>,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    restore_files_from_commit_impl(&state, rev, paths)
+}
+
+#[tauri::command(async)]
+pub(crate) fn revert_commit_hunk(
+    rev: String,
+    path: String,
+    old_path: Option<String>,
+    hunk_index: usize,
+    context_lines: u32,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    revert_commit_hunk_impl(&state, rev, path, old_path, hunk_index, context_lines)
+}
+
+#[tauri::command(async)]
 pub(crate) fn save_files_patch(
     paths: Vec<String>,
     staged: bool,
@@ -324,9 +393,19 @@ pub(crate) fn save_files_patch(
 }
 
 #[tauri::command(async)]
+pub(crate) fn apply_patch(path: String, state: State<RepoState>) -> Result<(), String> {
+    apply_patch_impl(&state, path)
+}
+
+#[tauri::command(async)]
 pub(crate) fn add_to_gitignore(
     paths: Vec<String>,
     state: State<RepoState>,
 ) -> Result<usize, String> {
     add_to_gitignore_impl(&state, paths)
+}
+
+#[tauri::command(async)]
+pub(crate) fn untrack_files(paths: Vec<String>, state: State<RepoState>) -> Result<(), String> {
+    untrack_files_impl(&state, paths)
 }

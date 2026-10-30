@@ -13,6 +13,8 @@ export interface CommitMenuHandlers {
   currentBranch: string;
   copySha: () => void;
   checkoutCommit: () => void;
+  compareWithWorkdir: () => void;
+  savePatch: () => void;
   newBranch: (name: string) => void;
   newTag: (name: string) => void;
   cherryPick: () => void;
@@ -119,6 +121,7 @@ function buildRoot(menu: HTMLElement, row: CommitRow, h: CommitMenuHandlers): vo
   menu.append(
     el("div", { class: "menu-label", text: `Commit ${row.short_id}` }),
     item("Checkout Commit", h.checkoutCommit),
+    item("Compare with Working Directory", h.compareWithWorkdir),
     sep(),
     submenuItem("New Branch here…", () => promptName(menu, row, h, "New branch name", h.newBranch)),
     submenuItem("New Tag here…", () => promptName(menu, row, h, "New tag name", h.newTag)),
@@ -138,6 +141,7 @@ function buildRoot(menu: HTMLElement, row: CommitRow, h: CommitMenuHandlers): vo
     item("Hard (discard changes)", () => h.reset("Hard"), true),
     sep(),
     item("Copy Commit SHA", h.copySha),
+    item("Save as Patch…", h.savePatch),
   );
 }
 
