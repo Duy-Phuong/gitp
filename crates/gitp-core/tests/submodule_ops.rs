@@ -1,5 +1,6 @@
 //! Submodules: their status, `update --init --recursive` (one or all, with
-//! progress), `sync`, and how a moved submodule shows up in Local Changes.
+//! progress), `sync`, adding / re-pointing / removing one, and how a moved
+//! submodule shows up in Local Changes.
 //! The submodule is a local repo cloned over `file://`, so no network is
 //! involved.
 
@@ -222,4 +223,111 @@ fn a_moved_submodule_diffs_as_a_subproject_commit_change() {
             format!("+Subproject commit {}", s.first),
         ]
     );
+}
+
+#[test]
+fn add_clones_the_submodule_and_stages_it() {
+    let s = setup();
+    let url = format!("file://{}", s.lib.display());
+
+    Repo::open(&s.sup)
+        .unwrap()
+        .add_submodule(&format!("  {url} "), Some("vendor/lib2"))
+        .unwrap();
+
+    let repo = Repo::open(&s.sup).unwrap();
+    let added = repo
+        .submodules()
+        .unwrap()
+        .into_iter()
+        .find(|m| m.path == "vendor/lib2")
+        .expect("listed");
+    assert_eq!(added.url.as_deref(), Some(url.as_str()));
+    assert_eq!(added.state, SubmoduleState::UpToDate);
+    assert!(s.sup.join("vendor/lib2/lib.txt").exists());
+    let staged = git(&s.sup, &["diff", "--cached", "--name-only"]);
+    assert!(staged.contains(".gitmodules") && staged.contains("vendor/lib2"), "{staged}");
+}
+
+#[test]
+fn add_refuses_option_like_urls_and_paths_outside_the_repo() {
+    let s = setup();
+    let repo = Repo::open(&s.sup).unwrap();
+    let url = format!("file://{}", s.lib.display());
+    for (url, path) in [
+        ("--upload-pack=touch pwned", "x"),
+        ("", "x"),
+        (url.as_str(), "-f"),
+        (url.as_str(), "../outside"),
+        (url.as_str(), "a/../../outside"),
+        (url.as_str(), "/tmp/abs"),
+        (url.as_str(), " "),
+    ] {
+        assert!(repo.add_submodule(url, Some(path)).is_err(), "{url:?} {path:?}");
+    }
+    assert_eq!(repo.submodules().unwrap().len(), 1, "nothing added");
+    assert!(!s.sup.join("pwned").exists());
+}
+
+#[test]
+fn removed_then_added_again_without_a_path_uses_the_repository_name() {
+    let s = setup();
+    let url = format!("file://{}", s.lib.display());
+    // Removing drops the old clone in .git/modules, so git doesn't refuse
+    // (or silently reuse it) when the same name comes back.
+    Repo::open(&s.sup).unwrap().remove_submodule("lib").unwrap();
+
+    Repo::open(&s.sup).unwrap().add_submodule(&url, None).unwrap();
+
+    assert!(s.sup.join("lib/lib.txt").exists());
+}
+
+#[test]
+fn set_url_rewrites_gitmodules_and_the_config() {
+    let s = setup();
+    let repo = Repo::open(&s.sup).unwrap();
+
+    repo.set_submodule_url("lib", "file:///moved/lib").unwrap();
+
+    assert_eq!(
+        git(&s.sup, &["config", "-f", ".gitmodules", "submodule.lib.url"]),
+        "file:///moved/lib"
+    );
+    assert_eq!(
+        git(&s.sup, &["config", "submodule.lib.url"]),
+        "file:///moved/lib"
+    );
+    assert!(repo.set_submodule_url("lib", "-oops").is_err());
+}
+
+#[test]
+fn remove_deinits_stages_the_removal_and_drops_the_clone() {
+    let s = setup();
+    assert!(s.sup.join(".git/modules/lib").is_dir());
+
+    Repo::open(&s.sup).unwrap().remove_submodule("lib").unwrap();
+
+    let repo = Repo::open(&s.sup).unwrap();
+    assert!(repo.submodules().unwrap().is_empty());
+    assert!(!s.sup.join("lib").exists(), "folder gone");
+    assert!(!s.sup.join(".git/modules/lib").exists(), "clone gone");
+    // Staged for the user to commit: the gitlink deleted, .gitmodules emptied.
+    let staged = git(&s.sup, &["diff", "--cached", "--name-status"]);
+    assert!(staged.contains("D\tlib"), "{staged}");
+    assert!(staged.contains(".gitmodules"), "{staged}");
+}
+
+#[test]
+fn remove_works_on_an_uninitialized_submodule_and_refuses_unknown_paths() {
+    let s = setup();
+    let clone = s.sup.parent().unwrap().join("clone");
+    git(
+        s.sup.parent().unwrap(),
+        &["clone", "-q", s.sup.to_str().unwrap(), "clone"],
+    );
+    let repo = Repo::open(&clone).unwrap();
+    assert!(repo.remove_submodule("nope").is_err());
+
+    repo.remove_submodule("lib").unwrap();
+    assert!(Repo::open(&clone).unwrap().submodules().unwrap().is_empty());
 }

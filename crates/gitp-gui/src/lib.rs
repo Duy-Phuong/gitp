@@ -131,6 +131,8 @@ pub fn run() {
             tags::delete_remote_tag,
             tags::remote_tag_exists,
             commits::cherry_pick,
+            commits::cherry_pick_plan,
+            commits::continue_cherry_pick_plan,
             commits::revert,
             commits::reset,
             commits::save_commits_patch,
@@ -235,6 +237,9 @@ pub fn run() {
             submodules::list_submodules,
             submodules::update_submodules,
             submodules::sync_submodules,
+            submodules::add_submodule,
+            submodules::set_submodule_url,
+            submodules::remove_submodule,
         ])
         .run(tauri::generate_context!())
         .expect("error while running gitp");

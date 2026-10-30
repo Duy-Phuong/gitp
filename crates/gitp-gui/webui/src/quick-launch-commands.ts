@@ -94,7 +94,7 @@ import {
 } from "./commit-actions";
 import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
-import { syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
+import { addSubmoduleAction, syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { addRemoteAction } from "./remote-actions";
 import { createFileAction, editFileStage } from "./editor-actions";
@@ -485,6 +485,7 @@ function repoCommands(): QuickItem[] {
       },
     );
   }
+  items.push({ kind: "command", label: "Add Submodule…", run: addSubmoduleAction });
   if (state.submodules.length) {
     items.push(
       { kind: "command", label: "Update All Submodules", run: () => void updateSubmodulesAction(null) },

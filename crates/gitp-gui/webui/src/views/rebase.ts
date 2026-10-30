@@ -11,6 +11,10 @@
 // open it's the platform dropdown with the full one-line explanations, so
 // keyboard and screen-reader behaviour stay native.
 //
+// The same editor plans an interactive multi-commit cherry-pick
+// (openCherryPickModal): the selected commits onto HEAD, with only the actions
+// that make sense there (pick / reword / squash / drop) and no branch options.
+//
 // Nothing here re-renders the whole modal. Changing an action repaints one row,
 // selecting one moves a class and refetches the preview, and only a reorder
 // rebuilds the list (keeping its scroll position). The previous version called
@@ -43,8 +47,10 @@ const ACTIONS: { value: RebaseAction; name: string; label: string; key: string }
   { value: "fixup", name: "Fixup", label: "Fixup — meld into previous, discard message", key: "f" },
   { value: "drop", name: "Drop", label: "Drop — remove commit", key: "d" },
 ];
-const KEY_TO_ACTION = new Map(ACTIONS.map((a) => [a.key, a.value]));
 const ACTION_NAME = new Map(ACTIONS.map((a) => [a.value, a.name]));
+// What each step of a cherry-pick plan can do: no edit stop (there's no
+// rebase to pause) and no fixup.
+const CHERRY_PICK_ACTIONS: RebaseAction[] = ["pick", "reword", "squash", "drop"];
 
 // A rounded chevron for the move buttons; CSS rotates it for "up".
 function chevron(): SVGElement {
@@ -81,14 +87,27 @@ export function closeRebaseModal(): void {
   onKey = null;
 }
 
+// Plan a cherry-pick of `commits` (oldest first) onto `currentName`.
+export function openCherryPickModal(
+  currentName: string,
+  commits: RebaseCommit[],
+  onRun: (steps: RebaseStep[]) => void,
+): void {
+  openRebaseModal("", currentName, commits, (steps) => onRun(steps), true);
+}
+
 export function openRebaseModal(
   onto: string,
   currentName: string,
   commits: RebaseCommit[],
   onRun: (steps: RebaseStep[], opts: RebaseOptions) => void,
+  cherryPick = false,
 ): void {
   closeRebaseModal();
-  const rows: Row[] = commits.map((commit) => ({ commit, action: "pick", message: commit.subject }));
+  const actions = cherryPick ? ACTIONS.filter((a) => CHERRY_PICK_ACTIONS.includes(a.value)) : ACTIONS;
+  const keyToAction = new Map(actions.map((a) => [a.key, a.value]));
+  const initialRows = (): Row[] => commits.map((commit) => ({ commit, action: "pick", message: commit.subject }));
+  const rows = initialRows();
   let selected = 0;
   let updateRefs = false;
   let backup = false;
@@ -123,7 +142,7 @@ export function openRebaseModal(
       return;
     }
 
-    const action = KEY_TO_ACTION.get(e.key.toLowerCase());
+    const action = keyToAction.get(e.key.toLowerCase());
     if (action && rows[selected]) {
       setAction(selected, action);
       e.preventDefault();
@@ -157,14 +176,15 @@ export function openRebaseModal(
   function render(): void {
     clear(modal);
 
-    // Header: what's being rebased, onto what, and the update-refs toggle.
+    // Header: what's being rebased, onto what, and the update-refs toggle —
+    // or, for a cherry-pick, how many commits land on the current branch.
     const header = el("div", { class: "rebase-header" }, [
       el("span", { class: "rebase-onto" }, [
-        el("span", { class: "rebase-branch", text: currentName }),
+        el("span", { class: "rebase-branch", text: cherryPick ? `${commits.length} commits` : currentName }),
         el("span", { class: "rebase-onto-sep", text: "onto" }),
-        el("span", { class: "rebase-target", text: onto }),
+        el("span", { class: "rebase-target", text: cherryPick ? currentName : onto }),
       ]),
-      checkbox("Update dependent branches", updateRefs, (v) => (updateRefs = v)),
+      ...(cherryPick ? [] : [checkbox("Update dependent branches", updateRefs, (v) => (updateRefs = v))]),
     ]);
 
     list = el("div", { class: "rebase-list" });
@@ -178,9 +198,19 @@ export function openRebaseModal(
     const backupBox = checkbox("Backup current state with temporary branch", backup, (v) => (backup = v));
     backupBox.classList.add("rebase-backup");
 
+    // Back to the order the editor opened with, every commit picked.
+    const reset = el("button", { class: "btn ghost", text: "Reset" });
+    reset.addEventListener("click", () => {
+      rows.splice(0, rows.length, ...initialRows());
+      selected = 0;
+      renderList();
+      clear(preview);
+      renderPreview(preview);
+      refreshValidity();
+    });
     const cancel = el("button", { class: "btn ghost", text: "Cancel" });
     cancel.addEventListener("click", closeRebaseModal);
-    start = el("button", { class: "btn", text: "Rebase" }) as HTMLButtonElement;
+    start = el("button", { class: "btn", text: cherryPick ? "Cherry-pick" : "Rebase" }) as HTMLButtonElement;
     start.addEventListener("click", () => {
       const steps: RebaseStep[] = rows.map((r) => ({
         sha: r.commit.sha,
@@ -193,13 +223,17 @@ export function openRebaseModal(
 
     modal.append(
       header,
-      el("div", { class: "rebase-hint", text: "Drag to reorder · Alt+↑/↓ to move · P E R S F D to set an action" }),
+      el("div", {
+        class: "rebase-hint",
+        text: `Drag to reorder · Alt+↑/↓ to move · ${actions.map((a) => a.key.toUpperCase()).join(" ")} to set an action`,
+      }),
       list,
       preview,
       warn,
       el("div", { class: "modal-actions rebase-actions" }, [
-        backupBox,
+        ...(cherryPick ? [] : [backupBox]),
         el("span", { class: "spacer" }),
+        reset,
         cancel,
         start,
       ]),
@@ -263,7 +297,8 @@ export function openRebaseModal(
   // which git refuses — say so and block Rebase rather than letting it fail.
   function refreshValidity(): void {
     const invalid = planIsInvalid();
-    warn.textContent = invalid ? "The first applied commit can't be Squash or Fixup." : "";
+    const melds = cherryPick ? "Squash" : "Squash or Fixup";
+    warn.textContent = invalid ? `The first applied commit can't be ${melds}.` : "";
     start.disabled = invalid || rows.length === 0;
   }
 
@@ -377,7 +412,7 @@ export function openRebaseModal(
       class: "rebase-action-select",
       "aria-label": `Action for ${row.commit.short_sha}`,
     }) as HTMLSelectElement;
-    for (const a of ACTIONS) {
+    for (const a of actions) {
       const opt = el("option", { value: a.value, text: a.label }) as HTMLOptionElement;
       if (a.value === row.action) opt.selected = true;
       sel.append(opt);

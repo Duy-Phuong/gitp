@@ -1,11 +1,11 @@
 //! Actions on a single commit in the graph: check it out, cherry-pick,
 //! revert, or reset the current branch to it — or save commits as a patch.
 
-use gitp_core::ResetMode;
+use gitp_core::{PickPlanOutcome, PickStep, ResetMode, Undoable};
 use tauri::State;
 
-use crate::state::{with_repo, RepoState};
-use crate::undo::{with_recorded_checkout, with_recorded_head_move};
+use crate::state::{to_message, with_repo, RepoState};
+use crate::undo::{clear_undo, set_undo, with_recorded_checkout, with_recorded_head_move};
 
 /// Detach HEAD onto `rev`. Invalidates the cached log because HEAD moves.
 pub(crate) fn checkout_commit_impl(state: &RepoState, rev: String) -> Result<String, String> {
@@ -28,6 +28,46 @@ fn short_rev(rev: &str) -> String {
 /// Cherry-pick `rev` onto the current branch. Invalidates the cached log.
 fn cherry_pick_impl(state: &RepoState, rev: String) -> Result<String, String> {
     with_recorded_head_move(state, "Cherry-pick", false, |repo| repo.cherry_pick(&rev))
+}
+
+/// Cherry-pick an edited plan of commits onto the current branch. A plan that
+/// runs through is one undo step; one paused on a conflict records nothing
+/// (see `with_recorded_head_move`) until its continuation finishes.
+pub(crate) fn cherry_pick_plan_impl(
+    state: &RepoState,
+    steps: Vec<PickStep>,
+) -> Result<PickPlanOutcome, String> {
+    with_recorded_head_move(state, "Cherry-pick", false, |repo| repo.cherry_pick_plan(&steps))
+}
+
+/// Resume a plan paused on a conflict. The resolver's own `--continue` was
+/// recorded as an undo of just that commit; once the plan finishes the slot
+/// is replaced by the whole run, back to the HEAD the plan started from.
+pub(crate) fn continue_cherry_pick_plan_impl(state: &RepoState) -> Result<PickPlanOutcome, String> {
+    let mut guard = state.0.lock().map_err(to_message)?;
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let out = session
+        .repo
+        .continue_cherry_pick_plan()
+        .map_err(to_message)?;
+    if out.paused || session.repo.operation_in_progress() {
+        clear_undo(session);
+        return Ok(out);
+    }
+    let after = session.repo.head_commit_id().map_err(to_message)?;
+    if after != out.start_head {
+        set_undo(
+            session,
+            Undoable::HeadMoved {
+                label: "Cherry-pick".into(),
+                before: out.start_head.clone(),
+                after,
+                soft: false,
+            },
+        );
+    }
+    Ok(out)
 }
 
 /// Revert `rev` on the current branch. Invalidates the cached log.
@@ -66,6 +106,19 @@ pub(crate) fn checkout_commit(rev: String, state: State<RepoState>) -> Result<St
 #[tauri::command(async)]
 pub(crate) fn cherry_pick(rev: String, state: State<RepoState>) -> Result<String, String> {
     cherry_pick_impl(&state, rev)
+}
+
+#[tauri::command(async)]
+pub(crate) fn cherry_pick_plan(
+    steps: Vec<PickStep>,
+    state: State<RepoState>,
+) -> Result<PickPlanOutcome, String> {
+    cherry_pick_plan_impl(&state, steps)
+}
+
+#[tauri::command(async)]
+pub(crate) fn continue_cherry_pick_plan(state: State<RepoState>) -> Result<PickPlanOutcome, String> {
+    continue_cherry_pick_plan_impl(&state)
 }
 
 #[tauri::command(async)]

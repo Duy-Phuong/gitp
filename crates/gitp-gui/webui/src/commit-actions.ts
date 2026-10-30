@@ -6,7 +6,9 @@ import {
   bisectStart,
   checkoutCommit,
   cherryPick,
+  cherryPickPlan,
   confirmDialog,
+  continueCherryPickPlan,
   createBranchAt,
   createTagAt,
   createBackupBranch,
@@ -23,9 +25,9 @@ import { $ } from "./dom";
 import { logRowTop, renderLog } from "./views/log";
 import { showCommitMenu } from "./views/commit-menu";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
-import { openRebaseModal, type RebaseOptions } from "./views/rebase";
+import { openCherryPickModal, openRebaseModal, type RebaseOptions } from "./views/rebase";
 import { openFormDialog } from "./views/form-dialog";
-import type { CommitRow, FileDiff, RebaseAction, RebaseStep, ReflogEntry, ResetMode } from "./types";
+import type { CommitRow, FileDiff, PickPlanOutcome, RebaseAction, RebaseStep, ReflogEntry, ResetMode } from "./types";
 import { state, ui } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
@@ -313,6 +315,47 @@ export async function runNextCherryPick(): Promise<void> {
   }
 }
 
+// "Cherry-pick N Commits (Interactive)…": plan the selected commits (oldest
+// first) in the rebase editor — reorder, pick / reword / squash / drop — and
+// run the plan onto HEAD. The backend runs it step by step; a conflict pauses
+// it on the normal resolver, and finishing there resumes the rest (the
+// conflictView onDone hook in init()), the same as the queued batch above.
+function cherryPickInteractive(commits: CommitRow[]): void {
+  const current = state.refs.head ?? "HEAD";
+  const planned = commits.map((c) => ({ sha: c.id, short_sha: c.short_id, subject: c.summary }));
+  openCherryPickModal(current, planned, (steps) => {
+    const n = steps.filter((s) => s.action !== "drop").length;
+    void runCherryPickPlan(`Cherry-picking ${n} commits onto ${current}`, () => cherryPickPlan(steps));
+  });
+}
+
+// Pick a paused plan back up once its conflict is resolved and committed.
+export async function resumeCherryPickPlan(): Promise<void> {
+  await runCherryPickPlan("Continuing the cherry-pick", continueCherryPickPlan);
+}
+
+async function runCherryPickPlan(label: string, run: () => Promise<PickPlanOutcome>): Promise<void> {
+  setStatus(`${label}…`);
+  try {
+    const out = await run();
+    if (out.paused) {
+      await Promise.all([refreshConflictStatus(), refreshRebaseStatus()]);
+      ui.pickPlanRepo = state.repoPath;
+      showView("conflict");
+      setStatus("A commit conflicted — resolve it to continue the cherry-pick.");
+      return;
+    }
+    showView("history");
+    await Promise.all([refreshHistory(), loadSidebar()]);
+    reportDone(out.output.trim() || "Cherry-pick done.");
+  } catch (err) {
+    // Whatever stopped it, show where the repo ended up (some steps may have
+    // landed) and any conflict it left behind.
+    await Promise.all([refreshHistory(), loadSidebar(), refreshConflictStatus(), refreshRebaseStatus()]);
+    opFailed("Cherry-pick failed", err);
+  }
+}
+
 // --- Commit right-click menu ------------------------------------------------
 
 // Open the context menu for a right-clicked commit, wiring each item to the
@@ -324,6 +367,7 @@ function onCommitBulkContextMenu(x: number, y: number): void {
   const items: MenuItem[] = [
     ...(combined ? [{ label: "Show Combined Diff", run: () => void showCombinedDiff(combined.base, combined.head, n) }] : []),
     { label: `Cherry-pick ${n} Commits`, run: () => void cherryPickSelectedCommits(commits) },
+    { label: `Cherry-pick ${n} Commits (Interactive)…`, run: () => cherryPickInteractive(commits) },
     { label: `Copy ${n} SHAs`, run: () => void copySelectedShasAction(commits) },
     { label: `Save ${n} Commits as Patch…`, run: () => void saveCommitsPatchAction(commits) },
     { separator: true },

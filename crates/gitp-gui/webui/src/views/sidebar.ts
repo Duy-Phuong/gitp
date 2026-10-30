@@ -33,7 +33,7 @@ export interface SidebarState {
   // The repo's worktrees, main first. The section shows only when there's a
   // linked one beside the main worktree.
   worktrees: Worktree[];
-  // The repo's submodules; the section shows only when there are any.
+  // The repo's submodules. The section always shows, for its "+" (Add).
   submodules: Submodule[];
   // The configured remotes, listed in Remotes even before any branch of
   // theirs has been fetched.
@@ -86,6 +86,8 @@ export interface SidebarCallbacks {
   onToggleHidden: (refname: string) => void;
   // Right-click the Branches, Remotes or Tags header: Hide All / Show All.
   onSectionMenu: (key: string, x: number, y: number) => void;
+  // The Submodules header's "+": add one.
+  onAddSubmodule: () => void;
 }
 
 export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCallbacks): void {
@@ -645,8 +647,13 @@ function buildSubmodules(
   cb: SidebarCallbacks,
   match: (t: string) => boolean,
 ): void {
-  if (s.submodules.length === 0) return;
   const { row, collapsed } = sectionHeader("sec:submodules", "Submodules", s, cb);
+  const add = el("button", { class: "sb-section-add", text: "+", title: "Add Submodule…" });
+  add.addEventListener("click", (e) => {
+    e.stopPropagation(); // not a collapse toggle
+    cb.onAddSubmodule();
+  });
+  row.append(add);
   tree.append(row);
   if (collapsed) return;
   for (const sm of s.submodules) if (match(sm.path)) tree.append(submoduleLeaf(sm, cb));
@@ -663,7 +670,7 @@ function submoduleLeaf(sm: Submodule, cb: SidebarCallbacks): HTMLElement {
       sm.path,
       sm.url ?? "",
       `Recorded: ${short(sm.recorded)} · Checked out: ${short(sm.checked_out)}`,
-      "Double-click: open · Right-click: update, sync",
+      "Double-click: open · Right-click: update, sync, edit URL, remove",
     ]
       .filter(Boolean)
       .join("\n"),

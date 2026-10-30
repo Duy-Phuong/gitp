@@ -28,6 +28,7 @@ import type {
   LogPage,
   MergeMode,
   LogScope,
+  PickPlanOutcome,
   PullMode,
   RebaseCommit,
   RebaseStatus,
@@ -677,6 +678,21 @@ export async function remoteTagExists(name: string): Promise<boolean> {
 export async function cherryPick(rev: string): Promise<string> {
   if (!isTauri()) return `Cherry-picked ${rev.slice(0, 10)} (preview mock)`;
   return invoke<string>("cherry_pick", { rev });
+}
+
+// Cherry-pick an edited plan (pick / reword / squash / drop, in order) onto
+// HEAD. Only those four actions are valid here.
+export async function cherryPickPlan(steps: RebaseStep[]): Promise<PickPlanOutcome> {
+  if (!isTauri()) {
+    const n = steps.filter((s) => s.action !== "drop").length;
+    return { output: `Cherry-picked ${n} commits (preview mock)`, paused: false, start_head: "" };
+  }
+  return invoke<PickPlanOutcome>("cherry_pick_plan", { steps });
+}
+
+export async function continueCherryPickPlan(): Promise<PickPlanOutcome> {
+  if (!isTauri()) return { output: "Finished the cherry-pick plan (preview mock)", paused: false, start_head: "" };
+  return invoke<PickPlanOutcome>("continue_cherry_pick_plan");
 }
 
 export async function revertCommit(rev: string): Promise<string> {
@@ -1467,6 +1483,39 @@ export async function updateSubmodules(path: string | null): Promise<string> {
 export async function syncSubmodules(path: string | null): Promise<string> {
   if (!isTauri()) return `Synchronizing submodule url for '${path ?? MOCK_SUBMODULES[0].path}' (preview mock)`;
   return invoke<string>("sync_submodules", { path });
+}
+
+// `git submodule add -- <url> [<path>]` (no path: git names the folder after
+// the repository): clones, so it reports progress and
+// can be cancelled like update. The new submodule is left staged.
+export async function addSubmodule(url: string, path: string | null): Promise<string> {
+  if (!isTauri()) {
+    path ??= url.replace(/\/+$/, "").split("/").pop()!.replace(/\.git$/, "");
+    MOCK_SUBMODULES.push({ name: path, path, url, recorded: mockOid("d"), checked_out: mockOid("d"), state: "up_to_date" });
+    return `Cloning into '${path}'... (preview mock)`;
+  }
+  return invokeNetwork<string>("add_submodule", { url, path });
+}
+
+// `git submodule set-url`: a new URL in .gitmodules, synced into the config.
+export async function setSubmoduleUrl(path: string, url: string): Promise<string> {
+  if (!isTauri()) {
+    const m = MOCK_SUBMODULES.find((m) => m.path === path);
+    if (m) m.url = url;
+    return "";
+  }
+  return invoke<string>("set_submodule_url", { path, url });
+}
+
+// Deinit, `git rm` and delete its clone under .git/modules; the removal is
+// left staged for the user to commit.
+export async function removeSubmodule(path: string): Promise<string> {
+  if (!isTauri()) {
+    const i = MOCK_SUBMODULES.findIndex((m) => m.path === path);
+    if (i !== -1) MOCK_SUBMODULES.splice(i, 1);
+    return `rm '${path}' (preview mock)`;
+  }
+  return invoke<string>("remove_submodule", { path });
 }
 
 // ---------------------------------------------------------------------------

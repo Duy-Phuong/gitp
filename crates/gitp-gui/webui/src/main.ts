@@ -117,11 +117,12 @@ import {
   restoreFilesAction,
   revertHunkAction,
   runCommitOp,
+  resumeCherryPickPlan,
   runNextCherryPick,
 } from "./commit-actions";
 import { onWorktreeMenu } from "./worktree-actions";
 import { addRemoteAction, onRemoteFolderMenu, onRemotesMenu } from "./remote-actions";
-import { onSubmoduleMenu, openSubmodule } from "./submodule-actions";
+import { addSubmoduleAction, onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import { createFileAction, editFileAction } from "./editor-actions";
 import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
@@ -246,6 +247,7 @@ async function init(): Promise<void> {
     onWorktreeMenu,
     onSubmoduleOpen: openSubmodule,
     onSubmoduleMenu,
+    onAddSubmodule: addSubmoduleAction,
     createBranchAt: (name, rev) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
     onSectionMenu,
   });
@@ -348,7 +350,10 @@ async function init(): Promise<void> {
       // An abort mid-batch cancels the rest — resolving that one commit's
       // conflict clearly wasn't wanted, so continuing to apply the remaining
       // queued commits without asking would be surprising.
-      if (aborted) ui.pendingCherryPicks = [];
+      if (aborted) {
+        ui.pendingCherryPicks = [];
+        ui.pickPlanRepo = "";
+      }
       // Resume only the batch this session paused: same repo, and the session
       // that just finished was its cherry-pick (not some later merge the
       // leftovers would otherwise be applied on top of). Decided now, because
@@ -359,6 +364,9 @@ async function init(): Promise<void> {
         queued.length > 0 &&
         ui.pendingCherryPicksRepo === state.repoPath &&
         state.conflict?.kind === "cherry-pick";
+      // An interactive cherry-pick plan paused here resumes the same way.
+      const planRepo = ui.pickPlanRepo;
+      const resumePlan = !aborted && planRepo === state.repoPath && state.conflict?.kind === "cherry-pick";
       showView("history");
       try {
         await Promise.all([refreshHistory(), loadSidebar()]);
@@ -371,6 +379,10 @@ async function init(): Promise<void> {
       if (resume && ui.pendingCherryPicksRepo === state.repoPath) {
         ui.pendingCherryPicks = queued;
         await runNextCherryPick();
+      }
+      if (resumePlan && planRepo === state.repoPath) {
+        ui.pickPlanRepo = "";
+        await resumeCherryPickPlan();
       }
     },
   });

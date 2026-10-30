@@ -475,11 +475,11 @@ mod tests {
     use std::path::Path;
     use std::process::Command;
 
-    use gitp_core::{RebaseAction, RebaseStep, ResetMode};
+    use gitp_core::{PickAction, PickStep, RebaseAction, RebaseStep, ResetMode};
 
     use super::{redo_impl, undo_impl, undo_state_impl};
     use crate::branches::{checkout_remote_impl, create_backup_branch_impl, create_branch_at_impl};
-    use crate::commits::reset_impl;
+    use crate::commits::{cherry_pick_plan_impl, continue_cherry_pick_plan_impl, reset_impl};
     use crate::history::get_log_page_impl;
     use crate::rebase::interactive_rebase_impl;
     use crate::staging::{
@@ -750,6 +750,49 @@ mod tests {
         );
         assert!(undo_impl(&state).is_err(), "nothing to undo mid-rebase");
         git(dir.path(), &["rebase", "--abort"]);
+    }
+
+    #[test]
+    fn a_cherry_pick_plan_resumed_after_a_conflict_undoes_as_one_step() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let main = head_branch(dir.path());
+        git(dir.path(), &["checkout", "-q", "-b", "side"]);
+        std::fs::write(dir.path().join("f.txt"), "side\n").unwrap();
+        git(dir.path(), &["commit", "-q", "-am", "s1"]);
+        let s1 = git_out(dir.path(), &["rev-parse", "HEAD"]);
+        std::fs::write(dir.path().join("g.txt"), "g\n").unwrap();
+        git(dir.path(), &["add", "g.txt"]);
+        git(dir.path(), &["commit", "-q", "-m", "s2"]);
+        let s2 = git_out(dir.path(), &["rev-parse", "HEAD"]);
+        git(dir.path(), &["checkout", "-q", &main]);
+        std::fs::write(dir.path().join("f.txt"), "main\n").unwrap();
+        git(dir.path(), &["commit", "-q", "-am", "c2"]);
+        let start = git_out(dir.path(), &["rev-parse", "HEAD"]);
+        let state = open(dir.path());
+
+        let pick = |sha: &str| PickStep {
+            sha: sha.into(),
+            action: PickAction::Pick,
+            message: None,
+        };
+        let out = cherry_pick_plan_impl(&state, vec![pick(&s1), pick(&s2)]).unwrap();
+        assert!(out.paused, "s1 conflicts");
+        assert_eq!(undo_state_impl(&state).unwrap().undo, None);
+
+        std::fs::write(dir.path().join("f.txt"), "resolved\n").unwrap();
+        git(dir.path(), &["add", "f.txt"]);
+        git(dir.path(), &["-c", "core.editor=true", "cherry-pick", "--continue"]);
+        let out = continue_cherry_pick_plan_impl(&state).unwrap();
+        assert!(!out.paused);
+        assert!(dir.path().join("g.txt").exists(), "s2 applied after the pause");
+        assert_eq!(
+            undo_state_impl(&state).unwrap().undo.as_deref(),
+            Some("Cherry-pick")
+        );
+
+        undo_impl(&state).expect("undo");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), start, "both picks undone");
     }
 
     #[test]

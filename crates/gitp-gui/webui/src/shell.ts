@@ -74,6 +74,7 @@ interface RefActions {
   onWorktreeMenu: SidebarCallbacks["onWorktreeMenu"];
   onSubmoduleOpen: SidebarCallbacks["onSubmoduleOpen"];
   onSubmoduleMenu: SidebarCallbacks["onSubmoduleMenu"];
+  onAddSubmodule: SidebarCallbacks["onAddSubmodule"];
   // The detached-HEAD banner's "Create Branch Here…".
   createBranchAt: (name: string, rev: string) => void;
   onSectionMenu: SidebarCallbacks["onSectionMenu"];
@@ -149,7 +150,7 @@ export function applyWorkspace(ws: Workspace): void {
 
 // Forget every piece of per-repo view state when the active repo changes: the
 // staging view's selection/commit message/Amend, the resolver's partial
-// choices, a paused cherry-pick batch, and the conflict-message prefill. The
+// choices, a paused cherry-pick batch or plan, and the conflict-message prefill. The
 // views are singletons, so without this repo A's state leaks into repo B —
 // up to amending B's HEAD with A's message.
 function resetRepoViews(): void {
@@ -158,6 +159,7 @@ function resetRepoViews(): void {
   ui.reflogView?.reset();
   ui.activityView?.reset();
   ui.pendingCherryPicks = [];
+  ui.pickPlanRepo = "";
   conflictPrefill = null;
 }
 
@@ -838,6 +840,7 @@ export function renderSidebarNow(): void {
       onSubmoduleMenu: (sm, x, y) => refActions.onSubmoduleMenu(sm, x, y),
       onToggleHidden: (refname) => updateGraphPrefs(withHidden(state.graph, [refname], !state.graph.hidden.includes(refname))),
       onSectionMenu: (key, x, y) => refActions.onSectionMenu(key, x, y),
+      onAddSubmodule: () => refActions.onAddSubmodule(),
     },
   );
 }
@@ -1050,7 +1053,10 @@ function applyConflictStatus(st: ConflictStatus | null): void {
   // A queued cherry-pick batch belongs to its own cherry-pick session: a
   // different kind of conflict means it was abandoned (e.g. a terminal abort
   // followed by a merge), so the leftovers must not run after that one.
-  if (state.conflict && state.conflict.kind !== "cherry-pick") ui.pendingCherryPicks = [];
+  if (state.conflict && state.conflict.kind !== "cherry-pick") {
+    ui.pendingCherryPicks = [];
+    ui.pickPlanRepo = "";
+  }
   if (hadConflict && !state.conflict) {
     // The session ended outside the resolver (terminal abort, commit from
     // Local Changes): drop its prefilled message if untouched, the resolver's
@@ -1059,6 +1065,7 @@ function applyConflictStatus(st: ConflictStatus | null): void {
     conflictPrefill = null;
     ui.conflictView?.reset();
     ui.pendingCherryPicks = [];
+    ui.pickPlanRepo = "";
   }
   // A resolved/aborted merge should not strand the user on the conflict view.
   if (state.view === "conflict" && !state.conflict) showView("history");
@@ -1113,6 +1120,7 @@ async function abortConflictAction(): Promise<void> {
     const out = await abortConflict();
     ui.conflictView?.reset(); // forget partial choices so a re-merge starts fresh
     ui.pendingCherryPicks = []; // the rest of a paused batch goes with it
+    ui.pickPlanRepo = ""; // …or of a paused plan
     showView("history");
     await Promise.all([refreshHistory(), loadSidebar()]);
     reportDone(out.trim() || "Aborted.");

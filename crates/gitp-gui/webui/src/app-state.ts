@@ -133,4 +133,7 @@ export const ui = {
   // The repo a conflicted batch paused in — the resolver's onDone resumes only
   // a batch that belongs to the repo and session that just finished.
   pendingCherryPicksRepo: "",
+  // The repo an interactive cherry-pick plan paused in on a conflict (its
+  // remaining steps are kept by the backend); "" when none is waiting.
+  pickPlanRepo: "",
 };
