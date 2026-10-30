@@ -1,5 +1,6 @@
-//! Comparing any two revisions — commits, branches or tags — as a tree-to-tree
-//! diff in the same `FileDiff` shape a commit's own diff uses.
+//! Comparing any two revisions — commits, branches or tags — or a revision and
+//! the working directory, as a diff in the same `FileDiff` shape a commit's own
+//! diff uses.
 //!
 //! Two modes, named after git's range syntax: two-dot (`base..head`) diffs the
 //! two trees directly; three-dot (`base...head`) diffs from their merge base
@@ -7,7 +8,9 @@
 //!
 //! Besides a revision, a side can be [`EMPTY_REV`] — no files at all — so a
 //! combined diff of a run of commits that starts at a root commit can diff
-//! from before it.
+//! from before it; or [`WORKDIR_REV`], the working directory's tracked files
+//! with any uncommitted changes (`git diff <rev>`). The working directory
+//! stands for HEAD in the merge base and the ahead / behind counts.
 
 use serde::Serialize;
 
@@ -20,8 +23,12 @@ use crate::repo::Repo;
 /// contain a space), so it can't shadow a real revision.
 pub const EMPTY_REV: &str = "Empty Tree";
 
+/// The `rev` naming the working directory as a side of a comparison — see
+/// [`EMPTY_REV`] for why it reads as a label.
+pub const WORKDIR_REV: &str = "Working Directory";
+
 /// One side of a comparison. `id`, `short_id` and `summary` are empty for
-/// [`EMPTY_REV`], which is no commit.
+/// [`EMPTY_REV`] and [`WORKDIR_REV`], which are no commit.
 #[derive(Debug, Clone, Serialize)]
 pub struct CompareEnd {
     /// The revision as given (a ref name or an id), for display.
@@ -118,6 +125,11 @@ impl Repo {
         if rev == EMPTY_REV {
             return Ok(Side::Empty);
         }
+        if rev == WORKDIR_REV {
+            // An unborn branch has no HEAD commit yet.
+            let head = self.inner.head().ok().and_then(|h| h.target());
+            return Ok(Side::Workdir(head));
+        }
         Ok(Side::Commit(
             self.inner.revparse_single(rev)?.peel_to_commit()?,
         ))
@@ -130,26 +142,43 @@ impl Repo {
         Ok(walk.count())
     }
 
-    /// The tree-to-tree diff for a comparison, with renames detected.
+    /// The diff for a comparison, with renames detected. The working directory
+    /// is diffed through the index, as `git diff <rev>` does: tracked files,
+    /// staged changes or not; untracked files are left out.
     fn compare_diff(
         &self,
         ends: &Ends,
         three_dot: bool,
         opts: &mut git2::DiffOptions,
     ) -> Result<git2::Diff<'_>> {
-        let from = if three_dot {
+        let from = || -> Result<Option<git2::Tree<'_>>> {
+            if !three_dot {
+                return ends.base.tree();
+            }
             let id = ends.merge_base.ok_or_else(|| {
                 Error::Message(
                     "these revisions have no common ancestor — use a two-dot comparison".into(),
                 )
             })?;
-            Some(self.inner.find_commit(id)?.tree()?)
-        } else {
-            ends.base.tree()?
+            Ok(Some(self.inner.find_commit(id)?.tree()?))
         };
-        let mut diff =
-            self.inner
-                .diff_tree_to_tree(from.as_ref(), ends.head.tree()?.as_ref(), Some(opts))?;
+        let mut diff = match (&ends.base, &ends.head) {
+            (Side::Workdir(_), Side::Workdir(_)) => {
+                self.inner.diff_tree_to_tree(None, None, Some(opts))?
+            }
+            (_, Side::Workdir(_)) => self
+                .inner
+                .diff_tree_to_workdir_with_index(from()?.as_ref(), Some(opts))?,
+            // From the working directory to a revision: that revision's diff
+            // to it, reversed.
+            (Side::Workdir(_), head) if !three_dot => self
+                .inner
+                .diff_tree_to_workdir_with_index(head.tree()?.as_ref(), Some(opts.reverse(true)))?,
+            (_, head) => {
+                self.inner
+                    .diff_tree_to_tree(from()?.as_ref(), head.tree()?.as_ref(), Some(opts))?
+            }
+        };
         diff.find_similar(Some(&mut git2::DiffFindOptions::new()))?;
         Ok(diff)
     }
@@ -167,6 +196,8 @@ enum Side<'r> {
     Commit(git2::Commit<'r>),
     /// [`EMPTY_REV`].
     Empty,
+    /// [`WORKDIR_REV`], with the HEAD commit it stands for in history.
+    Workdir(Option<git2::Oid>),
 }
 
 impl<'r> Side<'r> {
@@ -174,14 +205,17 @@ impl<'r> Side<'r> {
         match self {
             Side::Commit(c) => Some(c.id()),
             Side::Empty => None,
+            Side::Workdir(head) => *head,
         }
     }
 
-    /// The side's files; `None` is the empty tree.
+    /// The side's files; `None` is the empty tree. The working directory has
+    /// no tree — `compare_diff` diffs against it directly.
     fn tree(&self) -> Result<Option<git2::Tree<'r>>> {
         match self {
             Side::Commit(c) => Ok(Some(c.tree()?)),
             Side::Empty => Ok(None),
+            Side::Workdir(_) => Err(Error::Message("the working directory is not a tree".into())),
         }
     }
 }

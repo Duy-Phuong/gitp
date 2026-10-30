@@ -123,8 +123,13 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
   function showCompare(cmp: Comparison): void {
     const before = compare ? viewKey() : null;
     compare = cmp;
+    // The working directory changes under the same key, so a re-diff fetched
+    // for it may be stale by now.
+    if (!cmp.base.id || !cmp.head.id) recontexted = null;
     detail = {
-      id: cmp.head.id,
+      // Blame / History go as of a commit: the base when the head is the
+      // working directory (which is no commit).
+      id: cmp.head.id || cmp.base.id,
       summary: cmp.head.summary,
       message: cmp.head.summary,
       author_name: "",

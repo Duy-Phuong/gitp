@@ -2,6 +2,7 @@
 // multi-select), the history-rewriting rebase shortcuts, and batch cherry-pick.
 
 import {
+  WORKDIR_REV,
   bisectStart,
   checkoutCommit,
   cherryPick,
@@ -200,6 +201,16 @@ async function showCombinedDiff(base: string, head: string, n: number): Promise<
   await showComparison(base, head, false);
 }
 
+// "Compare with Working Directory": everything between `rev` and the files on
+// disk, committed since or not — two-dot, like `git diff <rev>`. Shown in the
+// History view's detail pane, the same way Compare with Current Branch is.
+export async function compareWithWorkdirAction(rev: string, label: string): Promise<void> {
+  if (state.view !== "history") showView("history", { refreshHistory: false });
+  await clearCommitSelection();
+  setStatus(`Comparing ${label} with the working directory…`);
+  await showComparison(rev, WORKDIR_REV, false);
+}
+
 // Cherry-pick every selected commit, oldest first. A conflict pauses the
 // batch on the normal conflict resolver; finishing it resumes with whatever
 // is left in `pendingCherryPicks`, aborting cancels the rest (see the
@@ -281,6 +292,7 @@ export function onCommitContextMenu(row: CommitRow, x: number, y: number): void 
   showCommitMenu(x, y, row, {
     currentBranch: state.refs.head ?? "HEAD",
     copySha: () => void copySha(rev),
+    compareWithWorkdir: () => void compareWithWorkdirAction(rev, short),
     checkoutCommit: () => void checkoutCommitAction(rev, short),
     newBranch: (name) => void runCommitOp(`Creating ${name}`, () => createBranchAt(name, rev), rev),
     newTag: (name) => void tagAction(name, rev, short),

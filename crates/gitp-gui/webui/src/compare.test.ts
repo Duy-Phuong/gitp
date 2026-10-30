@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { compareRevs, EMPTY_REV, MOCK_LOG } from "./api";
+import { compareRevs, EMPTY_REV, MOCK_LOG, WORKDIR_REV } from "./api";
 import { combinedDiffEnds, olderFirst } from "./compare";
 import { compareEndLabel } from "./views/detail";
 
@@ -74,6 +74,13 @@ describe("compareRevs in preview mode", () => {
     const cmp = await compareRevs(EMPTY_REV, a, false);
     expect(cmp.base).toMatchObject({ rev: EMPTY_REV, id: "" });
     expect([cmp.ahead, cmp.behind]).toEqual([1, 0]);
+  });
+
+  it("compares with the working directory, which stands for HEAD", async () => {
+    const cmp = await compareRevs(a, WORKDIR_REV, false);
+    expect(cmp.head).toMatchObject({ rev: WORKDIR_REV, id: "" });
+    expect(compareEndLabel(cmp.head)).toBe(WORKDIR_REV);
+    expect([cmp.ahead, cmp.behind]).toEqual([MOCK_LOG.length - 1, 0]);
   });
 
   it("rejects an unknown revision", async () => {

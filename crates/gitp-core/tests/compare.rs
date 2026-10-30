@@ -1,7 +1,7 @@
 mod common;
 
 use common::FixtureRepo;
-use gitp_core::{ChangeKind, Comparison, Repo, EMPTY_REV};
+use gitp_core::{ChangeKind, Comparison, Repo, EMPTY_REV, WORKDIR_REV};
 
 /// Commit a tree holding exactly `files` (flat paths), with explicit parents,
 /// and point `refs/heads/<branch>` at it. Trees are built from scratch so a
@@ -291,4 +291,68 @@ fn the_empty_tree_as_base_shows_everything_as_added() {
         repo.compare(EMPTY_REV, "main", true).is_err(),
         "no merge base"
     );
+}
+
+/// Whether `path` in `c` has a line `origin`+`content`.
+fn has_line(c: &Comparison, path: &str, origin: char, content: &str) -> bool {
+    c.files
+        .iter()
+        .filter(|f| f.path == path)
+        .flat_map(|f| &f.hunks)
+        .flat_map(|h| &h.lines)
+        .any(|l| l.origin == origin && l.content == content)
+}
+
+// A revision against the working directory: tracked files as they are on disk,
+// committed since or not, staged or not; untracked files stay out. Swapped,
+// the same diff runs the other way.
+#[test]
+fn compares_a_revision_with_the_working_directory() {
+    let f = FixtureRepo::init();
+    let c1 = f.commit_file("a.txt", "one\n", "c1");
+    f.commit_file("a.txt", "two\n", "c2");
+    std::fs::write(f.path().join("a.txt"), "three\n").unwrap();
+    std::fs::write(f.path().join("s.txt"), "staged\n").unwrap();
+    std::fs::write(f.path().join("u.txt"), "untracked\n").unwrap();
+    let repo = Repo::open(f.path()).unwrap();
+    repo.stage("s.txt").unwrap();
+    let c1 = c1.to_string();
+
+    let cmp = repo.compare(&c1, WORKDIR_REV, false).unwrap();
+    assert_eq!(
+        changes(&cmp),
+        [
+            ("a.txt".to_string(), ChangeKind::Modified),
+            ("s.txt".to_string(), ChangeKind::Added),
+        ]
+    );
+    assert!(has_line(&cmp, "a.txt", '-', "one") && has_line(&cmp, "a.txt", '+', "three"));
+    // The working directory stands for HEAD (c2), one commit past c1.
+    assert_eq!((cmp.ahead, cmp.behind), (1, 0));
+    assert_eq!(cmp.merge_base.as_deref(), Some(c1.as_str()));
+    assert_eq!(
+        (cmp.head.rev.as_str(), cmp.head.id.as_str()),
+        (WORKDIR_REV, "")
+    );
+
+    let back = repo.compare(WORKDIR_REV, &c1, false).unwrap();
+    assert_eq!(
+        changes(&back),
+        [
+            ("a.txt".to_string(), ChangeKind::Modified),
+            ("s.txt".to_string(), ChangeKind::Deleted),
+        ]
+    );
+    assert!(has_line(&back, "a.txt", '-', "three") && has_line(&back, "a.txt", '+', "one"));
+
+    let file = repo
+        .compare_file_diff(&c1, WORKDIR_REV, false, "a.txt", None, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(file.hunks.len(), 1);
+    assert!(repo
+        .compare(WORKDIR_REV, WORKDIR_REV, false)
+        .unwrap()
+        .files
+        .is_empty());
 }
