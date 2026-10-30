@@ -56,7 +56,14 @@ fn open_at(path: &str) -> Result<Repo, String> {
     if !dir.join(".git").exists() {
         return Err(format!("not a git repository: {path}"));
     }
-    Repo::open(dir).map_err(to_message)
+    let repo = Repo::open(dir).map_err(to_message)?;
+    // An empty or broken `.git` passes the check above, and discovery walks
+    // past it to the enclosing repository.
+    let here = std::fs::canonicalize(repo.workdir()).map_err(to_message)?;
+    if here != std::fs::canonicalize(dir).map_err(to_message)? {
+        return Err(format!("not a git repository: {path}"));
+    }
+    Ok(repo)
 }
 
 /// Branch, ahead/behind and the number of changed paths of the repo at `path`;
@@ -362,6 +369,23 @@ mod tests {
         let err = workspace_fetch_impl(&state, &ops, &gone, None).unwrap_err();
         assert!(err.contains("folder not found"), "{err}");
         assert!(workspace_repo_summary_impl(&gone).unwrap().missing);
+    }
+
+    #[test]
+    fn a_broken_git_folder_inside_a_repo_does_not_reach_the_parent() {
+        let (_root, repo, _other) = repo_behind_its_remote();
+        let inner = repo.join("a");
+        std::fs::create_dir_all(inner.join(".git")).unwrap();
+        let state = RepoState::default();
+        let ops = WorkspaceOps::default();
+        let before = head(&repo);
+
+        let path = path_of(&inner);
+        assert!(workspace_repo_summary_impl(&path).is_err());
+        let err = workspace_pull_impl(&state, &ops, &path, PullMode::FastForward, None)
+            .unwrap_err();
+        assert!(err.contains("not a git repository"), "{err}");
+        assert_eq!(head(&repo), before, "the parent repo was pulled");
     }
 
     #[test]
