@@ -70,6 +70,26 @@ export function saveRefColumnWidth(width: number): void {
   localStorage.setItem(REF_COLUMN_KEY, String(Math.round(width)));
 }
 
+// Per-repo graph settings, keyed by repo path: the branch pinned to the left.
+const GRAPH_PREFS_KEY = "gitp-graph:";
+
+export interface GraphPrefs {
+  pinned: string | null;
+}
+
+export function loadGraphPrefs(repo: string): GraphPrefs {
+  try {
+    const raw = JSON.parse(localStorage.getItem(GRAPH_PREFS_KEY + repo) ?? "{}") as Partial<GraphPrefs>;
+    return { pinned: typeof raw.pinned === "string" ? raw.pinned : null };
+  } catch {
+    return { pinned: null };
+  }
+}
+
+export function saveGraphPrefs(repo: string, prefs: GraphPrefs): void {
+  localStorage.setItem(GRAPH_PREFS_KEY + repo, JSON.stringify(prefs));
+}
+
 // The history toggle, persisted across restarts. Defaults to all branches.
 export function loadAllBranches(): boolean {
   return localStorage.getItem(ALL_BRANCHES_KEY) !== "current";

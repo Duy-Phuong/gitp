@@ -34,6 +34,8 @@ export interface SidebarState {
   worktrees: Worktree[];
   // The repo's submodules; the section shows only when there are any.
   submodules: Submodule[];
+  // The branch pinned to the left of the graph, badged in the list.
+  pinned: string | null;
 }
 
 export interface SidebarCallbacks {
@@ -170,6 +172,7 @@ function branchLeaf(
   label: string,
   indented: boolean,
   busy: boolean,
+  pinned: boolean,
   cb: SidebarCallbacks,
   selectable?: { order: string[]; s: SidebarState },
 ): HTMLElement {
@@ -181,6 +184,7 @@ function branchLeaf(
       : `${b.name}\nClick: jump to tip · Double-click: checkout · Drag onto a branch: actions · Right-click: actions`,
   });
   row.append(el("span", { class: "sb-leaf-label", text: label }));
+  if (pinned) row.append(el("span", { class: "sb-badge", text: "pinned", title: "Pinned to the left of the graph" }));
   if (busy) {
     // The spinner takes the ahead/behind slot: those counts are exactly what
     // the running operation is about to change, so showing stale ones beside a
@@ -316,7 +320,7 @@ function buildRecent(
   const { row, collapsed } = sectionHeader("sec:recent", "Recent", s, cb);
   tree.append(row);
   if (collapsed) return;
-  for (const b of recent) tree.append(branchLeaf(b, b.name, true, s.busyRefs.has(b.name), cb));
+  for (const b of recent) tree.append(branchLeaf(b, b.name, true, s.busyRefs.has(b.name), s.pinned === b.name, cb));
 }
 
 function buildBranches(
@@ -365,12 +369,12 @@ function buildBranches(
     tree.append(folderRow(fkey, folder, fcollapsed, cb));
     if (!fcollapsed) {
       for (const b of shown) {
-        tree.append(branchLeaf(b, splitRef(b.name).label, true, s.busyRefs.has(b.name), cb, selectable));
+        tree.append(branchLeaf(b, splitRef(b.name).label, true, s.busyRefs.has(b.name), s.pinned === b.name, cb, selectable));
       }
     }
   }
   for (const b of loose) {
-    if (match(b.name)) tree.append(branchLeaf(b, b.name, false, s.busyRefs.has(b.name), cb, selectable));
+    if (match(b.name)) tree.append(branchLeaf(b, b.name, false, s.busyRefs.has(b.name), s.pinned === b.name, cb, selectable));
   }
 }
 

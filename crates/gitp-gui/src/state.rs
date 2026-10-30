@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 use notify::RecommendedWatcher;
 
 use gitp_core::{
-    CommitRow, LogCache, NetworkHooks, Progress, ProgressFn, Refs, Repo, StatusLists, Undoable,
+    CommitRow, LogCache, LogScope, NetworkHooks, Progress, ProgressFn, Refs, Repo, StatusLists,
+    Undoable,
 };
 use serde::Serialize;
 
@@ -333,21 +334,21 @@ fn run_networked<P, T>(
 /// lanes stay globally consistent across pages and searches. When the refs
 /// move (or the all-branches toggle flips) the cache is refreshed — extended
 /// with just the new commits where possible, re-walked otherwise.
-pub(crate) fn ensure_log(
-    session: &mut Session,
-    all_branches: bool,
-) -> Result<&[CommitRow], String> {
+pub(crate) fn ensure_log<'a>(
+    session: &'a mut Session,
+    scope: &LogScope,
+) -> Result<&'a [CommitRow], String> {
     let sig = session.repo.state_fingerprint().map_err(to_message)?;
     match &mut session.log {
-        Some(cache) if session.log_sig == sig && cache.all_branches() == all_branches => {}
+        Some(cache) if session.log_sig == sig && cache.scope() == scope => {}
         Some(cache) => {
             session
                 .repo
-                .refresh_log(cache, all_branches)
+                .refresh_log_scoped(cache, scope)
                 .map_err(to_message)?;
         }
         None => {
-            let cache = session.repo.log_cache(all_branches).map_err(to_message)?;
+            let cache = session.repo.log_cache_scoped(scope).map_err(to_message)?;
             session.log = Some(cache);
         }
     }

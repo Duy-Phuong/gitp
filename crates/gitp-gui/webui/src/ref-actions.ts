@@ -42,6 +42,7 @@ import { openStashApplyModal } from "./views/stash-apply";
 import type { BranchRef, StashRef } from "./types";
 import { state } from "./app-state";
 import { opFailed, reportDone, setStatus } from "./report";
+import { loadGraphPrefs, saveGraphPrefs } from "./prefs";
 import { copyText } from "./clipboard";
 import {
   clearCommitSelection,
@@ -178,6 +179,10 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
   items.push({ label: "Unset Upstream", run: () => onBranch(`Unsetting upstream of ${b.name}`, () => unsetUpstream(b.name), false) });
 
   items.push({ separator: true });
+  const pinned = loadGraphPrefs(state.repoPath).pinned === b.name;
+  items.push({ label: pinned ? "Unpin" : "Pin to Left", run: () => pinBranchAction(pinned ? null : b.name) });
+
+  items.push({ separator: true });
   items.push({ label: "Rename…", run: () => void renameBranchAction(b) });
   if (!b.is_head) items.push({ label: "Delete…", danger: true, run: () => void deleteBranchAction(b) });
 
@@ -260,6 +265,15 @@ function resolveDragRef(ref: DragRef): DropRef | null {
       ? state.refs.branches.find((b) => b.name === ref.name)?.target
       : state.refs.remotes.find((r) => r.name === ref.name)?.target;
   return target ? { ...ref, target } : null;
+}
+
+// Keep `name`'s first-parent line in the graph's leftmost lane (null unpins).
+// One branch at a time, remembered per repo.
+function pinBranchAction(name: string | null): void {
+  saveGraphPrefs(state.repoPath, { ...loadGraphPrefs(state.repoPath), pinned: name });
+  renderSidebarNow();
+  void refreshHistory({ keepSelection: true });
+  setStatus(name ? `Pinned ${name} to the left of the graph.` : "Unpinned.");
 }
 
 export function onBranchBulkMenu(x: number, y: number): void {

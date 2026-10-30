@@ -21,6 +21,7 @@ import type {
   GitProgress,
   DeleteBranchesResult,
   LogPage,
+  LogScope,
   PullMode,
   RebaseCommit,
   RebaseStatus,
@@ -176,29 +177,29 @@ export async function historyFingerprint(): Promise<string> {
 export async function fetchLogPage(
   offset: number,
   limit: number,
-  allBranches: boolean,
+  scope: LogScope,
 ): Promise<LogPage> {
   if (!isTauri()) {
     return { rows: MOCK_LOG.slice(offset, offset + limit), total: MOCK_LOG.length, head: MOCK_LOG[0].id };
   }
-  return invoke<LogPage>("get_log_page", { offset, limit, allBranches });
+  return invoke<LogPage>("get_log_page", { offset, limit, scope });
 }
 
 // Where `rev` sits in the full log, or null when it isn't in it. The frontend
 // only holds the pages it has scrolled through, so this is how a sidebar click
 // finds out how far down a tag or an older branch actually is.
-export async function logIndexOf(rev: string, allBranches: boolean): Promise<number | null> {
+export async function logIndexOf(rev: string, scope: LogScope): Promise<number | null> {
   if (!isTauri()) return null;
-  return invoke<number | null>("log_index_of", { rev, allBranches });
+  return invoke<number | null>("log_index_of", { rev, scope });
 }
 
 // Commits matching a search query, in log order — GitKraken-style commit search
 // over the full loaded graph. Words match the message, author or id; author:,
 // path:, content: (-S:), after: and before: narrow it (see LogSearch in gitp-core).
-export async function searchLog(query: string, allBranches: boolean): Promise<CommitRow[]> {
+export async function searchLog(query: string, scope: LogScope): Promise<CommitRow[]> {
   if (!query.trim()) return [];
   if (!isTauri()) return mockSearch(query);
-  return invoke<CommitRow[]>("search_log", { query, allBranches });
+  return invoke<CommitRow[]>("search_log", { query, scope });
 }
 
 // Preview-mode stand-in for LogSearch: bare words (ANDed), author:, after: and

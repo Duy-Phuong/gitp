@@ -6,7 +6,7 @@ mod common;
 use std::collections::{HashMap, HashSet};
 
 use common::FixtureRepo;
-use gitp_core::{LogCache, LogOptions, LogRefresh, Repo};
+use gitp_core::{LogCache, LogOptions, LogRefresh, LogScope, Repo};
 
 /// The refreshed cache must hold exactly the commits a fresh full walk finds,
 /// once each, in a valid topological order (every commit above its parents).
@@ -287,4 +287,41 @@ fn lanes_are_reassigned_across_the_whole_log() {
         lane_of(b),
         "the two tips sit in different lanes"
     );
+}
+
+#[test]
+fn pinning_a_branch_relays_lanes_without_a_walk() {
+    let fx = FixtureRepo::init();
+    let a = fx.commit_raw("a", &[], 100);
+    let f = fx.commit_raw("f", &[a], 200);
+    let b = fx.commit_raw("b", &[a], 300);
+    set_branch(&fx, "feature", f);
+    fx.point_head_at(b);
+    let repo = Repo::open(fx.path()).unwrap();
+    let mut cache = repo.log_cache(true).unwrap();
+    let lane_of = |cache: &LogCache, oid: git2::Oid| {
+        let id = oid.to_string();
+        cache.rows.iter().find(|r| r.id == id).unwrap().lane
+    };
+    assert_eq!(lane_of(&cache, b), 0, "the newest tip leads unpinned");
+
+    let pinned = LogScope {
+        all_branches: true,
+        pinned: Some("feature".into()),
+    };
+    assert_eq!(
+        repo.refresh_log_scoped(&mut cache, &pinned).unwrap(),
+        LogRefresh::Relaid
+    );
+    assert_eq!(lane_of(&cache, f), 0);
+    assert_eq!(lane_of(&cache, a), 0, "down feature's first parents");
+    assert_ne!(lane_of(&cache, b), 0);
+    assert_eq!(cache.scope(), &pinned);
+
+    // Unpinning lays the plain graph out again.
+    assert_eq!(
+        repo.refresh_log_scoped(&mut cache, &true.into()).unwrap(),
+        LogRefresh::Relaid
+    );
+    assert_eq!(lane_of(&cache, b), 0);
 }

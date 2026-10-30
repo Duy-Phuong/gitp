@@ -4,7 +4,7 @@
 
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::repo::Repo;
@@ -18,6 +18,29 @@ pub struct LogOptions {
     /// than HEAD alone, so the graph shows all branches. Default `false`
     /// (current branch only).
     pub all_branches: bool,
+}
+
+/// What a cached log covers and how it is laid out, besides the refs
+/// themselves: the frontend's history toggle and its per-repo graph settings.
+/// The log is cached against it (see `LogCache::scope`).
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+pub struct LogScope {
+    /// Walk every branch (see `LogOptions::all_branches`), or HEAD alone.
+    pub all_branches: bool,
+    /// A local branch whose first-parent chain keeps lane 0 ("Pin to Left").
+    /// Ignored when the branch is gone or isn't in the walk.
+    #[serde(default)]
+    pub pinned: Option<String>,
+}
+
+/// Just the history toggle, with nothing pinned.
+impl From<bool> for LogScope {
+    fn from(all_branches: bool) -> Self {
+        LogScope {
+            all_branches,
+            ..LogScope::default()
+        }
+    }
 }
 
 /// One commit in the log, as plain data for frontends to render.
@@ -47,9 +70,11 @@ pub struct CommitRow {
 pub struct LogCache {
     /// Every reachable commit, newest-first, with graph lanes assigned.
     pub rows: Vec<CommitRow>,
-    all_branches: bool,
+    scope: LogScope,
     /// The commits the walk was seeded from, sorted and deduplicated.
     tips: Vec<git2::Oid>,
+    /// The pinned branch's tip the lanes were laid out with.
+    pinned_tip: Option<String>,
     /// Lowercased message bodies by commit id, read in by the first search
     /// that needs them (see `Repo::search_log`).
     pub(crate) bodies: HashMap<String, Box<str>>,
@@ -58,7 +83,12 @@ pub struct LogCache {
 impl LogCache {
     /// Whether this log was walked from every branch or from HEAD alone.
     pub fn all_branches(&self) -> bool {
-        self.all_branches
+        self.scope.all_branches
+    }
+
+    /// What this log covers and how it is laid out.
+    pub fn scope(&self) -> &LogScope {
+        &self.scope
     }
 }
 
@@ -67,6 +97,9 @@ impl LogCache {
 pub enum LogRefresh {
     /// The tips haven't moved, so neither has the log.
     Unchanged,
+    /// The same commits, with the lanes laid out again for another pinned
+    /// branch.
+    Relaid,
     /// Every cached commit is still reachable: only the `added` new commits
     /// were walked, and put above the cached rows.
     Extended { added: usize },
@@ -86,22 +119,37 @@ impl Repo {
     pub fn log(&self, options: LogOptions) -> Result<Vec<CommitRow>> {
         let tips = self.log_tips(options.all_branches)?;
         let mut rows = self.walk_rows(&tips, options.max_count)?;
-        crate::graph::assign_lanes(&mut rows);
+        crate::graph::assign_lanes(&mut rows, None);
         Ok(rows)
     }
 
     /// The full log (as `log` with no `max_count`), kept with the tips it was
     /// walked from so `refresh_log` can extend it cheaply later.
     pub fn log_cache(&self, all_branches: bool) -> Result<LogCache> {
-        let tips = self.log_tips(all_branches)?;
+        self.log_cache_scoped(&all_branches.into())
+    }
+
+    /// `log_cache` for a full `LogScope`.
+    pub fn log_cache_scoped(&self, scope: &LogScope) -> Result<LogCache> {
+        let tips = self.log_tips(scope.all_branches)?;
         let mut rows = self.walk_rows(&tips, None)?;
-        crate::graph::assign_lanes(&mut rows);
+        let pinned_tip = self.pinned_tip(scope);
+        crate::graph::assign_lanes(&mut rows, pinned_tip.as_deref());
         Ok(LogCache {
             rows,
-            all_branches,
+            scope: scope.clone(),
             tips,
+            pinned_tip,
             bodies: HashMap::new(),
         })
+    }
+
+    /// The commit the scope's pinned branch points at, if it still exists.
+    fn pinned_tip(&self, scope: &LogScope) -> Option<String> {
+        let name = scope.pinned.as_deref()?;
+        let branch = self.inner.find_branch(name, git2::BranchType::Local).ok()?;
+        let commit = branch.get().peel_to_commit().ok()?;
+        Some(commit.id().to_string())
     }
 
     /// Bring `cache` up to date with the current refs.
@@ -115,25 +163,40 @@ impl Repo {
     /// differ from a fresh walk only in where the new commits would have
     /// interleaved by date. Anything else falls back to a full walk.
     pub fn refresh_log(&self, cache: &mut LogCache, all_branches: bool) -> Result<LogRefresh> {
-        let tips = self.log_tips(all_branches)?;
-        if all_branches == cache.all_branches {
+        self.refresh_log_scoped(cache, &all_branches.into())
+    }
+
+    /// `refresh_log` for a full `LogScope`. A different pinned branch only
+    /// lays the lanes out again; a different walk is a full walk.
+    pub fn refresh_log_scoped(&self, cache: &mut LogCache, scope: &LogScope) -> Result<LogRefresh> {
+        let tips = self.log_tips(scope.all_branches)?;
+        let pinned_tip = self.pinned_tip(scope);
+        let relaid = pinned_tip != cache.pinned_tip;
+        if scope.all_branches == cache.scope.all_branches {
+            cache.scope = scope.clone();
             if tips == cache.tips {
-                return Ok(LogRefresh::Unchanged);
+                if !relaid {
+                    return Ok(LogRefresh::Unchanged);
+                }
+                crate::graph::assign_lanes(&mut cache.rows, pinned_tip.as_deref());
+                cache.pinned_tip = pinned_tip;
+                return Ok(LogRefresh::Relaid);
             }
             if let Some(new_rows) = self.commits_since(cache, &tips)? {
                 let added = new_rows.len();
-                if added > 0 {
+                if added > 0 || relaid {
                     cache.rows.splice(0..0, new_rows);
                     // The new strands shift the lanes of everything below them.
-                    crate::graph::assign_lanes(&mut cache.rows);
+                    crate::graph::assign_lanes(&mut cache.rows, pinned_tip.as_deref());
                 }
                 cache.tips = tips;
+                cache.pinned_tip = pinned_tip;
                 return Ok(LogRefresh::Extended { added });
             }
         }
         // A commit's message never changes, so the bodies read so far stay good.
         let bodies = std::mem::take(&mut cache.bodies);
-        *cache = self.log_cache(all_branches)?;
+        *cache = self.log_cache_scoped(scope)?;
         cache.bodies = bodies;
         Ok(LogRefresh::Full)
     }

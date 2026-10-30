@@ -36,11 +36,11 @@ import { logRowTop, renderLog, setBisectMarks, setStashNodes, setWipRow } from "
 import { bisectBannerText } from "./bisect-text";
 import { closeCommitMenu } from "./views/commit-menu";
 import { renderSidebar, type SidebarView, type SidebarCallbacks } from "./views/sidebar";
-import type { BisectMark, CommitRow, ConflictStatus, LogPage, ReflogEntry, StashRef, Workspace } from "./types";
+import type { BisectMark, CommitRow, ConflictStatus, LogPage, LogScope, ReflogEntry, StashRef, Workspace } from "./types";
 import { EMPTY_REFS, PAGE_SIZE, state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { markRemoteFetched, remoteFetchedAt, renderFetchAge } from "./fetch-age";
-import { loadWorkspace, rememberRecentRepo, saveWorkspace } from "./prefs";
+import { loadGraphPrefs, loadWorkspace, rememberRecentRepo, saveWorkspace } from "./prefs";
 import { rebuildCommitRefs, refLabelsAt } from "./commit-refs";
 import { refreshConfig } from "./config-panel";
 import { refreshActionButtons } from "./toolbar";
@@ -219,6 +219,14 @@ let loadingMore = false;
 // Which repo `state.rows` was loaded from — history from a previous tab must
 // never be mistaken for the active repo's (see historyUnchanged).
 let rowsRepoPath = "";
+// …and with which scope: a different pin lays the same commits out anew.
+let rowsScope = "";
+
+// What the log shows for the active repo: the All/Current toggle plus the
+// repo's graph settings.
+export function logScope(): LogScope {
+  return { all_branches: state.allBranches, pinned: loadGraphPrefs(state.repoPath).pinned };
+}
 
 // The commit id whose detail is currently rendered in detailView. Commits are
 // immutable, so re-selecting the same id (e.g. switching back to History)
@@ -242,7 +250,9 @@ export async function refreshHistory(opts: { keepSelection?: boolean } = {}): Pr
   // Ask the backend for the same fingerprint it uses on its own log cache
   // instead: a few bytes, and it settles the question.
   const repoPath = state.repoPath;
-  const fingerprint = `${repoPath}:${await historyFingerprint()}`;
+  const scope = logScope();
+  const scopeKey = JSON.stringify(scope);
+  const fingerprint = `${repoPath}:${scopeKey}:${await historyFingerprint()}`;
   if (repoPath !== state.repoPath) return; // the tab changed under us; its own refresh takes over
   if (opts.keepSelection && fingerprint === lastHistoryFingerprint && state.rows.length) return;
   lastHistoryFingerprint = fingerprint;
@@ -251,15 +261,16 @@ export async function refreshHistory(opts: { keepSelection?: boolean } = {}): Pr
   // fetched): show row-shaped placeholders rather than a blank pane while the
   // first page comes in.
   if (!state.rows.length || rowsRepoPath !== repoPath) renderLogSkeleton($("#log-pane"));
-  const page = await fetchLogPage(0, PAGE_SIZE, state.allBranches);
+  const page = await fetchLogPage(0, PAGE_SIZE, scope);
   if (repoPath !== state.repoPath) return;
   // A passive refresh that found history unchanged: keep the rows we already
   // have — including every page loaded by scrolling — and skip the re-render.
   // `state.rows` keeps its identity, so the log's graph-layout cache stays
   // valid too (see getLayout in log.ts), making a tab switch nearly free.
-  if (opts.keepSelection && historyUnchanged(page)) return;
+  if (opts.keepSelection && historyUnchanged(page, scopeKey)) return;
   state.rows = page.rows;
   rowsRepoPath = state.repoPath;
+  rowsScope = scopeKey;
   state.total = page.total;
   state.headId = page.head;
   setWipRow(state.localChanges, state.headId);
@@ -304,8 +315,8 @@ function renderLogSkeleton(pane: HTMLElement): void {
 // same repo, same total, same commits in the same order. Comparing only the
 // first page is enough: the log is append-only below it, so an unchanged head
 // plus an unchanged total means an unchanged log.
-function historyUnchanged(page: LogPage): boolean {
-  if (rowsRepoPath !== state.repoPath || page.total !== state.total) return false;
+function historyUnchanged(page: LogPage, scopeKey: string): boolean {
+  if (rowsRepoPath !== state.repoPath || rowsScope !== scopeKey || page.total !== state.total) return false;
   if (state.rows.length < page.rows.length) return false;
   return page.rows.every((r, i) => state.rows[i]?.id === r.id);
 }
@@ -357,7 +368,7 @@ export async function updateLogView(): Promise<void> {
   }, 300);
   let results: CommitRow[];
   try {
-    results = await searchLog(query, state.allBranches);
+    results = await searchLog(query, logScope());
   } catch (err) {
     if (seq === logViewSeq) {
       searchStatusShown = false;
@@ -388,7 +399,7 @@ export async function loadMoreCommits(): Promise<void> {
   loadingMore = true;
   const repoPath = state.repoPath;
   try {
-    const page = await fetchLogPage(state.rows.length, PAGE_SIZE, state.allBranches);
+    const page = await fetchLogPage(state.rows.length, PAGE_SIZE, logScope());
     if (repoPath !== state.repoPath) return; // a page of the previous repo
     state.rows = state.rows.concat(page.rows);
     rowsRepoPath = state.repoPath;
@@ -663,6 +674,7 @@ function sidebarSignature(repoName: string): string {
     [...state.busyRefs].sort().join(","),
     state.worktrees.map((w) => `${w.path}:${w.head}:${w.branch}:${w.is_current}:${w.locked}:${w.lock_reason}:${w.prunable}`).join(","),
     state.submodules.map((m) => `${m.path}:${m.url}:${m.recorded}:${m.checked_out}:${m.state}`).join(","),
+    loadGraphPrefs(state.repoPath).pinned ?? "",
   ].join("|");
 }
 
@@ -694,6 +706,7 @@ export function renderSidebarNow(): void {
       busyRefs: state.busyRefs,
       worktrees: state.worktrees,
       submodules: state.submodules,
+      pinned: loadGraphPrefs(state.repoPath).pinned,
     },
     {
       onSelectView: (v: SidebarView) => (v === "reflog" ? showReflog() : showView(v)),
@@ -799,13 +812,13 @@ export async function jumpToCommit(target: string, label: string): Promise<void>
 async function loadDownTo(target: string, label: string): Promise<number> {
   const repoPath = state.repoPath;
   try {
-    const idx = await logIndexOf(target, state.allBranches);
+    const idx = await logIndexOf(target, logScope());
     if (idx == null || repoPath !== state.repoPath) return -1;
     if (idx < state.rows.length) return idx;
 
     const missing = idx + 1 - state.rows.length;
     setStatus(`Loading ${missing.toLocaleString()} more commits to reach ${label}…`);
-    const page = await fetchLogPage(state.rows.length, Math.max(missing, PAGE_SIZE), state.allBranches);
+    const page = await fetchLogPage(state.rows.length, Math.max(missing, PAGE_SIZE), logScope());
     if (repoPath !== state.repoPath) return -1;
     state.rows = state.rows.concat(page.rows);
     rowsRepoPath = state.repoPath;
