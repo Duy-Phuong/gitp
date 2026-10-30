@@ -92,3 +92,47 @@ messages, agent sessions. gitp keeps "Create Pull Request" as a browser link.
    nodes, then #13 Hide/Solo.
 3. **Batch C:** P3 diff tools (#16–#20 are small and build on Compare).
 4. **Batch D:** P4 as needed; #23 file editor and #21 image diff last.
+
+## Round 2 (chosen 2026-10-30)
+
+Sources: the code-safety review of branch switching, conflicts and undo, plus the
+help pages outside the first three sections (Preferences, Command Palette,
+Interface Guide, Profiles, Tips, Experimental Features, Themes, Workspaces).
+The keyboard-shortcut pack was offered and left out on purpose.
+
+### Code safety
+
+| # | Feature | Today | Size |
+|---|---------|-------|------|
+| 33 | **Undo fixes** — undo/redo of a *mixed* reset works (it always fails now: `--keep` refuses the files the reset left modified); a refusal says which files are in the way and what to do, instead of git's raw "Entry 'x' not uptodate. Cannot merge." | broken / cryptic | S |
+| 34 | **Hard-reset backup** — before a hard reset, save the uncommitted work (tracked and untracked) as a hidden commit under a private ref, without touching the working tree; Undo of that reset brings back the commits *and* the work | undo restores commits only | S–M |
+| 35 | **Stash & Switch** — when a checkout has local changes, offer to stash them, switch, and re-apply them on the new branch (like GitKraken's auto-stash), keeping the stash if re-applying conflicts | warn / refuse only | S |
+| 36 | **Confirm Take Ours / Theirs** when the file on disk was hand-edited or the resolver holds choices for it | overwrites silently | S |
+| 37 | **Squash-merge conflicts** — detected as a conflict session (SQUASH_MSG + unmerged files): the resolver opens, Finish commits with the squash message, Abort restores (`git reset --merge`, drop SQUASH_MSG) | invisible; Abort fails | S |
+| 38 | **Editor on-disk check** — Save asks before overwriting a file that changed on disk since it was opened | overwrites | S |
+
+### Graph and interface
+
+| # | Feature | GitKraken | Size |
+|---|---------|-----------|------|
+| 39 | **Graph columns** | right-click the header (or gear) to show/hide Author, Date, SHA; drag headers to reorder; saved per repo; filter commits by author from the Author column | M |
+| 40 | **Branch hover + ghost branch** | hovering a branch fades unrelated commits (toggle in settings); selecting/hovering a commit shows its nearest containing branch as a faded "ghost" label, double-click checks it out | M |
+| 41 | **Tabs and zoom** | drag repo tabs to reorder; right-click → alias a tab; Cmd/Ctrl+Tab and Shift+Cmd/Ctrl+Tab cycle tabs; zoom in/out/reset (Cmd = / − / 0) with preset levels, remembered | S |
+
+### Settings and tools
+
+| # | Feature | GitKraken | Size |
+|---|---------|-----------|------|
+| 42 | **Diff and editor settings** | syntax highlighting in diffs and file views (toggle); font family, size, tab width, line numbers; terminal font and size | M–L |
+| 43 | **Display preferences** | date/time format (relative / absolute / locale); author initials instead of avatars; default branch name for Init; prune remote-tracking branches on auto-fetch | S |
+| 44 | **Command palette extras** | Perform Repo Maintenance (`git maintenance run` / `gc`); Open in <installed IDE> (VS Code, Cursor, IntelliJ, Sublime, Zed… detected); Create patch from all working changes; Toggle Theme; Discard all changes (confirmed, undoable) | S |
+| 45 | **Encoding** | per-repo text encoding for diffs and file views (UTF-8 default; e.g. Windows-1252, Shift_JIS, GBK) | M |
+| 46 | **Git Flow** | initialise (branch names and prefixes in `gitflow.*` config); start / finish feature, release, hotfix; menu entries on matching branches — done with plain git, no `git-flow` binary needed | M–L |
+| 47 | **LFS** | detect LFS repos; toolbar/status indicator; track / untrack patterns; LFS fetch/pull; LFS pointer files shown as such; clear message when `git-lfs` is not installed | M |
+
+### Bigger features
+
+| # | Feature | GitKraken | Size |
+|---|---------|-----------|------|
+| 48 | **Profiles** | several identities (name, email, optional signing key); switching changes the identity used for commits (repo or global, by choice) and keeps settings and open tabs per profile; optionally keep the global `.gitconfig` in sync | M |
+| 49 | **Local workspaces** | named groups of repos; a workspace screen with checkboxes and bulk Fetch / Pull / Open / Reveal / Remove | M |
