@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   folderName,
+  groupBySharedRepo,
   parseLocalWorkspaces,
+  repoLabel,
   runPool,
   summaryText,
   withRepoMoved,
@@ -69,7 +71,7 @@ describe("a workspace's repos", () => {
 });
 
 describe("summaryText", () => {
-  const base: RepoSummary = { missing: false, branch: "main", ahead: 0, behind: 0, has_upstream: true, changes: 0 };
+  const base: RepoSummary = { missing: false, branch: "main", ahead: 0, behind: 0, has_upstream: true, changes: 0, worktree_of: null, common_dir: "/r/.git" };
 
   it("says how the branch stands against its upstream, and what's changed", () => {
     expect(summaryText(base)).toBe("in sync");
@@ -124,5 +126,32 @@ describe("runPool", () => {
       () => stop,
     );
     expect(started).toEqual([1, 2]);
+  });
+});
+
+describe("repoLabel", () => {
+  it("is the folder name, prefixed by its repo's for a linked worktree", () => {
+    expect(repoLabel("/code/app", null)).toBe("app");
+    expect(repoLabel("/code/app-feat", "/code/app")).toBe("app · app-feat");
+  });
+});
+
+describe("groupBySharedRepo", () => {
+  const dirs: Record<string, string> = {
+    "/code/app": "/code/app/.git",
+    "/code/lib": "/code/lib/.git",
+    "/code/app-feat": "/code/app/.git",
+    "/code/app-fix": "/code/app/.git",
+  };
+
+  it("puts a repo's worktrees with the first of them to appear", () => {
+    expect(groupBySharedRepo(["/code/app-feat", "/code/lib", "/code/app", "/code/app-fix"], (p) => dirs[p])).toEqual([
+      ["/code/app-feat", "/code/app", "/code/app-fix"],
+      ["/code/lib"],
+    ]);
+  });
+
+  it("leaves a path with no known repository on its own", () => {
+    expect(groupBySharedRepo(["/gone", "/code/app", "/also-gone"], (p) => dirs[p])).toEqual([["/gone"], ["/code/app"], ["/also-gone"]]);
   });
 });

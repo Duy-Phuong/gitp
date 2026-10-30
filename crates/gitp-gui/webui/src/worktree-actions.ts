@@ -22,6 +22,8 @@ import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { copyText } from "./clipboard";
 import { closeRepoTab, loadRepo, loadSidebar } from "./shell";
 import { deleteLocalBranch } from "./ref-actions";
+import { openTerminalAt } from "./terminal-panel";
+import { otherWorktreeWith } from "./branch-worktree";
 import { askChoice } from "./views/choice-dialog";
 import { openFormDialog } from "./views/form-dialog";
 import type { DragRef } from "./ref-drop";
@@ -32,6 +34,7 @@ export function onWorktreeMenu(w: Worktree, x: number, y: number): void {
   const items: MenuItem[] = [];
   if (!w.is_current && !w.prunable) items.push({ label: "Open", run: () => void loadRepo(w.path) });
   if (!w.prunable) items.push({ label: "Reveal in Finder", run: () => void revealWorktree(w) });
+  if (!w.prunable) items.push({ label: "Open Terminal Here", run: () => openTerminalAt(w.path) });
   if (!w.is_main) {
     items.push({ separator: true });
     if (w.locked) {
@@ -76,6 +79,27 @@ async function revealWorktree(w: Worktree): Promise<void> {
 // The worktree that has `branch` checked out, if any.
 export function worktreeOf(branch: string): Worktree | undefined {
   return state.worktrees.find((w) => w.branch === branch);
+}
+
+// Before checking out local branch `branch`: when another worktree has it —
+// a checkout git would refuse — offer to open that worktree instead, rather
+// than asking about local changes first. Resolves true when it did (the
+// checkout must not go ahead), false when the checkout can proceed.
+export async function offerWorktreeWith(branch: string): Promise<boolean> {
+  const wt = otherWorktreeWith(branch, state.worktrees);
+  if (!wt) return false;
+  const open = await askChoice(
+    `“${branch}” is checked out in another worktree`,
+    `A branch can be checked out in only one worktree at a time, and ${worktreeName(wt)} (${wt.path}) has it.`,
+    [
+      { label: "Cancel", answer: false, left: true },
+      { label: "Open its worktree", answer: true, primary: true },
+    ],
+    false,
+  );
+  if (open) await loadRepo(wt.path);
+  else setStatus("Checkout cancelled.");
+  return true;
 }
 
 // The default folder for a new worktree of `branch` (see siblingWorktreePath).

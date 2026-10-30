@@ -178,6 +178,7 @@ pub fn run() {
             remote::clone_repository,
             local_workspaces::workspace_repo_summary,
             local_workspaces::workspace_scan_folder,
+            local_workspaces::workspace_with_worktrees,
             local_workspaces::workspace_fetch,
             local_workspaces::workspace_pull,
             local_workspaces::cancel_workspace_ops,

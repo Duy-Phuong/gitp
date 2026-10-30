@@ -69,7 +69,8 @@ import {
 } from "./commit-actions";
 import { openFormDialog } from "./views/form-dialog";
 import { showComparison } from "./compare";
-import { checkoutInNewWorktreeItem, newWorktreeAtAction, worktreeOf } from "./worktree-actions";
+import { checkoutInNewWorktreeItem, newWorktreeAtAction, offerWorktreeWith, worktreeOf } from "./worktree-actions";
+import { localBranchForRemote } from "./branch-worktree";
 import { worktreeName } from "./views/sidebar";
 import { allRefsAt } from "./commit-refs";
 import { pushTargets } from "./push-targets";
@@ -80,8 +81,10 @@ import { askSwitchWithChanges, reportStashSwitch } from "./stash-switch";
 
 // Double-click a branch: check it out, then reload history + sidebar from the new
 // HEAD. With uncommitted changes, asks first: Stash & Switch, or carry them.
+// A branch another worktree has checked out offers that worktree instead.
 export async function checkoutBranchAction(b: BranchRef): Promise<void> {
   if (b.is_head) return;
+  if (await offerWorktreeWith(b.name)) return;
   const how = state.localChanges > 0 ? await askSwitchWithChanges(`"${b.name}"`) : "switch";
   if (how === "cancel") {
     setStatus("Checkout cancelled.");
@@ -712,8 +715,11 @@ export function onRemoteMenu(name: string, target: string, x: number, y: number)
 }
 
 // Check out a remote branch, creating/switching to a local tracking branch.
-// Asks first about uncommitted changes, like branch checkout.
+// Asks first about uncommitted changes, like branch checkout — unless that
+// local branch is checked out in another worktree, which is offered instead.
 export async function checkoutRemoteAction(name: string): Promise<void> {
+  const local = localBranchForRemote(name, state.remoteList.map((r) => r.name));
+  if (await offerWorktreeWith(local)) return;
   const how = state.localChanges > 0 ? await askSwitchWithChanges(`"${name}"`) : "switch";
   if (how === "cancel") {
     setStatus("Checkout cancelled.");

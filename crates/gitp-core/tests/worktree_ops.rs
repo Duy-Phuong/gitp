@@ -104,6 +104,26 @@ fn lists_the_main_worktree_and_linked_ones() {
 }
 
 #[test]
+fn worktrees_share_one_common_dir_and_know_their_main() {
+    let s = Setup::new();
+    git(
+        &s.main(),
+        &["worktree", "add", "-q", "-b", "feat", "../linked"],
+    );
+    let main = s.repo();
+    let linked = Repo::open(s.sibling("linked")).unwrap();
+
+    assert_eq!(main.common_dir(), canon(s.main().join(".git")));
+    assert_eq!(linked.common_dir(), main.common_dir());
+    assert_eq!(main.main_worktree(), None);
+    assert_eq!(canon(linked.main_worktree().unwrap()), canon(s.main()));
+
+    // Another repository has a common dir of its own.
+    let other = Setup::new();
+    assert_ne!(other.repo().common_dir(), main.common_dir());
+}
+
+#[test]
 fn adds_a_worktree_for_an_existing_branch() {
     let s = Setup::new();
     git(&s.main(), &["branch", "topic", &s.first]);

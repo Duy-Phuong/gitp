@@ -7,7 +7,8 @@
 //! A workspace's repos are mostly *not* open as tabs, so everything here opens
 //! its own `Repo` by path and never touches the active session.
 
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gitp_core::{NetworkHooks, Progress, ProgressFn, PullMode, Repo};
@@ -35,6 +36,11 @@ pub(crate) struct RepoSummary {
     has_upstream: bool,
     /// Paths with uncommitted changes.
     changes: usize,
+    /// The main worktree's folder when this is a linked worktree of it.
+    worktree_of: Option<String>,
+    /// The git directory this repo shares with its other worktrees (empty when
+    /// missing): rows with the same one need fetching only once.
+    common_dir: String,
 }
 
 /// The `workspace-progress` event payload: git's progress for the repo at `path`.
@@ -78,7 +84,52 @@ pub(crate) fn workspace_repo_summary_impl(path: &str) -> Result<RepoSummary, Str
         behind: head.map_or(0, |b| b.behind),
         has_upstream: head.is_some_and(|b| b.has_upstream),
         changes: repo.local_change_count().map_err(to_message)?,
+        worktree_of: repo.main_worktree(),
+        common_dir: repo.common_dir().to_string_lossy().into_owned(),
     })
+}
+
+/// Resolve symlinks (macOS's `/var` → `/private/var`) so that git's spelling
+/// of a worktree's folder and the user's compare equal.
+fn canonical(path: &str) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path))
+}
+
+/// The other working trees of the repository at `path` — linked ones, and the
+/// main one when `path` is itself linked. Folders that are gone and a bare
+/// main repository are left out; so is everything when `path` isn't a repo.
+fn other_worktrees(path: &str) -> Vec<String> {
+    let Ok(list) = open_at(path).and_then(|repo| repo.worktrees().map_err(to_message)) else {
+        return Vec::new();
+    };
+    list.into_iter()
+        .filter(|w| !w.is_current && !w.prunable && Path::new(&w.path).join(".git").exists())
+        .map(|w| w.path)
+        .collect()
+}
+
+/// `paths` to add to a workspace, each followed by its repository's other
+/// worktrees, minus whatever is already in `known` or listed earlier — the
+/// same folder counted once however it is spelled, so "Add All in Folder…"
+/// over a repo and its sibling worktree adds that worktree once. Where git's
+/// spelling of a worktree and one in `paths` name the same folder, the
+/// user's is kept.
+pub(crate) fn workspace_with_worktrees_impl(known: &[String], paths: &[String]) -> Vec<String> {
+    let mut given: HashMap<PathBuf, &String> = HashMap::new();
+    for p in paths {
+        given.entry(canonical(p)).or_insert(p);
+    }
+    let mut seen: HashSet<PathBuf> = known.iter().map(|p| canonical(p)).collect();
+    let mut out = Vec::new();
+    for p in paths {
+        for candidate in std::iter::once(p.clone()).chain(other_worktrees(p)) {
+            let key = canonical(&candidate);
+            if seen.insert(key.clone()) {
+                out.push(given.get(&key).map_or(candidate, |s| s.to_string()));
+            }
+        }
+    }
+    out
 }
 
 /// The repositories directly inside `folder` (one level deep, hidden folders
@@ -200,6 +251,11 @@ pub(crate) fn workspace_repo_summary(path: String) -> Result<RepoSummary, String
 #[tauri::command(async)]
 pub(crate) fn workspace_scan_folder(folder: String) -> Result<Vec<String>, String> {
     workspace_scan_folder_impl(&folder)
+}
+
+#[tauri::command(async)]
+pub(crate) fn workspace_with_worktrees(known: Vec<String>, paths: Vec<String>) -> Vec<String> {
+    workspace_with_worktrees_impl(&known, &paths)
 }
 
 #[tauri::command(async)]
@@ -405,5 +461,66 @@ mod tests {
             .map(|p| Path::new(p).file_name().unwrap().to_str().unwrap())
             .collect();
         assert_eq!(names, ["a", "b"]);
+    }
+
+    fn name_of(p: &str) -> &str {
+        Path::new(p).file_name().unwrap().to_str().unwrap()
+    }
+
+    /// `app/` with linked worktrees `app-feat/` beside it and `gone/`, whose
+    /// folder was deleted, plus an unrelated `lib/`. Returns (root, app path).
+    fn repo_with_worktrees() -> (tempfile::TempDir, String) {
+        let root = tempfile::tempdir().unwrap();
+        let app = root.path().join("app");
+        std::fs::create_dir(&app).unwrap();
+        make_repo(&app, &["c1"]);
+        git(&app, &["worktree", "add", "-q", "-b", "feat", "../app-feat"]);
+        git(&app, &["worktree", "add", "-q", "--detach", "../gone"]);
+        std::fs::remove_dir_all(root.path().join("gone")).unwrap();
+        let lib = root.path().join("lib");
+        std::fs::create_dir(&lib).unwrap();
+        make_repo(&lib, &["c1"]);
+        (root, path_of(&app))
+    }
+
+    #[test]
+    fn adding_a_repo_brings_its_worktrees_once() {
+        let (root, app) = repo_with_worktrees();
+        let names = |paths: Vec<String>| -> Vec<String> {
+            paths.iter().map(|p| name_of(p).to_string()).collect()
+        };
+
+        // Add Folder…: the repo, then its live linked worktree.
+        let added = workspace_with_worktrees_impl(&[], &[app.clone()]);
+        assert_eq!(names(added), ["app", "app-feat"]);
+
+        // Add All in Folder…: the scan finds the worktree as a folder of its
+        // own too, but it is added once, under the scan's spelling.
+        let found = workspace_scan_folder_impl(&path_of(root.path())).unwrap();
+        assert_eq!(names(found.clone()), ["app", "app-feat", "lib"]);
+        let added = workspace_with_worktrees_impl(&[], &found);
+        assert_eq!(names(added.clone()), ["app", "app-feat", "lib"]);
+        assert_eq!(added, found);
+
+        // Add Worktrees of… a repo already in the workspace: just the
+        // worktrees, and from a linked worktree its main one counts too.
+        let feat = path_of(&root.path().join("app-feat"));
+        assert_eq!(names(workspace_with_worktrees_impl(&[app.clone()], &[app.clone()])), ["app-feat"]);
+        assert_eq!(names(workspace_with_worktrees_impl(&[feat.clone()], &[feat])), ["app"]);
+        assert!(workspace_with_worktrees_impl(&found, &[app]).is_empty());
+    }
+
+    #[test]
+    fn a_worktree_row_names_its_repo_and_shares_its_common_dir() {
+        let (root, app) = repo_with_worktrees();
+        let feat = workspace_repo_summary_impl(&path_of(&root.path().join("app-feat"))).unwrap();
+        let main = workspace_repo_summary_impl(&app).unwrap();
+        let lib = workspace_repo_summary_impl(&path_of(&root.path().join("lib"))).unwrap();
+
+        assert_eq!(feat.branch.as_deref(), Some("feat"));
+        assert_eq!(feat.worktree_of.as_deref().map(name_of), Some("app"));
+        assert_eq!(main.worktree_of, None);
+        assert_eq!(feat.common_dir, main.common_dir);
+        assert_ne!(lib.common_dir, main.common_dir);
     }
 }

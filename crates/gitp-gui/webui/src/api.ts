@@ -200,7 +200,18 @@ export async function workspaceRepoSummary(path: string): Promise<RepoSummary> {
   if (!isTauri()) {
     // Something different per path, so the table has some variety to show.
     const n = path.length;
-    return { missing: path.includes("missing"), branch: "main", ahead: n % 2, behind: n % 3, has_upstream: true, changes: n % 4 };
+    // The mock repo's linked worktree reads as one, sharing the main's git dir.
+    const main = path === MOCK_LINKED_WORKTREE.path ? MOCK_WORKTREES[0].path : null;
+    return {
+      missing: path.includes("missing"),
+      branch: main ? MOCK_LINKED_WORKTREE.branch : "main",
+      ahead: n % 2,
+      behind: n % 3,
+      has_upstream: true,
+      changes: n % 4,
+      worktree_of: main,
+      common_dir: `${main ?? path}/.git`,
+    };
   }
   return invoke<RepoSummary>("workspace_repo_summary", { path });
 }
@@ -209,6 +220,21 @@ export async function workspaceRepoSummary(path: string): Promise<RepoSummary> {
 export async function workspaceScanFolder(folder: string): Promise<string[]> {
   if (!isTauri()) return [`${folder}/alpha`, `${folder}/beta`];
   return invoke<string[]>("workspace_scan_folder", { folder });
+}
+
+// What adding `paths` to a workspace that has `known` adds: each path and its
+// repository's other worktrees, minus anything already there (compared as
+// folders on disk, not as spellings).
+export async function workspaceWithWorktrees(known: string[], paths: string[]): Promise<string[]> {
+  if (!isTauri()) {
+    const out = [...known];
+    for (const p of paths) {
+      const worktrees = MOCK_WORKTREES.some((w) => w.path === p) ? MOCK_WORKTREES.map((w) => w.path) : [];
+      for (const q of [p, ...worktrees]) if (!out.includes(q)) out.push(q);
+    }
+    return out.slice(known.length);
+  }
+  return invoke<string[]>("workspace_with_worktrees", { known, paths });
 }
 
 // The mocks take a moment, so the screen's per-row progress can be seen.
