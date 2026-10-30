@@ -15,6 +15,8 @@ export interface FormField {
   multiline?: boolean;
   // Must be non-empty to submit; the empty one gets focus instead.
   required?: boolean;
+  // A dropdown of these instead of a text field; `value` picks the option.
+  choices?: { value: string; label: string }[];
 }
 
 export interface FormOptions {
@@ -35,6 +37,15 @@ export function openFormDialog(opts: FormOptions, onSubmit: (values: string[]) =
     overlay.remove();
   };
   const inputs = opts.fields.map((f) => {
+    if (f.choices) {
+      const select = el(
+        "select",
+        { class: "rename-input" },
+        f.choices.map((c) => el("option", { value: c.value, text: c.label })),
+      );
+      select.value = f.value ?? f.choices[0]?.value ?? "";
+      return select;
+    }
     const input = el(f.multiline ? "textarea" : "input", {
       class: "rename-input",
       placeholder: f.placeholder ?? "",
@@ -92,6 +103,6 @@ export function openFormDialog(opts: FormOptions, onSubmit: (values: string[]) =
     // The first field still to fill in, or the first one.
     const first = inputs.find((i) => !i.value) ?? inputs[0];
     first?.focus();
-    first?.select();
+    if (!(first instanceof HTMLSelectElement)) first?.select();
   });
 }

@@ -35,7 +35,8 @@ pub struct TextFile {
 
 impl Repo {
     /// `path` as text, or `None` when it doesn't exist. Refuses a file over
-    /// [`EDIT_MAX_BYTES`], a binary one, and one that isn't UTF-8.
+    /// [`EDIT_MAX_BYTES`], a binary one, and one that isn't valid text in the
+    /// repo's encoding (see `encoding.rs`).
     pub fn read_text_file(&self, path: &str) -> Result<Option<TextFile>> {
         let full = self.edit_path(path)?;
         let meta = match fs::symlink_metadata(&full) {
@@ -53,24 +54,35 @@ impl Repo {
         }
         let bytes =
             fs::read(&full).map_err(|e| Error::Message(format!("can't read {path}: {e}")))?;
+        let enc = self.text_encoding();
         // git's own test for binary: a NUL byte in the first 8000.
-        if bytes.iter().take(8000).any(|&b| b == 0) {
+        if enc.nul_means_binary() && bytes.iter().take(8000).any(|&b| b == 0) {
             return Err(Error::Message(format!("{path} is a binary file")));
         }
-        let raw = String::from_utf8(bytes)
-            .map_err(|_| Error::Message(format!("{path} isn't UTF-8 text")))?;
+        let raw = enc
+            .decode(&bytes)
+            .ok_or_else(|| Error::Message(format!("{path} isn't {} text", enc.name())))?;
         Ok(Some(split_line_breaks(&raw)))
     }
 
     /// Write `text` (line breaks as `\n`) to `path`, turning them into `\r\n`
-    /// when `crlf`. Creates the file when it's missing, but not its folder.
+    /// when `crlf`, in the repo's encoding. Creates the file when it's
+    /// missing, but not its folder. Refuses text with a character the
+    /// encoding can't hold, rather than writing it some other way.
     pub fn write_text_file(&self, path: &str, text: &str, crlf: bool) -> Result<()> {
         let full = self.edit_path(path)?;
         if let Ok(meta) = fs::symlink_metadata(&full) {
             regular_file(path, &meta)?;
         }
-        fs::write(&full, join_line_breaks(text, crlf))
-            .map_err(|e| Error::Message(format!("can't write {path}: {e}")))
+        let enc = self.text_encoding();
+        let text = join_line_breaks(text, crlf);
+        let bytes = enc.encode(&text).ok_or_else(|| {
+            Error::Message(format!(
+                "{path} has characters that {} can't represent, so it wasn't saved",
+                enc.name()
+            ))
+        })?;
+        fs::write(&full, bytes).map_err(|e| Error::Message(format!("can't write {path}: {e}")))
     }
 
     /// Create `path` as an empty file, with any folders it needs. Refuses one

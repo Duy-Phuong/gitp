@@ -1,6 +1,6 @@
 //! Conflict resolution driven by the conflict-resolver view, for every git
-//! operation that can stop mid-way with conflict markers: merge, rebase,
-//! cherry-pick, and revert. Reports the in-progress session, reads the three
+//! operation that can stop mid-way with conflict markers: merge (squash
+//! included), rebase, cherry-pick, and revert. Reports the in-progress session, reads the three
 //! sides of a conflicted file, marks files resolved, and finishes (commit /
 //! continue) or aborts. Everything shells out through `run_git` so git's own
 //! conflict handling and messages apply as-is.
@@ -14,8 +14,8 @@ use crate::repo::Repo;
 /// A snapshot of the current conflict session, for the resolver UI.
 #[derive(Debug, Clone, Serialize)]
 pub struct ConflictStatus {
-    /// `"merge"`, `"rebase"`, `"cherry-pick"`, `"revert"`, or `"none"` when
-    /// nothing is in progress.
+    /// `"merge"` (a squash merge too), `"rebase"`, `"cherry-pick"`,
+    /// `"revert"`, or `"none"` when nothing is in progress.
     pub kind: String,
     /// Human summary, e.g. `Merging origin/x into dev` or `Rebasing dev`.
     pub summary: String,
@@ -38,6 +38,11 @@ pub struct ConflictSides {
     pub working: String,
     /// Any side is binary (or the working file contains a NUL byte).
     pub binary: bool,
+    /// The working file was changed after git wrote it: it matches neither
+    /// side and has no conflict markers. git leaves one side's version there
+    /// (binary and delete/modify conflicts) or its marked-up merge, so
+    /// anything else is someone's edit — which taking a side would overwrite.
+    pub edited: bool,
 }
 
 impl Repo {
@@ -50,8 +55,9 @@ impl Repo {
             git_dir.join("rebase-merge").is_dir() || git_dir.join("rebase-apply").is_dir();
         let cherry_picking = git_dir.join("CHERRY_PICK_HEAD").exists();
         let reverting = git_dir.join("REVERT_HEAD").exists();
+        let squashing = self.squash_pending();
 
-        if !merging && !rebasing && !cherry_picking && !reverting {
+        if !merging && !rebasing && !cherry_picking && !reverting && !squashing {
             return Ok(ConflictStatus {
                 kind: "none".into(),
                 summary: String::new(),
@@ -61,6 +67,15 @@ impl Repo {
         }
 
         let conflicted = self.unmerged_paths()?;
+
+        if squashing {
+            return Ok(ConflictStatus {
+                kind: "merge".into(),
+                summary: format!("Squash merge into {}", self.current_branch_label()),
+                conflicted,
+                message: self.squash_message().unwrap_or_default(),
+            });
+        }
 
         if rebasing {
             let into = self.rebasing_branch_label();
@@ -110,7 +125,13 @@ impl Repo {
         let base = stage(1);
         let ours = stage(2);
         let theirs = stage(3);
-        let working = std::fs::read(self.workdir_path()?.join(path)).unwrap_or_default();
+        let on_disk = std::fs::read(self.workdir_path()?.join(path)).ok();
+        let edited = on_disk.as_deref().is_some_and(|w| {
+            Some(w) != ours.as_deref()
+                && Some(w) != theirs.as_deref()
+                && !w.split(|&b| b == b'\n').any(|l| l.starts_with(b"<<<<<<<"))
+        });
+        let working = on_disk.unwrap_or_default();
 
         let has_nul = |b: &[u8]| b.contains(&0);
         let binary = has_nul(&working)
@@ -119,20 +140,29 @@ impl Repo {
                 .flat_map(|o| o.iter())
                 .any(|b| has_nul(b));
 
-        let to_text = |o: Option<Vec<u8>>| o.map(|b| String::from_utf8_lossy(&b).into_owned());
+        let enc = self.text_encoding();
+        let to_text = |o: Option<Vec<u8>>| o.map(|b| enc.decode_lossy(&b).into_owned());
         Ok(ConflictSides {
             ours: to_text(ours),
             theirs: to_text(theirs),
             base: to_text(base),
-            working: String::from_utf8_lossy(&working).into_owned(),
+            working: enc.decode_lossy(&working).into_owned(),
             binary,
+            edited,
         })
     }
 
-    /// Write the resolved `content` for `path` and stage it (`git add`), which
-    /// marks the conflict resolved.
+    /// Write the resolved `content` for `path`, in the repo's encoding, and
+    /// stage it (`git add`), which marks the conflict resolved.
     pub fn resolve_conflict(&self, path: &str, content: &str) -> Result<()> {
-        std::fs::write(self.workdir_path()?.join(path), content)
+        let enc = self.text_encoding();
+        let bytes = enc.encode(content).ok_or_else(|| {
+            Error::Message(format!(
+                "the result has characters that {} can't represent, so it wasn't saved",
+                enc.name()
+            ))
+        })?;
+        std::fs::write(self.workdir_path()?.join(path), bytes)
             .map_err(|e| crate::error::Error::Message(format!("can't write {path}: {e}")))?;
         self.run_git(&["add", "--", &literal_pathspec(path)])
             .map(|_| ())
@@ -175,6 +205,17 @@ impl Repo {
             self.run_git(&["cherry-pick", "--abort"])
         } else if git_dir.join("REVERT_HEAD").exists() {
             self.run_git(&["revert", "--abort"])
+        } else if self.squash_pending() {
+            // `merge --abort` needs MERGE_HEAD, which a squash never writes;
+            // `reset --merge` is what it would run. Drop the message too, or
+            // the squash would still look pending.
+            let out = self.run_git(&["reset", "--merge"])?;
+            let msg = git_dir.join("SQUASH_MSG");
+            if msg.exists() {
+                std::fs::remove_file(&msg)
+                    .map_err(|e| Error::Message(format!("can't remove SQUASH_MSG: {e}")))?;
+            }
+            Ok(out)
         } else {
             let out = self.run_git(&["rebase", "--abort"]);
             self.cleanup_rebase_scratch();
@@ -187,7 +228,7 @@ impl Repo {
     /// which reuses its own pending message).
     pub fn finish_conflict(&self, message: &str) -> Result<String> {
         let git_dir = self.inner.path();
-        if git_dir.join("MERGE_HEAD").exists() {
+        if git_dir.join("MERGE_HEAD").exists() || self.squash_pending() {
             self.run_git_stdin(&["commit", "-F", "-"], message)
         } else if git_dir.join("CHERRY_PICK_HEAD").exists() {
             self.continue_without_editor(&["cherry-pick", "--continue"])
@@ -222,6 +263,22 @@ impl Repo {
         } else {
             Err(Error::Message(combined))
         }
+    }
+
+    /// A `git merge --squash` is waiting to be committed. It writes no
+    /// MERGE_HEAD — only SQUASH_MSG, plus unmerged files when it conflicted —
+    /// yet it is a merge to resolve, commit or abort all the same. git removes
+    /// the file on commit and reset; should a stale one sit beside another
+    /// operation's state, that operation wins.
+    fn squash_pending(&self) -> bool {
+        let git_dir = self.inner.path();
+        git_dir.join("SQUASH_MSG").exists()
+            && ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]
+                .iter()
+                .all(|f| !git_dir.join(f).exists())
+            && ["rebase-merge", "rebase-apply"]
+                .iter()
+                .all(|d| !git_dir.join(d).is_dir())
     }
 
     /// Working-tree paths with unresolved conflicts.

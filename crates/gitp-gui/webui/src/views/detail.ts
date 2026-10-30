@@ -20,7 +20,9 @@
 
 import { DEFAULT_CONTEXT_LINES, FULL_FILE_CONTEXT, MAX_DIFF_LINES } from "../api";
 import { clear, copyToClipboard, el, statusBadge, svg } from "../dom";
-import { loadDiffWrap, loadIgnoreWhitespace, saveDiffWrap, saveIgnoreWhitespace } from "../prefs";
+import { highlighter, hunkRuns, overlay, type Highlighter, type Run } from "../highlight";
+import { loadDiffWrap, loadIgnoreWhitespace, loadSyntaxHighlight, saveDiffWrap, saveIgnoreWhitespace } from "../prefs";
+import { formatTime, fullTime } from "../timeago";
 import type {
   BlameLine,
   CommitDetail,
@@ -38,6 +40,7 @@ import { hunkWordDiffs, type Seg } from "../worddiff";
 import { showContextMenu, type MenuItem } from "./context-menu";
 import { imageMime, loadOnce, renderImageDiff, type ImageLoad } from "./image-diff";
 import { renderFileTree } from "./tree";
+import { lfsPointerPanel, parseLfsPointerDiff } from "../lfs-pointer";
 
 // Which pane of the commit detail is showing. Exported so the host can persist
 // the user's choice — see initialTab / onTabChange below.
@@ -104,6 +107,9 @@ export interface DetailHandle {
   showEmpty: () => void;
   // Re-render the current commit (e.g. after refs load) — no-op when empty.
   refresh: () => void;
+  // Draw whatever is on screen again, unconditionally — a display setting
+  // (syntax highlighting) changed.
+  redraw: () => void;
   // Switch to the Commit tab — used when jumping to a commit via a link.
   focusCommit: () => void;
   // Open one of the selected commit's changed files in the given mode, from
@@ -288,10 +294,9 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const body = d.message.split("\n").slice(1).join("\n").trim();
     if (body) scroll.append(el("div", { class: "detail-body", text: body }));
 
-    const when = new Date(d.author_time * 1000).toLocaleString();
     const meta = el("div", { class: "detail-meta" }, [
       el("div", { text: `${d.author_name} <${d.author_email}>` }),
-      el("div", { text: when }),
+      el("div", { text: formatTime(d.author_time), title: fullTime(d.author_time) }),
       el("div", {}, [el("span", { text: "SHA " }), el("span", { class: "sha", text: d.id })]),
     ]);
     if (d.parents.length) {
@@ -388,6 +393,11 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const file = detail!.files[selectedFile];
     if (fileMode === "blame") return renderBlameView(view, file);
     if (fileMode === "history") return renderHistoryView(view, file);
+    const pointer = parseLfsPointerDiff(file);
+    if (pointer) {
+      view.append(lfsPointerPanel(file.path, pointer));
+      return;
+    }
     const shown = displayedDiff(selectedFile);
     if (shown === undefined) return renderRecontexted(view, file);
     view.classList.toggle("wrap-lines", loadDiffWrap());
@@ -549,7 +559,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const d = detail!;
     const key = `${d.id}:${file.path}`;
     if (blame?.key === key) {
-      view.append(buildBlame(blame.data));
+      view.append(buildBlame(blame.data, file.path));
       return;
     }
     view.append(el("div", { class: "detail-empty", text: "Loading blame…" }));
@@ -566,22 +576,25 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
       });
   }
 
-  function buildBlame(lines: BlameLine[]): HTMLElement {
+  function buildBlame(lines: BlameLine[], path: string): HTMLElement {
     const wrap = el("div", { class: "blame" });
-    for (const l of lines) {
+    const runs = fileHighlighter(path)?.(lines.map((l) => l.content)) ?? null;
+    lines.forEach((l, i) => {
       const clickable = l.commit !== "";
+      const code = el("span", { class: "blame-code" });
+      appendCode(code, l.content, null, runs?.[i], "");
       const row = el("div", { class: `blame-row${clickable ? " link" : ""}` }, [
         el("span", { class: "blame-commit", text: l.commit.slice(0, 7) }),
         el("span", { class: "blame-author", text: l.author }),
         el("span", { class: "blame-ln", text: String(l.line_no) }),
-        el("span", { class: "blame-code", text: l.content }),
+        code,
       ]);
       if (clickable) {
         row.title = `Open commit ${l.commit.slice(0, 10)} — ${l.author}`;
         row.addEventListener("click", () => cb.onSelectCommit(l.commit));
       }
       wrap.append(row);
-    }
+    });
     return wrap;
   }
 
@@ -612,7 +625,7 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     }
     const wrap = el("div", { class: "file-history" });
     for (const c of commits) {
-      const when = new Date(c.time * 1000).toLocaleDateString();
+      const when = formatTime(c.time);
       const row = el("div", { class: "hist-row", title: c.id }, [
         el("span", { class: "hist-sha", text: c.short_id }),
         el("span", { class: "hist-summary", text: c.summary }),
@@ -845,6 +858,9 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
       const next = host.querySelector<HTMLElement>(".tab-scroll");
       if (next) next.scrollTop = keep;
     },
+    redraw: () => {
+      if (detail) render();
+    },
     focusCommit: () => {
       if (detail) setTab("commit");
     },
@@ -1004,26 +1020,32 @@ export function truncatedNotice(onShowAll: () => void): HTMLElement {
 
 export function renderFile(file: FileDiff): HTMLElement {
   const container = el("div", { class: "file" }, [fileHead(file)]);
+  const hl = fileHighlighter(file.path);
   file.hunks.forEach((hunk, i) => {
     const h = el("div", { class: "hunk", "data-hunk": i });
     h.append(hunkHeader(hunk));
     const at = lineIndexes(hunk);
     const words = hunkWordDiffs(hunk.lines);
+    const syntax = hl ? hunkRuns(hunk.lines, hl) : null;
+    const line = (l: Line, kind: "del" | "add" | "ctx") => {
+      const k = at.get(l)!;
+      return unifiedLine(l, k, kind, kind === "ctx" ? null : (words.get(k) ?? null), syntax?.get(k));
+    };
 
     let dels: Line[] = [];
     let adds: Line[] = [];
     const flush = () => {
-      dels.forEach((d) => h.append(unifiedLine(d, at.get(d)!, "del", words.get(at.get(d)!) ?? null)));
-      adds.forEach((a) => h.append(unifiedLine(a, at.get(a)!, "add", words.get(at.get(a)!) ?? null)));
+      dels.forEach((d) => h.append(line(d, "del")));
+      adds.forEach((a) => h.append(line(a, "add")));
       dels = [];
       adds = [];
     };
-    for (const line of hunk.lines) {
-      if (line.origin === "-") dels.push(line);
-      else if (line.origin === "+") adds.push(line);
+    for (const l of hunk.lines) {
+      if (l.origin === "-") dels.push(l);
+      else if (l.origin === "+") adds.push(l);
       else {
         flush();
-        h.append(unifiedLine(line, at.get(line)!, "ctx", null));
+        h.append(line(l, "ctx"));
       }
     }
     flush();
@@ -1040,8 +1062,14 @@ function lineIndexes(hunk: FileDiff["hunks"][number]): Map<Line, number> {
   return new Map(hunk.lines.map((l, k) => [l, k]));
 }
 
-function unifiedLine(line: Line, index: number, kind: "del" | "add" | "ctx", segs: Seg[] | null): HTMLElement {
-  const cls = kind === "add" ? "diff-line add" : kind === "del" ? "diff-line del" : "diff-line";
+function unifiedLine(
+  line: Line,
+  index: number,
+  kind: "del" | "add" | "ctx",
+  segs: Seg[] | null,
+  runs: Run[] | undefined,
+): HTMLElement {
+  const cls = `${kind === "add" ? "diff-line add" : kind === "del" ? "diff-line del" : "diff-line"}${runs ? " syn" : ""}`;
   // The old/new line numbers and the +/-/space marker are drawn by CSS
   // (`::before { content: attr(...) }`) rather than being text nodes:
   // `user-select: none` still lets them ride along into the selection
@@ -1051,8 +1079,7 @@ function unifiedLine(line: Line, index: number, kind: "del" | "add" | "ctx", seg
     el("span", { class: "diff-ln", "data-ln": lineno(line.new_lineno) }),
     el("span", { class: "diff-origin", "data-origin": line.origin }),
   ]);
-  if (segs) appendSegs(div, segs, kind === "del" ? "word-del" : "word-add");
-  else div.append(document.createTextNode(line.content));
+  appendCode(div, line.content, segs, runs, kind === "del" ? "word-del" : "word-add");
   return div;
 }
 
@@ -1067,18 +1094,20 @@ const renderUnifiedDiff = renderFile;
 // Split diff: old on the left, new on the right, changed runs aligned.
 export function renderSplitDiff(file: FileDiff): HTMLElement {
   const container = el("div", { class: "file" }, [fileHead(file)]);
+  const hl = fileHighlighter(file.path);
   file.hunks.forEach((hunk, i) => {
     const h = el("div", { class: "hunk", "data-hunk": i });
     h.append(hunkHeader(hunk));
     const table = el("div", { class: "split-table" });
     const at = lineIndexes(hunk);
     const words = hunkWordDiffs(hunk.lines);
+    const syntax = hl ? hunkRuns(hunk.lines, hl) : new Map<number, Run[]>();
 
     let dels: FileDiff["hunks"][number]["lines"] = [];
     let adds: FileDiff["hunks"][number]["lines"] = [];
     const flush = () => {
       const n = Math.max(dels.length, adds.length);
-      for (let k = 0; k < n; k++) table.append(splitRow(dels[k] ?? null, adds[k] ?? null, at, words));
+      for (let k = 0; k < n; k++) table.append(splitRow(dels[k] ?? null, adds[k] ?? null, at, words, syntax));
       dels = [];
       adds = [];
     };
@@ -1087,7 +1116,7 @@ export function renderSplitDiff(file: FileDiff): HTMLElement {
       else if (line.origin === "+") adds.push(line);
       else {
         flush();
-        table.append(splitRow(line, line, at, words));
+        table.append(splitRow(line, line, at, words, syntax));
       }
     }
     flush();
@@ -1131,12 +1160,14 @@ function splitRow(
   right: Line | null,
   at: Map<Line, number>,
   words: Map<number, Seg[]>,
+  syntax: Map<number, Run[]>,
 ): HTMLElement {
   // Only paired deletion/addition lines have word highlights in `words`.
   const segs = (line: Line | null) => (line ? (words.get(at.get(line)!) ?? null) : null);
+  const runs = (line: Line | null) => (line ? syntax.get(at.get(line)!) : undefined);
   return el("div", { class: "split-row" }, [
-    sideCell(left, "left", segs(left), at),
-    sideCell(right, "right", segs(right), at),
+    sideCell(left, "left", segs(left), runs(left), at),
+    sideCell(right, "right", segs(right), runs(right), at),
   ]);
 }
 
@@ -1144,15 +1175,15 @@ function sideCell(
   line: Line | null,
   side: "left" | "right",
   segs: Seg[] | null,
+  runs: Run[] | undefined,
   at: Map<Line, number>,
 ): HTMLElement {
   if (!line) return el("div", { class: "split-cell empty" });
   const changed = side === "left" ? line.origin === "-" : line.origin === "+";
   const no = side === "left" ? line.old_lineno : line.new_lineno;
   const code = el("span", { class: "split-code" });
-  if (segs) appendSegs(code, segs, side === "left" ? "word-del" : "word-add");
-  else code.append(document.createTextNode(line.content));
-  const cls = `split-cell${changed ? (side === "left" ? " del" : " add") : ""}`;
+  appendCode(code, line.content, segs, runs, side === "left" ? "word-del" : "word-add");
+  const cls = `split-cell${changed ? (side === "left" ? " del" : " add") : ""}${runs ? " syn" : ""}`;
   return el("div", { class: cls, "data-line": at.get(line)! }, [
     // Line number as CSS generated content — see the note in `unifiedLine`.
     el("span", { class: "split-ln", "data-ln": no != null ? String(no) : "" }),
@@ -1160,12 +1191,30 @@ function sideCell(
   ]);
 }
 
-// Append text segments, wrapping changed ones in a highlight span.
-function appendSegs(host: HTMLElement, segs: Seg[], changedClass: string): void {
-  for (const s of segs) {
-    if (s.changed) host.append(el("span", { class: changedClass, text: s.text }));
-    else host.append(document.createTextNode(s.text));
+// A line's code: its text, with the changed word-diff segments wrapped in a
+// `changedClass` mark and, when it was highlighted, the syntax token spans
+// inside those (see overlay in highlight.ts).
+function appendCode(
+  host: HTMLElement,
+  text: string,
+  segs: Seg[] | null,
+  runs: Run[] | undefined,
+  changedClass: string,
+): void {
+  const pieces = runs
+    ? overlay(runs, segs ?? [{ text, changed: false }])
+    : (segs ?? [{ text, changed: false }]).map((seg) => ({ seg, runs: [{ text: seg.text, cls: "" }] }));
+  for (const { seg, runs: parts } of pieces) {
+    const into = seg.changed ? el("span", { class: changedClass }) : host;
+    for (const r of parts) into.append(r.cls ? el("span", { class: r.cls, text: r.text }) : document.createTextNode(r.text));
+    if (into !== host) host.append(into);
   }
+}
+
+// The file's highlighter, or null while highlighting is off (Settings →
+// Editor & Diff) or the file has no language.
+function fileHighlighter(path: string): Highlighter | null {
+  return loadSyntaxHighlight() ? highlighter(path) : null;
 }
 
 const SIGNATURE_LABELS: Record<SignatureStatus, string> = {

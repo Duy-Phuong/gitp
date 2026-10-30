@@ -12,6 +12,8 @@ import type { CloneOptions } from "../types";
 
 export interface InitRequest {
   path: string;
+  /// The branch to start on, or null for git's own default.
+  branch: string | null;
   /// The `.gitignore` body to write, or null for none.
   gitignore: string | null;
   readme: boolean;
@@ -27,9 +29,15 @@ export function closeNewRepoDialog(): void {
   onKey = null;
 }
 
-/// `defaultPath`: where the folder field starts (it can be edited or browsed).
-export function openInitDialog(defaultPath: string, onSubmit: (req: InitRequest) => void): void {
+/// `defaultPath`: where the folder field starts (it can be edited or browsed);
+/// `defaultBranch`: the branch field's starting value (Settings → Git).
+export function openInitDialog(
+  defaultPath: string,
+  defaultBranch: string,
+  onSubmit: (req: InitRequest) => void,
+): void {
   const path = textInput("/path/to/new-repository", defaultPath);
+  const branch = textInput("git's default", defaultBranch);
   const template = el("select", { class: "new-repo-input" });
   template.append(el("option", { value: "", text: "None" }));
   for (const [i, t] of GITIGNORE_TEMPLATES.entries()) template.append(el("option", { value: String(i), text: t.name }));
@@ -39,11 +47,15 @@ export function openInitDialog(defaultPath: string, onSubmit: (req: InitRequest)
   const modal = openShell("Initialize a Repository", "Create a new, empty Git repository in a folder.", "Create", (fail) => {
     const folder = path.value.trim();
     if (!folder) return fail("Choose a folder for the repository.");
+    const b = branch.value.trim();
+    // git would read it as an option; the backend refuses it too.
+    if (b.startsWith("-")) return fail("That isn't a branch name.");
     const picked = template.value === "" ? null : GITIGNORE_TEMPLATES[Number(template.value)];
-    onSubmit({ path: folder, gitignore: picked?.body ?? null, readme: readme.checked });
+    onSubmit({ path: folder, branch: b || null, gitignore: picked?.body ?? null, readme: readme.checked });
   });
   modal.body.append(
     field("Folder", path, browseButton(path, "Folder for the New Repository")),
+    field("Branch", branch),
     field(".gitignore", template),
     el("label", { class: "fetch-check new-repo-check" }, [readme, el("span", { text: "Create README.md" })]),
   );

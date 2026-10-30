@@ -2,7 +2,7 @@
 //! single hunks or selected lines), committing, discarding, and per-file
 //! patch / ignore.
 
-use gitp_core::{FileDiff, Repo, SigningConfig, StatusLists};
+use gitp_core::{FileDiff, HeadMoveMode, Repo, SigningConfig, StatusLists};
 use tauri::State;
 
 use crate::state::{ensure_status, to_message, with_repo, with_repo_clearing_undo, RepoState};
@@ -154,7 +154,7 @@ pub(crate) fn commit_changes_impl(
     // Recorded soft: undo moves the tip back but keeps the committed changes
     // staged, so a mistaken commit can be reworked rather than lost.
     let label = if amend { "Amend commit" } else { "Commit" };
-    with_recorded_head_move(state, label, true, |repo| {
+    with_recorded_head_move(state, label, HeadMoveMode::Soft, |repo| {
         repo.commit(&subject, &body, amend, sign, no_verify)
     })
 }
@@ -220,6 +220,12 @@ fn save_files_patch_impl(
     with_repo(state, |repo| {
         repo.save_files_patch(&paths, staged, dest.as_ref())
     })
+}
+
+/// Write every local change, untracked files included, to `dest` as one patch
+/// against HEAD.
+fn save_all_changes_patch_impl(state: &RepoState, dest: String) -> Result<String, String> {
+    with_repo(state, |repo| repo.save_all_changes_patch(dest.as_ref()))
 }
 
 /// Apply the patch file at `path` (`git apply --3way`) to the working tree and
@@ -404,6 +410,14 @@ pub(crate) fn save_files_patch(
     state: State<RepoState>,
 ) -> Result<String, String> {
     save_files_patch_impl(&state, paths, staged, path)
+}
+
+#[tauri::command(async)]
+pub(crate) fn save_all_changes_patch(
+    path: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    save_all_changes_patch_impl(&state, path)
 }
 
 #[tauri::command(async)]

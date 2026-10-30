@@ -8,17 +8,43 @@
 
 import { el } from "../dom";
 import {
+  applyZoom,
   AUTO_FETCH_MINUTES,
   currentTheme,
+  DATE_FORMATS,
+  FONT_FAMILIES,
+  FONT_SIZES,
+  loadAuthorInitials,
   loadAutoFetchMinutes,
+  loadAutoFetchPrune,
+  loadBranchHoverFade,
+  loadCodePrefs,
+  loadDateFormat,
+  loadDefaultBranch,
   loadDetailTab,
   loadPullDefault,
+  loadSyntaxHighlight,
+  loadTerminalFont,
+  loadZoom,
   PULL_DEFAULT_LABEL,
   PULL_DEFAULTS,
+  saveAuthorInitials,
+  saveAutoFetchPrune,
+  saveBranchHoverFade,
+  saveCodePrefs,
+  saveDateFormat,
+  saveDefaultBranch,
   saveDetailTab,
   savePullDefault,
+  saveSyntaxHighlight,
+  saveTerminalFont,
+  TAB_SIZES,
+  type CodePrefs,
+  type DateFormat,
   type PullDefault,
+  type TerminalFont,
   type ThemeChoice,
+  ZOOM_LEVELS,
 } from "../prefs";
 import type { DetailTab } from "./detail";
 
@@ -29,11 +55,19 @@ export interface SettingsActions {
   setAllBranches: (all: boolean) => void;
   // Persist the auto-fetch interval (0 = off) and restart the timer on it.
   setAutoFetch: (minutes: number) => void;
+  // Redraw what shows dates and author avatars, after either setting changes.
+  redrawDisplay: () => void;
   // The open repo's local core.hooksPath ("" when unset), or null when no repo
   // is open; and writing it ("" unsets it).
   hooksPath: () => Promise<string | null>;
   setHooksPath: (path: string) => Promise<void>;
   browseFolder: (title: string) => Promise<string | null>;
+  // Draw the diffs on screen again (syntax highlighting was switched).
+  redrawDiffs: () => void;
+  // The open repo's text encoding label (gitp.encoding, "utf-8" when unset),
+  // or null when no repo is open; and setting it, which re-reads the diffs.
+  encoding: () => Promise<string | null>;
+  setEncoding: (label: string) => Promise<void>;
   // Leave the dialog for one of the Config view's tabs.
   openConfig: (tab: "git" | "dotfiles") => void;
 }
@@ -51,6 +85,21 @@ const THEMES: { choice: ThemeChoice; label: string; bg: string; accent: string }
   { choice: "dark", label: "Dark", bg: "#0f1117", accent: "#5b8cff" },
   { choice: "gitkraken", label: "GitKraken", bg: "#11151c", accent: "#00d2d3" },
   { choice: "gitkraken-neon", label: "GitKraken Neon", bg: "#11151c", accent: "#f368e0" },
+];
+
+// The encodings offered for a repo's files, by WHATWG label (what gitp-core's
+// encoding.rs reads from gitp.encoding).
+const ENCODINGS: { label: string; name: string }[] = [
+  { label: "utf-8", name: "UTF-8" },
+  { label: "utf-16le", name: "UTF-16 LE" },
+  { label: "utf-16be", name: "UTF-16 BE" },
+  { label: "windows-1252", name: "Western (Windows-1252)" },
+  { label: "iso-8859-1", name: "Western (ISO-8859-1)" },
+  { label: "shift_jis", name: "Japanese (Shift_JIS)" },
+  { label: "euc-jp", name: "Japanese (EUC-JP)" },
+  { label: "gbk", name: "Chinese Simplified (GBK)" },
+  { label: "big5", name: "Chinese Traditional (Big5)" },
+  { label: "euc-kr", name: "Korean (EUC-KR)" },
 ];
 
 const DETAIL_TABS: { tab: DetailTab; label: string }[] = [
@@ -73,7 +122,85 @@ export function openSettingsDialog(actions: SettingsActions): void {
   closeSettingsDialog();
 
   const sections: Section[] = [
-    { title: "Appearance", render: () => [row("Theme", themeCards(actions), "block")] },
+    {
+      title: "Appearance",
+      render: () => [
+        row("Theme", themeCards(actions), "block"),
+        row("Zoom", zoomSelect(), "inline", "Cmd/Ctrl + = and − step through these levels; Cmd/Ctrl + 0 goes back to 100%."),
+        row(
+          "Dates",
+          dateFormatSelect(actions),
+          "inline",
+          "In the log, commit details, file history, the reflog and tags. Hover a date in the log or details for the full time.",
+        ),
+        row(
+          "Commit graph shows",
+          segToggle(
+            [
+              { value: false, label: "Avatars" },
+              { value: true, label: "Initials" },
+            ],
+            loadAuthorInitials(),
+            (on) => {
+              saveAuthorInitials(on);
+              actions.redrawDisplay();
+            },
+          ),
+          "inline",
+          "Avatars come from gravatar.com, which is sent a hash of each author's email; initials fetch nothing.",
+        ),
+      ],
+    },
+    {
+      title: "Editor & Diff",
+      render: () => {
+        const code = loadCodePrefs();
+        const setCode = (change: Partial<CodePrefs>) => saveCodePrefs({ ...loadCodePrefs(), ...change });
+        const term = loadTerminalFont();
+        const setTerm = (change: Partial<TerminalFont>) => saveTerminalFont({ ...loadTerminalFont(), ...change });
+        return [
+          row(
+            "Syntax highlighting",
+            segToggle(
+              [
+                { value: true, label: "On" },
+                { value: false, label: "Off" },
+              ],
+              loadSyntaxHighlight(),
+              (on) => {
+                saveSyntaxHighlight(on);
+                actions.redrawDiffs();
+              },
+            ),
+            "inline",
+            "Colours code by file type in diffs and the blame view.",
+          ),
+          row("Font", fontPicker(code.font, (font) => setCode({ font })), "block", "Diffs, blame and the file editor."),
+          row("Font size", sizeSelect(code.size, (size) => setCode({ size }))),
+          row(
+            "Tab width",
+            segToggle(
+              TAB_SIZES.map((n) => ({ value: n, label: String(n) })),
+              code.tabSize,
+              (tabSize) => setCode({ tabSize }),
+            ),
+          ),
+          row(
+            "Line numbers in diffs",
+            segToggle(
+              [
+                { value: true, label: "Show" },
+                { value: false, label: "Hide" },
+              ],
+              code.lineNumbers,
+              (lineNumbers) => setCode({ lineNumbers }),
+            ),
+          ),
+          row("Terminal font", fontPicker(term.font, (font) => setTerm({ font })), "block"),
+          row("Terminal font size", sizeSelect(term.size, (size) => setTerm({ size }))),
+        ];
+      },
+    },
     {
       title: "Pull",
       render: () => [
@@ -83,6 +210,19 @@ export function openSettingsDialog(actions: SettingsActions): void {
           autoFetchSelect(actions),
           "inline",
           "Fetches all remotes of the open repository in the background. Opening History or Local Changes fetches either way.",
+        ),
+        row(
+          "Prune on auto-fetch",
+          segToggle(
+            [
+              { value: true, label: "On" },
+              { value: false, label: "Off" },
+            ],
+            loadAutoFetchPrune(),
+            saveAutoFetchPrune,
+          ),
+          "inline",
+          "Background fetches drop remote-tracking branches deleted on the remote (fetch --prune). Fetch and Refresh always prune.",
         ),
       ],
     },
@@ -110,6 +250,19 @@ export function openSettingsDialog(actions: SettingsActions): void {
           "inline",
           "Used at the next launch. Switching tabs in the details pane also changes it.",
         ),
+        row(
+          "Hovering a branch",
+          segToggle(
+            [
+              { value: true, label: "Fades other commits" },
+              { value: false, label: "Does nothing" },
+            ],
+            loadBranchHoverFade(),
+            saveBranchHoverFade,
+          ),
+          "inline",
+          "In the graph or the sidebar: the commits that aren't on the branch fade.",
+        ),
       ],
     },
     {
@@ -120,6 +273,13 @@ export function openSettingsDialog(actions: SettingsActions): void {
           hooksField(actions),
           "block",
           "core.hooksPath in the open repository's own config. Empty uses .git/hooks.",
+        ),
+        row("Default branch", defaultBranchField(), "inline", "The branch Init Repository starts a new repository on."),
+        row(
+          "Text encoding",
+          encodingSelect(actions),
+          "inline",
+          "How the open repository's files are read and saved: diffs, blame, the file editor and the conflict resolver. Kept in its config as gitp.encoding. UTF-16 files stay binary in diffs, as git sees them.",
         ),
         row("Git configuration", linkButton("Open Git Config", () => actions.openConfig("git"))),
         row("Dotfiles", linkButton("Open Dotfiles", () => actions.openConfig("dotfiles"))),
@@ -207,6 +367,14 @@ function pullSelect(): HTMLElement {
   return select;
 }
 
+function zoomSelect(): HTMLElement {
+  const select = el("select", { class: "settings-select" });
+  for (const z of ZOOM_LEVELS) select.append(el("option", { value: String(z), text: `${Math.round(z * 100)}%` }));
+  select.value = String(loadZoom());
+  select.addEventListener("change", () => void applyZoom(Number(select.value)));
+  return select;
+}
+
 function autoFetchSelect(actions: SettingsActions): HTMLElement {
   const select = el("select", { class: "settings-select" });
   for (const m of AUTO_FETCH_MINUTES) {
@@ -215,6 +383,92 @@ function autoFetchSelect(actions: SettingsActions): HTMLElement {
   }
   select.value = String(loadAutoFetchMinutes());
   select.addEventListener("change", () => actions.setAutoFetch(Number(select.value)));
+  return select;
+}
+
+function dateFormatSelect(actions: SettingsActions): HTMLElement {
+  const select = el("select", { class: "settings-select" });
+  for (const f of DATE_FORMATS) select.append(el("option", { value: f.format, text: f.label }));
+  select.value = loadDateFormat();
+  select.addEventListener("change", () => {
+    saveDateFormat(select.value as DateFormat);
+    actions.redrawDisplay();
+  });
+  return select;
+}
+
+// Saved when it changes (Enter or leaving it); emptied, it goes back to "main".
+function defaultBranchField(): HTMLElement {
+  const input = el("input", {
+    class: "settings-select",
+    placeholder: "main",
+    spellcheck: "false",
+    autocomplete: "off",
+    "aria-label": "Default branch",
+  }) as HTMLInputElement;
+  input.value = loadDefaultBranch();
+  input.addEventListener("change", () => {
+    saveDefaultBranch(input.value);
+    input.value = loadDefaultBranch();
+  });
+  return input;
+}
+
+// A font family: the app's monospace, one of FONT_FAMILIES, or any other typed
+// in as Custom (saved when the field changes).
+function fontPicker(current: string, onChange: (font: string) => void): HTMLElement {
+  const CUSTOM = "(custom)";
+  const select = el("select", { class: "settings-select" }) as HTMLSelectElement;
+  select.append(el("option", { value: "", text: "Default monospace" }));
+  for (const f of FONT_FAMILIES) select.append(el("option", { value: f, text: f }));
+  select.append(el("option", { value: CUSTOM, text: "Custom…" }));
+  const custom = el("input", {
+    class: "settings-select settings-path",
+    placeholder: "Font family, e.g. Iosevka",
+    spellcheck: "false",
+    autocomplete: "off",
+  }) as HTMLInputElement;
+  const preset = current === "" || FONT_FAMILIES.includes(current);
+  select.value = preset ? current : CUSTOM;
+  custom.value = preset ? "" : current;
+  custom.hidden = preset;
+  select.addEventListener("change", () => {
+    custom.hidden = select.value !== CUSTOM;
+    if (select.value === CUSTOM) custom.focus();
+    else onChange(select.value);
+  });
+  custom.addEventListener("change", () => onChange(custom.value.trim()));
+  return el("div", { class: "settings-path-row" }, [select, custom]);
+}
+
+function sizeSelect(current: number, onChange: (size: number) => void): HTMLElement {
+  const select = el("select", { class: "settings-select" }) as HTMLSelectElement;
+  for (const n of FONT_SIZES) select.append(el("option", { value: String(n), text: `${n} px` }));
+  select.value = String(current);
+  select.addEventListener("change", () => onChange(Number(select.value)));
+  return select;
+}
+
+// The open repo's text encoding. Disabled until the current value has loaded,
+// and when no repo is open. A label set by hand that isn't offered is shown as
+// it is, so the list never claims UTF-8 for it.
+function encodingSelect(actions: SettingsActions): HTMLElement {
+  const select = el("select", { class: "settings-select", disabled: true }) as HTMLSelectElement;
+  for (const e of ENCODINGS) select.append(el("option", { value: e.label, text: e.name }));
+  select.addEventListener("change", () => void actions.setEncoding(select.value));
+  void actions.encoding().then(
+    (label) => {
+      if (label === null) {
+        select.title = "No repository open";
+        return;
+      }
+      const known = ENCODINGS.find((e) => e.label === label.toLowerCase());
+      if (!known) select.append(el("option", { value: label, text: label }));
+      select.value = known?.label ?? label;
+      select.disabled = false;
+    },
+    () => (select.title = "Couldn't read the repository's config"),
+  );
   return select;
 }
 

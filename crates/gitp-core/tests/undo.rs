@@ -4,7 +4,7 @@
 mod common;
 
 use common::FixtureRepo;
-use gitp_core::{DeletedBranch, FileBlob, Repo, Undoable};
+use gitp_core::{DeletedBranch, FileBlob, HeadMoveMode, Repo, ResetMode, Undoable};
 
 fn read(fx: &FixtureRepo, name: &str) -> Option<String> {
     std::fs::read_to_string(fx.path().join(name)).ok()
@@ -27,7 +27,8 @@ fn undo_commit_moves_the_tip_back_but_keeps_the_change_staged() {
         label: "Commit".into(),
         before: before.clone(),
         after: after.clone(),
-        soft: true,
+        mode: HeadMoveMode::Soft,
+        backup: None,
     };
 
     repo.undo(&action).unwrap();
@@ -578,7 +579,8 @@ fn undo_is_refused_after_an_out_of_band_commit() {
         label: "Commit".into(),
         before: before.clone(),
         after,
-        soft: true,
+        mode: HeadMoveMode::Soft,
+        backup: None,
     };
     repo.can_undo(&action).expect("still at c2");
 
@@ -889,4 +891,186 @@ fn undo_of_a_stage_survives_a_stat_only_index_rewrite() {
         .expect("the staging area itself is unchanged");
     repo.undo(&action).unwrap();
     assert!(repo.status_summary().unwrap().staged.is_empty(), "unstaged");
+}
+
+// --- resets --------------------------------------------------------------------
+//
+// A reset is undone with the mode that can't lose work for it: `--mixed` for a
+// mixed reset (whose leftover edits `--keep` refuses), `--keep` plus the saved
+// backup for a hard one.
+
+/// The `HeadMoved` record the GUI makes around a reset.
+fn head_moved(before: &str, after: &str, mode: HeadMoveMode, backup: Option<String>) -> Undoable {
+    Undoable::HeadMoved {
+        label: "Reset".into(),
+        before: before.into(),
+        after: after.into(),
+        mode,
+        backup,
+    }
+}
+
+#[test]
+fn mixed_reset_undo_and_redo_keep_the_working_tree_edits() {
+    let fx = FixtureRepo::init();
+    let c1 = fx.commit_file("a.txt", "one\n", "c1").to_string();
+    let c2 = fx.commit_file("a.txt", "two\n", "c2").to_string();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    repo.reset(&c1, ResetMode::Mixed).unwrap();
+    assert_eq!(
+        porcelain(&fx),
+        " M a.txt",
+        "the reset left c2's change as an edit"
+    );
+    // And an edit of the user's own on top, which neither move may touch.
+    std::fs::write(fx.path().join("a.txt"), "two, edited\n").unwrap();
+
+    let action = head_moved(&c2, &c1, HeadMoveMode::Mixed, None);
+    repo.undo(&action).unwrap();
+    assert_eq!(repo.head_commit_id().unwrap(), c2);
+    assert_eq!(read(&fx, "a.txt").as_deref(), Some("two, edited\n"));
+    assert_eq!(porcelain(&fx), " M a.txt");
+
+    repo.redo(&action).unwrap();
+    assert_eq!(repo.head_commit_id().unwrap(), c1);
+    assert_eq!(read(&fx, "a.txt").as_deref(), Some("two, edited\n"));
+}
+
+#[test]
+fn a_refused_keep_move_names_the_files_in_the_way() {
+    let fx = FixtureRepo::init();
+    let c1 = fx.commit_file("a.txt", "one\n", "c1").to_string();
+    fx.commit_file("b.txt", "one\n", "c2");
+    let c3 = fx.commit_file("a.txt", "three\n", "c3").to_string();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    // A cherry-pick-like move c1 → c3, then a local edit to a file it changed.
+    repo.reset(&c1, ResetMode::Hard).unwrap();
+    std::fs::write(fx.path().join("a.txt"), "mine\n").unwrap();
+    let action = head_moved(&c3, &c1, HeadMoveMode::Keep, None);
+
+    let err = repo.undo(&action).unwrap_err().to_string();
+    assert!(err.contains("Undo would overwrite"), "got {err}");
+    assert!(err.contains("a.txt"), "names the file: {err}");
+    assert!(!err.contains("b.txt"), "b.txt has no local edit: {err}");
+    assert!(err.contains("Commit or stash"), "says what to do: {err}");
+    assert!(!err.contains("not uptodate"), "not git's raw output: {err}");
+    assert_eq!(repo.head_commit_id().unwrap(), c1, "nothing moved");
+    assert_eq!(read(&fx, "a.txt").as_deref(), Some("mine\n"), "edit kept");
+}
+
+#[test]
+fn hard_reset_undo_restores_the_commits_and_the_exact_uncommitted_work() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let c2 = fx.commit_file("gone.txt", "kept\n", "c2").to_string();
+    let c3 = fx.commit_file("a.txt", "three\n", "c3").to_string();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    // Uncommitted work of every kind: an edit, a deletion, a new untracked
+    // file (in a new folder), and an edit to a file the reset also changes.
+    std::fs::write(fx.path().join("a.txt"), "three, edited\n").unwrap();
+    std::fs::remove_file(fx.path().join("gone.txt")).unwrap();
+    std::fs::create_dir(fx.path().join("sub")).unwrap();
+    std::fs::write(fx.path().join("sub/new.txt"), "brand new\n").unwrap();
+    let work = porcelain(&fx);
+    let index = std::fs::read(fx.path().join(".git/index")).unwrap();
+
+    let backup = repo
+        .backup_uncommitted_work()
+        .unwrap()
+        .expect("work to save");
+    assert_eq!(porcelain(&fx), work, "the working tree is untouched");
+    assert_eq!(
+        std::fs::read(fx.path().join(".git/index")).unwrap(),
+        index,
+        "the real index is untouched"
+    );
+    let refs = std::process::Command::new("git")
+        .current_dir(fx.path())
+        .args([
+            "for-each-ref",
+            "--format=%(objectname)",
+            "refs/gitp/backups/",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&refs.stdout).trim(),
+        backup,
+        "kept under a private ref"
+    );
+
+    repo.reset(&c2, ResetMode::Hard).unwrap();
+    assert_eq!(read(&fx, "a.txt").as_deref(), Some("one\n"));
+    let action = head_moved(&c3, &c2, HeadMoveMode::Keep, Some(backup));
+
+    repo.undo(&action).unwrap();
+    assert_eq!(repo.head_commit_id().unwrap(), c3, "commits back");
+    assert_eq!(read(&fx, "a.txt").as_deref(), Some("three, edited\n"));
+    assert_eq!(read(&fx, "gone.txt"), None, "the deletion is back too");
+    assert_eq!(read(&fx, "sub/new.txt").as_deref(), Some("brand new\n"));
+    assert_eq!(porcelain(&fx), work, "back as the same uncommitted changes");
+
+    // Redo throws the work away again (it is still in the backup)…
+    repo.redo(&action).unwrap();
+    assert_eq!(repo.head_commit_id().unwrap(), c2);
+    assert_eq!(read(&fx, "a.txt").as_deref(), Some("one\n"));
+    assert_eq!(read(&fx, "gone.txt").as_deref(), Some("kept\n"));
+    // …and a second undo brings it back again.
+    repo.undo(&action).unwrap();
+    assert_eq!(porcelain(&fx), work);
+}
+
+#[test]
+fn hard_reset_undo_refuses_to_overwrite_work_done_since() {
+    let fx = FixtureRepo::init();
+    let c1 = fx.commit_file("a.txt", "one\n", "c1").to_string();
+    let c2 = fx.commit_file("b.txt", "two\n", "c2").to_string();
+    let repo = Repo::open(fx.path()).unwrap();
+    std::fs::write(fx.path().join("a.txt"), "saved work\n").unwrap();
+    let backup = repo
+        .backup_uncommitted_work()
+        .unwrap()
+        .expect("work to save");
+    repo.reset(&c1, ResetMode::Hard).unwrap();
+    let action = head_moved(&c2, &c1, HeadMoveMode::Keep, Some(backup));
+
+    // New work in a file the backup would overwrite.
+    std::fs::write(fx.path().join("a.txt"), "newer work\n").unwrap();
+    let err = repo.undo(&action).unwrap_err().to_string();
+    assert!(
+        err.contains("a.txt") && err.contains("Commit or stash"),
+        "got {err}"
+    );
+    assert_eq!(repo.head_commit_id().unwrap(), c1, "nothing moved");
+    assert_eq!(read(&fx, "a.txt").as_deref(), Some("newer work\n"));
+}
+
+#[test]
+fn no_backup_without_uncommitted_work_and_old_backups_are_pruned() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let repo = Repo::open(fx.path()).unwrap();
+    std::fs::write(fx.path().join(".gitignore"), "ignored.txt\n").unwrap();
+    std::fs::write(fx.path().join("ignored.txt"), "x\n").unwrap();
+    fx.commit_file(".gitignore", "ignored.txt\n", "ignore");
+    assert_eq!(
+        repo.backup_uncommitted_work().unwrap(),
+        None,
+        "ignored files don't count"
+    );
+
+    std::fs::write(fx.path().join("a.txt"), "edited\n").unwrap();
+    for _ in 0..22 {
+        repo.backup_uncommitted_work().unwrap().expect("saved");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let refs = std::process::Command::new("git")
+        .current_dir(fx.path())
+        .args(["for-each-ref", "refs/gitp/backups/"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&refs.stdout).lines().count(), 20);
 }

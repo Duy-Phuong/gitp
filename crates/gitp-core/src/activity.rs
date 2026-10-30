@@ -285,6 +285,8 @@ fn is_quiet(args: &[Cow<str>]) -> bool {
         "stash" => matches!(next, Some("list" | "show")),
         "worktree" => next == Some("list"),
         "submodule" => next == Some("status"),
+        // Asked on every refresh, to tell whether git-lfs is installed.
+        "lfs" => next == Some("version"),
         // `config <key>` and `config --get <key>` read; anything with a value
         // or an `--unset`/`--add` writes.
         "config" => {
@@ -393,6 +395,7 @@ mod tests {
             &["worktree", "list", "--porcelain", "-z"],
             &["config", "--get", "user.name"],
             &["config", "branch.main.remote"],
+            &["lfs", "version"],
         ] {
             assert!(is_quiet(&args(probe)), "{probe:?} should be quiet");
         }
@@ -405,6 +408,7 @@ mod tests {
             &["config", "user.name", "Someone"],
             &["config", "--unset", "user.name"],
             &["ls-remote", "--heads", "origin"],
+            &["-c", "lfs.forceprogress=true", "lfs", "pull"],
             &[],
         ] {
             assert!(!is_quiet(&args(op)), "{op:?} should not be quiet");

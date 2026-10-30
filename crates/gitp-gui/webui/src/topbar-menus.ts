@@ -2,7 +2,8 @@
 
 import { browseForFolder, fetchConfig, saveConfig, unsetConfig } from "./api";
 import { clear, el, $ } from "./dom";
-import { state } from "./app-state";
+import { state, ui } from "./app-state";
+import { ensureAvatars } from "./avatar";
 import { opFailed, reportDone } from "./report";
 import {
   applyTheme,
@@ -14,7 +15,7 @@ import {
   type ThemeChoice,
 } from "./prefs";
 import { setConfigTab } from "./config-panel";
-import { showView, startAutoFetch, updateLogView } from "./shell";
+import { reloadDiffs, showView, startAutoFetch, updateLogView } from "./shell";
 import { createBranchAction, runPullMethod } from "./repo-actions";
 import { checkoutBranchAction } from "./ref-actions";
 import { closeSettingsDialog, openSettingsDialog } from "./views/settings-dialog";
@@ -140,6 +141,15 @@ export function setupSettingsMenu(): void {
         saveAutoFetchMinutes(minutes);
         startAutoFetch(minutes);
       },
+      // The log and the reflog redraw now; the details pane shows the new
+      // format from the next commit selected.
+      redrawDisplay: () => {
+        if (state.view === "reflog") void ui.reflogView?.reload();
+        // Back from initials, the loaded rows' avatars were never looked up.
+        void ensureAvatars(state.rows.map((r) => r.author_email)).then(() => {
+          if (state.view === "history") void updateLogView();
+        });
+      },
       // libgit2 lists keys with the variable name lowercased.
       hooksPath: async () => {
         if (!state.repoPath) return null;
@@ -156,6 +166,27 @@ export function setupSettingsMenu(): void {
         }
       },
       browseFolder: browseForFolder,
+      redrawDiffs: () => {
+        ui.detailView?.redraw();
+        // Re-renders from the status it has; the diff itself isn't re-read.
+        void ui.changesView?.reload();
+      },
+      encoding: async () => {
+        if (!state.repoPath) return null;
+        const entries = await fetchConfig();
+        return entries.find((e) => e.scope === "Local" && e.name.toLowerCase() === "gitp.encoding")?.value ?? "utf-8";
+      },
+      // UTF-8 is the default, so choosing it unsets the key.
+      setEncoding: async (label) => {
+        try {
+          if (label === "utf-8") await unsetConfig("Local", "gitp.encoding");
+          else await saveConfig("Local", "gitp.encoding", label);
+          reportDone(`Text encoding set to ${label}`);
+          reloadDiffs();
+        } catch (err) {
+          opFailed("Couldn't set the text encoding", err);
+        }
+      },
       openConfig: (tab) => {
         closeSettingsDialog();
         setConfigTab(tab);

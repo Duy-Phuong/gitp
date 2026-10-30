@@ -45,7 +45,7 @@ impl Repo {
             .inner
             .diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts))?;
         diff.find_similar(Some(&mut git2::DiffFindOptions::new()))?;
-        collect_files(&diff, Some(MAX_DIFF_LINES))
+        collect_files(&diff, Some(MAX_DIFF_LINES), self.text_encoding())
     }
 
     /// The staging area: staged changes (HEAD → index) and unstaged changes
@@ -79,9 +79,10 @@ impl Repo {
             .diff_index_to_workdir(Some(&index), Some(&mut wt_opts))?;
         unstaged.find_similar(Some(&mut git2::DiffFindOptions::new()))?;
 
+        let enc = self.text_encoding();
         Ok(StatusLists {
-            staged: collect_files(&staged, Some(MAX_DIFF_LINES))?,
-            unstaged: collect_files(&unstaged, Some(MAX_DIFF_LINES))?,
+            staged: collect_files(&staged, Some(MAX_DIFF_LINES), enc)?,
+            unstaged: collect_files(&unstaged, Some(MAX_DIFF_LINES), enc)?,
         })
     }
 
@@ -209,7 +210,7 @@ impl Repo {
         max_lines: Option<usize>,
     ) -> Result<Option<FileDiff>> {
         let diff = self.staging_diff(path, staged, context_lines, ignore_whitespace)?;
-        let mut files = collect_files(&diff, max_lines)?;
+        let mut files = collect_files(&diff, max_lines, self.text_encoding())?;
         let idx = files.iter().position(|f| f.path == path);
         Ok(match idx {
             Some(i) => Some(files.remove(i)),

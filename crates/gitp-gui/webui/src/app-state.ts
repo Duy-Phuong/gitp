@@ -22,6 +22,8 @@ import type {
   UndoState,
   Submodule,
   Worktree,
+  GitFlowConfig,
+  LfsStatus,
 } from "./types";
 
 export type View = "history" | "changes" | "config" | "conflict" | "reflog" | "activity";
@@ -65,6 +67,10 @@ interface State {
   worktrees: Worktree[];
   // The repo's submodules, refreshed with the sidebar.
   submodules: Submodule[];
+  // The repo's Git Flow settings (null: not initialised) and Git LFS status
+  // (null: not known yet), refreshed with the sidebar.
+  gitflow: GitFlowConfig | null;
+  lfs: LfsStatus | null;
   // The repo's configured remotes, refreshed with the sidebar — including ones
   // never fetched, which have no remote branches in `refs` to show them by.
   remoteList: RemoteInfo[];
@@ -94,6 +100,8 @@ export const state: State = {
   busyRefs: new Set(),
   worktrees: [],
   submodules: [],
+  gitflow: null,
+  lfs: null,
   remoteList: [],
   rebase: null,
   conflict: null,
@@ -108,6 +116,8 @@ export interface TerminalPanel {
   clear: () => void;
   // Every tab, the ones in the background included.
   syncTheme: () => void;
+  // Every tab too; the one on screen is refitted to the new cell size.
+  syncFont: () => void;
   // Put `path`'s tabs on screen — the active repo changed.
   showRepo: (path: string) => void;
   // Kill `path`'s shells — its repo tab was closed.

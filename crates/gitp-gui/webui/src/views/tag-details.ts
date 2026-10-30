@@ -6,6 +6,7 @@
 // reads as missing data instead of the absence being the actual answer.
 
 import { clear, el } from "../dom";
+import { formatTime } from "../timeago";
 import type { TagDetail } from "../types";
 
 export function openTagDetailsModal(name: string, load: Promise<TagDetail>): void {
@@ -70,7 +71,7 @@ function fields(d: TagDetail): HTMLElement {
   if (d.annotated) {
     const who = [d.tagger_name, d.tagger_email && `<${d.tagger_email}>`].filter(Boolean).join(" ");
     if (who) add("Tagger", who);
-    if (d.tagger_time != null) add("Tagged", new Date(d.tagger_time * 1000).toLocaleString());
+    if (d.tagger_time != null) add("Tagged", formatTime(d.tagger_time));
   } else {
     // Say why the tagger/message rows aren't here, so their absence reads as
     // the answer rather than as a gap.

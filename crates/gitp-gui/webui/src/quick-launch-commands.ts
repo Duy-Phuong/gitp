@@ -11,6 +11,8 @@ import {
   fetchCommitTree,
   fetchRemote,
   fetchFileHistory,
+  listEditors,
+  openRepoInEditor,
   pushBranch,
   rebaseOnto,
   revertCommit,
@@ -30,16 +32,18 @@ import {
   type QuickItem,
   type QuickStage,
 } from "./views/quick-launch";
-import type { BranchRef, ResetMode, StashRef, WorktreeTarget } from "./types";
+import type { BranchRef, Editor, ResetMode, StashRef, WorktreeTarget } from "./types";
 import { state, ui } from "./app-state";
 import { cancelNetworkAction, canCancelNetwork, readFailed, setStatus } from "./report";
 import {
+  applyTheme,
   forgetRecentRepo,
   isFavoriteRepo,
   loadFavoriteRepos,
   loadRecentRepos,
   PULL_DEFAULT_LABEL,
   PULL_DEFAULTS,
+  toggledTheme,
 } from "./prefs";
 import {
   bisectStep,
@@ -50,17 +54,21 @@ import {
   showView,
   switchRepo,
   toggleFavorite,
+  updateLogView,
 } from "./shell";
 import {
   applyPatchAction,
   cleanUpAction,
   createBranchAction,
+  discardAllAction,
+  maintenanceAction,
   popAction,
   pushAction,
   pushForceAction,
   redoAction,
   refreshAllAction,
   runPullMethod,
+  saveAllChangesPatchAction,
   stageAllAction,
   openStashDialogAction,
   undoAction,
@@ -95,7 +103,11 @@ import {
 import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
 import { addSubmoduleAction, syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
+import { finishFlowAction, initGitflowAction, startFlowAction } from "./gitflow-actions";
+import { FLOW_KINDS, flowBranch } from "./gitflow";
+import { lfsFetchAction, lfsInstallAction, lfsPullAction, lfsTrackAction, lfsUntrackAction } from "./lfs-actions";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
+import { openWorkspacesAction } from "./local-workspace-actions";
 import { addRemoteAction } from "./remote-actions";
 import { createFileAction, editFileStage } from "./editor-actions";
 
@@ -113,6 +125,7 @@ import { createFileAction, editFileStage } from "./editor-actions";
 
 export function openQuickLaunch(): void {
   if (isQuickLaunchOpen()) return closeQuickLaunch();
+  detectEditors();
   showQuickLaunch({
     placeholder: state.repoPath ? "Command" : "Open a repository",
     sections: [
@@ -181,9 +194,33 @@ function openOnlyCommands(): QuickItem[] {
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
     { kind: "command", label: "Clone Repository…", run: cloneRepoAction },
     { kind: "command", label: "Init Repository…", run: initRepoAction },
+    { kind: "command", label: "Workspaces…", detail: "groups of repositories to fetch, pull or open together", run: openWorkspacesAction },
     { kind: "command", label: "Terminal", run: toggleTerminal },
+    { kind: "command", label: "Toggle Theme", detail: "light ↔ your last dark theme", run: toggleTheme },
   ];
 }
+
+// The rule is toggledTheme's. The GitKraken themes draw the graph differently,
+// which CSS alone can't do, so the log is redrawn (as Settings does).
+function toggleTheme(): void {
+  applyTheme(toggledTheme());
+  if (state.repoPath && state.view === "history") void updateLogView();
+}
+
+// The editors "Open in …" offers. Looked up in the background each time the
+// palette opens — a few dozen file checks — so the list is ready by the next
+// opening without the palette ever waiting on it; the first opening after
+// launch is covered by the lookup at startup below.
+let installedEditors: Editor[] = [];
+
+function detectEditors(): void {
+  listEditors().then(
+    (editors) => (installedEditors = editors),
+    () => {}, // keeps the last list; nothing worth reporting
+  );
+}
+
+detectEditors();
 
 async function browseAndOpen(): Promise<void> {
   const path = await browseForRepo();
@@ -374,6 +411,11 @@ function repoCommands(): QuickItem[] {
     },
     { kind: "command", label: "Repository Settings…", run: () => showView("config") },
     { kind: "command", label: "Reveal in Finder", run: () => void revealRepo() },
+    ...installedEditors.map((e): QuickItem => ({ kind: "command", label: `Open in ${e.name}`, run: () => void openInEditor(e) })),
+    { kind: "command", label: "Perform Repo Maintenance", detail: "git gc", run: () => void maintenanceAction() },
+    { kind: "command", label: "Create Patch from All Changes…", run: () => void saveAllChangesPatchAction() },
+    { kind: "command", label: "Discard All Changes…", run: () => void discardAllAction() },
+    { kind: "command", label: "Toggle Theme", detail: "light ↔ your last dark theme", run: toggleTheme },
     { kind: "command", label: "Save Stash…", run: openStashDialogAction },
     { kind: "command", label: "Show Reflog", run: () => showReflog() },
     { kind: "command", label: "Show Activity Log", run: () => showView("activity") },
@@ -381,6 +423,7 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
     { kind: "command", label: "Clone Repository…", run: cloneRepoAction },
     { kind: "command", label: "Init Repository…", run: initRepoAction },
+    { kind: "command", label: "Workspaces…", detail: "groups of repositories to fetch, pull or open together", run: openWorkspacesAction },
     { kind: "command", label: "Close Repository", run: () => void closeRepoTab(state.repoPath) },
     {
       kind: "command",
@@ -442,6 +485,8 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Apply Patch…", run: () => void applyPatchAction() },
     { kind: "command", label: "Stage All Changes", run: () => void stageAllAction() },
     { kind: "command", label: "Unstage All Changes", run: () => void unstageAllAction() },
+    ...gitflowCommands(),
+    ...lfsCommands(),
     ...commitCommands(),
   ];
 
@@ -499,6 +544,74 @@ function repoCommands(): QuickItem[] {
   return items;
 }
 
+// Git Flow: Initialize until it is set up; then Start, Finish and Settings.
+function gitflowCommands(): QuickItem[] {
+  if (!state.gitflow) return [{ kind: "command", label: "Git Flow: Initialize…", run: initGitflowAction }];
+  return [
+    ...FLOW_KINDS.map((kind) => ({
+      kind: "command" as const,
+      label: `Git Flow: Start ${kind}…`,
+      run: () => promptFor(`${kind} name`, (name) => void startFlowAction(kind, name)),
+    })),
+    { kind: "command", label: "Git Flow: Finish…", next: flowFinishStage },
+    { kind: "command", label: "Git Flow: Settings…", run: initGitflowAction },
+  ];
+}
+
+function flowFinishStage(): QuickStage {
+  return {
+    chip: "Finish",
+    placeholder: "branch",
+    emptyNote: "No feature, release or hotfix branches to finish.",
+    sections: [
+      {
+        title: "Git Flow Branches",
+        items: state.refs.branches
+          .filter((b) => flowBranch(state.gitflow, b.name))
+          .map((b) => ({ kind: "branch" as const, label: b.name, run: () => void finishFlowAction(b.name) })),
+      },
+    ],
+  };
+}
+
+// Git LFS. Track and Initialize are offered in any repository — they are how
+// one starts using LFS; the rest only where it is in use.
+function lfsCommands(): QuickItem[] {
+  const items: QuickItem[] = [
+    {
+      kind: "command",
+      label: "LFS: Track Pattern…",
+      run: () => promptFor("Pattern, e.g. *.psd", (p) => void lfsTrackAction(p)),
+    },
+    { kind: "command", label: "LFS: Initialize", run: () => void lfsInstallAction() },
+  ];
+  if (state.lfs?.used) {
+    items.push(
+      { kind: "command", label: "LFS: Untrack Pattern…", next: lfsUntrackStage },
+      { kind: "command", label: "LFS: Fetch", run: () => void lfsFetchAction() },
+      { kind: "command", label: "LFS: Pull", run: () => void lfsPullAction() },
+    );
+  }
+  return items;
+}
+
+function lfsUntrackStage(): QuickStage {
+  return {
+    chip: "Untrack",
+    placeholder: "pattern",
+    sections: [
+      {
+        title: "LFS Patterns",
+        items: (state.lfs?.patterns ?? []).map((p) => ({
+          kind: "option" as const,
+          label: p,
+          run: () => void lfsUntrackAction(p),
+        })),
+      },
+    ],
+  };
+}
+
 // `open_in_editor`/`reveal` succeed or fail entirely in the OS, so without a
 // status line a failed reveal is indistinguishable from a dead menu entry.
 async function revealRepo(): Promise<void> {
@@ -507,6 +620,15 @@ async function revealRepo(): Promise<void> {
     setStatus(`Revealed ${state.repoPath}`);
   } catch (err) {
     readFailed("Couldn't reveal the repository", err);
+  }
+}
+
+async function openInEditor(editor: Editor): Promise<void> {
+  try {
+    await openRepoInEditor(editor.id);
+    setStatus(`Opened ${state.repoPath} in ${editor.name}`);
+  } catch (err) {
+    readFailed(`Couldn't open the repository in ${editor.name}`, err);
   }
 }
 

@@ -318,3 +318,75 @@ fn a_saved_commit_patch_applies_back_with_apply_patch() {
         "one\ntwo\n"
     );
 }
+
+/// The paths in `git status`, staged and unstaged, for comparing before/after.
+fn status_paths(repo: &Repo) -> (Vec<String>, Vec<String>) {
+    let s = repo.status_lists().unwrap();
+    let paths = |l: Vec<gitp_core::FileDiff>| l.into_iter().map(|f| f.path).collect();
+    (paths(s.staged), paths(s.unstaged))
+}
+
+#[test]
+fn an_all_changes_patch_recreates_the_working_tree_on_a_clean_checkout() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    fx.commit_file("gone.txt", "bye\n", "c2");
+    let repo = Repo::open(fx.path()).unwrap();
+    // Staged, then edited again on top; a deletion; untracked text and binary;
+    // and an ignored file, which must stay out of it.
+    std::fs::write(fx.path().join("a.txt"), "one\ntwo\n").unwrap();
+    repo.stage("a.txt").unwrap();
+    std::fs::write(fx.path().join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    std::fs::remove_file(fx.path().join("gone.txt")).unwrap();
+    std::fs::create_dir(fx.path().join("dir")).unwrap();
+    std::fs::write(fx.path().join("dir/new.txt"), "fresh\n").unwrap();
+    let binary = [0u8, 1, 2, 255, 0, 7];
+    std::fs::write(fx.path().join("bin.dat"), binary).unwrap();
+    std::fs::write(fx.path().join(".git/info/exclude"), "*.log\n").unwrap();
+    std::fs::write(fx.path().join("debug.log"), "noise\n").unwrap();
+    let before = status_paths(&repo);
+
+    let out = tempfile::TempDir::new().unwrap();
+    let dest = out.path().join("all.patch");
+    repo.save_all_changes_patch(&dest).unwrap();
+
+    assert_eq!(status_paths(&repo), before, "the index is untouched");
+    assert!(
+        !fx.path().join(".git/gitp-patch-index").exists(),
+        "scratch index removed"
+    );
+    let text = String::from_utf8_lossy(&std::fs::read(&dest).unwrap()).into_owned();
+    assert!(!text.contains("debug.log"), "ignored files stay out");
+
+    // Back to a clean HEAD, then apply: the same working tree comes back.
+    repo.reset("HEAD", gitp_core::ResetMode::Hard).unwrap();
+    std::fs::remove_dir_all(fx.path().join("dir")).unwrap();
+    std::fs::remove_file(fx.path().join("bin.dat")).unwrap();
+    repo.apply_patch(&dest).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("a.txt")).unwrap(),
+        "one\ntwo\nthree\n"
+    );
+    assert!(!fx.path().join("gone.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("dir/new.txt")).unwrap(),
+        "fresh\n"
+    );
+    assert_eq!(std::fs::read(fx.path().join("bin.dat")).unwrap(), binary);
+}
+
+#[test]
+fn an_all_changes_patch_works_before_the_first_commit_and_refuses_when_clean() {
+    let fx = FixtureRepo::init();
+    std::fs::write(fx.path().join("first.txt"), "hello\n").unwrap();
+    let repo = Repo::open(fx.path()).unwrap();
+    let out = tempfile::TempDir::new().unwrap();
+    let dest = out.path().join("first.patch");
+
+    repo.save_all_changes_patch(&dest).unwrap();
+    assert!(std::fs::read_to_string(&dest).unwrap().contains("+hello"));
+
+    std::fs::remove_file(fx.path().join("first.txt")).unwrap();
+    let err = repo.save_all_changes_patch(&dest).unwrap_err();
+    assert!(err.to_string().contains("no local changes"), "{err}");
+}

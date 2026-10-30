@@ -3,6 +3,7 @@
 
 import type { RefLabel, RefLabels, TipRef } from "./views/log";
 import type { BranchRef, CommitRow, RemoteBranch, TagRef } from "./types";
+import type { DragRef } from "./ref-drop";
 import { state } from "./app-state";
 import { branchRefName, refFilter, refShown, remoteRefName, tagRefName } from "./ref-visibility";
 
@@ -25,9 +26,15 @@ let commitRefs = new Map<string, RefLabels>();
 
 // What the last rebuild knew, kept so allRefsAt can list every ref containing a
 // commit on demand: the branches in bit order, each loaded commit's row, and
-// the containment bitsets (`words` 32-bit words per row).
-let containment: { branches: BranchRef[]; index: Map<string, number>; bits: Uint32Array; words: number } | null =
-  null;
+// the containment bitsets (`words` 32-bit words per row), and the rows they
+// describe.
+let containment: {
+  rows: CommitRow[];
+  branches: BranchRef[];
+  index: Map<string, number>;
+  bits: Uint32Array;
+  words: number;
+} | null = null;
 let commitTips = new Map<string, TipRef[]>();
 
 const NO_REFS: RefLabels = { labels: [], total: 0 };
@@ -178,7 +185,7 @@ export function rebuildCommitRefs(): boolean {
   }
   commitRefs = labels;
   commitTips = tips;
-  containment = { branches, index, bits, words };
+  containment = { rows, branches, index, bits, words };
   return true;
 }
 
@@ -237,6 +244,56 @@ export function allRefsAt(id: string): { tips: TipRef[]; containing: string[] } 
     });
   }
   return { tips, containing };
+}
+
+// The branch to show as a commit's "ghost" badge in the GitKraken ref column:
+// the nearest branch containing it, for a commit no ref points at (one that has
+// a badge of its own needs no ghost). The labels are already nearest-first.
+export function ghostBranch(refs: RefLabels | undefined): string | null {
+  if (!refs || refs.tips?.length) return null;
+  return refs.labels.find((l) => l.kind === "branch" || l.kind === "head")?.name ?? null;
+}
+
+// The loaded commits on a branch, as a test per commit id: what hovering a
+// branch leaves unfaded in the log. A local branch reads its bit from the
+// containment bitsets. A remote branch, which the bitsets don't track (nor a
+// local one hidden from the graph), is walked from its tip once over the loaded
+// rows, children before parents as in rebuildCommitRefs. A commit outside the
+// loaded log (a search result further down) is never faded: there's no telling.
+export function branchReach(ref: DragRef): ((id: string) => boolean) | null {
+  if (!containment) return null;
+  const { rows, branches, index, bits, words } = containment;
+  if (ref.kind === "local") {
+    const bi = branches.findIndex((b) => b.name === ref.name);
+    if (bi >= 0) {
+      const word = bi >> 5;
+      const mask = 1 << (bi & 31);
+      return (id) => {
+        const ri = index.get(id);
+        return ri === undefined || (bits[ri * words + word] & mask) !== 0;
+      };
+    }
+  }
+  const target =
+    ref.kind === "local"
+      ? state.refs.branches.find((b) => b.name === ref.name)?.target
+      : state.refs.remotes.find((r) => r.name === ref.name)?.target;
+  const reach = new Uint8Array(rows.length);
+  const start = target === undefined ? undefined : index.get(target);
+  if (start !== undefined) {
+    reach[start] = 1;
+    for (let i = start; i < rows.length; i++) {
+      if (!reach[i]) continue;
+      for (const parent of rows[i].parents) {
+        const j = index.get(parent);
+        if (j !== undefined) reach[j] = 1;
+      }
+    }
+  }
+  return (id) => {
+    const ri = index.get(id);
+    return ri === undefined || reach[ri] === 1;
+  };
 }
 
 // Bits set in a 32-bit word (SWAR), turning a commit's containment bitset into

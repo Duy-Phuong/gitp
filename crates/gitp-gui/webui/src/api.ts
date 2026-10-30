@@ -18,6 +18,7 @@ import type {
   ConflictSides,
   ConflictStatus,
   DotfileKind,
+  Editor,
   FileCommit,
   FileContent,
   FileDiff,
@@ -37,18 +38,25 @@ import type {
   Refs,
   RemoteInfo,
   RepoChanged,
+  RepoSummary,
   ResetMode,
   SigningConfig,
+  Identity,
   StatusLists,
   TagDetail,
   TextFile,
   UndoState,
   Workspace,
+  WorkspaceProgress,
   WorkspaceSnapshot,
   Worktree,
   WorktreeTarget,
   Submodule,
   StashOptions,
+  StashSwitch,
+  FlowKind,
+  GitFlowConfig,
+  LfsStatus,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -158,6 +166,12 @@ export async function closeRepo(path: string): Promise<Workspace> {
   return invoke<Workspace>("close_repo", { path });
 }
 
+// Move the tab for `path` to position `to` (an index into the tabs without it).
+export async function moveRepo(path: string, to: number): Promise<Workspace> {
+  if (!isTauri()) return mockMoveTab(path, to);
+  return invoke<Workspace>("move_repo", { path, to });
+}
+
 // Show a native folder picker. Returns the chosen directory, or null if the
 // user cancelled (or if running outside the Tauri shell, where no picker exists).
 export async function browseForRepo(): Promise<string | null> {
@@ -172,6 +186,67 @@ export async function browseForFolder(title: string): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+// --- Local workspaces (the Workspaces screen) -------------------------------
+// Each call is about one repo folder, open as a tab or not, and leaves the
+// active repo alone. Fetch and pull are network operations of their own: not
+// counted by invokeNetwork, since the status bar's Cancel can't reach them —
+// cancelWorkspaceOps does — and their progress comes per repo as
+// `workspace-progress` events.
+
+export async function workspaceRepoSummary(path: string): Promise<RepoSummary> {
+  if (!isTauri()) {
+    // Something different per path, so the table has some variety to show.
+    const n = path.length;
+    return { missing: path.includes("missing"), branch: "main", ahead: n % 2, behind: n % 3, has_upstream: true, changes: n % 4 };
+  }
+  return invoke<RepoSummary>("workspace_repo_summary", { path });
+}
+
+// The repositories directly inside `folder` (and `folder` itself if it is one).
+export async function workspaceScanFolder(folder: string): Promise<string[]> {
+  if (!isTauri()) return [`${folder}/alpha`, `${folder}/beta`];
+  return invoke<string[]>("workspace_scan_folder", { folder });
+}
+
+// The mocks take a moment, so the screen's per-row progress can be seen.
+const mockNetworkDelay = () => new Promise((resolve) => setTimeout(resolve, 600));
+
+export async function workspaceFetch(path: string): Promise<string> {
+  if (!isTauri()) {
+    await mockNetworkDelay();
+    return "Fetched (preview mock)";
+  }
+  return invoke<string>("workspace_fetch", { path });
+}
+
+export async function workspacePull(path: string, mode: PullMode): Promise<string> {
+  if (!isTauri()) {
+    await mockNetworkDelay();
+    return "Already up to date. (preview mock)";
+  }
+  return invoke<string>("workspace_pull", { path, mode });
+}
+
+/// Stop every running Workspaces fetch / pull; each rejects as cancelled.
+export async function cancelWorkspaceOps(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("cancel_workspace_ops", {});
+}
+
+/// Listen for per-repo progress of Workspaces fetches and pulls. Returns the
+/// unsubscribe function. No-op in preview mode.
+export async function onWorkspaceProgress(cb: (progress: WorkspaceProgress) => void): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<WorkspaceProgress>("workspace-progress", (event) => cb(event.payload));
+}
+
+// Reveal an absolute folder (a workspace's repo) in Finder / Explorer.
+export async function revealFolder(path: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("reveal_folder", { path });
+}
+
 // `git clone` `url` into `dest`, a new folder, as `options` say. A network
 // operation: progress and Cancel as for a fetch, credentials asked for in a
 // dialog. Returns git's output; open `dest` with openRepo afterwards. In
@@ -181,12 +256,18 @@ export async function cloneRepository(url: string, dest: string, options: CloneO
   return invokeNetwork<string>("clone_repository", { url, dest, options });
 }
 
-// `git init` a new repository at `path` (created if missing), writing a
-// `.gitignore` with `gitignore` and a README.md when asked. Open it afterwards
-// with openRepo. In preview mode it simply succeeds.
-export async function initRepository(path: string, gitignore: string | null, readme: boolean): Promise<void> {
+// `git init` a new repository at `path` (created if missing) on `branch`
+// (null: git's default), writing a `.gitignore` with `gitignore` and a
+// README.md when asked. Open it afterwards with openRepo. In preview mode it
+// simply succeeds.
+export async function initRepository(
+  path: string,
+  branch: string | null,
+  gitignore: string | null,
+  readme: boolean,
+): Promise<void> {
   if (!isTauri()) return;
-  return invoke<void>("init_repository", { path, gitignore, readme });
+  return invoke<void>("init_repository", { path, branch, gitignore, readme });
 }
 
 // A cheap "has history changed?" probe. Pulling a page to find out costs ~264 KB
@@ -593,6 +674,20 @@ export async function checkoutRemoteBranch(name: string): Promise<string> {
   return invoke<string>("checkout_remote", { name });
 }
 
+// Stash & Switch: check out a local branch, a remote branch or a commit
+// (detached) with the uncommitted work stashed across the switch and popped
+// on the other side. `stash_kept`: the pop conflicted and git kept the stash.
+export async function stashAndSwitch(kind: "branch" | "remote" | "commit", target: string): Promise<StashSwitch> {
+  if (!isTauri()) {
+    let output = `Switched to ${target} (preview mock)`;
+    if (kind === "branch") await checkoutBranch(target);
+    else if (kind === "remote") output = await checkoutRemoteBranch(target);
+    else output = await checkoutCommit(target);
+    return { output, stash_kept: false };
+  }
+  return invoke<StashSwitch>("stash_and_switch", { kind, target });
+}
+
 export async function createBranch(name: string): Promise<void> {
   if (!isTauri()) {
     MOCK_REFS.branches.forEach((b) => (b.is_head = false));
@@ -782,6 +877,39 @@ export async function squashMessage(): Promise<string | null> {
   return invoke<string | null>("squash_message", {});
 }
 
+// --- Git Flow ---------------------------------------------------------------
+
+// The repo's Git Flow settings, or null before it is initialised.
+export async function gitflowConfig(): Promise<GitFlowConfig | null> {
+  if (!isTauri()) return mockGitflow && { ...mockGitflow };
+  return invoke<GitFlowConfig | null>("gitflow_config", {});
+}
+
+// Store the settings (in git-flow's `gitflow.*` keys) and create develop if
+// it doesn't exist.
+export async function gitflowInit(config: GitFlowConfig): Promise<string> {
+  if (!isTauri()) {
+    mockGitflow = { ...config };
+    return `Git Flow initialized: production ${config.production}, develop ${config.develop}. (preview mock)`;
+  }
+  return invoke<string>("gitflow_init", { config });
+}
+
+// Create the feature / release / hotfix branch `name` (prefix added by the
+// backend) from develop, or production for a hotfix, and check it out.
+export async function gitflowStart(kind: FlowKind, name: string): Promise<string> {
+  if (!isTauri()) return `Switched to a new branch '${name}' (${kind}, preview mock)`;
+  return invoke<string>("gitflow_start", { kind, name });
+}
+
+// Merge the flow branch where it belongs (tagging a release or hotfix with
+// `tagMessage`), then delete it. Stops on a conflict with the merge left in
+// progress, saying what is left to do.
+export async function gitflowFinish(branch: string, tagMessage: string | null): Promise<string> {
+  if (!isTauri()) return `Finished ${branch} (preview mock)`;
+  return invoke<string>("gitflow_finish", { branch, tagMessage });
+}
+
 // `remote`: where to push; by default the remote the branch tracks, else origin.
 export async function pushBranch(name: string, remote?: string): Promise<string> {
   if (!isTauri()) return `Pushed ${name} to ${remote ?? "origin"} (preview mock)`;
@@ -863,9 +991,17 @@ export async function removeRemote(name: string): Promise<string> {
 
 // `background`: the periodic refresh nobody asked for, which must never pop a
 // credential dialog — it fails quietly instead.
-export async function fetchAll(opts: { background?: boolean } = {}): Promise<string> {
+// `prune` (default on) drops remote-tracking branches deleted upstream.
+export async function fetchAll(opts: { background?: boolean; prune?: boolean } = {}): Promise<string> {
   if (!isTauri()) return "Fetched all remotes (preview mock)";
-  return invokeNetwork<string>("fetch_all", { background: opts.background ?? false });
+  return invokeNetwork<string>("fetch_all", { background: opts.background ?? false, prune: opts.prune ?? true });
+}
+
+// `git maintenance run --task=gc`: runs like a fetch (Cancel, the status
+// bar's busy state) though nothing goes over the network.
+export async function performMaintenance(): Promise<string> {
+  if (!isTauri()) return "";
+  return invokeNetwork<string>("perform_maintenance");
 }
 
 export async function fetchAndUpdateBranch(name: string): Promise<string> {
@@ -1163,6 +1299,17 @@ export async function saveFilesPatch(
   return invoke<string>("save_files_patch", { paths, staged, path: dest });
 }
 
+// Prompt for a destination and write every local change — staged, unstaged and
+// untracked — there as one patch against HEAD. Returns a status string, or null
+// if the user cancelled.
+export async function saveAllChangesPatch(defaultName: string): Promise<string | null> {
+  if (!isTauri()) return "Saved patch of all changes (preview mock)";
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const dest = await save({ title: "Create Patch from All Changes", defaultPath: defaultName });
+  if (!dest) return null;
+  return invoke<string>("save_all_changes_patch", { path: dest });
+}
+
 // Prompt for a destination and write `revs` (in that order) there as one patch
 // file. Returns a status string, or null if the user cancelled.
 export async function saveCommitsPatch(revs: string[], defaultName: string): Promise<string | null> {
@@ -1215,6 +1362,23 @@ export async function revealPath(path: string): Promise<void> {
 export async function openInEditor(path: string): Promise<void> {
   if (!isTauri()) return;
   await invoke<void>("open_in_editor", { path });
+}
+
+// The editors and IDEs installed here that the repository can be opened in.
+export async function listEditors(): Promise<Editor[]> {
+  if (!isTauri()) {
+    return [
+      { id: "vscode", name: "Visual Studio Code" },
+      { id: "cursor", name: "Cursor" },
+    ];
+  }
+  return invoke<Editor[]>("list_editors");
+}
+
+// Open the active repository's folder in the editor `id` (from listEditors).
+export async function openRepoInEditor(id: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("open_repo_in_editor", { id });
 }
 
 // --- In-app file editor ------------------------------------------------------
@@ -1300,7 +1464,7 @@ export async function conflictStatus(): Promise<ConflictStatus> {
 
 export async function conflictSides(path: string): Promise<ConflictSides> {
   if (!isTauri()) {
-    return MOCK_SIDES[path] ?? { ours: "", theirs: "", base: null, working: "", binary: false };
+    return MOCK_SIDES[path] ?? { ours: "", theirs: "", base: null, working: "", binary: false, edited: false };
   }
   return invoke<ConflictSides>("conflict_sides", { path });
 }
@@ -1365,6 +1529,26 @@ export async function unsetConfig(scope: ConfigScope, name: string): Promise<voi
     return;
   }
   await invoke<void>("unset_config", { scope, name });
+}
+
+// The identity git commits as outside any repo (global config, else system),
+// read without an open repo — the first-run "Default" profile starts from it.
+export async function fetchGlobalIdentity(): Promise<Identity> {
+  if (!isTauri()) return { name: "Ada Lovelace", email: "ada@example.com", signing_key: "" };
+  return invoke<Identity>("get_global_identity", {});
+}
+
+// Write a profile's identity into ~/.gitconfig (no repo needed).
+export async function setGlobalIdentity(identity: Identity): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("set_global_identity", { identity });
+}
+
+// Write a profile's identity into the active repo's local config; true when it
+// wasn't already there.
+export async function applyLocalIdentity(identity: Identity): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("apply_local_identity", { identity });
 }
 
 // The path each DotfileKind resolves to, purely for display — the backend
@@ -1518,6 +1702,53 @@ export async function removeSubmodule(path: string): Promise<string> {
   return invoke<string>("remove_submodule", { path });
 }
 
+// --- Git LFS ----------------------------------------------------------------
+
+// Whether git-lfs is installed, and whether (and how) this repo uses it.
+export async function lfsStatus(): Promise<LfsStatus> {
+  if (!isTauri()) return { ...MOCK_LFS, patterns: [...MOCK_LFS.patterns] };
+  return invoke<LfsStatus>("lfs_status", {});
+}
+
+// `git lfs track` / `untrack`: edit .gitattributes, left for the user to commit.
+export async function lfsTrack(pattern: string): Promise<string> {
+  if (!isTauri()) {
+    MOCK_LFS.patterns.push(pattern);
+    MOCK_LFS.used = true;
+    return `Tracking "${pattern}" (preview mock)`;
+  }
+  return invoke<string>("lfs_track", { pattern });
+}
+
+export async function lfsUntrack(pattern: string): Promise<string> {
+  if (!isTauri()) {
+    MOCK_LFS.patterns = MOCK_LFS.patterns.filter((p) => p !== pattern);
+    MOCK_LFS.used = MOCK_LFS.patterns.length > 0;
+    return `Untracking "${pattern}" (preview mock)`;
+  }
+  return invoke<string>("lfs_untrack", { pattern });
+}
+
+// `git lfs install --local`: the LFS filters and hooks for this repo.
+export async function lfsInstall(): Promise<string> {
+  if (!isTauri()) {
+    MOCK_LFS.initialized = true;
+    return "Updated Git hooks.\nGit LFS initialized. (preview mock)";
+  }
+  return invoke<string>("lfs_install", {});
+}
+
+// `git lfs fetch` / `pull`: network operations, with progress and Cancel.
+export async function lfsFetch(): Promise<string> {
+  if (!isTauri()) return "fetch: 2 objects found, done. (preview mock)";
+  return invokeNetwork<string>("lfs_fetch", {});
+}
+
+export async function lfsPull(): Promise<string> {
+  if (!isTauri()) return "Downloading LFS objects: 100% (2/2), done. (preview mock)";
+  return invokeNetwork<string>("lfs_pull", {});
+}
+
 // ---------------------------------------------------------------------------
 // Mock data (browser-only)
 // ---------------------------------------------------------------------------
@@ -1554,6 +1785,17 @@ function mockClose(path: string): Workspace {
     MOCK_WORKSPACE.repos.splice(i, 1);
     const a = MOCK_WORKSPACE.active ?? 0;
     MOCK_WORKSPACE.active = MOCK_WORKSPACE.repos.length === 0 ? null : Math.min(i < a ? a - 1 : a, MOCK_WORKSPACE.repos.length - 1);
+  }
+  return { ...MOCK_WORKSPACE };
+}
+
+function mockMoveTab(path: string, to: number): Workspace {
+  const i = MOCK_WORKSPACE.repos.findIndex((r) => r.path === path);
+  if (i !== -1) {
+    const active = MOCK_WORKSPACE.repos[MOCK_WORKSPACE.active ?? -1];
+    const [tab] = MOCK_WORKSPACE.repos.splice(i, 1);
+    MOCK_WORKSPACE.repos.splice(Math.min(to, MOCK_WORKSPACE.repos.length), 0, tab);
+    if (active) MOCK_WORKSPACE.active = MOCK_WORKSPACE.repos.indexOf(active);
   }
   return { ...MOCK_WORKSPACE };
 }
@@ -1893,6 +2135,7 @@ const MOCK_SIDES: Record<string, ConflictSides> = {
     base: `${BASE_README.join("\n")}\n`,
     working: "<<<<<<< HEAD\n(conflict)\n=======\n(conflict)\n>>>>>>> test-1\n",
     binary: false,
+    edited: false,
   },
   "reset.css": {
     ours: "body {\n  margin: 10px;\n}\n",
@@ -1900,6 +2143,7 @@ const MOCK_SIDES: Record<string, ConflictSides> = {
     base: "body {\n  margin: 0;\n}\n",
     working: "body {\n<<<<<<< HEAD\n  margin: 10px;\n=======\n  margin: 20px;\n>>>>>>> test-1\n}\n",
     binary: false,
+    edited: false,
   },
 };
 
@@ -2180,6 +2424,12 @@ const MOCK_WORKTREES: Worktree[] = [
   { ...MOCK_LINKED_WORKTREE, path: "/Users/you/Documents/mideal", head: mockOid("g"), branch: "develop/3.33.0", is_main: true },
   { ...MOCK_LINKED_WORKTREE },
 ];
+
+// Git Flow isn't set up in the mock repo until Initialize runs.
+let mockGitflow: GitFlowConfig | null = null;
+
+// The mock repo tracks its design files with LFS.
+const MOCK_LFS: LfsStatus = { installed: true, used: true, initialized: true, patterns: ["*.psd"] };
 
 // One submodule, with an older commit checked out than the repo records.
 const MOCK_SUBMODULES: Submodule[] = [

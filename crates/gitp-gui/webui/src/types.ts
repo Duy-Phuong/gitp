@@ -295,12 +295,22 @@ export interface ConflictStatus {
 }
 
 // The three staged versions plus the working text of a conflicted file.
+// What a Stash & Switch did (mirrors gitp-core's StashSwitch).
+export interface StashSwitch {
+  output: string;
+  // Popping on the new HEAD conflicted: markers are in the files and the
+  // auto-stash is still stash@{0}.
+  stash_kept: boolean;
+}
+
 export interface ConflictSides {
   ours: string | null;
   theirs: string | null;
   base: string | null;
   working: string;
   binary: boolean;
+  // Changed on disk since git wrote it (matches neither side, no markers).
+  edited: boolean;
 }
 
 // Pushed by the backend's filesystem watcher (Tauri event `repo-changed`) when
@@ -324,6 +334,26 @@ export interface GitProgress {
   cancellable: boolean;
 }
 
+// A local workspace's repo, as its row in the Workspaces screen shows it.
+// `missing`: the folder is gone. `branch` is null when HEAD is detached.
+export interface RepoSummary {
+  missing: boolean;
+  branch: string | null;
+  ahead: number;
+  behind: number;
+  has_upstream: boolean;
+  changes: number;
+}
+
+// Git's progress for one repo of a Workspaces bulk fetch or pull.
+export interface WorkspaceProgress {
+  path: string;
+  phase: string;
+  percent: number | null;
+  detail: string;
+  cancellable: boolean;
+}
+
 // One reflog entry: the ref moved from `old_id` to `new_id` because of
 // `message` (git's own, e.g. "commit: …", "checkout: moving from a to b").
 export interface ReflogEntry {
@@ -339,6 +369,13 @@ export interface ReflogEntry {
   time: number;
   // Summary of the `new_id` commit, or null once it has been pruned.
   summary: string | null;
+}
+
+// An installed editor or IDE the repository can be opened in (mirrors
+// gitp-gui's os::Editor).
+export interface Editor {
+  id: string;
+  name: string;
 }
 
 // One git command gitp ran for the repo (the Activity view).
@@ -426,6 +463,14 @@ export interface SigningConfig {
   sign_by_default: boolean;
 }
 
+// The user.name / user.email / user.signingkey a profile commits as (mirrors
+// gitp-core's Identity). An empty field is an unset key.
+export interface Identity {
+  name: string;
+  email: string;
+  signing_key: string;
+}
+
 // One working tree of the repository (mirrors gitp-core's Worktree): the main
 // one, listed first, and any linked ones added with `git worktree add`.
 export interface Worktree {
@@ -471,4 +516,29 @@ export interface Submodule {
   // The commit checked out in the submodule; null while uninitialized.
   checked_out: string | null;
   state: SubmoduleState;
+}
+
+// A repository's Git Flow settings (mirrors gitp-core's GitFlowConfig), stored
+// under git-flow's own `gitflow.*` config keys.
+export interface GitFlowConfig {
+  production: string;
+  develop: string;
+  feature: string;
+  release: string;
+  hotfix: string;
+  // May be empty.
+  version_tag: string;
+}
+
+export type FlowKind = "Feature" | "Release" | "Hotfix";
+
+// Git LFS for the status bar indicator (mirrors gitp-core's LfsStatus).
+export interface LfsStatus {
+  // `git lfs` runs.
+  installed: boolean;
+  // `.gitattributes` tracks some paths with LFS.
+  used: boolean;
+  // The LFS filters are configured (`git lfs install`).
+  initialized: boolean;
+  patterns: string[];
 }

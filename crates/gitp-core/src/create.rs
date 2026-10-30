@@ -14,15 +14,21 @@ use crate::git_bin::git_command;
 use crate::progress::{run_progress, NetworkHooks};
 use crate::remote::ref_arg;
 
-/// `git init` the folder at `path` (created if missing, parents too), then
-/// write a `.gitignore` with `gitignore` and a `README.md` headed with the
-/// folder's name when asked. No commit is made.
+/// `git init` the folder at `path` (created if missing, parents too) on
+/// `branch` — `None` leaves it to git's `init.defaultBranch` — then write a
+/// `.gitignore` with `gitignore` and a `README.md` headed with the folder's
+/// name when asked. No commit is made.
 ///
 /// The folder may already hold a project — that's the usual reason to init —
 /// so neither file overwrites one already there: that is refused before
 /// anything is written. `path` must be absolute; a relative one would land
 /// wherever the app happened to be started.
-pub fn init_repo(path: &Path, gitignore: Option<&str>, readme: bool) -> Result<()> {
+pub fn init_repo(
+    path: &Path,
+    branch: Option<&str>,
+    gitignore: Option<&str>,
+    readme: bool,
+) -> Result<()> {
     if !path.is_absolute() {
         return Err(Error::Message(format!(
             "{} is not an absolute path",
@@ -38,8 +44,20 @@ pub fn init_repo(path: &Path, gitignore: Option<&str>, readme: bool) -> Result<(
         }
     }
 
+    // Checked before anything is written; git itself refuses a name that
+    // isn't a valid branch.
+    let branch = branch
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .map(ref_arg)
+        .transpose()?;
+
     let mut cmd = git_command();
-    cmd.args(["init", "--"]).arg(path);
+    cmd.arg("init");
+    if let Some(branch) = branch {
+        cmd.arg(format!("--initial-branch={branch}"));
+    }
+    cmd.arg("--").arg(path);
     let output = Run::start(&key_for_new(path), cmd.get_args())
         .output(&mut cmd)
         .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;

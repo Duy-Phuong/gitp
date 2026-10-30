@@ -6,11 +6,15 @@ import {
   confirmDialog,
   createBranch,
   deleteBranches,
+  discardFiles,
   fetchAll,
+  fetchStatusSummary,
   goneBranches,
+  performMaintenance,
   pull,
   push,
   pushForce,
+  saveAllChangesPatch,
   undo,
   redo,
   stageAll,
@@ -320,5 +324,82 @@ export async function unstageAllAction(): Promise<void> {
     reportDone("Unstaged all changes.");
   } catch (err) {
     opFailed("Unstage all failed", err);
+  }
+}
+
+// Quick Launch's Discard All Changes: every staged, unstaged and untracked
+// change, as one discard — so one Undo brings all of it back.
+export async function discardAllAction(): Promise<void> {
+  if (!state.repoPath || operationInFlight()) return;
+  let paths: string[];
+  try {
+    const { staged, unstaged } = await fetchStatusSummary();
+    // A rename's old path is part of it too: discarding only the new path would
+    // delete that and leave the original missing.
+    paths = [...new Set([...staged, ...unstaged].flatMap((f) => (f.old_path ? [f.path, f.old_path] : [f.path])))];
+  } catch (err) {
+    opFailed("Discard failed", err);
+    return;
+  }
+  if (paths.length === 0) {
+    setStatus("Nothing to discard — there are no local changes.");
+    return;
+  }
+  const files = `${paths.length} file${paths.length === 1 ? "" : "s"}`;
+  const ok = await confirmDialog(
+    `Discard all local changes to ${files}? Modified files go back to HEAD and new files are deleted.\n\n` +
+      "Undo brings them back, until the next action that can be undone.",
+  );
+  if (!ok) {
+    setStatus("Discard cancelled.");
+    return;
+  }
+  setActionsBusy(true);
+  setStatus("Discarding all changes…");
+  try {
+    await discardFiles(paths);
+    reportDone(`Discarded changes to ${files}.`);
+  } catch (err) {
+    opFailed("Discard failed", err);
+  } finally {
+    setActionsBusy(false);
+    // Refreshed either way: a discard that failed part-way still changed files.
+    await loadSidebar();
+    if (state.view === "changes") await loadChanges();
+  }
+}
+
+// Quick Launch's Create Patch from All Changes: staged, unstaged and untracked,
+// against HEAD, without touching the index.
+export async function saveAllChangesPatchAction(): Promise<void> {
+  if (!state.repoPath) return;
+  setStatus("Saving patch…");
+  const name = state.repoPath.split("/").filter(Boolean).pop() ?? "changes";
+  try {
+    const out = await saveAllChangesPatch(`${name}.patch`);
+    if (out === null) {
+      setStatus("Save cancelled.");
+      return;
+    }
+    reportDone(out || "Saved patch.");
+  } catch (err) {
+    opFailed("Create patch failed", err);
+  }
+}
+
+// Quick Launch's Perform Repo Maintenance (`git maintenance run --task=gc`).
+// Busy like a pull while it runs; nothing to refresh after, since gc changes
+// how objects are stored, not what the repository holds.
+export async function maintenanceAction(): Promise<void> {
+  if (!state.repoPath || operationInFlight()) return;
+  setActionsBusy(true);
+  setStatus("Running repository maintenance (git gc)…");
+  try {
+    const out = (await performMaintenance()).trim();
+    reportDone(out || "Repository maintenance finished.");
+  } catch (err) {
+    opFailed("Repository maintenance failed", err);
+  } finally {
+    setActionsBusy(false);
   }
 }

@@ -17,7 +17,10 @@ mod compare;
 mod config;
 mod conflict;
 mod editor;
+mod gitflow;
 mod history;
+mod lfs;
+mod local_workspaces;
 mod os;
 mod rebase;
 mod reflog;
@@ -59,6 +62,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(RepoState::default())
         .manage(TerminalState::default())
+        .manage(local_workspaces::WorkspaceOps::default())
         .setup(|app| {
             // Repository watchers push changes on disk to the frontend (see
             // `watch`); they need the app handle to emit, which exists only now.
@@ -90,6 +94,7 @@ pub fn run() {
             workspace::list_repos,
             workspace::activate_repo,
             workspace::close_repo,
+            workspace::move_repo,
             history::get_log_page,
             history::search_log,
             history::log_index_of,
@@ -119,6 +124,7 @@ pub fn run() {
             staging::commit_changes,
             branches::checkout_branch,
             branches::checkout_remote,
+            branches::stash_and_switch,
             branches::create_branch,
             commits::checkout_commit,
             branches::create_branch_at,
@@ -145,10 +151,15 @@ pub fn run() {
             branches::remote_branch_exists,
             branches::merge_branch,
             branches::squash_message,
+            gitflow::gitflow_config,
+            gitflow::gitflow_init,
+            gitflow::gitflow_start,
+            gitflow::gitflow_finish,
             remote::push_branch,
             remote::push_branch_to,
             remote::fetch_branch,
             remote::fetch_all,
+            remote::perform_maintenance,
             remote::fetch_remote,
             remote::list_remotes,
             remote::add_remote,
@@ -165,6 +176,11 @@ pub fn run() {
             remote::create_pull_request,
             remote::cancel_network_op,
             remote::clone_repository,
+            local_workspaces::workspace_repo_summary,
+            local_workspaces::workspace_scan_folder,
+            local_workspaces::workspace_fetch,
+            local_workspaces::workspace_pull,
+            local_workspaces::cancel_workspace_ops,
             rebase::get_rebase_todo,
             rebase::interactive_rebase,
             rebase::rebase_status,
@@ -185,12 +201,16 @@ pub fn run() {
             staging::revert_commit_hunk,
             stash::stash_files,
             staging::save_files_patch,
+            staging::save_all_changes_patch,
             staging::apply_patch,
             staging::add_to_gitignore,
             staging::untrack_files,
             os::reveal_path,
+            os::reveal_folder,
             workspace::workspace_snapshot,
             os::open_in_editor,
+            os::list_editors,
+            os::open_repo_in_editor,
             editor::read_text_file,
             editor::write_text_file,
             editor::create_file,
@@ -214,6 +234,9 @@ pub fn run() {
             config::get_config,
             config::set_config,
             config::unset_config,
+            config::get_global_identity,
+            config::set_global_identity,
+            config::apply_local_identity,
             reflog::get_reflog,
             activity::get_activity_log,
             activity::clear_activity_log,
@@ -240,6 +263,12 @@ pub fn run() {
             submodules::add_submodule,
             submodules::set_submodule_url,
             submodules::remove_submodule,
+            lfs::lfs_status,
+            lfs::lfs_track,
+            lfs::lfs_untrack,
+            lfs::lfs_install,
+            lfs::lfs_fetch,
+            lfs::lfs_pull,
         ])
         .run(tauri::generate_context!())
         .expect("error while running gitp");

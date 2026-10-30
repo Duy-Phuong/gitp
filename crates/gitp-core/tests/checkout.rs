@@ -278,3 +278,115 @@ fn detaching_or_branching_mid_merge_is_refused_and_creates_no_branch() {
     assert!(fx.path().join(".git/MERGE_HEAD").exists(), "the merge is still paused");
     assert_eq!(read(&fx, "f.txt"), "a\nMY RESOLUTION\nc\n");
 }
+
+// --- Stash & Switch ----------------------------------------------------------
+
+fn stash_count(fx: &FixtureRepo) -> usize {
+    let mut repo = git2::Repository::open(fx.path()).unwrap();
+    let mut n = 0;
+    repo.stash_foreach(|_, _, _| {
+        n += 1;
+        true
+    })
+    .unwrap();
+    n
+}
+
+#[test]
+fn stash_and_switch_carries_clashing_work_over_and_drops_the_stash() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "1\n2\n3\n4\n5\n", "c1");
+    {
+        let c1 = fx.repo.head().unwrap().peel_to_commit().unwrap();
+        fx.repo.branch("feature", &c1, false).unwrap();
+    }
+    let repo = Repo::open(fx.path()).unwrap();
+    repo.checkout_branch("feature").unwrap();
+    fx.commit_file("a.txt", "ONE\n2\n3\n4\n5\n", "c2");
+    repo.checkout_branch("master").unwrap();
+
+    // An edit to a file the branches disagree about blocks a plain switch…
+    std::fs::write(fx.path().join("a.txt"), "1\n2\n3\n4\nFIVE\n").unwrap();
+    std::fs::write(fx.path().join("new.txt"), "untracked\n").unwrap();
+    assert!(repo.checkout_branch("feature").is_err());
+
+    // …but stashed, switched and popped, it merges into feature's version.
+    let out = repo
+        .stash_and_switch("feature", |r| {
+            r.checkout_branch("feature").map(|()| String::new())
+        })
+        .unwrap();
+
+    assert!(!out.stash_kept);
+    assert_eq!(head_branch(&repo), "feature");
+    assert_eq!(read(&fx, "a.txt"), "ONE\n2\n3\n4\nFIVE\n");
+    assert_eq!(
+        read(&fx, "new.txt"),
+        "untracked\n",
+        "untracked files come along"
+    );
+    assert_eq!(
+        stash_count(&fx),
+        0,
+        "the auto-stash is dropped once re-applied"
+    );
+}
+
+#[test]
+fn stash_and_switch_keeps_the_stash_when_re_applying_conflicts() {
+    let (fx, repo) = two_branches_differing_in_a_txt();
+    std::fs::write(fx.path().join("a.txt"), "my precious work\n").unwrap();
+
+    let out = repo
+        .stash_and_switch("feature", |r| {
+            r.checkout_branch("feature").map(|()| String::new())
+        })
+        .unwrap();
+
+    assert!(out.stash_kept, "a conflicting pop must be reported");
+    assert_eq!(head_branch(&repo), "feature", "the switch itself happened");
+    assert!(
+        read(&fx, "a.txt").contains("<<<<<<<"),
+        "conflict markers left to resolve"
+    );
+    // git keeps the entry when the pop conflicts — the work is still there.
+    assert_eq!(stash_count(&fx), 1);
+    let message = repo.stash_message(0).unwrap();
+    assert!(
+        message.contains("Auto-stash before switching to feature"),
+        "{message}"
+    );
+}
+
+#[test]
+fn stash_and_switch_puts_the_work_back_when_the_switch_fails() {
+    let (fx, repo) = two_branches_differing_in_a_txt();
+    std::fs::write(fx.path().join("a.txt"), "my precious work\n").unwrap();
+    std::fs::write(fx.path().join("new.txt"), "untracked\n").unwrap();
+    std::fs::write(fx.path().join("staged.txt"), "staged\n").unwrap();
+    {
+        let mut index = fx.repo.index().unwrap();
+        index.add_path(std::path::Path::new("staged.txt")).unwrap();
+        index.write().unwrap();
+    }
+
+    let err = repo
+        .stash_and_switch("nope", |r| {
+            r.checkout_branch("nope").map(|()| String::new())
+        })
+        .expect_err("no such branch");
+
+    assert!(err.to_string().contains("put back"), "{err}");
+    assert_eq!(head_branch(&repo), "master");
+    assert_eq!(read(&fx, "a.txt"), "my precious work\n");
+    assert_eq!(read(&fx, "new.txt"), "untracked\n");
+    assert_eq!(stash_count(&fx), 0, "nothing left behind in the stash");
+    let staged = git2::Repository::open(fx.path())
+        .unwrap()
+        .status_file(std::path::Path::new("staged.txt"))
+        .unwrap();
+    assert!(
+        staged.contains(git2::Status::INDEX_NEW),
+        "staged work stays staged"
+    );
+}

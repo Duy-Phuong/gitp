@@ -115,4 +115,14 @@ impl Repo {
         }
         Ok(hasher.finish())
     }
+
+    /// Repository maintenance: `git maintenance run --task=gc` — packs loose
+    /// objects, drops unreachable ones past their expiry, packs refs. Local
+    /// only (no `prefetch`), whatever tasks the repo has configured. Runs like
+    /// a network command so it can be cancelled (git's lock files keep a
+    /// cancelled gc safe); gc prints no meters without a terminal, so there is
+    /// no percentage to show, only that it's running.
+    pub fn perform_maintenance(&self) -> Result<String> {
+        self.run_git_progress(&["maintenance", "run", "--task=gc"])
+    }
 }

@@ -324,6 +324,40 @@ fn gone_branches_lists_only_branches_whose_upstream_disappeared() {
     );
 }
 
+/// The auto-fetch's prune setting: off keeps a remote-tracking branch that was
+/// deleted upstream, on drops it.
+#[test]
+fn fetch_all_prunes_only_when_asked() {
+    let remote = TempDir::new().unwrap();
+    git(remote.path(), &["init", "-q", "--bare", "-b", "main"]);
+    let url = remote.path().to_str().unwrap();
+
+    let work = TempDir::new().unwrap();
+    init_repo(work.path());
+    git(work.path(), &["remote", "add", "origin", url]);
+    std::fs::write(work.path().join("a.txt"), "hi\n").unwrap();
+    git(work.path(), &["add", "."]);
+    git(work.path(), &["commit", "-q", "-m", "c1"]);
+    git(work.path(), &["push", "-q", "origin", "main", "main:old"]);
+    git(work.path(), &["fetch", "-q", "origin"]);
+    // Deleted upstream by someone else, so this clone still has origin/old.
+    git(remote.path(), &["branch", "-D", "old"]);
+
+    let has_old = || {
+        let repo = Repo::open(work.path()).unwrap();
+        repo.refs()
+            .unwrap()
+            .remotes
+            .iter()
+            .any(|r| r.name == "origin/old")
+    };
+    let repo = Repo::open(work.path()).unwrap();
+    repo.fetch_all_with(false).unwrap();
+    assert!(has_old(), "a fetch without prune keeps it");
+    repo.fetch_all_with(true).unwrap();
+    assert!(!has_old(), "a pruning fetch drops it");
+}
+
 // O7: on a detached HEAD `shorthand()` is "HEAD", which used to surface as
 // "cannot locate local branch 'HEAD'" instead of the intended message.
 #[test]

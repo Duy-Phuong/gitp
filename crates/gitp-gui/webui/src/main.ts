@@ -48,7 +48,10 @@ import {
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
-import { setOnMoreRefs, setOnOpenWip, setStashHandlers } from "./views/log";
+import { setAuthorFilter, setOnGhostCheckout, setOnMoreRefs, setOnOpenWip, setStashHandlers } from "./views/log";
+import { showContextMenu, type MenuItem } from "./views/context-menu";
+import { authorsOf, authorTerm, withAuthorTerm } from "./log-columns";
+import { setupBranchHover } from "./branch-hover";
 import { setupChanges } from "./views/changes";
 import { setupConflict } from "./views/conflict";
 import { setupReflog } from "./views/reflog";
@@ -57,13 +60,17 @@ import { copyText } from "./clipboard";
 import { state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus, watchNetwork, watchPending } from "./report";
 import { setupFetchAgeIndicator } from "./fetch-age";
+import { onLfsMenu } from "./lfs-actions";
 import {
+  applyCodePrefs,
   applyTheme,
+  applyZoom,
   currentTheme,
   loadAllBranches,
   loadAutoFetchMinutes,
   loadDetailTab,
   loadPushAfterCommit,
+  loadZoom,
   saveAllBranches,
   saveDetailTab,
   savePushAfterCommit,
@@ -128,9 +135,11 @@ import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-pan
 import { setupExternalChangeRefresh } from "./external-refresh";
 import { openQuickLaunch } from "./quick-launch-commands";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
+import { openWorkspacesAction } from "./local-workspace-actions";
 import { openInDiffTool, openInMergeTool } from "./external-tools";
 import { setupLogKeyboardNav, setupShortcuts } from "./keyboard";
 import { setupBranchMenu, setupPullMenu, setupSettingsMenu } from "./topbar-menus";
+import { setupProfileMenu } from "./profile-menu";
 import { showComparison } from "./compare";
 
 function wireUi(): void {
@@ -145,6 +154,7 @@ function wireUi(): void {
   });
   $("#clone-btn").addEventListener("click", cloneRepoAction);
   $("#init-btn").addEventListener("click", initRepoAction);
+  $("#workspaces-btn").addEventListener("click", openWorkspacesAction);
   $<HTMLInputElement>("#repo-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") $("#open-btn").click();
   });
@@ -180,9 +190,14 @@ function wireUi(): void {
   setupPaneResizer();
   setupSidebarResizer();
   setupSettingsMenu();
+  void setupProfileMenu();
   setupExternalChangeRefresh();
   setupLogKeyboardNav();
   setupFetchAgeIndicator();
+  $("#status-lfs").addEventListener("click", (e) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    onLfsMenu(r.left, r.top);
+  });
   startAutoFetch(loadAutoFetchMinutes());
   setupBranchToggle();
   setupLogSearch();
@@ -204,6 +219,37 @@ function setupLogSearch(): void {
       void updateLogView();
     }
   });
+}
+
+// The Author column's funnel (GitKraken themes): a menu of the authors in the
+// loaded log. Picking one puts an author: term in the search box, which hides
+// everyone else's commits (see log-columns.ts); picking it again, or All
+// Authors, takes the term out.
+const AUTHOR_MENU_CAP = 25;
+
+function authorFilterActive(): boolean {
+  return authorTerm($<HTMLInputElement>("#log-search").value) !== null;
+}
+
+function openAuthorFilterMenu(x: number, y: number): void {
+  const input = $<HTMLInputElement>("#log-search");
+  const current = authorTerm(input.value)?.toLowerCase() ?? null;
+  const apply = (author: string | null) => {
+    input.value = withAuthorTerm(input.value, author);
+    void updateLogView();
+  };
+  const items: MenuItem[] = [
+    { label: current ? "All Authors" : "✓ All Authors", run: () => apply(null) },
+    { separator: true },
+    { heading: "Authors in the loaded commits" },
+  ];
+  for (const a of authorsOf(state.rows).slice(0, AUTHOR_MENU_CAP)) {
+    // By email where there is one: a name can be part of someone else's.
+    const value = a.email || a.name;
+    const on = value.toLowerCase() === current;
+    items.push({ label: `${on ? "✓ " : ""}${a.name} (${a.commits})`, run: () => apply(on ? null : value) });
+  }
+  showContextMenu(x, y, items);
 }
 
 // Wire the All-branches / Current segmented toggle above the log. Switching
@@ -231,6 +277,12 @@ async function init(): Promise<void> {
   // rows live in modules built on top of it, so they are plugged in from here.
   setOnMoreRefs(onMoreRefsMenu);
   setOnOpenWip(() => showView("changes"));
+  setAuthorFilter({ active: authorFilterActive, open: openAuthorFilterMenu });
+  setOnGhostCheckout((name) => {
+    const b = state.refs.branches.find((x) => x.name === name);
+    if (b) void checkoutBranchAction(b);
+  });
+  setupBranchHover();
   setStashHandlers((s) => void showStashDetail(s), onStashMenu);
   setOnRefDrop(onRefDrop);
   setRefActions({
@@ -252,6 +304,8 @@ async function init(): Promise<void> {
     onSectionMenu,
   });
   applyTheme(currentTheme());
+  void applyZoom(loadZoom());
+  applyCodePrefs();
   state.allBranches = loadAllBranches(); // before wireUi so the toggle reflects it
   wireUi();
   ui.detailView = setupDetail($("#detail-pane"), {

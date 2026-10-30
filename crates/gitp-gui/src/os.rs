@@ -4,6 +4,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use gitp_core::DiffToolTarget;
+use serde::Serialize;
 use tauri::State;
 
 use crate::state::{to_message, with_repo, with_repo_unlocked, RepoState};
@@ -31,6 +32,16 @@ fn reveal_path_impl(state: &RepoState, path: String) -> Result<(), String> {
     reveal_in_file_manager(&full)
 }
 
+/// Reveal the folder at the absolute `path` — a workspace's repo, which needn't
+/// be open — in the OS file manager.
+fn reveal_folder_impl(path: String) -> Result<(), String> {
+    let full = Path::new(&path);
+    if !full.is_absolute() || !full.is_dir() {
+        return Err(format!("folder not found: {path}"));
+    }
+    reveal_in_file_manager(full)
+}
+
 /// Open the repo-relative `path` for editing: prefer VS Code (the `code` CLI)
 /// when it's on PATH, since the OS's registered default app for a file type
 /// is often not an editor at all (e.g. a terminal app claiming shell scripts).
@@ -45,6 +56,160 @@ fn open_in_editor_impl(state: &RepoState, path: String) -> Result<(), String> {
         return Ok(());
     }
     open_in_default_app(&full)
+}
+
+/// An editor or IDE the repository can be opened in (Quick Launch's "Open in
+/// …"), as the frontend sees it: `id` goes back to `open_repo_in_editor`.
+#[derive(Serialize)]
+pub(crate) struct Editor {
+    id: &'static str,
+    name: &'static str,
+}
+
+/// An editor gitp knows how to find: its app bundles on macOS (several names
+/// where editions differ) and its command-line launcher.
+struct KnownEditor {
+    id: &'static str,
+    name: &'static str,
+    bundles: &'static [&'static str],
+    cli: &'static str,
+}
+
+/// One line per editor in `KNOWN_EDITORS`.
+const fn editor(
+    id: &'static str,
+    name: &'static str,
+    bundles: &'static [&'static str],
+    cli: &'static str,
+) -> KnownEditor {
+    KnownEditor {
+        id,
+        name,
+        bundles,
+        cli,
+    }
+}
+
+const KNOWN_EDITORS: &[KnownEditor] = &[
+    editor(
+        "vscode",
+        "Visual Studio Code",
+        &["Visual Studio Code.app"],
+        "code",
+    ),
+    editor("cursor", "Cursor", &["Cursor.app"], "cursor"),
+    editor("windsurf", "Windsurf", &["Windsurf.app"], "windsurf"),
+    editor("vscodium", "VSCodium", &["VSCodium.app"], "codium"),
+    editor("zed", "Zed", &["Zed.app"], "zed"),
+    editor("sublime", "Sublime Text", &["Sublime Text.app"], "subl"),
+    editor(
+        "intellij",
+        "IntelliJ IDEA",
+        &[
+            "IntelliJ IDEA.app",
+            "IntelliJ IDEA Ultimate.app",
+            "IntelliJ IDEA CE.app",
+        ],
+        "idea",
+    ),
+    editor("webstorm", "WebStorm", &["WebStorm.app"], "webstorm"),
+    editor(
+        "pycharm",
+        "PyCharm",
+        &[
+            "PyCharm.app",
+            "PyCharm Professional Edition.app",
+            "PyCharm CE.app",
+            "PyCharm Community Edition.app",
+        ],
+        "pycharm",
+    ),
+    editor("rustrover", "RustRover", &["RustRover.app"], "rustrover"),
+    editor("goland", "GoLand", &["GoLand.app"], "goland"),
+    editor("xcode", "Xcode", &["Xcode.app"], "xed"),
+];
+
+/// How to start an installed editor: through its app bundle (macOS) or its
+/// command-line launcher.
+#[derive(Debug, PartialEq)]
+enum Launcher {
+    Bundle(PathBuf),
+    Cli(PathBuf),
+}
+
+/// Where apps are installed (`/Applications`, `~/Applications`; none off
+/// macOS) and the PATH directories.
+fn search_dirs() -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut apps = Vec::new();
+    if cfg!(target_os = "macos") {
+        apps.push(PathBuf::from("/Applications"));
+        if let Some(home) = std::env::var_os("HOME") {
+            apps.push(Path::new(&home).join("Applications"));
+        }
+    }
+    let path = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    (apps, path)
+}
+
+/// `editor`'s launcher if it is installed: an app bundle in one of `app_dirs`
+/// first, else its CLI in one of `path_dirs`. Only existence checks, so
+/// listing every editor costs a few dozen `stat`s. A GUI app on macOS starts
+/// with a bare PATH, which is why the bundles come first there.
+fn find_editor(
+    editor: &KnownEditor,
+    app_dirs: &[PathBuf],
+    path_dirs: &[PathBuf],
+) -> Option<Launcher> {
+    let bundle = app_dirs
+        .iter()
+        .flat_map(|dir| editor.bundles.iter().map(move |b| dir.join(b)))
+        .find(|p| p.is_dir());
+    if let Some(bundle) = bundle {
+        return Some(Launcher::Bundle(bundle));
+    }
+    path_dirs
+        .iter()
+        .map(|dir| dir.join(editor.cli))
+        .find(|p| p.is_file())
+        .map(Launcher::Cli)
+}
+
+/// The editors installed here, in `KNOWN_EDITORS` order.
+fn list_editors_impl() -> Vec<Editor> {
+    let (apps, path) = search_dirs();
+    KNOWN_EDITORS
+        .iter()
+        .filter(|e| find_editor(e, &apps, &path).is_some())
+        .map(|e| Editor {
+            id: e.id,
+            name: e.name,
+        })
+        .collect()
+}
+
+/// Open the active repository's folder in the editor `id`. The path goes to
+/// the launcher as its own argument — no shell — and is absolute, so neither
+/// `open` nor the CLI can read it as an option.
+fn open_repo_in_editor_impl(state: &RepoState, id: String) -> Result<(), String> {
+    let editor = KNOWN_EDITORS
+        .iter()
+        .find(|e| e.id == id)
+        .ok_or_else(|| format!("unknown editor: {id}"))?;
+    let (apps, path) = search_dirs();
+    let launcher = find_editor(editor, &apps, &path)
+        .ok_or_else(|| format!("{} isn't installed", editor.name))?;
+    let dir = with_repo(state, |repo| repo.workdir_path())?;
+    let mut cmd = match launcher {
+        Launcher::Bundle(app) => {
+            let mut cmd = std::process::Command::new("open");
+            cmd.arg("-a").arg(app);
+            cmd
+        }
+        Launcher::Cli(cli) => std::process::Command::new(cli),
+    };
+    cmd.arg(&dir).spawn().map(|_| ()).map_err(to_message)
 }
 
 /// Open `url` in the OS default browser. Only web URLs: `open` would just as
@@ -133,8 +298,23 @@ pub(crate) fn reveal_path(path: String, state: State<RepoState>) -> Result<(), S
 }
 
 #[tauri::command(async)]
+pub(crate) fn reveal_folder(path: String) -> Result<(), String> {
+    reveal_folder_impl(path)
+}
+
+#[tauri::command(async)]
 pub(crate) fn open_in_editor(path: String, state: State<RepoState>) -> Result<(), String> {
     open_in_editor_impl(&state, path)
+}
+
+#[tauri::command(async)]
+pub(crate) fn list_editors() -> Vec<Editor> {
+    list_editors_impl()
+}
+
+#[tauri::command(async)]
+pub(crate) fn open_repo_in_editor(id: String, state: State<RepoState>) -> Result<(), String> {
+    open_repo_in_editor_impl(&state, id)
 }
 
 #[tauri::command(async)]
@@ -172,6 +352,38 @@ mod tests {
             let err = repo_path(&state, bad).unwrap_err();
             assert!(err.contains("not a path inside"), "{bad}: {err}");
         }
+    }
+
+    #[test]
+    fn an_editor_is_found_by_its_app_bundle_first_then_its_cli() {
+        let apps = tempfile::tempdir().unwrap();
+        let bin = tempfile::tempdir().unwrap();
+        let (app_dirs, path_dirs) = (
+            vec![apps.path().to_path_buf()],
+            vec![bin.path().to_path_buf()],
+        );
+        let editor = |id: &str| KNOWN_EDITORS.iter().find(|e| e.id == id).unwrap();
+
+        assert_eq!(find_editor(editor("zed"), &app_dirs, &path_dirs), None);
+
+        // Any edition's bundle counts.
+        std::fs::create_dir(apps.path().join("IntelliJ IDEA CE.app")).unwrap();
+        assert_eq!(
+            find_editor(editor("intellij"), &app_dirs, &path_dirs),
+            Some(Launcher::Bundle(apps.path().join("IntelliJ IDEA CE.app")))
+        );
+
+        std::fs::write(bin.path().join("zed"), "").unwrap();
+        assert_eq!(
+            find_editor(editor("zed"), &app_dirs, &path_dirs),
+            Some(Launcher::Cli(bin.path().join("zed")))
+        );
+        std::fs::create_dir(apps.path().join("Zed.app")).unwrap();
+        assert_eq!(
+            find_editor(editor("zed"), &app_dirs, &path_dirs),
+            Some(Launcher::Bundle(apps.path().join("Zed.app"))),
+            "the bundle wins over the CLI"
+        );
     }
 
     #[test]

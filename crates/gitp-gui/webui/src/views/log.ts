@@ -4,11 +4,32 @@
 // buffer) are in the DOM, so a repo with 100k commits stays responsive. The
 // full geometry is computed once (cheap math); only rendering is windowed.
 
-import { avatarUrl } from "../avatar";
+import { authorInitials, avatarUrl } from "../avatar";
 import { clear, el, githubIcon, laptopIcon, svg, tagIcon } from "../dom";
 import { edgePath, fitLaneWidth, GRAPH_METRICS, type GraphMetrics, layoutGraph } from "../graph";
-import { loadRefColumnWidth, REF_COLUMN_DEFAULT, saveRefColumnWidth } from "../prefs";
-import { relativeTime } from "../timeago";
+import { ghostBranch } from "../commit-refs";
+import {
+  DEFAULT_LOG_COLUMNS,
+  LOG_COLUMN_LABEL,
+  LOG_COLUMNS,
+  shownColumns,
+  withColumnMoved,
+  withColumnToggled,
+  type LogColumn,
+  type LogColumns,
+} from "../log-columns";
+import {
+  loadAuthorInitials,
+  loadDateFormat,
+  loadLogColumns,
+  loadRefColumnWidth,
+  REF_COLUMN_DEFAULT,
+  saveLogColumns,
+  saveRefColumnWidth,
+  type DateFormat,
+} from "../prefs";
+import { formatTime, fullTime } from "../timeago";
+import { showContextMenu, type MenuItem } from "./context-menu";
 import { refDragHandle } from "./ref-drag";
 import type { BisectStatus, CommitRow, StashRef } from "../types";
 
@@ -292,6 +313,142 @@ function tipBadge(t: TipRef): HTMLElement {
   return chip;
 }
 
+// The ghost badge (see ghostBadge) on a commit no ref points at: its nearest
+// containing branch, faded, shown while the row is hovered or selected (CSS).
+// Double-click checks the branch out.
+let onGhostCheckout: ((branch: string) => void) | null = null;
+
+// What double-clicking a ghost badge does. Set once at startup.
+export function setOnGhostCheckout(handler: (branch: string) => void): void {
+  onGhostCheckout = handler;
+}
+
+function ghostBadge(name: string): HTMLElement {
+  const chip = el("span", { class: "commit-ref tip ghost", title: `On ${name}\nDouble-click: checkout` });
+  chip.append(el("span", { class: "commit-ref-name", text: name }));
+  chip.addEventListener("click", (e) => {
+    // The click count rather than a dblclick listener: the first click selects
+    // the row, which redraws it, so the second lands on a new badge.
+    if (e.detail !== 2) return;
+    e.stopPropagation();
+    onGhostCheckout?.(name);
+  });
+  // A branch like any other badge: it drags, and hovering it fades the rest.
+  refDragHandle(chip, { kind: "local", name });
+  return chip;
+}
+
+// The open repo's optional columns (GitKraken themes; see log-columns.ts), and
+// the repo they are saved for. Set when the active repo changes.
+let columns: LogColumns = DEFAULT_LOG_COLUMNS;
+let columnsRepo = "";
+
+export function setLogColumnsRepo(repo: string): void {
+  columnsRepo = repo;
+  columns = loadLogColumns(repo);
+}
+
+// The Author column's funnel: whether an author filter is in force, and the
+// menu that picks one. Set once at startup (see main.ts), which owns the search
+// box the filter lives in.
+let authorFilter: { active: () => boolean; open: (x: number, y: number) => void } | null = null;
+
+export function setAuthorFilter(filter: { active: () => boolean; open: (x: number, y: number) => void }): void {
+  authorFilter = filter;
+}
+
+// A row's cell for each optional column. Rows and header append them in the
+// same order, so the two line up.
+const COLUMN_CLASS: Record<LogColumn, string> = {
+  author: "commit-meta commit-author",
+  date: "commit-meta commit-time",
+  sha: "commit-sha",
+};
+
+const COLUMN_TEXT: Record<LogColumn, (row: CommitRow, dates: DateFormat) => string> = {
+  author: (row) => row.author_name,
+  date: (row, dates) => formatTime(row.time, dates),
+  sha: (row) => row.short_id,
+};
+
+function funnelIcon(): SVGElement {
+  const s = svg("svg", { viewBox: "0 0 16 16", class: "funnel-icon" });
+  s.appendChild(
+    svg("path", { d: "M2 3h12l-4.5 5.5V13l-3 1.5v-6z", fill: "none", stroke: "currentColor", "stroke-width": "1.4", "stroke-linejoin": "round" }),
+  );
+  return s;
+}
+
+// While a branch is hovered (see branch-hover.ts): which commits are on it.
+// The rest are drawn faded.
+let highlight: ((id: string) => boolean) | null = null;
+// Redraws the rows on screen of the log last rendered, and its header cells
+// too when the columns changed; null while no log is shown.
+let repaint: ((columnsChanged: boolean) => void) | null = null;
+
+export function setLogHighlight(test: ((id: string) => boolean) | null): void {
+  if (test === highlight) return;
+  highlight = test;
+  repaint?.(false);
+}
+
+// Adopt and save new columns, and redraw the log with them.
+function applyColumns(next: LogColumns): void {
+  columns = next;
+  saveLogColumns(columnsRepo, next);
+  repaint?.(true);
+}
+
+// The header's right-click menu: a checkmark per shown column.
+function columnsMenu(): MenuItem[] {
+  return [
+    { heading: "Columns" },
+    // Always shown: nothing to toggle.
+    { label: "✓ Commit message" },
+    ...LOG_COLUMNS.map((c) => ({
+      label: `${columns.hidden.includes(c) ? "" : "✓ "}${LOG_COLUMN_LABEL[c]}`,
+      run: () => applyColumns(withColumnToggled(columns, c)),
+    })),
+  ];
+}
+
+// Drag a column's header cell sideways to move the column. Mouse events rather
+// than HTML5 drag-and-drop, for the reason given in ref-drag.ts. The slot is
+// shown as an accent edge on the cell the column would go before (or after the
+// last one).
+function columnDragHandle(cell: HTMLElement, col: LogColumn, cols: HTMLElement): void {
+  cell.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    let dragging = false;
+    let before: LogColumn | null = null;
+    const cells = () => [...cols.querySelectorAll<HTMLElement>("[data-column]")];
+    const onMove = (ev: MouseEvent) => {
+      if (!dragging && Math.abs(ev.clientX - startX) < 5) return;
+      dragging = true;
+      cell.classList.add("dragging");
+      const next = cells().find((c) => {
+        const r = c.getBoundingClientRect();
+        return ev.clientX < r.left + r.width / 2;
+      });
+      before = next ? (next.dataset.column as LogColumn) : null;
+      for (const c of cells()) c.classList.toggle("drop-before", c === next);
+      cols.classList.toggle("drop-end", !next);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      cell.classList.remove("dragging");
+      for (const c of cells()) c.classList.remove("drop-before");
+      cols.classList.remove("drop-end");
+      if (dragging) applyColumns(withColumnMoved(columns, col, before));
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  });
+}
+
 // One ResizeObserver at a time; disconnected when the log is re-rendered.
 let resizeObserver: ResizeObserver | null = null;
 
@@ -386,6 +543,7 @@ export function renderLog(
   host.onscroll = null;
   clear(host);
   wipLead = 0;
+  repaint = null;
 
   if (rows.length === 0) {
     host.append(el("div", { class: "detail-empty", text: "No commits to show." }));
@@ -404,6 +562,12 @@ export function renderLog(
   let { layout, emailById, laneWidth, maxLane } = getLayout(rows, host.clientWidth, theme);
   const rowH = metrics.rowHeight;
   let currentSelected = selectedId;
+  // Read once per render: Settings redraws the log when either changes. A
+  // full date needs a wider Date column than "3h ago".
+  const dateFormat = loadDateFormat();
+  const timeClass = `commit-meta commit-time${dateFormat === "relative" ? "" : " wide"}`;
+  const columnClass = (c: LogColumn) => (c === "date" ? timeClass : COLUMN_CLASS[c]);
+  const nameById = loadAuthorInitials() ? new Map(rows.map((r) => [r.id, r.author_name])) : null;
   // A local mutable copy, same pattern as `currentSelected` — updated
   // immediately so `renderWindow` reflects a click without waiting for the
   // caller to re-invoke renderLog with a fresh `multiSelected`.
@@ -443,15 +607,47 @@ export function renderLog(
   const header = el("div", { class: "log-header" });
   const headRefs = el("span", { class: "log-header-cell", text: "Branch / Tag" });
   const headGraph = el("span", { class: "log-header-cell", text: "Graph" });
-  const headCols = el("div", { class: "log-header-cols" }, [
-    el("span", { class: "commit-summary", text: "Commit message" }),
-    el("span", { class: "commit-meta commit-author", text: "Author" }),
-    el("span", { class: "commit-meta commit-time", text: "Date" }),
-    el("span", { class: "commit-sha", text: "SHA" }),
-  ]);
+  const headCols = el("div", { class: "log-header-cols" });
   const grip = el("span", { class: "log-header-grip", title: "Drag to resize the branch column" });
   header.append(headRefs, headGraph, headCols, grip);
+  header.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    showContextMenu(e.clientX, e.clientY, columnsMenu());
+  });
   if (refsColumn) host.append(header);
+
+  // The optional columns in force: the repo's choice on the GitKraken themes,
+  // which have the header to make it with; all of them otherwise.
+  const shown = () => (refsColumn ? shownColumns(columns) : LOG_COLUMNS);
+
+  function fillHeaderCols(): void {
+    headCols.replaceChildren(el("span", { class: "commit-summary", text: "Commit message" }));
+    for (const c of shown()) {
+      const cell = el("span", {
+        class: columnClass(c),
+        "data-column": c,
+        title: "Drag to move · Right-click: choose columns",
+      });
+      cell.append(el("span", { class: "log-header-label", text: LOG_COLUMN_LABEL[c] }));
+      if (c === "author" && authorFilter) {
+        const funnel = el("button", {
+          class: `log-header-filter${authorFilter.active() ? " active" : ""}`,
+          title: "Filter by author",
+        });
+        funnel.append(funnelIcon());
+        // Not the start of a column drag.
+        funnel.addEventListener("mousedown", (e) => e.stopPropagation());
+        funnel.addEventListener("click", (e) => {
+          e.stopPropagation();
+          authorFilter?.open(e.clientX, e.clientY);
+        });
+        cell.append(funnel);
+      }
+      columnDragHandle(cell, c, headCols);
+      headCols.append(cell);
+    }
+  }
+  fillHeaderCols();
   host.append(content);
 
   function relayout(): void {
@@ -580,11 +776,12 @@ export function renderLog(
       headCols.style.left = `${textLeft}px`;
     }
 
+    const cols = shown();
     clear(rowsLayer);
     for (let i = start; i < end; i++) {
       const row = rows[i];
       const rowEl = el("div", {
-        class: `commit-row${row.id === currentSelected ? " selected" : ""}${currentMultiSelected.has(row.id) ? " multi-selected" : ""}${row.id === bisectCurrent ? " bisect-current" : ""}`,
+        class: `commit-row${row.id === currentSelected ? " selected" : ""}${currentMultiSelected.has(row.id) ? " multi-selected" : ""}${row.id === bisectCurrent ? " bisect-current" : ""}${highlight && !highlight(row.id) ? " faded" : ""}`,
       });
       placeRow(rowEl, i * rowH + lead, layout.nodes[i].x, laneColor(row.color), textLeft);
       const mark = bisectMarks.get(row.id);
@@ -606,7 +803,15 @@ export function renderLog(
         box.append(tipBadge(refs.tips[0]));
         if (refs.tips.length > 1) box.append(moreBadge(row.id, refs.tips.length - 1));
         rowEl.append(box);
-      } else if (!refsColumn && refs && refs.labels.length) {
+      } else if (refsColumn) {
+        const ghost = ghostBranch(refs);
+        if (ghost) {
+          const box = el("span", { class: "commit-refs refs-col" });
+          box.style.width = `${metrics.originX - 16}px`;
+          box.append(ghostBadge(ghost));
+          rowEl.append(box);
+        }
+      } else if (refs && refs.labels.length) {
         const box = el("span", { class: "commit-refs" });
         for (const r of refs.labels.slice(0, MAX_REF_CHIPS)) {
           const chip = el("span", {
@@ -623,11 +828,11 @@ export function renderLog(
         rowEl.append(box);
       }
 
-      rowEl.append(
-        el("span", { class: "commit-meta commit-author", text: row.author_name }),
-        el("span", { class: "commit-meta commit-time", text: relativeTime(row.time) }),
-        el("span", { class: "commit-sha", text: row.short_id }),
-      );
+      for (const c of cols) {
+        const cell = el("span", { class: columnClass(c), text: COLUMN_TEXT[c](row, dateFormat) });
+        if (c === "date") cell.title = fullTime(row.time);
+        rowEl.append(cell);
+      }
       rowEl.addEventListener("click", (e) => {
         if (onMultiSelect && e.shiftKey) {
           // Range from the anchor (the last plain/Cmd-clicked row) to here,
@@ -682,6 +887,10 @@ export function renderLog(
     clip.appendChild(svg("circle", { cx: 0.5, cy: 0.5, r: 0.5 }));
     defs.appendChild(clip);
     graph.append(defs, graphBody);
+    // While a branch is hovered, what isn't on it is drawn into this group,
+    // which the stylesheet fades. Under everything else, so the branch's own
+    // lines run over the faded ones.
+    const faded = svg("g", { class: "graph-faded" });
     // The WIP row is on screen whenever the first rows are.
     const wipShown = wipRow !== null && start === 0;
     if (theme.guides) {
@@ -691,11 +900,14 @@ export function renderLog(
       }
     }
     if (wipShown) renderWip(textLeft, wipRow.changes);
+    graphBody.append(faded);
     for (const edge of layout.edges) {
       if (Math.max(edge.fromY, edge.toY) < top || Math.min(edge.fromY, edge.toY) > bottom) {
         continue;
       }
-      graphBody.append(
+      // An edge belongs to the commit it leaves, the row its fromY is in.
+      const from = rows[Math.floor(edge.fromY / rowH)];
+      (highlight && !highlight(from.id) ? faded : graphBody).append(
         svg("path", {
           d: edgePath(edge, metrics),
           fill: "none",
@@ -710,10 +922,11 @@ export function renderLog(
       const color = laneColor(node.color);
       const isSelected = node.id === currentSelected;
       const r = theme.nodeRadius;
+      const layer = highlight && !highlight(node.id) ? faded : graphBody;
 
       // GitKraken themes: a line from the commit's ref badges across to its node.
       if (refsColumn && refsAt?.(node.id).tips?.length) {
-        graphBody.append(
+        layer.append(
           svg("line", {
             x1: metrics.originX - 6,
             y1: node.y,
@@ -729,7 +942,7 @@ export function renderLog(
       // Stashes taken on this commit: a dashed line from its node to their
       // chips at the start of the message.
       if (stashesAt.has(node.id)) {
-        graphBody.append(
+        layer.append(
           svg("line", { class: "stash-edge", x1: node.x, y1: node.y, x2: textLeft, y2: node.y, stroke: color, "stroke-width": 1.5 }),
         );
       }
@@ -745,7 +958,7 @@ export function renderLog(
       // drawn to the old width runs straight through the message like a
       // strikethrough.
       if (isSelected) {
-        graphBody.append(
+        layer.append(
           svg("line", {
             x1: node.x,
             y1: node.y,
@@ -759,13 +972,18 @@ export function renderLog(
 
       // Base dot: the whole node on Neon, otherwise the fallback if the avatar
       // image is missing/fails to load.
-      graphBody.append(svg("circle", { cx: node.x, cy: node.y, r, fill: color }));
+      layer.append(svg("circle", { cx: node.x, cy: node.y, r, fill: color }));
 
-      const url = theme.node === "avatar" ? avatarUrl(emailById.get(node.id) ?? "") : undefined;
+      const url = theme.node === "avatar" && !nameById ? avatarUrl(emailById.get(node.id) ?? "") : undefined;
       if (theme.node === "dot") {
         // An inner ring in the background colour, so the dot reads as a bead
         // on the line rather than a blob.
-        graphBody.append(svg("circle", { class: "node-inner", cx: node.x, cy: node.y, r: r - 2.5, fill: "none", "stroke-width": 1.5 }));
+        layer.append(svg("circle", { class: "node-inner", cx: node.x, cy: node.y, r: r - 2.5, fill: "none", "stroke-width": 1.5 }));
+      } else if (nameById) {
+        // Settings → Appearance: the author's initials on the lane colour.
+        const text = svg("text", { class: "node-initials", x: node.x, y: node.y, "font-size": Math.round(r * 0.85) });
+        text.textContent = authorInitials(nameById.get(node.id) ?? "");
+        layer.append(text);
       } else if (url) {
         const img = svg("image", {
           x: node.x - r,
@@ -777,12 +995,12 @@ export function renderLog(
           "clip-path": "url(#avatarClip)",
         });
         img.addEventListener("error", () => img.remove());
-        graphBody.append(img);
+        layer.append(img);
       }
 
       // Lane-colored ring around the avatar, thickened on the selected commit.
       if (theme.node === "avatar") {
-        graphBody.append(
+        layer.append(
           svg("circle", {
             cx: node.x,
             cy: node.y,
@@ -796,7 +1014,7 @@ export function renderLog(
       // …plus a soft outer halo, so the active commit is findable at a glance
       // on a graph where every lane already has its own colour.
       if (isSelected) {
-        graphBody.append(
+        layer.append(
           svg("circle", {
             cx: node.x,
             cy: node.y,
@@ -868,6 +1086,10 @@ export function renderLog(
   };
 
   host.onscroll = renderWindow;
+  repaint = (columnsChanged) => {
+    if (columnsChanged) fillHeaderCols();
+    renderWindow();
+  };
   resizeObserver = new ResizeObserver(() => renderWindow());
   resizeObserver.observe(host);
   renderWindow();

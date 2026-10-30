@@ -15,6 +15,7 @@
         <button id="open-btn" class="btn">Open</button>
         <button id="clone-btn" class="btn ghost" title="Clone a remote repository">Clone…</button>
         <button id="init-btn" class="btn ghost" title="Initialize a new repository">Init…</button>
+        <button id="workspaces-btn" class="btn ghost" title="Workspaces — named groups of repositories to fetch, pull or open together">Workspaces…</button>
         <span id="branch-indicator" class="branch-chip hidden" title="Current branch"></span>
         <nav class="tabs">
           <button class="tab active" data-tab="history">History</button>
@@ -32,6 +33,10 @@
           </svg>
           <span class="btn-label">Terminal</span>
         </button>
+        <div id="profile-wrap" class="settings">
+          <button id="profile-btn" class="btn ghost" title="Profile" aria-haspopup="menu" aria-expanded="false"></button>
+          <div id="profile-menu" class="menu hidden" role="menu"></div>
+        </div>
         <div id="settings" class="settings">
           <button id="settings-btn" class="btn ghost icon-btn" title="Settings" aria-haspopup="dialog">
             <svg class="ql-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -189,6 +194,7 @@
         <span id="status-message" class="status-message"></span>
         <button id="status-cancel" class="status-cancel hidden" type="button" title="Stop the running fetch, pull or push">Cancel</button>
         <span id="status-fetched" class="status-fetched hidden" title="How long ago this repository's remotes were last fetched. Ahead/behind counts are only as current as this."></span>
+        <button id="status-lfs" class="status-lfs hidden" type="button"></button>
       </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>

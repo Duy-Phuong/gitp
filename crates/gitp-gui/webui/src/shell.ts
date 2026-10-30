@@ -9,6 +9,7 @@
 import {
   activateRepo,
   closeRepo,
+  moveRepo,
   confirmDialog,
   fetchAll,
   fetchCommitDetail,
@@ -30,24 +31,31 @@ import {
   listWorktrees,
   listSubmodules,
   listRemotes,
+  gitflowConfig,
+  lfsStatus,
 } from "./api";
 import { ensureAvatars } from "./avatar";
 import { clear, el, $ } from "./dom";
-import { logRowTop, renderLog, setBisectMarks, setStashNodes, setWipRow } from "./views/log";
+import { logRowTop, renderLog, setBisectMarks, setLogColumnsRepo, setStashNodes, setWipRow } from "./views/log";
 import { bisectBannerText } from "./bisect-text";
 import { closeCommitMenu } from "./views/commit-menu";
 import { showContextMenu, showPrompt } from "./views/context-menu";
+import { tabDragHandle } from "./views/tab-drag";
 import { renderSidebar, type SidebarView, type SidebarCallbacks } from "./views/sidebar";
 import type { BisectMark, CommitRow, ConflictStatus, LogPage, LogScope, ReflogEntry, StashRef, Workspace } from "./types";
 import { EMPTY_REFS, PAGE_SIZE, state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { markRemoteFetched, remoteFetchedAt, renderFetchAge } from "./fetch-age";
+import { renderLfsIndicator } from "./lfs-indicator";
 import {
+  loadAutoFetchPrune,
   loadFavoriteRepos,
   loadGraphPrefs,
+  loadTabAliases,
   loadWorkspace,
   rememberRecentRepo,
   saveGraphPrefs,
+  saveTabAlias,
   saveWorkspace,
   toggleFavoriteRepo,
   type GraphPrefs,
@@ -57,6 +65,8 @@ import { rebuildCommitRefs, refLabelsAt } from "./commit-refs";
 import { refreshConfig } from "./config-panel";
 import { refreshActionButtons } from "./toolbar";
 import { cancelComparison, compareSelectedCommits, showComparison } from "./compare";
+import { cycledTabIndex } from "./tab-order";
+import { applyProfileIdentityHere } from "./profile-menu";
 
 // What a ref or commit row does when it's right-clicked (or, for a branch,
 // double-clicked) — set once by main.ts at startup; see the module comment.
@@ -139,6 +149,8 @@ export function applyWorkspace(ws: Workspace): void {
   if (changed) {
     resetRepoViews();
     state.graph = loadGraphPrefs(state.repoPath);
+    setLogColumnsRepo(state.repoPath);
+    applyProfileIdentityHere();
   }
   rememberRecentRepo(state.repoPath);
   renderRepoTabs();
@@ -168,20 +180,28 @@ function renderRepoTabs(): void {
   host.classList.toggle("hidden", state.repos.length === 0);
   clear(host);
   const favorites = loadFavoriteRepos();
+  const aliases = loadTabAliases();
   for (const repo of state.repos) {
     const active = repo.path === state.repoPath;
+    const alias = aliases[repo.path];
     const tab = el("div", { class: `repo-tab${active ? " active" : ""}`, title: repo.path }, [
-      repo.name,
+      alias ?? repo.name,
     ]);
     if (favorites.includes(repo.path)) {
       tab.prepend(el("span", { class: "repo-tab-star", title: "Favorite", "aria-label": "Favorite" }, ["★"]));
     }
     tab.addEventListener("click", () => void switchRepo(repo.path));
+    tabDragHandle(tab, (to) => void moveRepoTab(repo.path, to));
     tab.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       const starred = favorites.includes(repo.path);
       showContextMenu(e.clientX, e.clientY, [
         { label: starred ? "Remove from Favorites" : "Add to Favorites", run: () => toggleFavorite(repo.path) },
+        {
+          label: "Rename Tab…",
+          prompt: { placeholder: "Tab name", value: alias ?? repo.name, onSubmit: (name) => renameTab(repo.path, name) },
+        },
+        ...(alias ? [{ label: "Reset Name", run: () => renameTab(repo.path, null) }] : []),
         { separator: true },
         { label: "Close", run: () => void closeRepoTab(repo.path) },
       ]);
@@ -202,6 +222,32 @@ export function toggleFavorite(path: string): void {
   renderRepoTabs();
   const name = state.repos.find((r) => r.path === path)?.name ?? path;
   setStatus(starred ? `Added ${name} to Favorites.` : `Removed ${name} from Favorites.`);
+}
+
+// Show `name` on the tab for `path` instead of its folder, or (null, or the
+// folder name itself) go back to the folder name.
+function renameTab(path: string, name: string | null): void {
+  const folder = state.repos.find((r) => r.path === path)?.name;
+  saveTabAlias(path, name === folder ? null : name);
+  renderRepoTabs();
+}
+
+// Drop the tab for `path` at position `to` (see droppedTabIndex). The new order
+// is saved with the workspace, so tabs reopen in it.
+async function moveRepoTab(path: string, to: number): Promise<void> {
+  try {
+    applyWorkspace(await moveRepo(path, to));
+  } catch (err) {
+    readFailed("Failed to move tab", err);
+  }
+}
+
+// Ctrl+Tab / Ctrl+Shift+Tab: the next or previous tab, wrapping around.
+export function cycleRepoTab(step: 1 | -1): void {
+  const n = state.repos.length;
+  if (n < 2) return;
+  const i = state.repos.findIndex((r) => r.path === state.repoPath);
+  void switchRepo(state.repos[cycledTabIndex(n, Math.max(i, 0), step)].path);
 }
 
 export async function switchRepo(path: string): Promise<void> {
@@ -230,6 +276,8 @@ export async function closeRepoTab(path: string): Promise<void> {
       state.refs = EMPTY_REFS;
       state.worktrees = [];
       state.submodules = [];
+      state.gitflow = null;
+      state.lfs = null;
       state.localChanges = 0;
       // No repo: nothing is in progress and nothing can be undone. Left as
       // they were, the banners stay up with buttons that hit "no active repo".
@@ -509,6 +557,15 @@ export async function selectCommit(id: string): Promise<void> {
   }
 }
 
+// The repo's text encoding changed (Settings → Git): the diffs on screen were
+// decoded with the old one, so the commit's and the selected change's are
+// fetched again.
+export function reloadDiffs(): void {
+  shownDetailId = null;
+  if (state.view === "history" && state.selectedId) void selectCommit(state.selectedId);
+  void ui.changesView?.recheckDiff();
+}
+
 // Drop a commit multi-selection and repaint the log without it, keeping the
 // scroll position.
 export async function clearCommitSelection(): Promise<void> {
@@ -556,7 +613,7 @@ async function refreshRemoteQuietly(throttleMs = REMOTE_REFRESH_THROTTLE_MS): Pr
   // navigation start another one.
   markRemoteFetched();
   try {
-    await fetchAll({ background: true });
+    await fetchAll({ background: true, prune: loadAutoFetchPrune() });
     await loadSidebar();
   } catch (err) {
     readFailed("Background fetch failed", err);
@@ -644,11 +701,13 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
   try {
     // Worktrees, submodules and remotes are separate, cheap reads; failing one
     // only hides its section (or, for remotes, the never-fetched ones).
-    const [snap, worktrees, submodules, remoteList] = await Promise.all([
+    const [snap, worktrees, submodules, remoteList, gitflow, lfs] = await Promise.all([
       workspaceSnapshot(),
       listWorktrees().catch(() => []),
       listSubmodules().catch(() => []),
       listRemotes().catch(() => []),
+      gitflowConfig().catch(() => null),
+      lfsStatus().catch(() => null),
     ]);
     // A passive refresh must not land a snapshot taken before an operation the
     // user started while it was in flight: that would repaint the pre-op state
@@ -660,6 +719,8 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     state.worktrees = worktrees;
     state.submodules = submodules;
     state.remoteList = remoteList;
+    state.gitflow = gitflow;
+    state.lfs = lfs;
     state.localChanges = snap.local_changes;
     state.rebase = snap.rebase;
     ui.undoLabels = snap.undo;
@@ -772,6 +833,7 @@ export function renderSidebarNow(): void {
   // The fetch age is per repo, so it has to follow a tab switch, not just the
   // 30s tick.
   renderFetchAge();
+  renderLfsIndicator();
   renderTerminalCwd();
   refreshActionButtons();
   renderHiddenRefs();

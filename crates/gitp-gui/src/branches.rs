@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use gitp_core::{DeletedBranch, MergeMode, Repo, Undoable};
+use gitp_core::{DeletedBranch, HeadMoveMode, MergeMode, Repo, StashSwitch, Undoable};
 use serde::Serialize;
 use tauri::State;
 
@@ -23,6 +23,30 @@ fn checkout_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
         || format!("Checkout {name}"),
         |repo| repo.checkout_branch(&name),
     )
+}
+
+/// Stash & Switch: check out `target` — a local branch (`kind` "branch"), a
+/// remote-tracking branch ("remote") or a commit, detached ("commit") — with
+/// the uncommitted work stashed across the switch and popped there. Clears
+/// undo rather than recording the switch: undoing it would carry the popped
+/// work back as it stands, not reverse the stash.
+fn stash_and_switch_impl(
+    state: &RepoState,
+    kind: String,
+    target: String,
+) -> Result<StashSwitch, String> {
+    with_repo_clearing_undo(state, |repo| {
+        repo.stash_and_switch(&target, |r| match kind.as_str() {
+            "branch" => r
+                .checkout_branch(&target)
+                .map(|()| format!("Switched to {target}")),
+            "remote" => r.checkout_remote(&target),
+            "commit" => r.checkout_commit(&target),
+            _ => Err(gitp_core::Error::Message(format!(
+                "unknown checkout kind {kind}"
+            ))),
+        })
+    })
 }
 
 /// Check out a remote-tracking branch (creating a local tracking branch if
@@ -255,9 +279,12 @@ fn merge_branch_impl(state: &RepoState, name: String, mode: MergeMode) -> Result
         clear_undo(session);
         return out.map_err(to_message);
     }
-    with_recorded_head_move(state, &format!("Merge {name}"), false, |repo| {
-        repo.merge_branch(&name, mode)
-    })
+    with_recorded_head_move(
+        state,
+        &format!("Merge {name}"),
+        HeadMoveMode::Keep,
+        |repo| repo.merge_branch(&name, mode),
+    )
 }
 
 /// The message a squash merge left for its commit, if one is pending.
@@ -270,7 +297,7 @@ fn squash_message_impl(state: &RepoState) -> Result<Option<String>, String> {
 fn fast_forward_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
     // Recorded as a HEAD move when it is the current branch that advances;
     // undoing is then a plain reset back to the old tip.
-    with_recorded_head_move(state, "Fast-forward", false, |repo| {
+    with_recorded_head_move(state, "Fast-forward", HeadMoveMode::Keep, |repo| {
         repo.fast_forward_branch(&name)
     })
 }
@@ -283,7 +310,7 @@ fn fast_forward_branch_to_impl(
     name: String,
     to: String,
 ) -> Result<String, String> {
-    with_recorded_head_move(state, "Fast-forward", false, |repo| {
+    with_recorded_head_move(state, "Fast-forward", HeadMoveMode::Keep, |repo| {
         repo.fast_forward_branch_to(&name, &to)
     })
 }
@@ -322,6 +349,15 @@ pub(crate) fn checkout_branch(name: String, state: State<RepoState>) -> Result<(
 #[tauri::command(async)]
 pub(crate) fn checkout_remote(name: String, state: State<RepoState>) -> Result<String, String> {
     checkout_remote_impl(&state, name)
+}
+
+#[tauri::command(async)]
+pub(crate) fn stash_and_switch(
+    kind: String,
+    target: String,
+    state: State<RepoState>,
+) -> Result<StashSwitch, String> {
+    stash_and_switch_impl(&state, kind, target)
 }
 
 #[tauri::command(async)]

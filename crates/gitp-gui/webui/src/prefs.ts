@@ -4,7 +4,9 @@ import { isTauri } from "./api";
 import { $ } from "./dom";
 import type { DetailTab } from "./views/detail";
 import type { PullMode } from "./types";
+import { DEFAULT_LOG_COLUMNS, normalizeLogColumns, type LogColumns } from "./log-columns";
 import { state, ui } from "./app-state";
+import { readFailed } from "./report";
 
 // --- Persisted preferences (localStorage) ----------------------------------
 
@@ -50,6 +52,119 @@ export function saveIgnoreWhitespace(on: boolean): void {
   localStorage.setItem(DIFF_IGNORE_WS_KEY, on ? "1" : "0");
 }
 
+// Settings → Editor & Diff. Syntax highlighting is read as each diff is drawn
+// (highlight.ts); the code font, size, tab width and line numbers are CSS
+// variables on :root (see applyCodePrefs), shared by the diffs, the blame view
+// and the file editor; the terminal has a font of its own.
+const SYNTAX_KEY = "gitp-syntax-highlight";
+const CODE_FONT_KEY = "gitp-code-font";
+const CODE_SIZE_KEY = "gitp-code-font-size";
+const TAB_SIZE_KEY = "gitp-tab-size";
+const LINE_NUMBERS_KEY = "gitp-diff-line-numbers";
+const TERMINAL_FONT_KEY = "gitp-terminal-font";
+const TERMINAL_SIZE_KEY = "gitp-terminal-font-size";
+
+export const FONT_SIZES = [10, 11, 12, 13, 14, 15, 16, 18, 20];
+export const TAB_SIZES = [2, 4, 8];
+// What the code panes used before these settings existed.
+const DEFAULT_FONT_SIZE = 12;
+const DEFAULT_TAB_SIZE = 4;
+
+// Font families offered by name; anything else is typed in as Custom. ""
+// is the app's own monospace stack (--mono).
+export const FONT_FAMILIES = [
+  "SF Mono",
+  "Menlo",
+  "Monaco",
+  "JetBrains Mono",
+  "Fira Code",
+  "Cascadia Code",
+  "Source Code Pro",
+  "Consolas",
+  "Courier New",
+];
+
+export function loadSyntaxHighlight(): boolean {
+  return localStorage.getItem(SYNTAX_KEY) !== "0";
+}
+
+export function saveSyntaxHighlight(on: boolean): void {
+  localStorage.setItem(SYNTAX_KEY, on ? "1" : "0");
+}
+
+export interface CodePrefs {
+  font: string;
+  size: number;
+  tabSize: number;
+  lineNumbers: boolean;
+}
+
+function oneOf(raw: string | null, choices: number[], fallback: number): number {
+  const v = Number(raw);
+  return choices.includes(v) ? v : fallback;
+}
+
+export function loadCodePrefs(): CodePrefs {
+  return {
+    font: localStorage.getItem(CODE_FONT_KEY) ?? "",
+    size: oneOf(localStorage.getItem(CODE_SIZE_KEY), FONT_SIZES, DEFAULT_FONT_SIZE),
+    tabSize: oneOf(localStorage.getItem(TAB_SIZE_KEY), TAB_SIZES, DEFAULT_TAB_SIZE),
+    lineNumbers: localStorage.getItem(LINE_NUMBERS_KEY) !== "0",
+  };
+}
+
+export function saveCodePrefs(p: CodePrefs): void {
+  localStorage.setItem(CODE_FONT_KEY, p.font);
+  localStorage.setItem(CODE_SIZE_KEY, String(p.size));
+  localStorage.setItem(TAB_SIZE_KEY, String(p.tabSize));
+  localStorage.setItem(LINE_NUMBERS_KEY, p.lineNumbers ? "1" : "0");
+  applyCodePrefs(p);
+}
+
+// The CSS variables that carry `p` (styles.css reads them).
+export function codeCssVars(p: CodePrefs): Record<string, string> {
+  return {
+    "--code-font": fontStack(p.font, "var(--mono)"),
+    "--code-size": `${p.size}px`,
+    "--tab-size": String(p.tabSize),
+  };
+}
+
+export function applyCodePrefs(p: CodePrefs = loadCodePrefs()): void {
+  const root = document.documentElement;
+  for (const [name, value] of Object.entries(codeCssVars(p))) root.style.setProperty(name, value);
+  root.toggleAttribute("data-no-line-numbers", !p.lineNumbers);
+}
+
+// A CSS font-family value: `family` first, then `fallback` for the glyphs it
+// lacks (or for all of them, when it isn't installed). One family name with a
+// space needs quotes; a list the user typed is used as written.
+export function fontStack(family: string, fallback: string): string {
+  const f = family.trim();
+  if (!f) return fallback;
+  const first = /[,"']/.test(f) || !/\s/.test(f) ? f : `"${f}"`;
+  return `${first}, ${fallback}`;
+}
+
+export interface TerminalFont {
+  font: string;
+  size: number;
+}
+
+export function loadTerminalFont(): TerminalFont {
+  return {
+    font: localStorage.getItem(TERMINAL_FONT_KEY) ?? "",
+    size: oneOf(localStorage.getItem(TERMINAL_SIZE_KEY), FONT_SIZES, DEFAULT_FONT_SIZE),
+  };
+}
+
+export function saveTerminalFont(f: TerminalFont): void {
+  localStorage.setItem(TERMINAL_FONT_KEY, f.font);
+  localStorage.setItem(TERMINAL_SIZE_KEY, String(f.size));
+  // Like the theme, xterm holds its font as JS values.
+  ui.terminal?.syncFont();
+}
+
 // What the plain Pull button runs. "FetchAll" isn't a real pull (no merge) but
 // is offered alongside the pull strategies, GitKraken-style.
 export type PullDefault = "FetchAll" | PullMode;
@@ -90,6 +205,66 @@ export function loadAutoFetchMinutes(): number {
 
 export function saveAutoFetchMinutes(minutes: number): void {
   localStorage.setItem(AUTO_FETCH_KEY, String(minutes));
+}
+
+// Whether the background fetch (auto-fetch, and the one on opening History or
+// Local Changes) prunes remote-tracking branches deleted upstream. On by
+// default — every fetch pruned before this was a setting. A fetch you start
+// yourself always prunes.
+const AUTO_FETCH_PRUNE_KEY = "gitp-auto-fetch-prune";
+
+export function loadAutoFetchPrune(): boolean {
+  return localStorage.getItem(AUTO_FETCH_PRUNE_KEY) !== "0";
+}
+
+export function saveAutoFetchPrune(on: boolean): void {
+  localStorage.setItem(AUTO_FETCH_PRUNE_KEY, on ? "1" : "0");
+}
+
+// How dates read everywhere one is shown (see formatTime in timeago.ts):
+// "3h ago", "2026-10-30 14:05", or the system locale's own short form.
+export type DateFormat = "relative" | "absolute" | "locale";
+
+export const DATE_FORMATS: { format: DateFormat; label: string }[] = [
+  { format: "relative", label: "Relative (3h ago)" },
+  { format: "absolute", label: "Absolute (2026-10-30 14:05)" },
+  { format: "locale", label: "System locale" },
+];
+
+const DATE_FORMAT_KEY = "gitp-date-format";
+
+export function loadDateFormat(): DateFormat {
+  const v = localStorage.getItem(DATE_FORMAT_KEY);
+  return v === "absolute" || v === "locale" ? v : "relative";
+}
+
+export function saveDateFormat(format: DateFormat): void {
+  localStorage.setItem(DATE_FORMAT_KEY, format);
+}
+
+// Author initials in the graph's commit nodes instead of Gravatar images —
+// which also stops sending email hashes to gravatar.com.
+const AUTHOR_INITIALS_KEY = "gitp-author-initials";
+
+export function loadAuthorInitials(): boolean {
+  return localStorage.getItem(AUTHOR_INITIALS_KEY) === "1";
+}
+
+export function saveAuthorInitials(on: boolean): void {
+  localStorage.setItem(AUTHOR_INITIALS_KEY, on ? "1" : "0");
+}
+
+// The branch Init Repository starts a new repository on, prefilled in its
+// dialog. "main" rather than git's own default, which depends on the git
+// version and init.defaultBranch.
+const DEFAULT_BRANCH_KEY = "gitp-default-branch";
+
+export function loadDefaultBranch(): string {
+  return localStorage.getItem(DEFAULT_BRANCH_KEY)?.trim() || "main";
+}
+
+export function saveDefaultBranch(name: string): void {
+  localStorage.setItem(DEFAULT_BRANCH_KEY, name.trim());
 }
 
 // The commit box's "Push after commit" toggle. Off by default: pushing is a
@@ -142,6 +317,36 @@ export function loadGraphPrefs(repo: string): GraphPrefs {
 
 export function saveGraphPrefs(repo: string, prefs: GraphPrefs): void {
   localStorage.setItem(GRAPH_PREFS_KEY + repo, JSON.stringify(prefs));
+}
+
+// Per-repo log columns (which of Author, Date and SHA show, and their order),
+// keyed by repo path like the graph settings. Kept apart from GraphPrefs:
+// those describe which commits the log walks, and changing them reloads it;
+// a column change only redraws the rows on screen.
+const LOG_COLUMNS_KEY = "gitp-log-columns:";
+
+export function loadLogColumns(repo: string): LogColumns {
+  try {
+    return normalizeLogColumns(JSON.parse(localStorage.getItem(LOG_COLUMNS_KEY + repo) ?? "{}"));
+  } catch {
+    return DEFAULT_LOG_COLUMNS;
+  }
+}
+
+export function saveLogColumns(repo: string, cols: LogColumns): void {
+  localStorage.setItem(LOG_COLUMNS_KEY + repo, JSON.stringify(cols));
+}
+
+// Hovering a branch fades the commits that aren't on it (Settings → History).
+// On by default, as in GitKraken.
+const BRANCH_HOVER_KEY = "gitp-branch-hover-fade";
+
+export function loadBranchHoverFade(): boolean {
+  return localStorage.getItem(BRANCH_HOVER_KEY) !== "0";
+}
+
+export function saveBranchHoverFade(on: boolean): void {
+  localStorage.setItem(BRANCH_HOVER_KEY, on ? "1" : "0");
 }
 
 // The history toggle, persisted across restarts. Defaults to all branches.
@@ -221,6 +426,38 @@ export function withFavoriteToggled(favorites: string[], path: string): string[]
   return favorites.includes(path) ? favorites.filter((p) => p !== path) : [...favorites, path];
 }
 
+// Names given to repo tabs (right-click → Rename Tab…), keyed by repo path.
+// The tab shows the name instead of its folder; its tooltip keeps the path.
+const TAB_ALIASES_KEY = "gitp-tab-aliases";
+
+export function loadTabAliases(): Record<string, string> {
+  return parseTabAliases(localStorage.getItem(TAB_ALIASES_KEY));
+}
+
+// Name the tab for `path`, or with null (or a blank name) go back to the
+// folder name.
+export function saveTabAlias(path: string, alias: string | null): void {
+  localStorage.setItem(TAB_ALIASES_KEY, JSON.stringify(withTabAlias(loadTabAliases(), path, alias)));
+}
+
+export function parseTabAliases(raw: string | null): Record<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(raw ?? "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter((e): e is [string, string] => typeof e[1] === "string"));
+  } catch {
+    return {};
+  }
+}
+
+export function withTabAlias(aliases: Record<string, string>, path: string, alias: string | null): Record<string, string> {
+  const next = { ...aliases };
+  const name = alias?.trim();
+  if (name) next[path] = name;
+  else delete next[path];
+  return next;
+}
+
 export function loadWorkspace(): { paths: string[]; active: string } | null {
   try {
     const raw = localStorage.getItem(REPOS_KEY);
@@ -245,6 +482,11 @@ const RECENT_REPOS_KEY = "gitp-recent-repos";
 // Enough to fill Quick Launch's list without it becoming an archive.
 const MAX_RECENT_REPOS = 12;
 
+// The dark theme Toggle Theme goes back to: the last one chosen.
+const LAST_DARK_THEME_KEY = "gitp-last-dark-theme";
+
+const DARK_THEMES: ThemeChoice[] = ["dark", "gitkraken", "gitkraken-neon"];
+
 export function currentTheme(): ThemeChoice {
   const v = localStorage.getItem(THEME_KEY);
   return (THEME_CHOICES as string[]).includes(v ?? "") ? (v as ThemeChoice) : "system";
@@ -259,8 +501,63 @@ export function applyTheme(choice: ThemeChoice): void {
   } else {
     document.documentElement.dataset.theme = choice;
     localStorage.setItem(THEME_KEY, choice);
+    if (DARK_THEMES.includes(choice)) localStorage.setItem(LAST_DARK_THEME_KEY, choice);
   }
   // xterm keeps its palette as JS values, so the CSS change alone leaves the
   // terminal on the old theme until it's told.
   ui.terminal?.syncTheme();
+}
+
+// --- Zoom -------------------------------------------------------------------
+
+// The steps Cmd/Ctrl + = and Cmd/Ctrl + − walk through, as scale factors.
+export const ZOOM_LEVELS = [0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.5, 1.75, 2];
+
+const ZOOM_KEY = "gitp-zoom";
+
+export function loadZoom(): number {
+  const v = Number(localStorage.getItem(ZOOM_KEY));
+  return ZOOM_LEVELS.includes(v) ? v : 1;
+}
+
+// The level after `zoom` going up (1) or down (-1), staying put at the ends.
+export function steppedZoom(zoom: number, step: 1 | -1): number {
+  if (step > 0) return ZOOM_LEVELS.find((z) => z > zoom) ?? ZOOM_LEVELS[ZOOM_LEVELS.length - 1];
+  return [...ZOOM_LEVELS].reverse().find((z) => z < zoom) ?? ZOOM_LEVELS[0];
+}
+
+// Apply and persist a zoom level for the whole window. The desktop app zooms
+// the webview itself, like a browser's Cmd +; the browser preview can't reach
+// that, so CSS zoom stands in for it there.
+export async function applyZoom(zoom: number): Promise<void> {
+  localStorage.setItem(ZOOM_KEY, String(zoom));
+  try {
+    if (isTauri()) {
+      const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+      await getCurrentWebview().setZoom(zoom);
+    } else {
+      document.documentElement.style.zoom = zoom === 1 ? "" : String(zoom);
+    }
+  } catch (err) {
+    readFailed("Couldn't zoom", err);
+    return;
+  }
+  // The terminal's rows and columns come from the pixel size it measured;
+  // after a zoom they no longer fill the panel until it measures again.
+  requestAnimationFrame(() => ui.terminal?.fit());
+}
+
+// Toggle Theme (Quick Launch): from whatever is showing that is dark — a dark
+// theme, or System while the OS is dark — to Light; from light back to the
+// dark theme last chosen (Dark if none was). One keystroke flips between the
+// two looks someone actually uses, without stepping through every theme.
+export function toggledTheme(): ThemeChoice {
+  const saved = localStorage.getItem(LAST_DARK_THEME_KEY);
+  const lastDark = (DARK_THEMES as string[]).includes(saved ?? "") ? (saved as ThemeChoice) : "dark";
+  return nextToggleTheme(currentTheme(), window.matchMedia("(prefers-color-scheme: dark)").matches, lastDark);
+}
+
+export function nextToggleTheme(current: ThemeChoice, osDark: boolean, lastDark: ThemeChoice): ThemeChoice {
+  const showingDark = DARK_THEMES.includes(current) || (current === "system" && osDark);
+  return showingDark ? "light" : lastDark;
 }

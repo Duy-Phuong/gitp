@@ -62,6 +62,7 @@ impl Repo {
         let files = collect_files(
             &self.compare_diff(&ends, three_dot, opts.patience(true))?,
             Some(MAX_DIFF_LINES),
+            self.text_encoding(),
         )?;
         let (ahead, behind) = match (ends.head.commit_id(), ends.base.commit_id()) {
             (Some(h), Some(b)) => self.inner.graph_ahead_behind(h, b)?,
@@ -131,7 +132,11 @@ impl Repo {
         if let Some(old) = old_path {
             opts.pathspec(old);
         }
-        let files = collect_files(&self.compare_diff(&ends, three_dot, &mut opts)?, max_lines)?;
+        let files = collect_files(
+            &self.compare_diff(&ends, three_dot, &mut opts)?,
+            max_lines,
+            self.text_encoding(),
+        )?;
         Ok(files.into_iter().find(|f| f.path == path))
     }
 
