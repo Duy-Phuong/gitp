@@ -14,6 +14,9 @@ use serde::Serialize;
 use tree_sitter::{Language, Query};
 
 pub mod java;
+pub mod javascript;
+pub mod python;
+pub mod typescript;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -75,7 +78,10 @@ impl Lang {
     pub fn def(self) -> &'static LangDef {
         match self {
             Lang::Java => java::DEF.get_or_init(java::load),
-            _ => unimplemented!("grammar for {self:?}"),
+            Lang::JavaScript => javascript::DEF.get_or_init(javascript::load),
+            Lang::TypeScript => typescript::DEF.get_or_init(typescript::load_ts),
+            Lang::Tsx => typescript::DEF_TSX.get_or_init(typescript::load_tsx),
+            Lang::Python => python::DEF.get_or_init(python::load),
         }
     }
 }

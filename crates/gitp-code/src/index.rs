@@ -120,8 +120,10 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
             lang,
         });
     }
-    // Outer definitions first; the innermost other symbol around each is its container.
-    symbols.sort_by_key(|s| (s.range.start_byte, std::cmp::Reverse(s.range.end_byte)));
+    // Outer definitions first; the innermost other symbol around each is its
+    // container. A span matched twice (`const f = () => …` is a variable and
+    // a function) keeps the more specific kind.
+    symbols.sort_by_key(|s| (s.range.start_byte, std::cmp::Reverse(s.range.end_byte), kind_rank(s.kind)));
     symbols.dedup_by_key(|s| s.id);
     // Only scopes contain things: a variable's declaration spans its
     // initializer, but nothing is "inside" a variable.
@@ -139,6 +141,14 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
     };
     for s in &mut symbols {
         s.container = enclosing(s.range.start_byte, s.range.end_byte, Some(s.id));
+    }
+    // A function directly inside a class is a method (Python's `def` says no
+    // more than that).
+    let classes: HashSet<SymbolId> = symbols.iter().filter(|s| s.kind == SymbolKind::Class).map(|s| s.id).collect();
+    for s in &mut symbols {
+        if s.kind == SymbolKind::Function && s.container.is_some_and(|c| classes.contains(&c)) {
+            s.kind = SymbolKind::Method;
+        }
     }
 
     let def_names: HashSet<(u32, u32)> = symbols.iter().map(|s| (s.name_range.start_byte, s.name_range.end_byte)).collect();
@@ -179,6 +189,16 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
     refs.dedup_by(|b, a| (a.range.start_byte, a.range.end_byte) == (b.range.start_byte, b.range.end_byte));
 
     FileIndex { path: path.to_string(), lang, symbols, refs, mtime_ms: 0 }
+}
+
+/// Lower sorts first when two patterns match the same span.
+fn kind_rank(kind: SymbolKind) -> u8 {
+    match kind {
+        SymbolKind::Class | SymbolKind::Interface | SymbolKind::Enum => 0,
+        SymbolKind::Function | SymbolKind::Method => 1,
+        SymbolKind::Field => 2,
+        SymbolKind::Variable => 3,
+    }
 }
 
 fn symbol_kind(name: &str) -> SymbolKind {
@@ -325,5 +345,122 @@ mod tests {
         spans.sort();
         spans.dedup();
         assert_eq!(spans.len(), n, "every reference spans a distinct identifier");
+    }
+}
+
+#[cfg(test)]
+mod lang_tests {
+    use super::*;
+    use SymbolKind::*;
+
+    const JS: &str = include_str!("../tests/fixtures/js/cart.js");
+    const TS: &str = include_str!("../tests/fixtures/ts/cart.ts");
+    const TSX: &str = include_str!("../tests/fixtures/tsx/Cart.tsx");
+    const PY: &str = include_str!("../tests/fixtures/py/cart.py");
+
+    fn names(fi: &FileIndex) -> Vec<(&str, SymbolKind)> {
+        fi.symbols.iter().map(|s| (s.name.as_str(), s.kind)).collect()
+    }
+
+    #[test]
+    fn js_definitions() {
+        let fi = index_file(0, "cart.js", Lang::JavaScript, JS.as_bytes());
+        assert_eq!(
+            names(&fi),
+            [
+                ("Cart", Class),
+                ("constructor", Method),
+                ("add", Method),
+                ("item", Variable),
+                ("total", Function),
+                ("cart", Variable),
+                ("x", Variable),
+                ("c", Variable),
+                ("fmt", Function),
+                ("n", Variable),
+            ]
+        );
+        let add = fi.symbols.iter().find(|s| s.name == "add").unwrap();
+        let cart = fi.symbols.iter().find(|s| s.name == "Cart").unwrap();
+        assert_eq!(add.container, Some(cart.id));
+    }
+
+    #[test]
+    fn ts_definitions() {
+        let fi = index_file(0, "cart.ts", Lang::TypeScript, TS.as_bytes());
+        assert_eq!(
+            names(&fi),
+            [
+                ("Props", Interface),
+                ("count", Field),
+                ("Cart", Class),
+                ("items", Field),
+                ("add", Method),
+                ("item", Variable),
+                ("total", Function),
+                ("cart", Variable),
+                ("x", Variable),
+                ("c", Variable),
+                ("fmt", Function),
+                ("n", Variable),
+            ]
+        );
+    }
+
+    #[test]
+    fn tsx_parses_jsx() {
+        let fi = index_file(0, "Cart.tsx", Lang::Tsx, TSX.as_bytes());
+        assert!(fi.symbols.iter().any(|s| s.name == "View" && s.kind == Function));
+        let view = fi.symbols.iter().find(|s| s.name == "View").unwrap();
+        let fmt_call = fi.refs.iter().find(|r| r.name == "fmt" && r.kind == RefKind::Call).unwrap();
+        assert_eq!(fmt_call.enclosing, Some(view.id));
+        let props = fi.refs.iter().find(|r| r.name == "Props").unwrap();
+        assert_eq!(props.kind, RefKind::Ident);
+    }
+
+    #[test]
+    fn py_definitions() {
+        let fi = index_file(0, "cart.py", Lang::Python, PY.as_bytes());
+        assert_eq!(
+            names(&fi),
+            [
+                ("RATE", Variable),
+                ("Cart", Class),
+                ("__init__", Method),
+                ("self", Variable),
+                ("add", Method),
+                ("self", Variable),
+                ("item", Variable),
+                ("total", Function),
+                ("cart", Variable),
+                ("x", Variable),
+            ]
+        );
+        assert!(!fi.symbols.iter().any(|s| s.name == "items"), "self.items is an attribute, not a definition");
+    }
+
+    #[test]
+    fn each_lang_finds_the_call_and_the_import() {
+        for (path, lang, src) in [
+            ("cart.js", Lang::JavaScript, JS),
+            ("cart.ts", Lang::TypeScript, TS),
+            ("Cart.tsx", Lang::Tsx, TSX),
+            ("cart.py", Lang::Python, PY),
+        ] {
+            let fi = index_file(0, path, lang, src.as_bytes());
+            let total = fi.symbols.iter().find(|s| s.name == "total").unwrap();
+            let add = fi.refs.iter().find(|r| r.name == "add" && r.kind == RefKind::Call).unwrap_or_else(|| panic!("{path}: cart.add"));
+            assert_eq!(add.receiver.as_deref(), Some("cart"), "{path}");
+            assert_eq!(add.enclosing, Some(total.id), "{path}");
+            let new = fi.refs.iter().find(|r| r.name == "Cart" && r.kind == RefKind::Call).unwrap_or_else(|| panic!("{path}: new Cart"));
+            assert_eq!(new.enclosing, Some(total.id), "{path}");
+            assert!(fi.refs.iter().any(|r| r.name == "money" && r.kind == RefKind::Import), "{path}: import money");
+            assert!(fi.refs.iter().any(|r| r.name == "money" && r.kind == RefKind::Call), "{path}: money(...)");
+            let spans: Vec<(u32, u32)> = fi.refs.iter().map(|r| (r.range.start_byte, r.range.end_byte)).collect();
+            let mut uniq = spans.clone();
+            uniq.sort();
+            uniq.dedup();
+            assert_eq!(uniq.len(), spans.len(), "{path}: refs deduped");
+        }
     }
 }
