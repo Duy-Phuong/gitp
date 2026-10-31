@@ -415,7 +415,7 @@ async function deleteSelectedBranchesAction(names: string[]): Promise<void> {
   renderSidebarNow();
   // One call: the batch becomes a single undoable action, so Undo restores all
   // of them rather than only whichever happened to go last.
-  let failed: string[] = [];
+  let failed: string[];
   try {
     ({ failed } = await deleteBranches(targets, false));
   } finally {

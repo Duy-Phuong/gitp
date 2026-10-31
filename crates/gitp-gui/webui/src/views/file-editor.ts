@@ -61,7 +61,7 @@ export async function openFileEditor(path: string, deps: FileEditorDeps): Promis
     autocorrect: "off",
     autocomplete: "off",
     wrap: "off",
-  }) as HTMLTextAreaElement;
+  });
   text.value = saved;
   const preview = el("div", { class: "file-editor-preview hidden" });
 
@@ -104,8 +104,8 @@ export async function openFileEditor(path: string, deps: FileEditorDeps): Promis
   }
 
   const closeBtn = el("button", { class: "btn ghost", text: "Close" });
-  const stageBtn = el("button", { class: "btn ghost", text: "Save and Stage" }) as HTMLButtonElement;
-  const saveBtn = el("button", { class: "btn", text: "Save" }) as HTMLButtonElement;
+  const stageBtn = el("button", { class: "btn ghost", text: "Save and Stage" });
+  const saveBtn = el("button", { class: "btn", text: "Save" });
   modal.append(
     head,
     text,

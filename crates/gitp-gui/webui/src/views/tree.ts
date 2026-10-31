@@ -51,7 +51,7 @@ export function folderCheckState(
 // A checkbox that stops its click/dblclick from reaching the row (which would
 // select the file or toggle the folder). `indeterminate` renders the dash state.
 function checkbox(checked: boolean, indeterminate: boolean, onChange: (checked: boolean) => void) {
-  const box = el("input", { type: "checkbox", class: "tree-check" }) as HTMLInputElement;
+  const box = el("input", { type: "checkbox", class: "tree-check" });
   box.checked = checked;
   box.indeterminate = indeterminate;
   box.addEventListener("click", (e) => e.stopPropagation());

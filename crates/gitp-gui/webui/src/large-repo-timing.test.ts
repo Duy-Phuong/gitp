@@ -15,6 +15,10 @@ import { branchReach, ghostBranch, rebuildCommitRefs, refLabelsAt } from "./comm
 import { state } from "./app-state";
 import { authorsOf } from "./log-columns";
 import { highlighter, hunkRuns } from "./highlight";
+import { registerAll } from "./highlight-languages";
+
+// The grammars are a lazy chunk in the app; the tests need them up front.
+registerAll();
 import { hunkWordDiffs } from "./worddiff";
 import type { BranchRef, CommitRow, RemoteBranch, TagRef } from "./types";
 

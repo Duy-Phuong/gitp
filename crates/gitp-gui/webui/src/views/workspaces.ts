@@ -526,7 +526,7 @@ export function openWorkspacesDialog(actions: WorkspacesActions): void {
           }
           if (!isCancelled(err)) failed += rows.length;
         }
-        await Promise.all(rows.map((p) => view?.loadSummary(p)));
+        await Promise.all(rows.map((p) => view?.loadSummary(p) ?? Promise.resolve()));
       },
       () => stopped,
     );

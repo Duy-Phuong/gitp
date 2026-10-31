@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { highlighter, hunkRuns, languageFor, overlay, parseHighlighted, splitLines, type Run } from "./highlight";
+import { registerAll } from "./highlight-languages";
+
+// The grammars are a lazy chunk in the app; the tests need them up front.
+registerAll();
 
 const text = (runs: Run[]) => runs.map((r) => r.text).join("");
 

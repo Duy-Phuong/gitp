@@ -178,7 +178,7 @@ export function showQuickLaunch(first: QuickStage): void {
     "aria-expanded": "true",
     "aria-controls": "ql-listbox",
     "aria-autocomplete": "list",
-  }) as HTMLInputElement;
+  });
   const list = el("div", { class: "ql-list", role: "listbox", id: "ql-listbox" });
   // The rows on screen, by index, so moving the selection repaints two rows
   // rather than the whole list.

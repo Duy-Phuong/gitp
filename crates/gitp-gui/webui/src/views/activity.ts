@@ -70,7 +70,7 @@ export function setupActivity(host: HTMLElement, cb: ActivityCallbacks): Activit
   // user left the view mustn't start polling again behind it.
   let active = false;
 
-  const quietBox = el("input", { type: "checkbox" }) as HTMLInputElement;
+  const quietBox = el("input", { type: "checkbox" });
   quietBox.addEventListener("change", () => {
     showQuiet = quietBox.checked;
     render();

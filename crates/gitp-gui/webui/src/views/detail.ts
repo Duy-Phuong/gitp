@@ -903,7 +903,7 @@ export function iconBtn(
 ): HTMLElement {
   const b = el("button", { class: `tb-btn icon${active ? " active" : ""}`, title });
   b.append(icon(paths));
-  if (disabled) (b as HTMLButtonElement).disabled = true;
+  if (disabled) (b).disabled = true;
   else b.addEventListener("click", onClick);
   return b;
 }

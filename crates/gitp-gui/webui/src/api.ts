@@ -1685,6 +1685,7 @@ export async function addWorktree(path: string, target: WorktreeTarget): Promise
 export async function removeWorktree(path: string, force: boolean): Promise<string> {
   if (!isTauri()) {
     // Every mock worktree has "changes", so preview exercises the force path.
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- Tauri rejects with a string, and the mock does the same
     if (!force) throw `fatal: '${path}' contains modified or untracked files, use --force to delete it`;
     const i = MOCK_WORKTREES.findIndex((w) => w.path === path);
     if (i !== -1) MOCK_WORKTREES.splice(i, 1);
@@ -1698,7 +1699,9 @@ export async function removeWorktree(path: string, force: boolean): Promise<stri
 export async function moveWorktree(path: string, to: string): Promise<string> {
   if (!isTauri()) {
     const w = MOCK_WORKTREES.find((x) => x.path === path);
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- Tauri rejects with a string, and the mock does the same
     if (!w || w.is_main) throw "The main worktree is the repository's own folder and can't be moved.";
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- Tauri rejects with a string, and the mock does the same
     if (w.locked) throw `${path} is locked. Unlock it before moving it.`;
     const parent = path.split("/").slice(0, -1).join("/");
     w.path = to.startsWith("/") ? to : `${parent}/${to.split("/").filter((p) => p && p !== "..").join("/")}`;

@@ -34,6 +34,9 @@ jobs:
       - name: Typecheck frontend
         run: npm --prefix crates/gitp-gui/webui run typecheck
 
+      - name: Lint frontend
+        run: npm --prefix crates/gitp-gui/webui run lint
+
       - name: Test frontend
         run: npm --prefix crates/gitp-gui/webui test
 

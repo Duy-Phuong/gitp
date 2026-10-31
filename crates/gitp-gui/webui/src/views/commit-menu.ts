@@ -200,7 +200,7 @@ function promptName(
 ): void {
   clear(menu);
   if (label) menu.append(el("div", { class: "menu-label", text: label }));
-  const input = el("input", { placeholder, value, spellcheck: "false" }) as HTMLInputElement;
+  const input = el("input", { placeholder, value, spellcheck: "false" });
   const create = el("button", { class: "btn small", text: "OK" });
   const submit = () => {
     const name = input.value.trim();

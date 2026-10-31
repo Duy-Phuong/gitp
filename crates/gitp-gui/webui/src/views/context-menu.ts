@@ -152,7 +152,7 @@ function renderPrompt(
     placeholder: prompt.placeholder,
     value: prompt.value ?? "",
     spellcheck: "false",
-  }) as HTMLInputElement;
+  });
   const create = el("button", { class: "btn small", text: "OK" });
   const submit = () => {
     const value = input.value.trim();

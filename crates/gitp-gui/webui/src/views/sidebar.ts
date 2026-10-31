@@ -169,7 +169,7 @@ export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCal
     placeholder: "Filter",
     value: s.filter,
     spellcheck: "false",
-  }) as HTMLInputElement;
+  });
   filter.addEventListener("input", () => cb.onFilter(filter.value));
   host.append(el("div", { class: "sb-filter-wrap" }, [filter]));
 

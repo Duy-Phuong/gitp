@@ -117,7 +117,7 @@ function eqLines(a: string[], b: string[]): boolean {
 function lcsPairs(a: string[], b: string[]): Array<[number, number]> {
   const n = a.length;
   const m = b.length;
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
       dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
@@ -390,7 +390,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   function footer(kind: ConflictStatus["kind"]): HTMLElement {
     const box = el("div", { class: "conflict-footer" });
     if (kind === "merge") {
-      const msg = el("textarea", { class: "commit-body", placeholder: "Commit Message", rows: 3 }) as HTMLTextAreaElement;
+      const msg = el("textarea", { class: "commit-body", placeholder: "Commit Message", rows: 3 });
       msg.value = message;
       msg.addEventListener("input", () => (message = msg.value));
       box.append(msg);
@@ -406,13 +406,13 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     const finishBtn = el("button", {
       class: "btn commit-btn",
       text: finishLabel[kind],
-    }) as HTMLButtonElement;
+    });
     // `run()` guards against re-entrancy, so no need to also disable on `busy`
     // (render happens inside run() while busy is still true).
     finishBtn.disabled = !done;
     finishBtn.addEventListener("click", () => void finish());
 
-    const abortBtn = el("button", { class: "btn danger", text: "Abort" }) as HTMLButtonElement;
+    const abortBtn = el("button", { class: "btn danger", text: "Abort" });
     abortBtn.addEventListener("click", () => void abort());
 
     box.append(el("div", { class: "conflict-footer-actions" }, [abortBtn, finishBtn]));
@@ -562,18 +562,18 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     };
 
     const tbBtn = (label: string, title: string, onClick: () => void, disabled = false) => {
-      const b = el("button", { class: "btn ghost small icon-btn", text: label, title }) as HTMLButtonElement;
+      const b = el("button", { class: "btn ghost small icon-btn", text: label, title });
       b.disabled = disabled;
       b.addEventListener("click", onClick);
       return b;
     };
     const txtBtn = (label: string, onClick: () => void, disabled = false) => {
-      const b = el("button", { class: "btn ghost small", text: label }) as HTMLButtonElement;
+      const b = el("button", { class: "btn ghost small", text: label });
       b.disabled = disabled;
       b.addEventListener("click", onClick);
       return b;
     };
-    const save = el("button", { class: "btn", text: "Save" }) as HTMLButtonElement;
+    const save = el("button", { class: "btn", text: "Save" });
     save.disabled = !allResolved();
     save.title = allResolved()
       ? "Stage this file as resolved"
@@ -797,7 +797,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     ]);
   }
   function iconBtn(glyph: string, title: string, onClick: () => void, disabled = false): HTMLElement {
-    const b = el("button", { class: "merge-arrow", text: glyph, title }) as HTMLButtonElement;
+    const b = el("button", { class: "merge-arrow", text: glyph, title });
     b.disabled = disabled;
     b.addEventListener("click", onClick);
     return b;

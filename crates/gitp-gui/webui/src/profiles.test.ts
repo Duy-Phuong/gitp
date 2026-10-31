@@ -195,8 +195,8 @@ describe("signing formats", () => {
     ensureStore(storage, ADA);
     const { signingFormat: _a, ...oldDefault } = activeProfile(loadStore(storage)!);
     const { signingFormat: _b, ...oldWork } = work;
-    putProfile(storage, oldDefault as Profile);
-    putProfile(storage, oldWork as Profile);
+    putProfile(storage, oldDefault);
+    putProfile(storage, oldWork);
     putProfile(storage, { ...work, id: "new", signingFormat: "x509" });
 
     fillSigningFormats(storage, "ssh");
@@ -222,7 +222,7 @@ describe("profileSwitchPrompt", () => {
 
   it("refuses while a git operation is running, and says why", () => {
     const prompt = profileSwitchPrompt(work, 3, true, ADA);
-    expect(prompt).toEqual({ refuse: expect.stringMatching(/still running/) });
+    expect(prompt).toEqual({ refuse: expect.stringMatching(/still running/) as string });
   });
 
   it("lists what the switch drops before it happens", () => {

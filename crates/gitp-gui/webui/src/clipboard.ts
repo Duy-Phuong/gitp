@@ -9,7 +9,7 @@ export async function copyText(text: string, note: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
   } catch {
-    const ta = el("textarea", { text }) as HTMLTextAreaElement;
+    const ta = el("textarea", { text });
     ta.style.position = "fixed";
     ta.style.opacity = "0";
     document.body.append(ta);

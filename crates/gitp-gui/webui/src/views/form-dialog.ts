@@ -50,7 +50,7 @@ export function openFormDialog(opts: FormOptions, onSubmit: (values: string[]) =
       class: "rename-input",
       placeholder: f.placeholder ?? "",
       spellcheck: "false",
-    }) as HTMLInputElement | HTMLTextAreaElement;
+    });
     input.value = f.value ?? "";
     return input;
   });

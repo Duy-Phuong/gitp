@@ -42,7 +42,7 @@ export function openRenameBranchModal(
     class: "rename-input",
     value: currentName,
     spellcheck: "false",
-  }) as HTMLInputElement;
+  });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") submit();
   });
@@ -79,7 +79,7 @@ export function openRenameBranchModal(
       if (closed) return;
       remoteSlot.replaceChildren();
       if (!remoteBranch) return; // not on the remote — local-only rename
-      const box = el("input", { type: "checkbox" }) as HTMLInputElement;
+      const box = el("input", { type: "checkbox" });
       box.addEventListener("change", () => (renameRemote = box.checked));
       remoteSlot.append(
         el("label", { class: "delete-remote-row" }, [

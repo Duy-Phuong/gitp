@@ -207,7 +207,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // --- Conversation ---------------------------------------------------------
 
   function renderConversation(body: HTMLElement, pr: PullRequestDetail): void {
-    const area = el("textarea", { class: "pr-composer-input", placeholder: "Leave a comment (Markdown)", spellcheck: "true" }) as HTMLTextAreaElement;
+    const area = el("textarea", { class: "pr-composer-input", placeholder: "Leave a comment (Markdown)", spellcheck: "true" });
     area.value = draft;
     area.addEventListener("input", () => (draft = area.value));
     const quote = (author: string, text: string) => {
@@ -231,7 +231,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       }
     }
 
-    const post = el("button", { class: "btn small", text: "Comment" }) as HTMLButtonElement;
+    const post = el("button", { class: "btn small", text: "Comment" });
     const submit = async () => {
       if (!area.value.trim()) return area.focus();
       post.disabled = true;
@@ -526,13 +526,13 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     const postable = drafts.filter((d) => d.status === "approved" && anchorOf(d) === "ok");
     const blocked = drafts.filter((d) => d.status === "approved" && anchorOf(d) !== "ok").length;
 
-    const verdict = el("select", { class: "pr-drafts-verdict", "aria-label": "Review verdict" }) as HTMLSelectElement;
+    const verdict = el("select", { class: "pr-drafts-verdict", "aria-label": "Review verdict" });
     for (const [value, label] of [
       ["comment", "Comment"],
       ["approve", "Approve"],
       ["request_changes", "Request changes"],
     ] as const) {
-      const o = el("option", { value, text: label }) as HTMLOptionElement;
+      const o = el("option", { value, text: label });
       o.selected = draftsVerdict === value;
       verdict.append(o);
     }
@@ -541,12 +541,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       class: "pr-composer-input pr-drafts-message",
       placeholder: "Review message (Markdown) — optional for Comment and Approve",
       spellcheck: "true",
-    }) as HTMLTextAreaElement;
+    });
     message.value = draftsBody;
     message.addEventListener("input", () => (draftsBody = message.value));
 
     const n = postable.length;
-    const postBtn = el("button", { class: "btn small", text: `Post ${n} approved` }) as HTMLButtonElement;
+    const postBtn = el("button", { class: "btn small", text: `Post ${n} approved` });
     postBtn.disabled = n === 0;
     postBtn.addEventListener("click", () => {
       postBtn.disabled = true;
@@ -622,7 +622,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     }
     const card = el("div", { class: `pr-draft ${d.status}` }, [head]);
     if (d.status !== "discarded") {
-      const area = el("textarea", { class: "pr-composer-input pr-draft-text", spellcheck: "true" }) as HTMLTextAreaElement;
+      const area = el("textarea", { class: "pr-composer-input pr-draft-text", spellcheck: "true" });
       area.value = d.body;
       area.addEventListener("input", () => (d.body = area.value));
       card.append(area);
@@ -721,8 +721,8 @@ function smallButton(text: string, onClick: () => void): HTMLElement {
 // A comment box with its button (and Cancel when `onCancel`). `post`
 // resolves true once posted, which clears the box.
 function replyBox(placeholder: string, label: string, post: (text: string) => Promise<boolean>, onCancel?: () => void): HTMLElement {
-  const area = el("textarea", { class: "pr-composer-input", placeholder, spellcheck: "true" }) as HTMLTextAreaElement;
-  const send = el("button", { class: "btn small", text: label }) as HTMLButtonElement;
+  const area = el("textarea", { class: "pr-composer-input", placeholder, spellcheck: "true" });
+  const send = el("button", { class: "btn small", text: label });
   const submit = async () => {
     if (!area.value.trim()) return area.focus();
     send.disabled = true;

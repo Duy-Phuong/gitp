@@ -623,7 +623,7 @@ export const RECENT_COMMANDS_LIMIT = 6;
 
 export function loadRecentCommands(): string[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(RECENT_COMMANDS_KEY) ?? "[]");
+    const raw: unknown = JSON.parse(localStorage.getItem(RECENT_COMMANDS_KEY) ?? "[]");
     return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
   } catch {
     return [];

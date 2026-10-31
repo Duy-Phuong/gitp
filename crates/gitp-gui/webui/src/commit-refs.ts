@@ -115,7 +115,7 @@ export function rebuildCommitRefs(): boolean {
   // otherwise labels most of history with itself.
   const branches = [...shownBranches.filter((b) => !b.is_head), ...shownBranches.filter((b) => b.is_head)];
 
-  const top: (Cand[] | undefined)[] = new Array(rows.length);
+  const top = new Array<Cand[] | undefined>(rows.length);
   const words = Math.ceil(Math.max(1, branches.length) / 32);
   const bits = new Uint32Array(rows.length * words);
   let order = 0;
