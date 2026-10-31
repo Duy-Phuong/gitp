@@ -3,7 +3,7 @@
 // and where on a diff a new comment goes. The DOM is in views/sidebar.ts and
 // views/pull-request.ts.
 
-import type { DiffLine, PrCheck, PrFilter, PrReview, PrComment, PrReviewComment, PullRequest, PullRequestDetail } from "./types";
+import type { DiffLine, FileDiff, PrCheck, PrFilter, PrReview, PrComment, PrReviewComment, PullRequest, PullRequestDetail } from "./types";
 
 export const PR_FILTERS: { value: PrFilter; label: string }[] = [
   { value: "all", label: "All" },
@@ -76,6 +76,34 @@ export function threadsByLine(threads: Thread[]): Map<string, Thread[]> {
     out.set(key, [...(out.get(key) ?? []), t]);
   }
   return out;
+}
+
+// How many current threads each file has, for its header in the Files tab.
+export function threadsPerFile(threads: Thread[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const t of threads) {
+    if (t.root.line !== null) out.set(t.root.path, (out.get(t.root.path) ?? 0) + 1);
+  }
+  return out;
+}
+
+// The Files tab's search, per file: `null` when it doesn't match — neither
+// its name (old or new) nor any line of its diff holds the query, ignoring
+// case — else the [hunk, line] of each line that does, to mark. A blank
+// query keeps every file and marks nothing.
+export function searchFiles(files: FileDiff[], query: string): ([number, number][] | null)[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return files.map(() => []);
+  return files.map((file) => {
+    const hits: [number, number][] = [];
+    file.hunks.forEach((hunk, h) =>
+      hunk.lines.forEach((line, k) => {
+        if (line.content.toLowerCase().includes(q)) hits.push([h, k]);
+      }),
+    );
+    const named = [file.path, file.old_path ?? ""].some((name) => name.toLowerCase().includes(q));
+    return named || hits.length ? hits : null;
+  });
 }
 
 // A reply to a comment that has no thread on GitHub (one on the pull request

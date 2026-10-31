@@ -8,9 +8,11 @@ import {
   prTimeline,
   quoteReply,
   reviewThreads,
+  searchFiles,
   threadsByLine,
+  threadsPerFile,
 } from "./pull-requests";
-import type { PrReviewComment, PullRequest, PullRequestDetail } from "./types";
+import type { FileDiff, PrReviewComment, PullRequest, PullRequestDetail } from "./types";
 
 function lineComment(id: number, at: string, over: Partial<PrReviewComment> = {}): PrReviewComment {
   return {
@@ -172,5 +174,50 @@ describe("prMatches", () => {
     expect(prMatches(pr, matcher("octo"))).toBe(true);
     expect(prMatches(pr, matcher("feature/"))).toBe(true);
     expect(prMatches(pr, matcher("nothing"))).toBe(false);
+  });
+});
+
+describe("searchFiles", () => {
+  const file = (path: string, lines: string[], old_path: string | null = null): FileDiff => ({
+    path,
+    old_path,
+    status: "Modified",
+    hunks: [
+      {
+        header: "@@ -1 +1 @@",
+        lines: lines.map((content, i) => ({ origin: i % 2 ? "+" : " ", old_lineno: i + 1, new_lineno: i + 1, content: `${content}\n` })),
+      },
+    ],
+  });
+  const files = [
+    file("src/retry.ts", ["const MAX_RETRIES = 3;", "retry(MAX_RETRIES)", "done"]),
+    file("docs/README.md", ["# Retry", "nothing here"]),
+    file("src/new.ts", ["x"], "src/old-name.ts"),
+  ];
+
+  it("keeps every file and marks nothing for a blank query", () => {
+    expect(searchFiles(files, "  ")).toEqual([[], [], []]);
+  });
+
+  it("keeps the files whose name or code matches, ignoring case, with the lines that match", () => {
+    // A name match keeps the file; its matching lines are still marked.
+    expect(searchFiles(files, "max_retries")).toEqual([[[0, 0], [0, 1]], null, null]);
+    expect(searchFiles(files, "readme")).toEqual([null, [], null]);
+    expect(searchFiles(files, "retry")).toEqual([[[0, 1]], [[0, 0]], null]);
+    expect(searchFiles(files, "old-name")).toEqual([null, null, []]);
+    expect(searchFiles(files, "absent")).toEqual([null, null, null]);
+  });
+});
+
+describe("threadsPerFile", () => {
+  it("counts each file's current threads, not replies or outdated ones", () => {
+    const comments = [
+      lineComment(1, "2026-10-27T10:00:00Z"),
+      lineComment(2, "2026-10-27T11:00:00Z", { in_reply_to: 1 }),
+      lineComment(3, "2026-10-27T12:00:00Z", { line: 9 }),
+      lineComment(4, "2026-10-27T13:00:00Z", { line: null }),
+      lineComment(5, "2026-10-27T14:00:00Z", { path: "src/b.ts" }),
+    ];
+    expect(threadsPerFile(reviewThreads(comments))).toEqual(new Map([["src/a.ts", 2], ["src/b.ts", 1]]));
   });
 });
