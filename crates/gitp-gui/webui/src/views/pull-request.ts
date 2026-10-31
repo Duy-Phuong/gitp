@@ -29,7 +29,8 @@ import {
   type Thread,
 } from "../pull-requests";
 import { fullTime, relativeTime } from "../timeago";
-import type { FileDiff, LineComment, PrLabel, PrReviewComment, PullRequestDetail } from "../types";
+import { checkAnchor, type DraftComment } from "../review-drafts";
+import type { FileDiff, LineComment, PrLabel, PrReviewComment, PullRequestDetail, ReviewVerdict } from "../types";
 
 export interface PullRequestCallbacks {
   fetchDetail: (number: number) => Promise<PullRequestDetail>;
@@ -45,7 +46,19 @@ export interface PullRequestCallbacks {
   comment: (pr: PullRequestDetail, body: string) => Promise<boolean>;
   reply: (pr: PullRequestDetail, root: PrReviewComment, body: string) => Promise<boolean>;
   lineComment: (pr: PullRequestDetail, comment: LineComment) => Promise<boolean>;
+  // Picks and reads a review file; its findings, or null when nothing was
+  // picked (the caller has reported why).
+  loadDrafts: (pr: PullRequestDetail) => Promise<DraftComment[] | null>;
+  // Posts one review with `comments` after the user confirms; true once it is
+  // on GitHub.
+  postReview: (pr: PullRequestDetail, verdict: ReviewVerdict, body: string, comments: LineComment[]) => Promise<boolean>;
   reportError: (title: string, err: unknown) => void;
+}
+
+// A loaded finding and what the user decided about it.
+interface Draft extends DraftComment {
+  id: number;
+  status: "pending" | "approved" | "discarded";
 }
 
 export interface PullRequestHandle {
@@ -57,7 +70,7 @@ export interface PullRequestHandle {
   reset: () => void;
 }
 
-type Tab = "conversation" | "files" | "checks";
+type Tab = "conversation" | "files" | "checks" | "drafts";
 
 export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks): PullRequestHandle {
   let number: number | null = null;
@@ -72,6 +85,11 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // The Files tab's search, kept across re-renders (a layout switch).
   let filesQuery = "";
   let split = loadPrDiffSplit();
+  // Draft comments loaded from a review file, with the verdict and message
+  // the review they'll be posted in will carry.
+  let drafts: Draft[] = [];
+  let draftsVerdict: ReviewVerdict = "comment";
+  let draftsBody = "";
 
   const message = (text: string) => {
     clear(host);
@@ -119,6 +137,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       tabButton("conversation", `Conversation (${prTimeline(pr).length})`),
       tabButton("files", `Files changed (${pr.changed_files})`),
       tabButton("checks", `Checks (${pr.checks.length})`),
+      ...(drafts.length ? [tabButton("drafts", `Drafts (${drafts.filter((d) => d.status !== "discarded").length})`)] : []),
       el("span", { class: "pr-diffstat" }, [
         el("span", { class: "pr-add", text: `+${pr.additions}` }),
         el("span", { class: "pr-del", text: `−${pr.deletions}` }),
@@ -127,6 +146,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     host.append(el("div", { class: "pr-view" }, [header(pr), tabs, body]));
     if (tab === "conversation") renderConversation(body, pr);
     else if (tab === "files") void renderFiles(body, pr);
+    else if (tab === "drafts") renderDrafts(body, pr);
     else renderChecks(body, pr);
   }
 
@@ -156,6 +176,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       button("Check Out", () => cb.checkout(pr), `gh pr checkout ${pr.number}: a local branch tracking ${pr.head}`),
       button("Check Out in New Worktree…", (e) => cb.checkoutInWorktree(pr, e.clientX, e.clientY)),
       button("Review ▾", (e) => cb.reviewMenu(pr, e.clientX, e.clientY), "Approve, request changes or comment"),
+      button("Load Review File…", () => void loadDrafts(pr), "Read a review's findings as draft comments, to approve or discard before posting"),
       open,
       button("Refresh", () => void load(false), "Read it again from GitHub"),
     ]);
@@ -389,6 +410,143 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     return node;
   }
 
+  // --- Draft comments -------------------------------------------------------
+
+  // Read a review file's findings into the Drafts tab. The changed files are
+  // loaded too, so each draft can say whether its line is in the diff.
+  async function loadDrafts(pr: PullRequestDetail): Promise<void> {
+    const found = await cb.loadDrafts(pr);
+    if (!found || number !== pr.number) return;
+    if (!files) {
+      try {
+        files = await cb.fetchFiles(pr.number);
+      } catch {
+        // Without the diff the anchors go unchecked; GitHub will still refuse a
+        // bad one when posting.
+      }
+    }
+    const next = drafts.length ? Math.max(...drafts.map((d) => d.id)) + 1 : 1;
+    drafts = [...drafts, ...found.map((d, i) => ({ ...d, id: next + i, status: "pending" as const }))];
+    tab = "drafts";
+    render();
+  }
+
+  // Each draft: where it goes, its severity, the text (editable), and Approve
+  // or Discard. Above them the review the approved ones will be posted as.
+  function renderDrafts(body: HTMLElement, pr: PullRequestDetail): void {
+    const live = drafts.filter((d) => d.status !== "discarded");
+    if (live.length === 0 && drafts.length === 0) {
+      body.append(el("div", { class: "pr-empty", text: "No draft comments. Load a review file to get some." }));
+      return;
+    }
+    const anchorOf = (d: Draft) => (files ? checkAnchor(d, files) : "ok");
+    const postable = drafts.filter((d) => d.status === "approved" && anchorOf(d) === "ok");
+    const blocked = drafts.filter((d) => d.status === "approved" && anchorOf(d) !== "ok").length;
+
+    const verdict = el("select", { class: "pr-drafts-verdict", "aria-label": "Review verdict" }) as HTMLSelectElement;
+    for (const [value, label] of [
+      ["comment", "Comment"],
+      ["approve", "Approve"],
+      ["request_changes", "Request changes"],
+    ] as const) {
+      const o = el("option", { value, text: label }) as HTMLOptionElement;
+      o.selected = draftsVerdict === value;
+      verdict.append(o);
+    }
+    verdict.addEventListener("change", () => (draftsVerdict = verdict.value as ReviewVerdict));
+    const message = el("textarea", {
+      class: "pr-composer-input pr-drafts-message",
+      placeholder: "Review message (Markdown) — optional for Comment and Approve",
+      spellcheck: "true",
+    }) as HTMLTextAreaElement;
+    message.value = draftsBody;
+    message.addEventListener("input", () => (draftsBody = message.value));
+
+    const n = postable.length;
+    const postBtn = el("button", { class: "btn small", text: `Post ${n} approved` }) as HTMLButtonElement;
+    postBtn.disabled = n === 0;
+    postBtn.addEventListener("click", () => {
+      postBtn.disabled = true;
+      void cb
+        .postReview(
+          pr,
+          draftsVerdict,
+          draftsBody,
+          postable.map((d) => ({ path: d.path, line: d.line, side: d.side, commit_id: pr.head_oid, body: d.body })),
+        )
+        .then(async (ok) => {
+          if (!ok) {
+            postBtn.disabled = false;
+            return;
+          }
+          const posted = new Set(postable.map((d) => d.id));
+          drafts = drafts.filter((d) => !posted.has(d.id));
+          draftsBody = "";
+          if (!drafts.some((d) => d.status !== "discarded")) {
+            drafts = [];
+            tab = "conversation";
+          }
+          await load(true);
+        });
+    });
+    const setAll = (status: Draft["status"]) => {
+      for (const d of drafts) if (d.status !== "discarded" || status === "pending") d.status = status;
+      render();
+    };
+    const summary = `${live.length} draft${live.length === 1 ? "" : "s"} · ${drafts.filter((d) => d.status === "approved").length} approved${blocked ? ` · ${blocked} can't be posted (line not in this diff)` : ""}`;
+    body.append(
+      el("div", { class: "pr-drafts-bar" }, [
+        el("span", { class: "pr-drafts-summary", text: summary }),
+        smallButton("Approve All", () => setAll("approved")),
+        smallButton("Clear", () => {
+          drafts = [];
+          tab = "conversation";
+          render();
+        }),
+        el("span", { class: "spacer" }),
+        verdict,
+        postBtn,
+      ]),
+      message,
+    );
+    for (const d of drafts) body.append(draftCard(d, anchorOf(d)));
+  }
+
+  function draftCard(d: Draft, anchor: ReturnType<typeof checkAnchor>): HTMLElement {
+    const head = el("div", { class: "pr-draft-head" }, [
+      el("code", { class: "pr-draft-where", text: `${d.path}:${d.line}${d.side === "LEFT" ? " (removed line)" : ""}` }),
+    ]);
+    if (d.severity) head.append(el("span", { class: `pr-draft-sev ${d.severity.replace(/\W+/g, "-")}`, text: d.severity }));
+    if (anchor !== "ok") {
+      head.append(
+        el("span", {
+          class: "pr-draft-warn",
+          text: anchor === "no-file" ? "file not in this pull request" : "line not in this diff",
+          title: "GitHub only takes comments on lines that are part of the diff; this one can't be posted as it stands.",
+        }),
+      );
+    }
+    head.append(el("span", { class: "spacer" }));
+    const toggle = (status: Draft["status"]) => () => {
+      d.status = d.status === status ? "pending" : status;
+      render();
+    };
+    if (d.status !== "discarded") {
+      head.append(smallButton(d.status === "approved" ? "Approved ✓" : "Approve", toggle("approved")));
+      head.append(smallButton("Discard", toggle("discarded")));
+    } else {
+      head.append(smallButton("Restore", toggle("discarded")));
+    }
+    const card = el("div", { class: `pr-draft ${d.status}` }, [head]);
+    if (d.status !== "discarded") {
+      const area = el("textarea", { class: "pr-composer-input pr-draft-text", spellcheck: "true" }) as HTMLTextAreaElement;
+      area.value = d.body;
+      area.addEventListener("input", () => (d.body = area.value));
+      card.append(area);
+    }
+    return card;
+  }
+
   // --- Checks ---------------------------------------------------------------
 
   function renderChecks(body: HTMLElement, pr: PullRequestDetail): void {
@@ -412,6 +570,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   return {
     show: (n) => {
       if (n !== number) {
+        drafts = [];
+        draftsBody = "";
+      }
+      if (n !== number) {
         number = n;
         detail = null;
         files = null;
@@ -428,6 +590,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       detail = null;
       files = null;
       draft = "";
+      drafts = [];
+      draftsBody = "";
       clear(host);
     },
   };

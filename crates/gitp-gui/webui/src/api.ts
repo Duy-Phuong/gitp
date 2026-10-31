@@ -1975,6 +1975,92 @@ export async function commentOnLine(number: number, comment: LineComment): Promi
   return invoke<PrReviewComment>("gh_line_comment", { number, comment });
 }
 
+// Pick a review file (Markdown or JSON) in the file dialog; null when the
+// dialog was cancelled. The preview has a sample file of its own.
+export async function pickReviewFile(): Promise<string | null> {
+  if (!isTauri()) return "/Users/you/review/pr-review-42.md";
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    multiple: false,
+    directory: false,
+    title: "Load review comments",
+    filters: [{ name: "Review", extensions: ["md", "markdown", "json", "txt"] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+// The text of a review file the user picked.
+export async function readReviewFile(path: string): Promise<string> {
+  if (!isTauri()) return MOCK_REVIEW_FILE;
+  return invoke<string>("read_review_file", { path });
+}
+
+// One review with its verdict, message and comments on diff lines, posted
+// together. Resolves with the review's URL.
+export async function reviewWithComments(number: number, verdict: ReviewVerdict, body: string, comments: LineComment[]): Promise<string> {
+  if (!isTauri()) {
+    const detail = mockPrDetailOf(number);
+    const state = { approve: "APPROVED", request_changes: "CHANGES_REQUESTED", comment: "COMMENTED" }[verdict];
+    detail.reviews.push({ author: MOCK_GH_ACCOUNT.login ?? "you", state, body, submitted_at: new Date().toISOString() });
+    for (const c of comments) {
+      detail.review_comments.push({
+        id: Date.now() + Math.floor(Math.random() * 1000),
+        author: MOCK_GH_ACCOUNT.login ?? "you",
+        body: c.body,
+        path: c.path,
+        line: c.line,
+        original_line: c.line,
+        side: c.side,
+        created_at: new Date().toISOString(),
+        in_reply_to: null,
+        url: `https://github.com/example/mideal/pull/${number}#discussion_r2`,
+        diff_hunk: "",
+      });
+    }
+    return `https://github.com/example/mideal/pull/${number}#pullrequestreview-1 (preview mock)`;
+  }
+  return invoke<string>("gh_review_with_comments", { number, verdict, body, comments });
+}
+
+// The review the preview loads: two findings on lines of the mock diff, one
+// on a line outside it, to show the warning.
+const MOCK_REVIEW_FILE = `# Review of #42
+
+### \`src/identity/retry.ts:6\`
+
+**Severity:** 🔴 blocking
+
+**Comment to paste:**
+
+<!-- copy:start -->
+The retry stops one attempt early: \`attempt === 3\` throws on the third try, so only two retries happen.
+
+\`\`\`suggestion
+      if (attempt === MAX_ATTEMPTS) throw err;
+\`\`\`
+<!-- copy:end -->
+
+### \`src/identity/client.ts:11\`
+
+**Severity:** 🟡 minor
+
+**Comment to paste:**
+
+<!-- copy:start -->
+A timeout from \`http.get\` is retried too — is that wanted for a POST-like check?
+<!-- copy:end -->
+
+### \`src/identity/retry.ts:40\`
+
+**Severity:** 🟢 nit
+
+**Comment to paste:**
+
+<!-- copy:start -->
+This line is not part of the diff, so GitHub would refuse a comment here.
+<!-- copy:end -->
+`;
+
 // Start `gh auth login`'s browser sign-in: resolves with the one-time code as
 // soon as gh shows it. `ghLoginWait` then waits for the user to approve it.
 export async function ghLoginStart(): Promise<DeviceCode> {

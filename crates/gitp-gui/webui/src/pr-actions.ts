@@ -22,14 +22,18 @@ import {
   isCancelled,
   listPullRequests,
   openGithubUrl,
+  pickReviewFile,
+  readReviewFile,
   replyToReviewComment,
   reviewPullRequest,
+  reviewWithComments,
 } from "./api";
 import { state, ui } from "./app-state";
 import { copyText } from "./clipboard";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { loadRepo, loadSidebar, refreshHistory, renderSidebarNow, showPullRequest, showView } from "./shell";
 import { defaultWorktreePath } from "./worktree-actions";
+import { parseReviewFile } from "./review-drafts";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
 import { showErrorDialog } from "./views/message-dialog";
@@ -228,6 +232,30 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
     post(`a reply to ${root.author}`, pr.number, body, async () => (await replyToReviewComment(pr.number, root.id, body)).url),
   lineComment: (pr, comment) =>
     post(`a comment on ${comment.path}:${comment.line}`, pr.number, comment.body, async () => (await commentOnLine(pr.number, comment)).url),
+  loadDrafts: async () => {
+    const path = await pickReviewFile();
+    if (!path) return null;
+    try {
+      const drafts = parseReviewFile(await readReviewFile(path));
+      if (drafts.length === 0) {
+        showErrorDialog(
+          "No review comments found",
+          `${path} has no finding with a "### path/to/file:line" heading and a comment, and is not a JSON list of {path, line, body}.`,
+        );
+        return null;
+      }
+      setStatus(`Loaded ${drafts.length} draft comment${drafts.length === 1 ? "" : "s"} from ${path}.`);
+      return drafts;
+    } catch (err) {
+      readFailed("Couldn't read the review file", err);
+      return null;
+    }
+  },
+  postReview: (pr, verdict, body, comments) => {
+    const what = `a review with ${comments.length} comment${comments.length === 1 ? "" : "s"}`;
+    const preview = comments.map((c) => `${c.path}:${c.line} — ${c.body.split("\n")[0]}`).join("\n");
+    return post(what, pr.number, body.trim() ? `${body}\n\n${preview}` : preview, () => reviewWithComments(pr.number, verdict, body, comments));
+  },
   reportError: readFailed,
 };
 

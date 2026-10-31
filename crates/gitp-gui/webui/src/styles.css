@@ -5652,3 +5652,79 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .welcome-tips {
   margin-top: 28px;
 }
+
+/* --- Draft review comments (loaded from a review file) --------------------- */
+.pr-drafts-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.pr-drafts-summary {
+  color: var(--text-dim);
+}
+.pr-drafts-verdict {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+.pr-drafts-message {
+  margin: 10px 12px 0;
+  width: calc(100% - 24px);
+  min-height: 48px;
+}
+.pr-draft {
+  margin: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+}
+.pr-draft.approved {
+  border-color: var(--accent);
+}
+.pr-draft.discarded {
+  opacity: 0.55;
+}
+.pr-draft-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.pr-draft.discarded .pr-draft-head {
+  border-bottom: none;
+}
+.pr-draft-where {
+  font-family: var(--mono);
+}
+.pr-draft-sev {
+  padding: 0 6px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.pr-draft-sev.blocking {
+  color: var(--del-fg);
+  border-color: var(--del-fg);
+}
+.pr-draft-warn {
+  color: var(--del-fg);
+  font-size: 11px;
+}
+.pr-draft-text {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 8px 10px;
+  min-height: 72px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
