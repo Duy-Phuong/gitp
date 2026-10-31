@@ -9,7 +9,7 @@
 // which builds text nodes, and the rest is set as text.
 
 import { clear, el, githubIcon } from "../dom";
-import { renderMarkdown } from "./markdown-preview";
+import { renderGitHubMarkdown } from "./github-markdown";
 import { renderFile } from "./detail";
 import {
   checksSummary,
@@ -93,6 +93,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     const pr = detail;
     clear(host);
     const body = el("div", { class: "pr-body" });
+    // A link in a description or comment opens in the browser (see
+    // renderGitHubMarkdown).
+    body.addEventListener("click", (e) => {
+      const link = (e.target as HTMLElement).closest<HTMLElement>(".github-markdown [data-href]");
+      if (link?.dataset.href) cb.openUrl(link.dataset.href);
+    });
     const tabs = el("div", { class: "pr-tabs" });
     const tabButton = (t: Tab, label: string) => {
       const b = el("button", { class: `pr-tab${tab === t ? " active" : ""}`, text: label });
@@ -362,7 +368,7 @@ function card(author: string, at: string, verb: string, body: string | null, act
   if (secs) head.append(el("span", { class: "pr-card-time", text: relativeTime(secs), title: fullTime(secs) }));
   head.append(...actions);
   const node = el("div", { class: `pr-card ${cls}`.trim() }, [head]);
-  if (body !== null) node.append(body.trim() ? renderMarkdown(body) : el("div", { class: "pr-card-none", text: "No description provided." }));
+  if (body !== null) node.append(body.trim() ? renderGitHubMarkdown(body) : el("div", { class: "pr-card-none", text: "No description provided." }));
   return node;
 }
 
