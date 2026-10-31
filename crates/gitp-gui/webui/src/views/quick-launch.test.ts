@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { capSections, filterSections, scoreItem, type QuickItem, type QuickSection } from "./quick-launch";
+import { arrangeCommands, capSections, filterSections, scoreItem, type QuickItem, type QuickSection } from "./quick-launch";
 
 function cmd(label: string, detail?: string): QuickItem {
   return { kind: "command", label, detail, run: () => {} };
@@ -132,5 +132,27 @@ describe("capSections", () => {
   it("keeps the best matches — the front of each already-sorted section", () => {
     const out = capSections([mk("a", 10)], 3);
     expect(out[0].items.map((i) => i.label)).toEqual(["a-0", "a-1", "a-2"]);
+  });
+});
+
+describe("arrangeCommands", () => {
+  const all = [cmd("Push"), cmd("Pull…"), cmd("Fetch…"), cmd("Settings…")];
+
+  it("puts the recent commands first, in their order, and lists each once", () => {
+    const { recent, rest } = arrangeCommands(all, ["Fetch…", "Push"]);
+    expect(recent.map((c) => c.label)).toEqual(["Fetch…", "Push"]);
+    expect(rest.map((c) => c.label)).toEqual(["Pull…", "Settings…"]);
+  });
+
+  it("skips a remembered command that no longer exists", () => {
+    const { recent, rest } = arrangeCommands(all, ["Gone", "Pull…"]);
+    expect(recent.map((c) => c.label)).toEqual(["Pull…"]);
+    expect(rest).toHaveLength(3);
+  });
+
+  it("leaves the list as it is when nothing was run yet", () => {
+    const { recent, rest } = arrangeCommands(all, []);
+    expect(recent).toEqual([]);
+    expect(rest).toEqual(all);
   });
 });

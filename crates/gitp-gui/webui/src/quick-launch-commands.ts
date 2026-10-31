@@ -27,6 +27,7 @@ import { showContextMenu } from "./views/context-menu";
 import { openStashApplyModal } from "./views/stash-apply";
 import { openFetchDialog } from "./views/fetch-dialog";
 import {
+  arrangeCommands,
   closeQuickLaunch,
   isQuickLaunchOpen,
   showQuickLaunch,
@@ -138,9 +139,7 @@ export function openQuickLaunch(): void {
   const commands = state.repoPath ? repoCommands() : openOnlyCommands();
   // The commands run last time, first — each listed once, so a recent one
   // leaves the main list.
-  const recentLabels = loadRecentCommands();
-  const recent = recentLabels.flatMap((label) => commands.filter((c) => c.label === label));
-  const rest = commands.filter((c) => !recentLabels.includes(c.label));
+  const { recent, rest } = arrangeCommands(commands, loadRecentCommands());
   showQuickLaunch({
     placeholder: state.repoPath ? "Command" : "Open a repository",
     sections: [
