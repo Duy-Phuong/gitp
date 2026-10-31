@@ -234,6 +234,11 @@ function detectEditors(): void {
 
 detectEditors();
 
+// The Checkout Branch picker on its own — the branch chip's "All Branches…".
+export function openCheckoutBranchPicker(): void {
+  showQuickLaunch(branchStage("Checkout Branch", (b) => void checkoutBranchAction(b), true));
+}
+
 // Ask for a name and create the branch at HEAD — Quick Launch's "Create
 // Branch…" and its shortcut.
 export function createBranchPrompt(): void {

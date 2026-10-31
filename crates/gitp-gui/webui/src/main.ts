@@ -144,13 +144,14 @@ import {
 import { createFileAction, editFileAction } from "./editor-actions";
 import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
-import { browseAndOpen, openQuickLaunch, openRecentRepo } from "./quick-launch-commands";
+import { browseAndOpen, createBranchPrompt, openCheckoutBranchPicker, openQuickLaunch, openRecentRepo } from "./quick-launch-commands";
 import { setupWelcome } from "./views/welcome";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { openWorkspacesAction } from "./local-workspace-actions";
 import { openInDiffTool, openInMergeTool } from "./external-tools";
 import { setupLogKeyboardNav, setupShortcuts } from "./keyboard";
 import { setupBranchMenu, setupPullMenu, setupSettingsMenu } from "./topbar-menus";
+import type { BranchRef } from "./types";
 import { setupProfileMenu } from "./profile-menu";
 import { showComparison } from "./compare";
 
@@ -165,6 +166,16 @@ function wireUi(): void {
     else if (!isTauri()) setStatus("The folder picker is only available in the desktop app.");
   });
   $("#clone-btn").addEventListener("click", cloneRepoAction);
+  // The branch chip: copy the name, or switch — the branches switched to
+  // lately right there, the rest through the picker.
+  const chip = $("#branch-indicator");
+  chip.addEventListener("click", (e) => openBranchChipMenu(e.clientX, e.clientY));
+  chip.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    const r = chip.getBoundingClientRect();
+    openBranchChipMenu(r.left, r.bottom);
+  });
   $("#init-btn").addEventListener("click", initRepoAction);
   $("#workspaces-btn").addEventListener("click", openWorkspacesAction);
   $<HTMLInputElement>("#repo-input").addEventListener("keydown", (e) => {
@@ -214,6 +225,31 @@ function wireUi(): void {
   setupBranchToggle();
   setupLogSearch();
   setupConfigTabs();
+}
+
+// How many recently switched-to branches the branch chip's menu lists before
+// handing over to the picker.
+const CHIP_RECENT = 8;
+
+function openBranchChipMenu(x: number, y: number): void {
+  const head = state.refs.head;
+  if (!head) return;
+  const byName = new Map(state.refs.branches.map((b) => [b.name, b]));
+  const recent = state.refs.recent
+    .map((name) => byName.get(name))
+    .filter((b): b is BranchRef => !!b && !b.is_head)
+    .slice(0, CHIP_RECENT);
+  const items: MenuItem[] = [
+    { heading: `On ${head}` },
+    { label: "Copy Branch Name", run: () => void copyText(head, `Copied "${head}".`) },
+    { separator: true },
+    { heading: "Switch to" },
+    ...recent.map((b) => ({ label: b.name, run: () => void checkoutBranchAction(b) })),
+    { label: recent.length ? "All Branches…" : "Choose a Branch…", run: openCheckoutBranchPicker },
+    { separator: true },
+    { label: "Create Branch…", run: createBranchPrompt },
+  ];
+  showContextMenu(x, y, items);
 }
 
 // Live commit search: debounced so typing doesn't fire a query per keystroke;
