@@ -480,6 +480,37 @@ export function withTabAlias(aliases: Record<string, string>, path: string, alia
   return next;
 }
 
+// The Code tab's recently opened files (Quick Open), keyed by repo path,
+// newest first.
+const CODE_RECENT_KEY = "gitp-code-recent";
+
+export function loadCodeRecent(repo: string): string[] {
+  return parseCodeRecent(localStorage.getItem(CODE_RECENT_KEY))[repo] ?? [];
+}
+
+export function saveCodeRecent(repo: string, paths: string[]): void {
+  localStorage.setItem(CODE_RECENT_KEY, JSON.stringify(withCodeRecent(parseCodeRecent(localStorage.getItem(CODE_RECENT_KEY)), repo, paths)));
+}
+
+export function parseCodeRecent(raw: string | null): Record<string, string[]> {
+  try {
+    const parsed: unknown = JSON.parse(raw ?? "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([repo, v]) => (Array.isArray(v) ? [[repo, v.filter((p): p is string => typeof p === "string")]] : [])),
+    );
+  } catch {
+    return {};
+  }
+}
+
+export function withCodeRecent(all: Record<string, string[]>, repo: string, paths: string[]): Record<string, string[]> {
+  const next = { ...all };
+  if (paths.length) next[repo] = paths;
+  else delete next[repo];
+  return next;
+}
+
 export function loadWorkspace(): { paths: string[]; active: string } | null {
   try {
     const raw = localStorage.getItem(REPOS_KEY);

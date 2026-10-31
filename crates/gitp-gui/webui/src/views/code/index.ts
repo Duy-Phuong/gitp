@@ -38,6 +38,8 @@ export interface CodeViewDeps {
   reportError: (title: string, err: unknown) => void;
   // Whether the Code tab is the one showing.
   isShowing: () => boolean;
+  // Quick Open's recent files for the current repository, kept across restarts.
+  recentFiles?: { load: () => string[]; save: (paths: string[]) => void };
   // Tests hand in a fake editor; the app builds CodeMirror.
   makeEditor?: (host: HTMLElement, deps: CodeEditorDeps) => EditorLike;
 }
@@ -117,6 +119,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   let recent: string[] = [];
   const touchRecent = (path: string) => {
     recent = [path, ...recent.filter((p) => p !== path)].slice(0, 20);
+    deps.recentFiles?.save(recent);
   };
   const tabs = new Tabs();
   const nav = new NavStack();
@@ -535,6 +538,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
       .then((ws) => {
         files = ws.files;
         indexing = ws.indexing;
+        recent = deps.recentFiles?.load() ?? [];
         renderTree();
       })
       .catch((err) => {

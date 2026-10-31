@@ -4,6 +4,8 @@ import {
   fontStack,
   nextToggleTheme,
   parseTabAliases,
+  parseCodeRecent,
+  withCodeRecent,
   steppedZoom,
   withFavoriteToggled,
   withTabAlias,
@@ -99,5 +101,20 @@ describe("codeCssVars", () => {
       "--tab-size": "2",
     });
     expect(codeCssVars({ font: "", size: 12, tabSize: 4, lineNumbers: true })["--code-font"]).toBe("var(--mono)");
+  });
+});
+
+describe("Code tab recent files", () => {
+  it("parses only repo → list-of-paths entries", () => {
+    expect(parseCodeRecent(null)).toEqual({});
+    expect(parseCodeRecent("not json")).toEqual({});
+    expect(parseCodeRecent('["/a"]')).toEqual({});
+    expect(parseCodeRecent('{"/a":["x.ts",3,"y.ts"],"/b":"z"}')).toEqual({ "/a": ["x.ts", "y.ts"] });
+  });
+
+  it("sets one repo's list, keeps the others, and drops an empty one", () => {
+    const all = { "/a": ["x.ts"], "/b": ["y.ts"] };
+    expect(withCodeRecent(all, "/a", ["z.ts", "x.ts"])).toEqual({ "/a": ["z.ts", "x.ts"], "/b": ["y.ts"] });
+    expect(withCodeRecent(all, "/b", [])).toEqual({ "/a": ["x.ts"] });
   });
 });

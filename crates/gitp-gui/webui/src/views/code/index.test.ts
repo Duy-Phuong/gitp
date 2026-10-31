@@ -195,6 +195,16 @@ describe("setupCodeView", () => {
     document.querySelectorAll(".ql-overlay").forEach((o) => o.remove());
   });
 
+  it("Quick Open's recent files come back from, and are saved to, the repository's store", async () => {
+    const saved: string[][] = [];
+    const { view, deps } = setup([entry("a.ts"), entry("b.ts")], { "a.ts": "x", "b.ts": "y" });
+    deps.recentFiles = { load: () => ["b.ts"], save: (p) => void saved.push(p) };
+    view.start();
+    await flush();
+    await view.openFile({ path: "a.ts", line: 0, col: 0 });
+    expect(saved.pop()).toEqual(["a.ts", "b.ts"]);
+  });
+
   describe("go to definition", () => {
     it("one result jumps there and records a stop", async () => {
       const { view, api, editor } = setup([entry("a.ts"), entry("b.ts")], { "a.ts": "x", "b.ts": "function total() {}" });

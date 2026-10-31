@@ -87,6 +87,7 @@ import {
   currentTheme,
   loadAllBranches,
   loadAutoFetchMinutes,
+  loadCodeRecent,
   loadDetailTab,
   loadFavoriteRepos,
   loadLocalHistoryEnabled,
@@ -94,6 +95,7 @@ import {
   loadRecentRepos,
   loadZoom,
   saveAllBranches,
+  saveCodeRecent,
   saveDetailTab,
   savePushAfterCommit,
   updatePullButtonTitle,
@@ -527,6 +529,7 @@ async function init(): Promise<void> {
     toast: (message, kind = "info") => toast(message, { kind }),
     reportError: opFailed,
     isShowing: () => state.view === "code",
+    recentFiles: { load: () => loadCodeRecent(state.repoPath), save: (paths) => saveCodeRecent(state.repoPath, paths) },
   });
   ui.localHistoryView = setupLocalHistory($("#localhistory-view"), {
     fetch: fetchLocalHistory,
