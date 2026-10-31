@@ -1,0 +1,3 @@
+class Dup {
+    void save() {}
+}
