@@ -193,7 +193,9 @@ export class CodeEditor implements EditorLike {
 
   /// Show `path`, restoring its state if it was open before.
   open(path: string, text: string, lang: Lang | null): void {
-    if (this.activePath && this.activePath !== path) this.states.set(this.activePath, this.view.state);
+    // Already shown: its state is the view's, not in `states`.
+    if (this.activePath === path) return;
+    if (this.activePath) this.states.set(this.activePath, this.view.state);
     const state = this.states.get(path) ?? EditorState.create({ doc: text, extensions: this.extensions(lang) });
     this.activePath = path;
     this.view.setState(state);

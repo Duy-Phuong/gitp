@@ -1,6 +1,7 @@
+// @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AutoSave, languageFor } from "./editor";
+import { AutoSave, CodeEditor, languageFor } from "./editor";
 
 describe("languageFor", () => {
   it("returns a language extension for each of the four languages and nothing otherwise", () => {
@@ -133,5 +134,15 @@ describe("AutoSave", () => {
     expect(await a.saveNow("a.ts")).toBe(false);
     a.forget("a.ts");
     expect(await a.saveNow("a.ts")).toBe(true);
+  });
+});
+
+describe("CodeEditor", () => {
+  it("opening the file already shown keeps its text", () => {
+    const deps = { onEdit: () => {}, onSaveShortcut: () => {}, gotoDefinition: () => {}, onCaretMoved: () => {} };
+    const ed = new CodeEditor(document.createElement("div"), deps);
+    ed.open("a.java", "class A {}\n", "java");
+    ed.open("a.java", "", "java"); // a jump within the same file passes no text
+    expect(ed.text("a.java")).toBe("class A {}\n");
   });
 });
