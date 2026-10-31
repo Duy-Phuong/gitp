@@ -235,4 +235,106 @@ describe("setupCodeView", () => {
       expect(view.tabs.active()).toBe("b.ts");
     });
   });
+
+  describe("changes on disk", () => {
+    const changed = (paths: string[], external = paths, removed: string[] = []): CodeFilesChanged => ({
+      paths,
+      external,
+      entries: paths.filter((p) => !removed.includes(p)).map(entry),
+      removed,
+      rebuilt: false,
+    });
+
+    it("an external change reloads a clean file and keeps the new mtime", async () => {
+      const { view, api, listeners, editor } = setup();
+      view.start();
+      await flush();
+      await view.openFile({ path: "src/a.ts", line: 0, col: 0 });
+      (api.codeReadFile as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ text: "fresh\n", crlf: false, mixed: false, mtime_ms: 9 });
+      listeners.changed[0](changed(["src/a.ts"]));
+      await flush();
+      expect(editor.text("src/a.ts")).toBe("fresh\n");
+      expect(view.tabs.get("src/a.ts")).toMatchObject({ mtime: 9, changedOnDisk: false, dirty: false });
+    });
+
+    it("an external change to a dirty file raises the banner instead", async () => {
+      const { view, listeners, editor, h } = setup();
+      view.start();
+      await flush();
+      await view.openFile({ path: "src/a.ts", line: 0, col: 0 });
+      editor.replaceText("src/a.ts", "mine\n");
+      view.editorDeps.onEdit("src/a.ts");
+      listeners.changed[0](changed(["src/a.ts"]));
+      await flush();
+      expect(editor.text("src/a.ts")).toBe("mine\n");
+      expect(view.tabs.get("src/a.ts")?.changedOnDisk).toBe(true);
+      expect(h.querySelector("#code-banner")?.classList.contains("hidden")).toBe(false);
+      expect(h.querySelector("#code-banner")?.textContent).toContain("changed on disk");
+    });
+
+    it("a deleted file's tab stays, read-only, and never saves", async () => {
+      const { view, api, listeners, editor, h } = setup();
+      view.start();
+      await flush();
+      await view.openFile({ path: "src/a.ts", line: 0, col: 0 });
+      const ro = vi.spyOn(editor, "setReadOnly");
+      listeners.changed[0](changed(["src/a.ts"], ["src/a.ts"], ["src/a.ts"]));
+      await flush();
+      expect(view.tabs.get("src/a.ts")?.deleted).toBe(true);
+      expect(ro).toHaveBeenCalledWith("src/a.ts", true);
+      expect(h.querySelector(".code-tab.deleted")).not.toBeNull();
+      view.editorDeps.onEdit("src/a.ts");
+      await view.saveActive();
+      expect(api.codeWriteFile).not.toHaveBeenCalled();
+    });
+
+    it("Keep mine writes the buffer over the disk version with its current mtime", async () => {
+      const { view, api, listeners, editor, h } = setup();
+      view.start();
+      await flush();
+      await view.openFile({ path: "src/a.ts", line: 0, col: 0 });
+      editor.replaceText("src/a.ts", "mine\n");
+      view.editorDeps.onEdit("src/a.ts");
+      listeners.changed[0](changed(["src/a.ts"]));
+      await flush();
+      (api.codeReadFile as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ text: "theirs\n", crlf: false, mixed: false, mtime_ms: 11 });
+      h.querySelector<HTMLElement>("#code-banner [data-action=keep]")!.click();
+      await flush();
+      await flush();
+      expect(api.codeWriteFile).toHaveBeenCalledWith("src/a.ts", "mine\n", false, 11);
+      expect(view.tabs.get("src/a.ts")).toMatchObject({ changedOnDisk: false, dirty: false, mtime: 6 });
+      expect(h.querySelector("#code-banner")?.classList.contains("hidden")).toBe(true);
+    });
+
+    it("Reload drops the buffer for the disk version", async () => {
+      const { view, api, listeners, editor, h } = setup();
+      view.start();
+      await flush();
+      await view.openFile({ path: "src/a.ts", line: 0, col: 0 });
+      editor.replaceText("src/a.ts", "mine\n");
+      view.editorDeps.onEdit("src/a.ts");
+      listeners.changed[0](changed(["src/a.ts"]));
+      await flush();
+      (api.codeReadFile as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ text: "theirs\n", crlf: false, mixed: false, mtime_ms: 11 });
+      h.querySelector<HTMLElement>("#code-banner [data-action=reload]")!.click();
+      await flush();
+      await flush();
+      expect(editor.text("src/a.ts")).toBe("theirs\n");
+      expect(view.tabs.get("src/a.ts")).toMatchObject({ changedOnDisk: false, dirty: false, mtime: 11 });
+      expect(api.codeWriteFile).not.toHaveBeenCalled();
+    });
+
+    it("the echo of the Code tab's own save changes nothing", async () => {
+      const { view, api, listeners, editor } = setup();
+      view.start();
+      await flush();
+      await view.openFile({ path: "src/a.ts", line: 0, col: 0 });
+      editor.replaceText("src/a.ts", "mine\n");
+      listeners.changed[0](changed(["src/a.ts"], []));
+      await flush();
+      expect(api.codeReadFile).toHaveBeenCalledTimes(1);
+      expect(editor.text("src/a.ts")).toBe("mine\n");
+      expect(view.tabs.get("src/a.ts")?.changedOnDisk).toBe(false);
+    });
+  });
 });

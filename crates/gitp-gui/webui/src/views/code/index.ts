@@ -73,6 +73,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   const tabsHost = part("code-tabs");
   const editorHost = part("code-editor");
   const panelHost = part("code-panel");
+  const bannerHost = part("code-banner");
   const panelDivider = part("code-panel-divider");
 
   // The bottom panel: one pane showing at a time, each with its own body.
@@ -344,7 +345,77 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   };
   tabs.onChange(renderTabs);
 
+  /// Read `path` again from disk into its tab; the buffer's edits are dropped.
+  const reloadFromDisk = async (path: string) => {
+    const file = await deps.api.codeReadFile(path);
+    if (!file) return;
+    autosave.forget(path);
+    editor.replaceText(path, file.text);
+    tabs.setMtime(path, file.mtime_ms);
+    tabs.setDirty(path, false);
+    tabs.setChangedOnDisk(path, false);
+  };
+
+  /// Write the buffer over whatever is on disk now.
+  const keepMine = async (path: string) => {
+    const onDisk = await deps.api.codeReadFile(path);
+    const text = editor.text(path);
+    const tab = tabs.get(path);
+    if (!onDisk || text === null || !tab) return;
+    try {
+      const mtime = await deps.api.codeWriteFile(path, text, tab.crlf, onDisk.mtime_ms);
+      autosave.forget(path);
+      tabs.setMtime(path, mtime);
+      tabs.setDirty(path, false);
+      tabs.setChangedOnDisk(path, false);
+    } catch (err) {
+      deps.reportError(`Couldn't save ${path}`, err);
+    }
+  };
+
+  const renderBanner = () => {
+    const active = tabs.active();
+    const tab = active ? tabs.get(active) : undefined;
+    clear(bannerHost);
+    const show = !!tab && (tab.changedOnDisk || tab.deleted);
+    bannerHost.classList.toggle("hidden", !show);
+    if (!tab || !show) return;
+    if (tab.deleted) {
+      bannerHost.append(el("span", {}, [`${tab.path} was deleted on disk. This copy is read-only.`]));
+      return;
+    }
+    const reload = el("button", { class: "btn ghost", "data-action": "reload", type: "button" }, ["Reload"]);
+    const keep = el("button", { class: "btn", "data-action": "keep", type: "button" }, ["Keep mine"]);
+    reload.addEventListener("click", () => void reloadFromDisk(tab.path));
+    keep.addEventListener("click", () => void keepMine(tab.path));
+    bannerHost.append(el("span", {}, [`${tab.path} changed on disk while you were editing it.`]), reload, keep);
+  };
+  tabs.onChange(renderBanner);
+
+  /// What a watcher batch means for the open tabs.
+  const applyToTabs = (ev: CodeFilesChanged) => {
+    for (const tab of tabs.list()) {
+      const path = tab.path;
+      if (ev.removed.includes(path)) {
+        autosave.forget(path);
+        tabs.setDirty(path, false);
+        tabs.setDeleted(path, true);
+        editor.setReadOnly(path, true);
+        continue;
+      }
+      if (!ev.paths.includes(path)) continue;
+      if (tab.deleted) {
+        tabs.setDeleted(path, false);
+        editor.setReadOnly(path, false);
+      }
+      if (!ev.external.includes(path)) continue; // the echo of our own save
+      if (tabs.get(path)?.dirty) tabs.setChangedOnDisk(path, true);
+      else void reloadFromDisk(path);
+    }
+  };
+
   const applyChanged = (ev: CodeFilesChanged) => {
+    applyToTabs(ev);
     if (ev.rebuilt) {
       void deps.api.codeRefresh().then((f) => {
         files = f;
