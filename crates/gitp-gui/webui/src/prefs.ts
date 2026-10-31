@@ -55,6 +55,17 @@ export function savePrDiffSplit(on: boolean): void {
   localStorage.setItem(PR_DIFF_SPLIT_KEY, on ? "1" : "0");
 }
 
+// The file tree beside a pull request's diffs: shown unless hidden once.
+const PR_FILES_TREE_KEY = "gitp-pr-files-tree";
+
+export function loadPrFilesTree(): boolean {
+  return localStorage.getItem(PR_FILES_TREE_KEY) !== "0";
+}
+
+export function savePrFilesTree(on: boolean): void {
+  localStorage.setItem(PR_FILES_TREE_KEY, on ? "1" : "0");
+}
+
 export function loadIgnoreWhitespace(): boolean {
   return localStorage.getItem(DIFF_IGNORE_WS_KEY) === "1";
 }

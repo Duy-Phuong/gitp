@@ -5728,3 +5728,40 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   font-family: var(--mono);
   font-size: 12px;
 }
+
+/* --- The file tree beside a pull request's diffs --------------------------- */
+.pr-files-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+.pr-files-tree {
+  position: sticky;
+  top: 0;
+  flex: 0 0 240px;
+  max-height: calc(100vh - 230px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  padding: 6px 4px;
+}
+.pr-files-tree .tree-row.dim {
+  opacity: 0.45;
+}
+.pr-files-diffs {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pr-tree-comments {
+  margin-left: auto;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
