@@ -35,7 +35,12 @@ fn records_commands_newest_first_with_exit_status_and_duration() {
 
     let pop = ops[0];
     assert!(!pop.success);
-    assert_eq!(pop.exit_code, Some(1));
+    // 1 from one git version, 128 from another: a failure either way.
+    assert!(
+        pop.exit_code.is_some_and(|code| code != 0),
+        "{:?}",
+        pop.exit_code
+    );
     assert!(
         pop.stderr.contains("No stash entries found"),
         "{:?}",
