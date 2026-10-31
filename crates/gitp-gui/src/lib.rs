@@ -91,11 +91,14 @@ pub fn run() {
             // Repository watchers push changes on disk to the frontend (see
             // `watch`); they need the app handle to emit, which exists only now.
             let handle = app.handle().clone();
+            let code_handle = app.handle().clone();
             let sink: ChangeSink = Arc::new(move |change| {
                 // A working-tree change also arms that repository's local
-                // history snapshot (see `local_history`).
+                // history snapshot (see `local_history`), and feeds the Code
+                // tab's index when that tab has opened the repository.
                 if change.kinds.contains(&"worktree") {
                     local_history::note_change(&change.path);
+                    code::feed_index(&code_handle, &change);
                 }
                 let _ = handle.emit(REPO_CHANGED_EVENT, change);
             });

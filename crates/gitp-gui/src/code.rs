@@ -17,7 +17,7 @@ use gitp_code::grep::{self, Query, SearchResult};
 use gitp_code::index::{Symbol, SymbolIndex};
 use gitp_code::resolve::{self, HierarchyNode, UsageHit};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::state::{to_message, RepoState};
 
@@ -92,6 +92,7 @@ pub(crate) struct FilesChanged {
 /// nothing in tests.
 pub(crate) type Emit = Arc<dyn Fn(&str, serde_json::Value) + Send + Sync>;
 
+#[cfg(test)]
 fn no_emit() -> Emit {
     Arc::new(|_, _| {})
 }
@@ -295,6 +296,24 @@ pub(crate) fn on_worktree_changed(emit: &Emit, code: &CodeState, root: &Path, pa
     emit(FILES_CHANGED_EVENT, serde_json::to_value(payload).unwrap_or_default());
 }
 
+/// The watcher's sink for a working-tree batch: hand its paths to the
+/// repository's `CodeState`, if the Code tab has one there. The workspace
+/// lock is held only to find the state; the reindex runs on the index's own.
+pub(crate) fn feed_index(app: &AppHandle, change: &crate::watch::RepoChanged) {
+    let found = {
+        let state = app.state::<RepoState>();
+        let guard = state.workspace();
+        guard
+            .sessions
+            .iter()
+            .find(|s| s.path == change.path)
+            .and_then(|s| Some((s.code.clone()?, s.repo.workdir_path().ok()?)))
+    };
+    if let Some((code, root)) = found {
+        on_worktree_changed(&app_emit(app), &code, &root, &change.worktree_paths, change.worktree_overflow);
+    }
+}
+
 // --- Tauri commands --------------------------------------------------------
 
 #[tauri::command(async)]
@@ -435,6 +454,69 @@ mod tests {
         let index = code.index.read().unwrap();
         assert_eq!(index.definitions_named("alpha").count(), 0);
         assert_eq!(index.definitions_named("beta").count(), 1);
+    }
+
+    fn ready_state(dir: &Path) -> (RepoState, Arc<CodeState>) {
+        let state = open(dir);
+        code_open_workspace_impl(&state, no_emit()).unwrap();
+        wait_ready(&state);
+        let (code, _) = code_state(&state).unwrap();
+        (state, code)
+    }
+
+    fn capture() -> (Emit, Arc<Mutex<Vec<(String, serde_json::Value)>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = seen.clone();
+        let emit: Emit = Arc::new(move |name, payload| record.lock().unwrap().push((name.to_string(), payload)));
+        (emit, seen)
+    }
+
+    #[test]
+    fn on_worktree_changed_reindexes_and_patches_files() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let (_state, code) = ready_state(dir.path());
+        let (emit, seen) = capture();
+
+        std::fs::write(dir.path().join("n.ts"), "export function newer() {}\n").unwrap();
+        on_worktree_changed(&emit, &code, dir.path(), &["n.ts".into()], false);
+        assert_eq!(code.index.read().unwrap().definitions_named("newer").count(), 1);
+        let paths: Vec<String> = code.files.read().unwrap().iter().map(|f| f.path.clone()).collect();
+        assert_eq!(paths, ["f.txt", "n.ts"], "inserted in order");
+        let (name, payload) = seen.lock().unwrap().pop().unwrap();
+        assert_eq!(name, FILES_CHANGED_EVENT);
+        assert_eq!(payload["external"], serde_json::json!(["n.ts"]));
+
+        std::fs::remove_file(dir.path().join("n.ts")).unwrap();
+        on_worktree_changed(&emit, &code, dir.path(), &["n.ts".into()], false);
+        assert_eq!(code.index.read().unwrap().definitions_named("newer").count(), 0);
+        assert!(!code.files.read().unwrap().iter().any(|f| f.path == "n.ts"));
+    }
+
+    #[test]
+    fn own_write_is_not_external() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let (state, code) = ready_state(dir.path());
+        let file = code_read_file_impl(&state, "f.txt".into()).unwrap().unwrap();
+        code_write_file_impl(&state, "f.txt".into(), "mine\n".into(), false, file.mtime_ms).unwrap();
+        let (emit, seen) = capture();
+        on_worktree_changed(&emit, &code, dir.path(), &["f.txt".into()], false);
+        let (_, payload) = seen.lock().unwrap().pop().unwrap();
+        assert_eq!(payload["paths"], serde_json::json!(["f.txt"]));
+        assert_eq!(payload["external"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn overflow_rebuilds() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let (_state, code) = ready_state(dir.path());
+        std::fs::write(dir.path().join("big.py"), "def huge():\n    pass\n").unwrap();
+        let (emit, _) = capture();
+        on_worktree_changed(&emit, &code, dir.path(), &[], true);
+        assert_eq!(code.index.read().unwrap().definitions_named("huge").count(), 1);
+        assert!(code.files.read().unwrap().iter().any(|f| f.path == "big.py"));
     }
 
     #[test]

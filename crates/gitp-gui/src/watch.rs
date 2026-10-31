@@ -8,7 +8,7 @@
 //! directories and coalesces bursts — a checkout or an `npm install` produces
 //! thousands of events — into one `repo-changed` event once things go quiet.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -26,6 +26,9 @@ const QUIET: Duration = Duration::from_millis(300);
 const MAX_WAIT: Duration = Duration::from_secs(2);
 /// Entries in the ignored-directory cache before it is simply dropped.
 const IGNORE_CACHE_LIMIT: usize = 50_000;
+/// Worktree paths a batch keeps for the Code tab's index; past this it says
+/// "many" and the index rebuilds instead.
+const PATHS_LIMIT: usize = 500;
 
 /// The Tauri event the frontend listens for.
 pub(crate) const REPO_CHANGED_EVENT: &str = "repo-changed";
@@ -39,6 +42,11 @@ pub(crate) type ChangeSink = Arc<dyn Fn(RepoChanged) + Send + Sync>;
 pub(crate) struct RepoChanged {
     pub(crate) path: String,
     pub(crate) kinds: Vec<&'static str>,
+    /// The working-tree paths that changed (relative, ignored ones dropped),
+    /// unless there were more than [`PATHS_LIMIT`]: then empty, with
+    /// `worktree_overflow` set.
+    pub(crate) worktree_paths: Vec<String>,
+    pub(crate) worktree_overflow: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,6 +149,8 @@ pub(crate) struct Debouncer {
     kinds: Kinds,
     first: Option<Instant>,
     last: Option<Instant>,
+    paths: BTreeSet<String>,
+    overflow: bool,
 }
 
 impl Debouncer {
@@ -150,8 +160,23 @@ impl Debouncer {
         self.last = Some(now);
     }
 
-    pub(crate) fn pending(&self, kind: ChangeKind) -> bool {
-        self.kinds.contains(kind)
+    /// A working-tree change at `rel`, kept for the batch up to [`PATHS_LIMIT`].
+    pub(crate) fn push_path(&mut self, rel: String, now: Instant) {
+        self.push(ChangeKind::Worktree, now);
+        if self.overflow {
+            return;
+        }
+        self.paths.insert(rel);
+        if self.paths.len() > PATHS_LIMIT {
+            self.paths.clear();
+            self.overflow = true;
+        }
+    }
+
+    /// The batch's paths, sorted, and whether there were too many to keep.
+    pub(crate) fn take_paths(&mut self) -> (Vec<String>, bool) {
+        let overflow = std::mem::take(&mut self.overflow);
+        (std::mem::take(&mut self.paths).into_iter().collect(), overflow)
     }
 
     /// When the pending batch becomes due, or `None` when nothing is pending.
@@ -303,19 +328,20 @@ fn report_changes(
             // An inactive tab reports nothing; skip the ignore checks too.
             Some(_) if !live.load(Ordering::SeqCst) => {}
             Some(Change::Git(kind)) => debouncer.push(kind, Instant::now()),
-            // Once a worktree change is pending, another one adds nothing the
-            // ignore check could take away.
-            Some(Change::Worktree(rel))
-                if debouncer.pending(ChangeKind::Worktree) || !ignore.is_ignored(&rel) =>
-            {
-                debouncer.push(ChangeKind::Worktree, Instant::now())
+            // The ignore check is cached per directory, so every path can
+            // afford it — and the Code tab's index must not see ignored ones.
+            Some(Change::Worktree(rel)) if !ignore.is_ignored(&rel) => {
+                debouncer.push_path(rel.to_string_lossy().replace('\\', "/"), Instant::now())
             }
             Some(Change::Worktree(_)) => {} // ignored path
         }
         if let Some(kinds) = debouncer.take_due(Instant::now()) {
+            let (worktree_paths, worktree_overflow) = debouncer.take_paths();
             sink(RepoChanged {
                 path: path.clone(),
                 kinds: kinds.names(),
+                worktree_paths,
+                worktree_overflow,
             });
         }
     }
@@ -415,6 +441,53 @@ mod tests {
             }
         }
         assert_eq!(reported, vec![2000, 4100]);
+    }
+
+    #[test]
+    fn batch_keeps_worktree_paths_up_to_500() {
+        let t0 = Instant::now();
+        let mut d = Debouncer::default();
+        for i in 0..500 {
+            d.push_path(format!("src/{i}.rs"), t0);
+        }
+        d.push_path("src/0.rs".into(), t0); // a repeat adds nothing
+        let (paths, overflow) = d.take_paths();
+        assert_eq!((paths.len(), overflow), (500, false));
+        assert_eq!(paths[0], "src/0.rs");
+        assert!(d.take_paths().0.is_empty(), "taken once");
+
+        let mut d = Debouncer::default();
+        for i in 0..501 {
+            d.push_path(format!("src/{i}.rs"), t0);
+        }
+        let (paths, overflow) = d.take_paths();
+        assert_eq!((paths.len(), overflow), (0, true));
+        assert_eq!(d.take_due(t0 + Duration::from_secs(5)).map(|k| k.names()), Some(vec!["worktree"]), "a path is a worktree change");
+    }
+
+    #[test]
+    fn ignored_paths_are_not_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        std::fs::write(dir.path().join(".gitignore"), "build/\n").unwrap();
+        git(dir.path(), &["add", ".gitignore"]);
+        git(dir.path(), &["commit", "-q", "-m", "ignore"]);
+        let seen = Arc::new(Mutex::new(Vec::<RepoChanged>::new()));
+        let record = Arc::clone(&seen);
+        let sink: ChangeSink = Arc::new(move |ev| record.lock().unwrap().push(ev));
+        let (_, watcher) = watch_worktree(dir.path(), "repo".into(), Some(sink), Arc::new(AtomicBool::new(true)));
+        assert!(watcher.is_some());
+        std::thread::sleep(Duration::from_millis(600));
+        seen.lock().unwrap().clear();
+
+        std::fs::create_dir_all(dir.path().join("build")).unwrap();
+        std::fs::write(dir.path().join("build/x.o"), "x").unwrap();
+        std::fs::write(dir.path().join("f2.txt"), "x").unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        let seen = seen.lock().unwrap();
+        let paths: Vec<&str> = seen.iter().flat_map(|e| e.worktree_paths.iter().map(String::as_str)).collect();
+        assert_eq!(paths, ["f2.txt"], "{seen:?}");
+        assert!(seen.iter().all(|e| !e.worktree_overflow));
     }
 
     #[test]
