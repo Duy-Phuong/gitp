@@ -17,7 +17,12 @@ impl FixtureRepo {
     /// Initialize an empty repo with a deterministic identity configured.
     pub fn init() -> Self {
         let dir = TempDir::new().expect("temp dir");
-        let repo = git2::Repository::init(dir.path()).expect("git init");
+        // The tests name the first branch "master": pin it, because libgit2
+        // otherwise follows `init.defaultBranch` from the user's (or CI's)
+        // global config.
+        let mut opts = git2::RepositoryInitOptions::new();
+        opts.initial_head("master");
+        let repo = git2::Repository::init_opts(dir.path(), &opts).expect("git init");
         {
             let mut cfg = repo.config().expect("config");
             cfg.set_str("user.name", "Fixture Author").unwrap();
