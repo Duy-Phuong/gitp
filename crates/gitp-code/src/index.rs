@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 
 use rayon::prelude::*;
 
@@ -48,9 +49,11 @@ pub struct Range {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Symbol {
     pub id: SymbolId,
-    pub name: String,
+    pub name: Arc<str>,
     pub kind: SymbolKind,
-    pub path: String,
+    /// Shared with every symbol and reference of the file: a 20k-file repo
+    /// has millions of these, and a `String` each would be most of its memory.
+    pub path: Arc<str>,
     /// The whole definition.
     pub range: Range,
     /// Just the identifier: where the caret lands.
@@ -70,9 +73,9 @@ pub enum RefKind {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Reference {
-    pub name: String,
+    pub name: Arc<str>,
     pub kind: RefKind,
-    pub path: String,
+    pub path: Arc<str>,
     pub range: Range,
     /// The symbol whose body contains it.
     pub enclosing: Option<SymbolId>,
@@ -81,7 +84,7 @@ pub struct Reference {
 }
 
 pub struct FileIndex {
-    pub path: String,
+    pub path: Arc<str>,
     pub lang: Lang,
     pub symbols: Vec<Symbol>,
     pub refs: Vec<Reference>,
@@ -96,6 +99,13 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
     let tree = parser.parse(source, None).expect("parse without a timeout never fails");
     let root = tree.root_node();
     let lines = LineTable::new(source);
+    let path: Arc<str> = Arc::from(path);
+    // One allocation per distinct name in the file, however often it occurs.
+    let mut names: HashMap<&[u8], Arc<str>> = HashMap::new();
+    let mut intern = |n: Node| -> Arc<str> {
+        let bytes = &source[n.byte_range()];
+        names.entry(bytes).or_insert_with(|| Arc::from(String::from_utf8_lossy(bytes).as_ref())).clone()
+    };
     let text = |n: Node| String::from_utf8_lossy(&source[n.byte_range()]).into_owned();
 
     let mut symbols: Vec<Symbol> = Vec::new();
@@ -115,9 +125,9 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
         let (Some(name), Some((kind, body))) = (name, body) else { continue };
         symbols.push(Symbol {
             id: SymbolId { file: file_id, byte: body.start_byte() as u32 },
-            name: text(name),
+            name: intern(name),
             kind,
-            path: path.to_string(),
+            path: path.clone(),
             range: lines.range(body),
             name_range: lines.range(name),
             container: None,
@@ -179,9 +189,9 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
             continue; // a definition's own name
         }
         refs.push(Reference {
-            name: text(name),
+            name: intern(name),
             kind,
-            path: path.to_string(),
+            path: path.clone(),
             range,
             enclosing: enclosing(range.start_byte, range.end_byte, None),
             receiver,
@@ -192,7 +202,7 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
     refs.sort_by_key(|r| (r.range.start_byte, r.range.end_byte, specificity(r.kind), r.receiver.is_none()));
     refs.dedup_by(|b, a| (a.range.start_byte, a.range.end_byte) == (b.range.start_byte, b.range.end_byte));
 
-    FileIndex { path: path.to_string(), lang, symbols, refs, mtime_ms: 0 }
+    FileIndex { path, lang, symbols, refs, mtime_ms: 0 }
 }
 
 /// Lower sorts first when two patterns match the same span.
@@ -267,9 +277,9 @@ pub struct SymbolIndex {
     /// survives a reindex of its file.
     ids: HashMap<String, u32>,
     paths: Vec<String>,
-    by_name: HashMap<String, Vec<SymbolId>>,
+    by_name: HashMap<Arc<str>, Vec<SymbolId>>,
     /// `(path, index into that file's refs)`.
-    refs_by_name: HashMap<String, Vec<(String, usize)>>,
+    refs_by_name: HashMap<Arc<str>, Vec<(Arc<str>, usize)>>,
 }
 
 impl SymbolIndex {
@@ -310,16 +320,43 @@ impl SymbolIndex {
 
     pub fn remove(&mut self, path: &str) {
         let Some(old) = self.files.remove(path) else { return };
-        for s in &old.symbols {
-            if let Some(v) = self.by_name.get_mut(&s.name) {
-                v.retain(|id| *id != s.id);
+        let file = old.symbols.first().map(|s| s.id.file);
+        let names: HashSet<&Arc<str>> = old.symbols.iter().map(|s| &s.name).collect();
+        for name in names {
+            if let Some(v) = self.by_name.get_mut(name) {
+                v.retain(|id| Some(id.file) != file);
+                if v.is_empty() {
+                    self.by_name.remove(name);
+                }
             }
         }
-        for r in &old.refs {
-            if let Some(v) = self.refs_by_name.get_mut(&r.name) {
-                v.retain(|(p, _)| p != path);
+        let names: HashSet<&Arc<str>> = old.refs.iter().map(|r| &r.name).collect();
+        for name in names {
+            if let Some(v) = self.refs_by_name.get_mut(name) {
+                v.retain(|(p, _)| p.as_ref() != path);
+                if v.is_empty() {
+                    self.refs_by_name.remove(name);
+                }
             }
         }
+    }
+
+    /// Forget a file's mtime so the next refresh parses it again.
+    pub fn mark_stale(&mut self, path: &str) {
+        if let Some(f) = self.files.get_mut(path) {
+            f.mtime_ms = 0;
+        }
+    }
+
+    /// Assign (or look up) the id for `path`, for a parse done outside the lock.
+    pub fn prepare(&mut self, path: &str) -> u32 {
+        self.id_for(path)
+    }
+
+    /// Put a parse done outside the lock in place of the file's old entry.
+    pub fn apply(&mut self, fi: FileIndex) {
+        self.remove(&fi.path);
+        self.insert(fi);
     }
 
     pub fn file(&self, path: &str) -> Option<&FileIndex> {
@@ -340,7 +377,7 @@ impl SymbolIndex {
             .get(name)
             .into_iter()
             .flatten()
-            .filter_map(move |(p, i)| self.files.get(p).and_then(|f| f.refs.get(*i)))
+            .filter_map(move |(p, i)| self.files.get(p.as_ref()).and_then(|f| f.refs.get(*i)))
     }
 
     pub fn symbol_count(&self) -> usize {
@@ -382,7 +419,41 @@ impl SymbolIndex {
         for (i, r) in fi.refs.iter().enumerate() {
             self.refs_by_name.entry(r.name.clone()).or_default().push((fi.path.clone(), i));
         }
-        self.files.insert(fi.path.clone(), fi);
+        self.files.insert(fi.path.to_string(), fi);
+    }
+}
+
+/// Reindex `paths` with the lock held only to assign ids and to swap the
+/// results in; the parsing — the slow part — runs in parallel outside it, so
+/// saves and queries are not blocked by a batch of changed files.
+pub fn reindex_many(lock: &RwLock<SymbolIndex>, root: &Path, paths: &[String]) {
+    let mut jobs = Vec::new();
+    let mut gone = Vec::new();
+    {
+        let mut index = lock.write().unwrap();
+        for p in paths {
+            let full = root.join(p);
+            match (Lang::from_path(p), std::fs::metadata(&full)) {
+                (Some(lang), Ok(meta)) if meta.is_file() => jobs.push((index.prepare(p), p.clone(), lang, crate::files::mtime_ms(&meta))),
+                _ => gone.push(p.clone()),
+            }
+        }
+    }
+    let parsed: Vec<FileIndex> = jobs
+        .par_iter()
+        .filter_map(|(id, p, lang, mtime)| {
+            let src = std::fs::read(root.join(p)).ok()?;
+            let mut fi = index_file(*id, p, *lang, &src);
+            fi.mtime_ms = *mtime;
+            Some(fi)
+        })
+        .collect();
+    let mut index = lock.write().unwrap();
+    for p in &gone {
+        index.remove(p);
+    }
+    for fi in parsed {
+        index.apply(fi);
     }
 }
 
@@ -399,7 +470,7 @@ mod tests {
     fn sym<'a>(fi: &'a FileIndex, name: &str, kind: SymbolKind) -> &'a Symbol {
         fi.symbols
             .iter()
-            .find(|s| s.name == name && s.kind == kind)
+            .find(|s| s.name.as_ref() == name && s.kind == kind)
             .unwrap_or_else(|| panic!("no {kind:?} {name}"))
     }
 
@@ -407,7 +478,7 @@ mod tests {
     fn java_definitions() {
         use SymbolKind::*;
         let fi = java();
-        let names: Vec<(&str, SymbolKind)> = fi.symbols.iter().map(|s| (s.name.as_str(), s.kind)).collect();
+        let names: Vec<(&str, SymbolKind)> = fi.symbols.iter().map(|s| (s.name.as_ref(), s.kind)).collect();
         assert_eq!(
             names,
             [
@@ -435,29 +506,29 @@ mod tests {
     fn java_references() {
         let fi = java();
         let audit = sym(&fi, "audit", SymbolKind::Method).id;
-        let deposit = fi.refs.iter().find(|r| r.name == "deposit").unwrap();
+        let deposit = fi.refs.iter().find(|r| r.name.as_ref() == "deposit").unwrap();
         assert_eq!(deposit.kind, RefKind::Call);
         assert_eq!(deposit.receiver.as_deref(), Some("this"));
         assert_eq!(deposit.enclosing, Some(audit));
-        let log = fi.refs.iter().find(|r| r.name == "log").unwrap();
+        let log = fi.refs.iter().find(|r| r.name.as_ref() == "log").unwrap();
         assert_eq!(log.receiver.as_deref(), Some("Logger"));
         let import = fi.refs.iter().find(|r| r.kind == RefKind::Import).unwrap();
-        assert_eq!(import.name, "java.util.List");
-        let new = fi.refs.iter().find(|r| r.name == "ArrayList").unwrap();
+        assert_eq!(import.name.as_ref(), "java.util.List");
+        let new = fi.refs.iter().find(|r| r.name.as_ref() == "ArrayList").unwrap();
         assert_eq!(new.kind, RefKind::Call);
-        let list = fi.refs.iter().find(|r| r.name == "List" && r.kind == RefKind::Ident).unwrap();
+        let list = fi.refs.iter().find(|r| r.name.as_ref() == "List" && r.kind == RefKind::Ident).unwrap();
         assert_eq!(list.enclosing, Some(audit));
         // The field's own declaration is a definition, not a reference.
-        assert!(!fi.refs.iter().any(|r| r.name == "balance" && r.range.start_line == 5));
+        assert!(!fi.refs.iter().any(|r| r.name.as_ref() == "balance" && r.range.start_line == 5));
         // The constructor's `this.balance` is a member access.
-        let field = fi.refs.iter().find(|r| r.name == "balance").unwrap();
+        let field = fi.refs.iter().find(|r| r.name.as_ref() == "balance").unwrap();
         assert_eq!((field.kind, field.receiver.as_deref()), (RefKind::Ident, Some("this")));
     }
 
     #[test]
     fn columns_are_utf16() {
         let fi = java();
-        let log = fi.refs.iter().find(|r| r.name == "log").unwrap();
+        let log = fi.refs.iter().find(|r| r.name.as_ref() == "log").unwrap();
         let line = JAVA.lines().nth(16).unwrap();
         let byte = line.find("log(").unwrap();
         let utf16 = line[..byte].encode_utf16().count();
@@ -470,8 +541,8 @@ mod tests {
     #[test]
     fn overlapping_captures_are_deduped() {
         let fi = java();
-        assert_eq!(fi.refs.iter().filter(|r| r.name == "deposit").count(), 1);
-        assert_eq!(fi.refs.iter().filter(|r| r.name == "ArrayList").count(), 1);
+        assert_eq!(fi.refs.iter().filter(|r| r.name.as_ref() == "deposit").count(), 1);
+        assert_eq!(fi.refs.iter().filter(|r| r.name.as_ref() == "ArrayList").count(), 1);
         let mut spans: Vec<(u32, u32)> = fi.refs.iter().map(|r| (r.range.start_byte, r.range.end_byte)).collect();
         let n = spans.len();
         spans.sort();
@@ -491,7 +562,7 @@ mod lang_tests {
     const PY: &str = include_str!("../tests/fixtures/py/cart.py");
 
     fn names(fi: &FileIndex) -> Vec<(&str, SymbolKind)> {
-        fi.symbols.iter().map(|s| (s.name.as_str(), s.kind)).collect()
+        fi.symbols.iter().map(|s| (s.name.as_ref(), s.kind)).collect()
     }
 
     #[test]
@@ -512,8 +583,8 @@ mod lang_tests {
                 ("n", Variable),
             ]
         );
-        let add = fi.symbols.iter().find(|s| s.name == "add").unwrap();
-        let cart = fi.symbols.iter().find(|s| s.name == "Cart").unwrap();
+        let add = fi.symbols.iter().find(|s| s.name.as_ref() == "add").unwrap();
+        let cart = fi.symbols.iter().find(|s| s.name.as_ref() == "Cart").unwrap();
         assert_eq!(add.container, Some(cart.id));
     }
 
@@ -542,11 +613,11 @@ mod lang_tests {
     #[test]
     fn tsx_parses_jsx() {
         let fi = index_file(0, "Cart.tsx", Lang::Tsx, TSX.as_bytes());
-        assert!(fi.symbols.iter().any(|s| s.name == "View" && s.kind == Function));
-        let view = fi.symbols.iter().find(|s| s.name == "View").unwrap();
-        let fmt_call = fi.refs.iter().find(|r| r.name == "fmt" && r.kind == RefKind::Call).unwrap();
+        assert!(fi.symbols.iter().any(|s| s.name.as_ref() == "View" && s.kind == Function));
+        let view = fi.symbols.iter().find(|s| s.name.as_ref() == "View").unwrap();
+        let fmt_call = fi.refs.iter().find(|r| r.name.as_ref() == "fmt" && r.kind == RefKind::Call).unwrap();
         assert_eq!(fmt_call.enclosing, Some(view.id));
-        let props = fi.refs.iter().find(|r| r.name == "Props").unwrap();
+        let props = fi.refs.iter().find(|r| r.name.as_ref() == "Props").unwrap();
         assert_eq!(props.kind, RefKind::Ident);
     }
 
@@ -568,7 +639,7 @@ mod lang_tests {
                 ("x", Variable),
             ]
         );
-        assert!(!fi.symbols.iter().any(|s| s.name == "items"), "self.items is an attribute, not a definition");
+        assert!(!fi.symbols.iter().any(|s| s.name.as_ref() == "items"), "self.items is an attribute, not a definition");
     }
 
     #[test]
@@ -580,14 +651,14 @@ mod lang_tests {
             ("cart.py", Lang::Python, PY),
         ] {
             let fi = index_file(0, path, lang, src.as_bytes());
-            let total = fi.symbols.iter().find(|s| s.name == "total").unwrap();
-            let add = fi.refs.iter().find(|r| r.name == "add" && r.kind == RefKind::Call).unwrap_or_else(|| panic!("{path}: cart.add"));
+            let total = fi.symbols.iter().find(|s| s.name.as_ref() == "total").unwrap();
+            let add = fi.refs.iter().find(|r| r.name.as_ref() == "add" && r.kind == RefKind::Call).unwrap_or_else(|| panic!("{path}: cart.add"));
             assert_eq!(add.receiver.as_deref(), Some("cart"), "{path}");
             assert_eq!(add.enclosing, Some(total.id), "{path}");
-            let new = fi.refs.iter().find(|r| r.name == "Cart" && r.kind == RefKind::Call).unwrap_or_else(|| panic!("{path}: new Cart"));
+            let new = fi.refs.iter().find(|r| r.name.as_ref() == "Cart" && r.kind == RefKind::Call).unwrap_or_else(|| panic!("{path}: new Cart"));
             assert_eq!(new.enclosing, Some(total.id), "{path}");
-            assert!(fi.refs.iter().any(|r| r.name == "money" && r.kind == RefKind::Import), "{path}: import money");
-            assert!(fi.refs.iter().any(|r| r.name == "money" && r.kind == RefKind::Call), "{path}: money(...)");
+            assert!(fi.refs.iter().any(|r| r.name.as_ref() == "money" && r.kind == RefKind::Import), "{path}: import money");
+            assert!(fi.refs.iter().any(|r| r.name.as_ref() == "money" && r.kind == RefKind::Call), "{path}: money(...)");
             let spans: Vec<(u32, u32)> = fi.refs.iter().map(|r| (r.range.start_byte, r.range.end_byte)).collect();
             let mut uniq = spans.clone();
             uniq.sort();
@@ -623,7 +694,7 @@ mod index_tests {
         assert!(index.file("notes.md").is_none());
         let beta: Vec<&Symbol> = index.definitions_named("beta").collect();
         assert_eq!(beta.len(), 1);
-        assert_eq!(beta[0].path, "b.ts");
+        assert_eq!(beta[0].path.as_ref(), "b.ts");
         assert_eq!(index.references_named("beta").count(), 2);
         assert_eq!(index.file_symbols("c.py").len(), 1);
         assert!(index.file("a.ts").unwrap().mtime_ms > 0);
@@ -661,12 +732,31 @@ mod index_tests {
         index.reindex(dir.path(), "b.ts");
         let after = index.definitions_named("beta").next().unwrap().id;
         assert_eq!(before, after);
-        assert_eq!(index.symbol(after).map(|s| s.name.as_str()), Some("beta"));
+        assert_eq!(index.symbol(after).map(|s| s.name.as_ref()), Some("beta"));
         std::fs::write(dir.path().join("d.ts"), "export function delta() {}\n").unwrap();
         index.reindex(dir.path(), "d.ts");
         let delta = index.definitions_named("delta").next().unwrap().id;
         assert_ne!(delta.file, after.file, "a new file gets a new id");
-        assert_eq!(index.symbol(delta).map(|s| s.path.as_str()), Some("d.ts"));
+        assert_eq!(index.symbol(delta).map(|s| s.path.as_ref()), Some("d.ts"));
+    }
+
+    #[test]
+    fn reindex_many_parses_outside_the_lock_and_applies_all() {
+        let dir = workspace();
+        let lock = std::sync::RwLock::new(build(&dir));
+        std::fs::write(dir.path().join("b.ts"), "export function beta2() {}\n").unwrap();
+        std::fs::write(dir.path().join("d.py"), "def delta():\n    pass\n").unwrap();
+        std::fs::remove_file(dir.path().join("c.py")).unwrap();
+        reindex_many(&lock, dir.path(), &["b.ts".to_string(), "d.py".to_string(), "c.py".to_string()]);
+        let index = lock.read().unwrap();
+        assert_eq!(index.definitions_named("beta2").count(), 1);
+        assert_eq!(index.definitions_named("delta").count(), 1);
+        assert_eq!(index.definitions_named("gamma").count(), 0);
+        assert!(index.file("c.py").is_none());
+        let before = index.file("b.ts").unwrap().symbols[0].id.file;
+        drop(index);
+        reindex_many(&lock, dir.path(), &["b.ts".to_string()]);
+        assert_eq!(lock.read().unwrap().file("b.ts").unwrap().symbols[0].id.file, before, "ids survive");
     }
 
     #[test]

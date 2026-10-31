@@ -51,6 +51,8 @@ export interface CodeViewHandle {
   openFile: (loc: Location, opts?: { endCol?: number; reveal?: boolean }) => Promise<void>;
   closeTab: (path: string) => Promise<void>;
   saveActive: () => Promise<void>;
+  // Flush every dirty tab (before a repository switch).
+  saveAll: () => Promise<void>;
   gotoDefinition: (loc: Location) => Promise<void>;
   goBack: () => Promise<void>;
   goForward: () => Promise<void>;
@@ -85,7 +87,9 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     hierarchy: el("div", { class: "code-pane" }),
   };
   const paneButtons: Record<Pane, HTMLElement> = { search: el("button"), usages: el("button"), hierarchy: el("button") };
+  let currentPane: Pane | null = null;
   const showPane = (which: Pane | null) => {
+    currentPane = which;
     panelHost.classList.toggle("hidden", !which);
     panelDivider.classList.toggle("hidden", !which);
     for (const [name, body] of Object.entries(paneBodies) as [Pane, HTMLElement][]) {
@@ -112,8 +116,12 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   const tabs = new Tabs();
   const nav = new NavStack();
 
+  // Files being replaced from disk right now: their change is no edit.
+  const reloading = new Set<string>();
   const editorDeps: CodeEditorDeps = {
-    onEdit: (path) => autosave.edited(path),
+    onEdit: (path) => {
+      if (!reloading.has(path)) autosave.edited(path);
+    },
     onSaveShortcut: (path) => void autosave.saveNow(path),
     gotoDefinition: (loc) => void gotoDefinition(loc),
     onCaretMoved: (loc) => nav.caretMoved(loc),
@@ -181,7 +189,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   };
 
   const closeTab: CodeViewHandle["closeTab"] = async (path) => {
-    await autosave.saveNow(path);
+    if (!(await autosave.saveNow(path))) return; // the banner says what to do
     autosave.forget(path);
     editor.close(path);
     showTab(tabs.close(path));
@@ -347,22 +355,35 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
 
   /// Read `path` again from disk into its tab; the buffer's edits are dropped.
   const reloadFromDisk = async (path: string) => {
-    const file = await deps.api.codeReadFile(path);
+    let file: CodeFile | null;
+    try {
+      file = await deps.api.codeReadFile(path);
+    } catch (err) {
+      deps.reportError(`Couldn't reload ${path}`, err);
+      return;
+    }
     if (!file) return;
     autosave.forget(path);
-    editor.replaceText(path, file.text);
+    reloading.add(path);
+    try {
+      editor.replaceText(path, file.text);
+    } finally {
+      reloading.delete(path);
+    }
     tabs.setMtime(path, file.mtime_ms);
+    tabs.setCrlf(path, file.crlf);
     tabs.setDirty(path, false);
     tabs.setChangedOnDisk(path, false);
   };
 
   /// Write the buffer over whatever is on disk now.
   const keepMine = async (path: string) => {
-    const onDisk = await deps.api.codeReadFile(path);
     const text = editor.text(path);
     const tab = tabs.get(path);
-    if (!onDisk || text === null || !tab) return;
+    if (text === null || !tab) return;
     try {
+      const onDisk = await deps.api.codeReadFile(path);
+      if (!onDisk) return;
       const mtime = await deps.api.codeWriteFile(path, text, tab.crlf, onDisk.mtime_ms);
       autosave.forget(path);
       tabs.setMtime(path, mtime);
@@ -414,17 +435,47 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     }
   };
 
+  /// After a rebuild the batch names no paths: look at every open tab.
+  const recheckTabs = async () => {
+    for (const tab of tabs.list()) {
+      const path = tab.path;
+      if (!files.some((f) => f.path === path)) {
+        autosave.forget(path);
+        tabs.setDirty(path, false);
+        tabs.setDeleted(path, true);
+        editor.setReadOnly(path, true);
+        continue;
+      }
+      let file: CodeFile | null;
+      try {
+        file = await deps.api.codeReadFile(path);
+      } catch {
+        continue;
+      }
+      if (!file || file.mtime_ms === tab.mtime) continue;
+      if (tab.deleted) {
+        tabs.setDeleted(path, false);
+        editor.setReadOnly(path, false);
+      }
+      if (tabs.get(path)?.dirty) tabs.setChangedOnDisk(path, true);
+      else await reloadFromDisk(path);
+    }
+  };
+
   const applyChanged = (ev: CodeFilesChanged) => {
-    applyToTabs(ev);
     if (ev.rebuilt) {
       void deps.api.codeRefresh().then((f) => {
         files = f;
         renderTree();
+        return recheckTabs();
       });
       return;
     }
+    applyToTabs(ev);
     const root = hierarchyPanel.root();
-    if (root && ev.paths.some((p) => p === root.symbol.path || files.some((f) => f.path === p && f.lang))) void hierarchyPanel.show(root.symbol, root.mode);
+    if (root && currentPane === "hierarchy" && ev.external.some((p) => p === root.symbol.path || ev.entries.some((e) => e.path === p && e.lang))) {
+      void hierarchyPanel.show(root.symbol, root.mode).catch(() => {});
+    }
     const byPath = new Map(files.map((f) => [f.path, f]));
     for (const p of ev.removed) byPath.delete(p);
     for (const e of ev.entries) byPath.set(e.path, e);
@@ -493,6 +544,9 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     saveActive: async () => {
       const a = tabs.active();
       if (a) await autosave.saveNow(a);
+    },
+    saveAll: async () => {
+      await Promise.all(tabs.list().map((t) => autosave.saveNow(t.path)));
     },
     gotoDefinition,
     goBack,

@@ -14,7 +14,8 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use gitp_code::files::{walk, FileEntry};
 use gitp_code::grep::{self, Query, SearchResult};
-use gitp_code::index::{Symbol, SymbolIndex};
+use gitp_code::lang::{Family, Lang};
+use gitp_code::index::{reindex_many, RefKind, Reference, Range, Symbol, SymbolIndex, SymbolKind};
 use gitp_code::resolve::{self, HierarchyNode, UsageHit};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -32,6 +33,8 @@ pub(crate) struct CodeState {
     pub(crate) files: Arc<RwLock<Vec<FileEntry>>>,
     /// The first index has been built.
     pub(crate) ready: Arc<AtomicBool>,
+    /// The first build is running (so a second open doesn't start another).
+    indexing: Arc<AtomicBool>,
     /// Raised to stop the search in flight when a newer one starts.
     search_cancel: Mutex<Arc<AtomicBool>>,
     /// The mtime each file had right after the Code tab last saved it, so
@@ -45,6 +48,7 @@ impl CodeState {
             index: Arc::new(RwLock::new(SymbolIndex::default())),
             files: Arc::new(RwLock::new(Vec::new())),
             ready: Arc::new(AtomicBool::new(false)),
+            indexing: Arc::new(AtomicBool::new(false)),
             search_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
             own_writes: Mutex::new(HashMap::new()),
         }
@@ -143,15 +147,27 @@ pub(crate) fn code_open_workspace_impl(state: &RepoState, emit: Emit) -> Result<
     let files = walk(&root)?;
     *code.files.write().unwrap() = files.clone();
     if code.ready.load(Ordering::SeqCst) {
+        // Back from another repository tab, whose watcher was not live: the
+        // files that changed meanwhile are parsed again.
+        refresh_stale(&code, &root, &files);
         return Ok(Workspace { files, indexing: false });
     }
-    let (index, ready, files_for_thread) = (code.index.clone(), code.ready.clone(), files.clone());
+    if code.indexing.swap(true, Ordering::SeqCst) {
+        return Ok(Workspace { files, indexing: true }); // a build is on its way
+    }
+    let (index, ready, indexing, files_for_thread) = (code.index.clone(), code.ready.clone(), code.indexing.clone(), files.clone());
     std::thread::spawn(move || {
         let t = std::time::Instant::now();
         let built = SymbolIndex::build(&root, &files_for_thread);
         let symbols = built.symbol_count();
         *index.write().unwrap() = built;
         ready.store(true, Ordering::SeqCst);
+        indexing.store(false, Ordering::SeqCst);
+        // A file saved during the build may have been read before the save.
+        if let Ok(files) = walk(&root) {
+            let stale = index.read().unwrap().stale_files(&files);
+            reindex_many(&index, &root, &stale);
+        }
         let payload = IndexReady { symbols, files: files_for_thread.len(), ms: t.elapsed().as_millis() };
         emit(INDEX_READY_EVENT, serde_json::to_value(payload).unwrap_or_default());
     });
@@ -164,13 +180,18 @@ pub(crate) fn code_refresh_impl(state: &RepoState) -> Result<Vec<FileEntry>, Str
     let (code, root) = code_state_or_init(state)?;
     let files = walk(&root)?;
     if code.ready.load(Ordering::SeqCst) {
-        let mut index = code.index.write().unwrap();
-        for path in index.stale_files(&files) {
-            index.reindex(&root, &path);
-        }
+        refresh_stale(&code, &root, &files);
     }
     *code.files.write().unwrap() = files.clone();
     Ok(files)
+}
+
+/// Parse again whatever changed since it was indexed, outside the lock.
+fn refresh_stale(code: &CodeState, root: &Path, files: &[FileEntry]) {
+    let stale = code.index.read().unwrap().stale_files(files);
+    if !stale.is_empty() {
+        reindex_many(&code.index, root, &stale);
+    }
 }
 
 pub(crate) fn code_read_file_impl(state: &RepoState, path: String) -> Result<Option<CodeFile>, String> {
@@ -201,7 +222,7 @@ pub(crate) fn code_write_file_impl(
     let mtime = std::fs::metadata(&full).map(|m| gitp_code::files::mtime_ms(&m)).unwrap_or(0);
     code.own_writes.lock().unwrap().insert(path.clone(), mtime);
     if code.ready.load(Ordering::SeqCst) {
-        code.index.write().unwrap().reindex(&root, &path);
+        reindex_many(&code.index, &root, std::slice::from_ref(&path));
     }
     Ok(mtime)
 }
@@ -213,18 +234,61 @@ pub(crate) fn code_definition_impl(state: &RepoState, path: String, line: u32, c
 }
 
 pub(crate) fn code_references_impl(state: &RepoState, path: String, line: u32, col: u32) -> Result<UsagesResult, String> {
-    let (code, _) = ready_index(state)?;
-    let index = code.index.read().unwrap();
-    let symbol = resolve::symbol_at(&index, &path, line, col).ok_or("no_symbol")?;
-    let (hits, truncated) = resolve::references(&index, &symbol, USAGES_LIMIT);
+    let (code, root) = ready_index(state)?;
+    let symbol = {
+        let index = code.index.read().unwrap();
+        let symbol = resolve::symbol_at(&index, &path, line, col).ok_or("no_symbol")?;
+        if !matches!(symbol.kind, SymbolKind::Variable | SymbolKind::Field) {
+            let (hits, truncated) = resolve::references(&index, &symbol, USAGES_LIMIT);
+            return Ok(UsagesResult { symbol, hits, truncated });
+        }
+        symbol
+    };
+    // Plain identifiers are not indexed (a 20k-file repo has millions): a
+    // variable's or field's uses come from a whole-word grep over the same
+    // language's files, and are never more than "possible".
+    let query = Query {
+        pattern: symbol.name.to_string(),
+        regex: false,
+        case_sensitive: true,
+        whole_word: true,
+        include_glob: Some(family_glob(symbol.lang.family()).to_string()),
+    };
+    let found = grep::search(&root, &query, USAGES_LIMIT + 1, Arc::new(AtomicBool::new(false)))?;
+    let truncated = found.hits.len() > USAGES_LIMIT;
+    let hits = found
+        .hits
+        .into_iter()
+        .take(USAGES_LIMIT)
+        .filter(|h| !(h.path == symbol.path.as_ref() && h.line == symbol.name_range.start_line && h.col == symbol.name_range.start_col))
+        .map(|h| UsageHit {
+            reference: Reference {
+                name: symbol.name.clone(),
+                kind: RefKind::Ident,
+                path: Arc::from(h.path),
+                range: Range { start_line: h.line, start_col: h.col, end_line: h.line, end_col: h.end_col, start_byte: 0, end_byte: 0 },
+                enclosing: None,
+                receiver: None,
+            },
+            certain: false,
+        })
+        .collect();
     Ok(UsagesResult { symbol, hits, truncated })
+}
+
+fn family_glob(family: Family) -> &'static str {
+    match family {
+        Family::Java => "*.java",
+        Family::Js => "*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}",
+        Family::Python => "*.{py,pyi}",
+    }
 }
 
 pub(crate) fn code_callers_impl(state: &RepoState, path: String, line: u32, col: u32) -> Result<Vec<HierarchyNode>, String> {
     let (code, _) = ready_index(state)?;
     let index = code.index.read().unwrap();
     let symbol = resolve::symbol_at(&index, &path, line, col).ok_or("no_symbol")?;
-    Ok(resolve::callers(&index, &symbol))
+    Ok(resolve::callers(&index, &symbol, USAGES_LIMIT).0)
 }
 
 pub(crate) fn code_callees_impl(state: &RepoState, path: String, line: u32, col: u32) -> Result<Vec<HierarchyNode>, String> {
@@ -271,6 +335,7 @@ pub(crate) fn on_worktree_changed(emit: &Emit, code: &CodeState, root: &Path, pa
     };
     let mut entries = Vec::new();
     let mut removed = Vec::new();
+    let mut removed_under: Vec<String> = Vec::new();
     if overflow {
         if let Ok(files) = walk(root) {
             let built = SymbolIndex::build(root, &files);
@@ -278,28 +343,39 @@ pub(crate) fn on_worktree_changed(emit: &Emit, code: &CodeState, root: &Path, pa
             *code.files.write().unwrap() = files;
         }
     } else {
-        let mut index = code.index.write().unwrap();
-        let mut files = code.files.write().unwrap();
+        // What each path is now: a file, a directory (notify reports a
+        // renamed or moved directory by its path alone), or gone.
         for p in paths {
             match std::fs::metadata(root.join(p)) {
-                Ok(meta) if meta.is_file() => {
-                    index.reindex(root, p);
-                    let entry = FileEntry { path: p.clone(), size: meta.len(), lang: gitp_code::lang::Lang::from_path(p), mtime_ms: gitp_code::files::mtime_ms(&meta) };
-                    match files.binary_search_by(|f| f.path.cmp(p)) {
-                        Ok(i) => files[i] = entry.clone(),
-                        Err(i) => files.insert(i, entry.clone()),
+                Ok(meta) if meta.is_file() => entries.push(FileEntry { path: p.clone(), size: meta.len(), lang: Lang::from_path(p), mtime_ms: gitp_code::files::mtime_ms(&meta) }),
+                Ok(meta) if meta.is_dir() => {
+                    if let Ok(inside) = walk(&root.join(p)) {
+                        entries.extend(inside.into_iter().map(|f| FileEntry { path: format!("{p}/{}", f.path), ..f }));
                     }
-                    entries.push(entry);
                 }
-                _ => {
-                    index.remove(p);
-                    if let Ok(i) = files.binary_search_by(|f| f.path.cmp(p)) {
-                        files.remove(i);
-                    }
-                    removed.push(p.clone());
+                _ => removed.push(p.clone()),
+            }
+        }
+        {
+            let mut files = code.files.write().unwrap();
+            // A gone path takes everything under it: a directory's files
+            // were never reported one by one.
+            for p in &removed {
+                let prefix = format!("{p}/");
+                let under: Vec<String> = files.iter().filter(|f| f.path.starts_with(&prefix)).map(|f| f.path.clone()).collect();
+                files.retain(|f| f.path != *p && !f.path.starts_with(&prefix));
+                removed_under.extend(under);
+            }
+            for e in &entries {
+                match files.binary_search_by(|f| f.path.cmp(&e.path)) {
+                    Ok(i) => files[i] = e.clone(),
+                    Err(i) => files.insert(i, e.clone()),
                 }
             }
         }
+        removed.append(&mut removed_under);
+        let to_index: Vec<String> = entries.iter().map(|e| e.path.clone()).chain(removed.iter().cloned()).collect();
+        reindex_many(&code.index, root, &to_index);
     }
     let payload = FilesChanged { paths: paths.to_vec(), external, entries, removed, rebuilt: overflow };
     emit(FILES_CHANGED_EVENT, serde_json::to_value(payload).unwrap_or_default());
@@ -319,7 +395,11 @@ pub(crate) fn feed_index(app: &AppHandle, change: &crate::watch::RepoChanged) {
             .and_then(|s| Some((s.code.clone()?, s.repo.workdir_path().ok()?)))
     };
     if let Some((code, root)) = found {
-        on_worktree_changed(&app_emit(app), &code, &root, &change.worktree_paths, change.worktree_overflow);
+        // Off the watcher thread: a checkout's rebuild must not delay the
+        // History tab's refresh, which the same batch triggers.
+        let emit = app_emit(app);
+        let (paths, overflow) = (change.worktree_paths.clone(), change.worktree_overflow);
+        std::thread::spawn(move || on_worktree_changed(&emit, &code, &root, &paths, overflow));
     }
 }
 
@@ -410,7 +490,7 @@ mod tests {
         wait_ready(&state);
         let found = code_definition_impl(&state, "a.ts".into(), 1, 0).unwrap();
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].name, "alpha");
+        assert_eq!(found[0].name.as_ref(), "alpha");
         // Opening again neither rebuilds nor reports indexing.
         assert!(!code_open_workspace_impl(&state, no_emit()).unwrap().indexing);
     }
@@ -530,6 +610,56 @@ mod tests {
         on_worktree_changed(&emit, &code, dir.path(), &[], true);
         assert_eq!(code.index.read().unwrap().definitions_named("huge").count(), 1);
         assert!(code.files.read().unwrap().iter().any(|f| f.path == "big.py"));
+    }
+
+    #[test]
+    fn a_directory_rename_moves_its_files() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/m.ts"), "export function moved() {}\n").unwrap();
+        let (_state, code) = ready_state(dir.path());
+        std::fs::rename(dir.path().join("src"), dir.path().join("lib")).unwrap();
+        let (emit, _) = capture();
+        // notify reports the directory paths only.
+        on_worktree_changed(&emit, &code, dir.path(), &["lib".into(), "src".into()], false);
+        let index = code.index.read().unwrap();
+        let moved: Vec<&str> = index.definitions_named("moved").map(|s| s.path.as_ref()).collect();
+        assert_eq!(moved, ["lib/m.ts"]);
+        assert!(index.file("src/m.ts").is_none());
+        let paths: Vec<String> = code.files.read().unwrap().iter().map(|f| f.path.clone()).collect();
+        assert_eq!(paths, ["f.txt", "lib/m.ts"]);
+    }
+
+    #[test]
+    fn reopening_the_workspace_reindexes_stale_files() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        std::fs::write(dir.path().join("a.ts"), "export function alpha() {}\n").unwrap();
+        let (state, code) = ready_state(dir.path());
+        // Edited while this repo's tab was inactive: no watcher batch arrives.
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(dir.path().join("a.ts"), "export function alpha2() {}\n").unwrap();
+        code.index.write().unwrap().mark_stale("a.ts");
+        let ws = code_open_workspace_impl(&state, no_emit()).unwrap();
+        assert!(!ws.indexing);
+        let index = code.index.read().unwrap();
+        assert_eq!(index.definitions_named("alpha").count(), 0);
+        assert_eq!(index.definitions_named("alpha2").count(), 1);
+    }
+
+    #[test]
+    fn usages_of_a_variable_come_from_a_whole_word_grep() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        std::fs::write(dir.path().join("a.ts"), "export const rate = 1;\nconst x = rate + rates;\n").unwrap();
+        std::fs::write(dir.path().join("b.py"), "rate = 2\n").unwrap();
+        let (state, _code) = ready_state(dir.path());
+        let r = code_references_impl(&state, "a.ts".into(), 0, 13).unwrap();
+        assert_eq!(r.symbol.name.as_ref(), "rate");
+        let hits: Vec<(&str, u32, bool)> = r.hits.iter().map(|h| (h.reference.path.as_ref(), h.reference.range.start_line, h.certain)).collect();
+        assert_eq!(hits, [("a.ts", 1, false)], "the use on line 2, not `rates`, not the Python file, not the definition");
+        assert_eq!(r.hits[0].reference.range.start_col, 10);
     }
 
     #[test]

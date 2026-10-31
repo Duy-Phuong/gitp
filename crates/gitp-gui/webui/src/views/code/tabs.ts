@@ -66,6 +66,10 @@ export class Tabs {
     this.set(path, (t) => (t.mtime = mtime));
   }
 
+  setCrlf(path: string, crlf: boolean): void {
+    this.set(path, (t) => (t.crlf = crlf));
+  }
+
   onChange(cb: (tabs: TabInfo[], active: string | null) => void): void {
     this.listeners.push(cb);
   }

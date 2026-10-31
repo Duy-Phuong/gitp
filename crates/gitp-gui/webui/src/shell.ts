@@ -266,6 +266,9 @@ export function cycleRepoTab(step: 1 | -1): void {
 export async function switchRepo(path: string): Promise<void> {
   if (path === state.repoPath) return;
   try {
+    // The Code tab's unsaved edits belong to this repository: write them
+    // before the backend's "active repo" moves.
+    await ui.codeView?.saveAll();
     applyWorkspace(await activateRepo(path));
     showView("history");
     await Promise.all([refreshHistory(), loadSidebar()]);

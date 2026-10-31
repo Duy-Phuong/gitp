@@ -2,17 +2,19 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { setupCodeView, type CodeApi, type CodeViewDeps } from "./index";
-import type { EditorLike } from "./editor";
+import type { CodeEditorDeps, EditorLike } from "./editor";
 import type { CodeFile, CodeFilesChanged, FileEntry, IndexReady, Location, Symbol } from "../../types";
 
 const entry = (path: string): FileEntry => ({ path, size: 1, lang: path.endsWith(".ts") ? "typescript" : null, mtime_ms: 5 });
 
-function fakeEditor(): EditorLike & { opened: string[]; revealed: Location[] } {
+function fakeEditor(): EditorLike & { opened: string[]; revealed: Location[]; readOnly: Map<string, boolean>; deps: CodeEditorDeps | null } {
   let active: string | null = null;
   const texts = new Map<string, string>();
   return {
     opened: [],
     revealed: [],
+    readOnly: new Map(),
+    deps: null,
     open(path, text) {
       active = path;
       if (!texts.has(path)) texts.set(path, text);
@@ -20,8 +22,14 @@ function fakeEditor(): EditorLike & { opened: string[]; revealed: Location[] } {
     },
     active: () => active,
     text: (p) => texts.get(p) ?? null,
-    replaceText: (p, t) => void texts.set(p, t),
-    setReadOnly: () => {},
+    // CodeMirror reports a programmatic replace as a document change too.
+    replaceText(p, t) {
+      texts.set(p, t);
+      this.deps?.onEdit(p);
+    },
+    setReadOnly(p, on) {
+      this.readOnly.set(p, on);
+    },
     reveal(loc) {
       this.revealed.push(loc);
     },
@@ -68,7 +76,16 @@ function setup(files = [entry("src/a.ts"), entry("README.md")], contents: Record
   const { api, listeners } = fakeApi(files, contents);
   const editor = fakeEditor();
   const toast = vi.fn();
-  const deps: CodeViewDeps = { api, toast, reportError: vi.fn(), makeEditor: () => editor, isShowing: () => true };
+  const deps: CodeViewDeps = {
+    api,
+    toast,
+    reportError: vi.fn(),
+    makeEditor: (_h, d) => {
+      editor.deps = d;
+      return editor;
+    },
+    isShowing: () => true,
+  };
   const h = host();
   const view = setupCodeView(h, deps);
   return { view, api, listeners, editor, toast, h, deps };
@@ -335,6 +352,98 @@ describe("setupCodeView", () => {
       expect(api.codeReadFile).toHaveBeenCalledTimes(1);
       expect(editor.text("src/a.ts")).toBe("mine\n");
       expect(view.tabs.get("src/a.ts")?.changedOnDisk).toBe(false);
+    });
+  });
+
+  describe("after review", () => {
+    it("a reload from disk is not an edit: nothing is written back and crlf follows the file", async () => {
+      vi.useFakeTimers();
+      try {
+        const { view, api, listeners, editor } = setup();
+        view.start();
+        await vi.advanceTimersByTimeAsync(0);
+        await view.openFile({ path: "src/a.ts", line: 0, col: 0 });
+        (api.codeReadFile as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ text: "fresh\r\n", crlf: true, mixed: false, mtime_ms: 9 });
+        listeners.changed[0]({ paths: ["src/a.ts"], external: ["src/a.ts"], entries: [entry("src/a.ts")], removed: [], rebuilt: false });
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(api.codeWriteFile).not.toHaveBeenCalled();
+        expect(editor.text("src/a.ts")).toBe("fresh\r\n");
+        expect(view.tabs.get("src/a.ts")).toMatchObject({ dirty: false, crlf: true, mtime: 9 });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a file deleted while open in a background tab is read-only there too", async () => {
+      const { view, listeners, editor } = setup([entry("a.ts"), entry("b.ts")], { "a.ts": "a", "b.ts": "b" });
+      view.start();
+      await flush();
+      await view.openFile({ path: "a.ts", line: 0, col: 0 });
+      await view.openFile({ path: "b.ts", line: 0, col: 0 });
+      listeners.changed[0]({ paths: ["a.ts"], external: ["a.ts"], entries: [], removed: ["a.ts"], rebuilt: false });
+      await flush();
+      expect(view.tabs.get("a.ts")?.deleted).toBe(true);
+      expect(editor.readOnly.get("a.ts")).toBe(true);
+    });
+
+    it("a rebuilt batch re-reads every open tab: gone ones are flagged, changed ones reloaded", async () => {
+      const { view, api, listeners, editor } = setup([entry("a.ts"), entry("b.ts")], { "a.ts": "a", "b.ts": "b" });
+      view.start();
+      await flush();
+      await view.openFile({ path: "a.ts", line: 0, col: 0 });
+      await view.openFile({ path: "b.ts", line: 0, col: 0 });
+      (api.codeRefresh as ReturnType<typeof vi.fn>).mockResolvedValueOnce([entry("b.ts")]);
+      (api.codeReadFile as ReturnType<typeof vi.fn>).mockImplementation(async (p: string) => (p === "b.ts" ? { text: "b2", crlf: false, mixed: false, mtime_ms: 77 } : null));
+      listeners.changed[0]({ paths: [], external: [], entries: [], removed: [], rebuilt: true });
+      await flush();
+      await flush();
+      expect(view.tabs.get("a.ts")?.deleted).toBe(true);
+      expect(editor.text("b.ts")).toBe("b2");
+      expect(view.tabs.get("b.ts")?.mtime).toBe(77);
+    });
+
+    it("closing a tab whose save fails keeps the tab", async () => {
+      const { view, api } = setup();
+      view.start();
+      await flush();
+      await view.openFile({ path: "src/a.ts", line: 0, col: 0 });
+      view.editorDeps.onEdit("src/a.ts");
+      (api.codeWriteFile as ReturnType<typeof vi.fn>).mockRejectedValueOnce("changed_on_disk");
+      await view.closeTab("src/a.ts");
+      expect(view.tabs.list().map((t) => t.path)).toEqual(["src/a.ts"]);
+      expect(view.tabs.get("src/a.ts")?.changedOnDisk).toBe(true);
+    });
+
+    it("saveAll flushes every dirty tab", async () => {
+      const { view, api } = setup([entry("a.ts"), entry("b.ts")], { "a.ts": "a", "b.ts": "b" });
+      view.start();
+      await flush();
+      await view.openFile({ path: "a.ts", line: 0, col: 0 });
+      await view.openFile({ path: "b.ts", line: 0, col: 0 });
+      view.editorDeps.onEdit("a.ts");
+      view.editorDeps.onEdit("b.ts");
+      await view.saveAll();
+      expect((api.codeWriteFile as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => String(c[0])).sort()).toEqual(["a.ts", "b.ts"]);
+    });
+
+    it("the hierarchy panel refreshes only for external changes while it shows", async () => {
+      const { view, api, listeners } = setup([entry("a.ts")], { "a.ts": "function f() {}" });
+      view.start();
+      await flush();
+      await view.openFile({ path: "a.ts", line: 0, col: 0 });
+      const root = { id: { file: 0, byte: 0 }, name: "f", kind: "function" as const, path: "a.ts", lang: "typescript" as const, container: null, range: { start_line: 0, start_col: 0, end_line: 0, end_col: 15, start_byte: 0, end_byte: 15 }, name_range: { start_line: 0, start_col: 9, end_line: 0, end_col: 10, start_byte: 9, end_byte: 10 } };
+      (api.codeDefinition as ReturnType<typeof vi.fn>).mockResolvedValue([root]);
+      view.runAction("callHierarchy");
+      await flush();
+      await flush();
+      expect(api.codeCallers).toHaveBeenCalledTimes(1);
+      listeners.changed[0]({ paths: ["a.ts"], external: [], entries: [entry("a.ts")], removed: [], rebuilt: false }); // our own save
+      await flush();
+      expect(api.codeCallers).toHaveBeenCalledTimes(1);
+      listeners.changed[0]({ paths: ["a.ts"], external: ["a.ts"], entries: [entry("a.ts")], removed: [], rebuilt: false });
+      await flush();
+      await flush();
+      expect(api.codeCallers).toHaveBeenCalledTimes(2);
     });
   });
 });

@@ -1,6 +1,9 @@
 //! Where a name under the caret is defined, where a definition is used, and
 //! who calls whom — by name and scope, ranked, never by type.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use serde::Serialize;
 
 use crate::index::{Range, RefKind, Reference, Symbol, SymbolId, SymbolIndex};
@@ -27,10 +30,14 @@ pub struct HierarchyNode {
 /// otherwise the caller shows the list.
 pub fn definition(index: &SymbolIndex, path: &str, line: u32, col: u32) -> Vec<Symbol> {
     let Some(file) = index.file(path) else { return vec![] };
-    if let Some(s) = file.symbols.iter().find(|s| contains(&s.name_range, line, col)) {
+    // A caret right after the last character still means that name (an
+    // editor's position is between characters); a strict hit comes first.
+    let at = |r: &Range| contains(r, line, col);
+    let after = |r: &Range| (r.end_line, r.end_col) == (line, col) && !file.symbols.iter().any(|s| at(&s.name_range)) && !file.refs.iter().any(|x| at(&x.range));
+    if let Some(s) = file.symbols.iter().find(|s| at(&s.name_range) || after(&s.name_range)) {
         return vec![s.clone()];
     }
-    let Some(r) = file.refs.iter().find(|r| contains(&r.range, line, col)) else { return vec![] };
+    let Some(r) = file.refs.iter().find(|r| at(&r.range) || after(&r.range)) else { return vec![] };
     if r.kind == RefKind::Import {
         return vec![];
     }
@@ -56,13 +63,13 @@ pub fn symbol_at(index: &SymbolIndex, path: &str, line: u32, col: u32) -> Option
 /// 0 = defined in a scope around the use, in the same file; 1 = in a file
 /// this one imports; 2 = same file; 3 = same directory; 4 = anywhere.
 fn rank(s: &Symbol, path: &str, scope: &[SymbolId], imports: &[&Reference]) -> u8 {
-    if s.path == path && s.container.is_none_or(|c| scope.contains(&c)) {
+    if s.path.as_ref() == path && s.container.is_none_or(|c| scope.contains(&c)) {
         return 0;
     }
     if imports.iter().any(|i| names_file(&i.name, &s.path)) {
         return 1;
     }
-    if s.path == path {
+    if s.path.as_ref() == path {
         return 2;
     }
     if dir(&s.path) == dir(path) {
@@ -76,6 +83,8 @@ fn rank(s: &Symbol, path: &str, scope: &[SymbolId], imports: &[&Reference]) -> u
 pub fn references(index: &SymbolIndex, s: &Symbol, limit: usize) -> (Vec<UsageHit>, bool) {
     let mut hits = Vec::new();
     let mut truncated = false;
+    // Whether a file imports s's file: one scan per file, not per hit.
+    let mut imports_it: HashMap<Arc<str>, bool> = HashMap::new();
     for r in index.references_named(&s.name).filter(|r| r.kind != RefKind::Import) {
         let Some(file) = index.file(&r.path) else { continue };
         if file.lang.family() != s.lang.family() {
@@ -85,25 +94,35 @@ pub fn references(index: &SymbolIndex, s: &Symbol, limit: usize) -> (Vec<UsageHi
             truncated = true;
             break;
         }
+        let imported = *imports_it
+            .entry(r.path.clone())
+            .or_insert_with(|| file.refs.iter().any(|i| i.kind == RefKind::Import && names_file(&i.name, &s.path)));
         let certain = r.path == s.path
-            || file.refs.iter().any(|i| i.kind == RefKind::Import && names_file(&i.name, &s.path))
+            || imported
             || (matches!(r.receiver.as_deref(), Some("this" | "self")) && s.container.is_some_and(|c| chain(index, r.enclosing).contains(&c)));
         hits.push(UsageHit { reference: r.clone(), certain });
     }
     (hits, truncated)
 }
 
-/// Who calls `s`: each call site with the symbol whose body it sits in.
-pub fn callers(index: &SymbolIndex, s: &Symbol) -> Vec<HierarchyNode> {
-    let (hits, _) = references(index, s, usize::MAX);
-    hits.into_iter()
-        .filter(|h| h.reference.kind == RefKind::Call)
-        .map(|h| HierarchyNode {
-            symbol: h.reference.enclosing.and_then(|id| index.symbol(id)).cloned(),
-            certain: h.certain,
-            reference: h.reference,
-        })
-        .collect()
+/// Who calls `s`: each call site with the symbol whose body it sits in, at
+/// most `limit`; the flag says whether more were cut off.
+pub fn callers(index: &SymbolIndex, s: &Symbol, limit: usize) -> (Vec<HierarchyNode>, bool) {
+    let mut out = Vec::new();
+    let mut truncated = false;
+    for r in index.references_named(&s.name).filter(|r| r.kind == RefKind::Call) {
+        let Some(file) = index.file(&r.path) else { continue };
+        if file.lang.family() != s.lang.family() {
+            continue;
+        }
+        if out.len() == limit {
+            truncated = true;
+            break;
+        }
+        let certain = r.path == s.path || file.refs.iter().any(|i| i.kind == RefKind::Import && names_file(&i.name, &s.path));
+        out.push(HierarchyNode { symbol: r.enclosing.and_then(|id| index.symbol(id)).cloned(), reference: r.clone(), certain });
+    }
+    (out, truncated)
 }
 
 /// What `s` calls: every call inside its body, resolved to the best
@@ -194,7 +213,7 @@ mod tests {
         let (l, c) = pos(&root, "a.ts", "fmt(x)", 0);
         let found = definition(&index, "a.ts", l, c);
         assert_eq!(found.len(), 1);
-        assert_eq!((found[0].path.as_str(), found[0].kind), ("a.ts", SymbolKind::Function));
+        assert_eq!((found[0].path.as_ref(), found[0].kind), ("a.ts", SymbolKind::Function));
     }
 
     #[test]
@@ -203,7 +222,7 @@ mod tests {
         let (l, c) = pos(&root, "a.ts", "money(x)", 0);
         let found = definition(&index, "a.ts", l, c);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].path, "b.ts");
+        assert_eq!(found[0].path.as_ref(), "b.ts");
     }
 
     #[test]
@@ -211,7 +230,7 @@ mod tests {
         let (index, root) = index();
         let (l, c) = pos(&root, "java/Third.java", "save()", 0);
         let found = definition(&index, "java/Third.java", l, c);
-        let paths: Vec<&str> = found.iter().map(|s| s.path.as_str()).collect();
+        let paths: Vec<&str> = found.iter().map(|s| s.path.as_ref()).collect();
         assert_eq!(paths, ["java/Dup.java", "java/other/Far.java"]);
     }
 
@@ -225,12 +244,33 @@ mod tests {
     }
 
     #[test]
+    fn caret_just_past_an_identifier_still_finds_it() {
+        let (index, root) = index();
+        let (l, c) = pos(&root, "a.ts", "money(x)", 0);
+        let found = definition(&index, "a.ts", l, c + 5); // right after "money"
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].path.as_ref(), "b.ts");
+        assert!(definition(&index, "a.ts", l, c + 6).is_empty(), "inside the parenthesis is not the name");
+    }
+
+    #[test]
+    fn callers_are_capped() {
+        let (index, root) = index();
+        let (l, c) = pos(&root, "b.ts", "money", 0);
+        let money = symbol_at(&index, "b.ts", l, c).unwrap();
+        let (nodes, truncated) = callers(&index, &money, 1);
+        assert_eq!((nodes.len(), truncated), (1, true));
+        let (nodes, truncated) = callers(&index, &money, 100);
+        assert_eq!((nodes.len(), truncated), (2, false));
+    }
+
+    #[test]
     fn definition_on_a_definition_returns_itself() {
         let (index, root) = index();
         let (l, c) = pos(&root, "b.ts", "money", 0);
         let found = definition(&index, "b.ts", l, c + 2);
         assert_eq!(found.len(), 1);
-        assert_eq!((found[0].path.as_str(), found[0].name.as_str()), ("b.ts", "money"));
+        assert_eq!((found[0].path.as_ref(), found[0].name.as_ref()), ("b.ts", "money"));
     }
 
     #[test]
@@ -240,7 +280,7 @@ mod tests {
         let money = symbol_at(&index, "b.ts", l, c).unwrap();
         let (hits, truncated) = references(&index, &money, 100);
         assert!(!truncated);
-        let mut by_path: Vec<(&str, bool)> = hits.iter().map(|h| (h.reference.path.as_str(), h.certain)).collect();
+        let mut by_path: Vec<(&str, bool)> = hits.iter().map(|h| (h.reference.path.as_ref(), h.certain)).collect();
         by_path.sort();
         assert_eq!(by_path, [("a.ts", true), ("d.ts", false)]);
         assert!(hits.iter().all(|h| h.reference.kind != RefKind::Import));
@@ -260,9 +300,10 @@ mod tests {
         let (index, root) = index();
         let (l, c) = pos(&root, "b.ts", "money", 0);
         let money = symbol_at(&index, "b.ts", l, c).unwrap();
-        let mut callers: Vec<(String, String)> = callers(&index, &money)
+        let mut callers: Vec<(String, String)> = callers(&index, &money, 100)
+            .0
             .into_iter()
-            .map(|n| (n.symbol.map(|s| s.name).unwrap_or_default(), n.reference.path))
+            .map(|n| (n.symbol.map(|s| s.name.to_string()).unwrap_or_default(), n.reference.path.to_string()))
             .collect();
         callers.sort();
         assert_eq!(callers, [("report".to_string(), "d.ts".to_string()), ("total".to_string(), "a.ts".to_string())]);
@@ -274,11 +315,11 @@ mod tests {
         let (l, c) = pos(&root, "a.ts", "total", 0);
         let total = symbol_at(&index, "a.ts", l, c).unwrap();
         let callees = callees(&index, &total);
-        let fmt = callees.iter().find(|n| n.reference.name == "fmt").unwrap();
-        assert_eq!(fmt.symbol.as_ref().map(|s| s.path.as_str()), Some("a.ts"));
+        let fmt = callees.iter().find(|n| n.reference.name.as_ref() == "fmt").unwrap();
+        assert_eq!(fmt.symbol.as_ref().map(|s| s.path.as_ref()), Some("a.ts"));
         assert!(fmt.certain);
-        let money = callees.iter().find(|n| n.reference.name == "money").unwrap();
-        assert_eq!(money.symbol.as_ref().map(|s| s.path.as_str()), Some("b.ts"));
+        let money = callees.iter().find(|n| n.reference.name.as_ref() == "money").unwrap();
+        assert_eq!(money.symbol.as_ref().map(|s| s.path.as_ref()), Some("b.ts"));
     }
 
     #[test]
@@ -286,7 +327,7 @@ mod tests {
         let (index, root) = index();
         let (l, c) = pos(&root, "a.ts", "total", 0);
         let total = symbol_at(&index, "a.ts", l, c).unwrap();
-        let log = callees(&index, &total).into_iter().find(|n| n.reference.name == "log").unwrap();
+        let log = callees(&index, &total).into_iter().find(|n| n.reference.name.as_ref() == "log").unwrap();
         assert!(log.symbol.is_none());
         assert!(!log.certain);
     }

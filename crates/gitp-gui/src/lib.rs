@@ -96,11 +96,14 @@ pub fn run() {
                 // A working-tree change also arms that repository's local
                 // history snapshot (see `local_history`), and feeds the Code
                 // tab's index when that tab has opened the repository.
-                if change.kinds.contains(&"worktree") {
+                let worktree = change.kinds.contains(&"worktree");
+                if worktree {
                     local_history::note_change(&change.path);
+                }
+                let _ = handle.emit(REPO_CHANGED_EVENT, change.clone());
+                if worktree {
                     code::feed_index(&code_handle, &change);
                 }
-                let _ = handle.emit(REPO_CHANGED_EVENT, change);
             });
             app.state::<RepoState>()
                 .0

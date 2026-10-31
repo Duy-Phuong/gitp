@@ -9,13 +9,17 @@ import { java } from "@codemirror/lang-java";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
 import { bracketMatching, indentOnInput } from "@codemirror/language";
-import { Compartment, EditorState, type Extension } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, type Extension } from "@codemirror/state";
 import { Decoration, type DecorationSet, drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers, ViewPlugin } from "@codemirror/view";
 
 import type { Lang, Location } from "../../types";
 import { codeTheme } from "./theme";
 
 export const AUTOSAVE_MS = 1500;
+
+// Marks a change the host made (a reload from disk), not the user: it is no
+// edit, and it does not go into the undo history.
+const programmatic = Annotation.define<boolean>();
 
 export function languageFor(lang: Lang | null): Extension {
   switch (lang) {
@@ -45,42 +49,59 @@ export interface AutoSaveDeps {
 /// when it fires, or on an explicit save, the host writes the file.
 export class AutoSave {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
-  private dirty = new Set<string>();
+  // Edits per file since it was last clean; a save clears the file only if
+  // no edit arrived while the write was on its way.
+  private edits = new Map<string, number>();
+  private inFlight = new Map<string, Promise<boolean>>();
 
   constructor(private deps: AutoSaveDeps) {}
 
   edited(path: string): void {
-    if (!this.dirty.has(path)) {
-      this.dirty.add(path);
-      this.deps.onDirty(path, true);
-    }
+    const n = this.edits.get(path) ?? 0;
+    this.edits.set(path, n + 1);
+    if (n === 0) this.deps.onDirty(path, true);
     clearTimeout(this.timers.get(path));
     this.timers.set(path, setTimeout(() => void this.saveNow(path), AUTOSAVE_MS));
   }
 
-  async saveNow(path: string): Promise<void> {
+  /// Write `path` now if it is dirty. True when the file is clean afterwards
+  /// (saved, or had nothing to save); false when the save failed.
+  saveNow(path: string): Promise<boolean> {
     clearTimeout(this.timers.get(path));
     this.timers.delete(path);
-    if (!this.dirty.has(path)) return;
-    try {
-      await this.deps.save(path);
-    } catch (err) {
-      this.deps.onError?.(path, err);
-      return;
-    }
-    this.dirty.delete(path);
-    this.deps.onDirty(path, false);
+    const pending = this.inFlight.get(path);
+    if (pending) return pending;
+    if (!this.edits.get(path)) return Promise.resolve(true);
+    const run = (async () => {
+      const seen = this.edits.get(path) ?? 0;
+      try {
+        await this.deps.save(path);
+      } catch (err) {
+        this.deps.onError?.(path, err);
+        return false;
+      } finally {
+        this.inFlight.delete(path);
+      }
+      if ((this.edits.get(path) ?? 0) === seen) {
+        this.edits.delete(path);
+        this.deps.onDirty(path, false);
+      }
+      // Else the timer `edited` re-armed will save the newer text.
+      return true;
+    })();
+    this.inFlight.set(path, run);
+    return run;
   }
 
   isDirty(path: string): boolean {
-    return this.dirty.has(path);
+    return !!this.edits.get(path);
   }
 
   /// Drop a pending save (the tab closed, or the file was reloaded).
   forget(path: string): void {
     clearTimeout(this.timers.get(path));
     this.timers.delete(path);
-    this.dirty.delete(path);
+    this.edits.delete(path);
   }
 }
 
@@ -158,7 +179,7 @@ export class CodeEditor implements EditorLike {
       }),
       EditorView.updateListener.of((u) => {
         if (!this.activePath) return;
-        if (u.docChanged) this.deps.onEdit(this.activePath);
+        if (u.docChanged && !u.transactions.some((t) => t.annotation(programmatic))) this.deps.onEdit(this.activePath);
         else if (u.selectionSet) this.deps.onCaretMoved(this.locationOf(u.state.selection.main.head));
       }),
       this.readOnly.of(EditorState.readOnly.of(false)),
@@ -191,16 +212,21 @@ export class CodeEditor implements EditorLike {
   replaceText(path: string, text: string): void {
     if (path !== this.activePath) {
       const old = this.states.get(path);
-      if (old) this.states.set(path, old.update({ changes: { from: 0, to: old.doc.length, insert: text } }).state);
+      if (old) this.states.set(path, old.update({ changes: { from: 0, to: old.doc.length, insert: text }, annotations: programmatic.of(true) }).state);
       return;
     }
     const head = Math.min(this.view.state.selection.main.head, text.length);
-    this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: text }, selection: { anchor: head } });
+    this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: text }, selection: { anchor: head }, annotations: programmatic.of(true) });
   }
 
   setReadOnly(path: string, on: boolean): void {
-    if (path !== this.activePath) return;
-    this.view.dispatch({ effects: this.readOnly.reconfigure(EditorState.readOnly.of(on)) });
+    const effects = this.readOnly.reconfigure(EditorState.readOnly.of(on));
+    if (path === this.activePath) {
+      this.view.dispatch({ effects });
+      return;
+    }
+    const old = this.states.get(path);
+    if (old) this.states.set(path, old.update({ effects }).state);
   }
 
   /// Put the caret at `loc` (clamped to the document) and scroll it into view.
