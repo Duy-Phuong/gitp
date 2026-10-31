@@ -594,12 +594,12 @@ export function tildePath(path: string): string {
 }
 
 // The shell line that writes a review of a pull request's diff (on its
-// stdin), for "Generate Drafts". The default asks the Claude Code CLI for
-// findings in the shape the Drafts tab reads.
+// stdin), for "Generate Drafts". The default asks the Claude Code CLI — Opus
+// at medium effort — for findings in the shape the Drafts tab reads.
 const REVIEW_COMMAND_KEY = "gitp-review-command";
 
 export const DEFAULT_REVIEW_COMMAND =
-  "claude -p 'Review the pull request diff on stdin as a careful senior engineer. " +
+  "claude -p --model opus --effort medium 'Review the pull request diff on stdin as a careful senior engineer. " +
   "Report only real problems: bugs, missing error handling, security issues, broken tests. " +
   "For each one write a block: a \"### path/to/file:line\" heading where line is in the new file, " +
   "a \"**Severity:** blocking|minor|nit\" line, then \"**Comment to paste:**\" and the comment for the author " +
