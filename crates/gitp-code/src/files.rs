@@ -22,6 +22,7 @@ pub fn walk(root: &Path) -> Result<Vec<FileEntry>, String> {
     let mut files = Vec::new();
     let walker = ignore::WalkBuilder::new(root)
         .hidden(false)
+        .require_git(false)
         .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
