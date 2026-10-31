@@ -1,12 +1,16 @@
 //! What one file defines and what it refers to, pulled out of its syntax
 //! tree, and the index over all of them.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+
+use rayon::prelude::*;
 
 use serde::Serialize;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser, Point, QueryCursor};
 
+use crate::files::FileEntry;
 use crate::lang::Lang;
 
 /// A definition's identity: the file it is in and where it starts. Stable
@@ -254,6 +258,134 @@ impl<'a> LineTable<'a> {
     }
 }
 
+/// Every indexed file's definitions and references, with name lookups
+/// across them.
+#[derive(Default)]
+pub struct SymbolIndex {
+    files: HashMap<String, FileIndex>,
+    /// File ids, assigned on first sight and never reused, so a symbol's id
+    /// survives a reindex of its file.
+    ids: HashMap<String, u32>,
+    paths: Vec<String>,
+    by_name: HashMap<String, Vec<SymbolId>>,
+    /// `(path, index into that file's refs)`.
+    refs_by_name: HashMap<String, Vec<(String, usize)>>,
+}
+
+impl SymbolIndex {
+    /// Index every supported file in `files`, in parallel.
+    pub fn build(root: &Path, files: &[FileEntry]) -> SymbolIndex {
+        let mut index = SymbolIndex::default();
+        let supported: Vec<(u32, &FileEntry, Lang)> = files
+            .iter()
+            .filter_map(|f| f.lang.map(|lang| (index.id_for(&f.path), f, lang)))
+            .collect();
+        let parsed: Vec<FileIndex> = supported
+            .par_iter()
+            .filter_map(|(id, f, lang)| {
+                let src = std::fs::read(root.join(&f.path)).ok()?;
+                let mut fi = index_file(*id, &f.path, *lang, &src);
+                fi.mtime_ms = f.mtime_ms;
+                Some(fi)
+            })
+            .collect();
+        for fi in parsed {
+            index.insert(fi);
+        }
+        index
+    }
+
+    /// Parse `path` again (or for the first time); a missing or unsupported
+    /// file is dropped from the index.
+    pub fn reindex(&mut self, root: &Path, path: &str) {
+        self.remove(path);
+        let Some(lang) = Lang::from_path(path) else { return };
+        let full = root.join(path);
+        let (Ok(src), Ok(meta)) = (std::fs::read(&full), std::fs::metadata(&full)) else { return };
+        let id = self.id_for(path);
+        let mut fi = index_file(id, path, lang, &src);
+        fi.mtime_ms = crate::files::mtime_ms(&meta);
+        self.insert(fi);
+    }
+
+    pub fn remove(&mut self, path: &str) {
+        let Some(old) = self.files.remove(path) else { return };
+        for s in &old.symbols {
+            if let Some(v) = self.by_name.get_mut(&s.name) {
+                v.retain(|id| *id != s.id);
+            }
+        }
+        for r in &old.refs {
+            if let Some(v) = self.refs_by_name.get_mut(&r.name) {
+                v.retain(|(p, _)| p != path);
+            }
+        }
+    }
+
+    pub fn file(&self, path: &str) -> Option<&FileIndex> {
+        self.files.get(path)
+    }
+
+    pub fn symbol(&self, id: SymbolId) -> Option<&Symbol> {
+        let path = self.paths.get(id.file as usize)?;
+        self.files.get(path)?.symbols.iter().find(|s| s.id == id)
+    }
+
+    pub fn definitions_named(&self, name: &str) -> impl Iterator<Item = &Symbol> {
+        self.by_name.get(name).into_iter().flatten().filter_map(move |id| self.symbol(*id))
+    }
+
+    pub fn references_named(&self, name: &str) -> impl Iterator<Item = &Reference> {
+        self.refs_by_name
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter_map(move |(p, i)| self.files.get(p).and_then(|f| f.refs.get(*i)))
+    }
+
+    pub fn symbol_count(&self) -> usize {
+        self.files.values().map(|f| f.symbols.len()).sum()
+    }
+
+    pub fn file_symbols(&self, path: &str) -> Vec<Symbol> {
+        self.files.get(path).map(|f| f.symbols.clone()).unwrap_or_default()
+    }
+
+    /// Supported files whose mtime differs from the indexed one or that the
+    /// index hasn't seen, plus indexed files no longer in `files`.
+    pub fn stale_files(&self, files: &[FileEntry]) -> Vec<String> {
+        let mut stale: Vec<String> = files
+            .iter()
+            .filter(|f| f.lang.is_some())
+            .filter(|f| self.files.get(&f.path).is_none_or(|fi| fi.mtime_ms != f.mtime_ms))
+            .map(|f| f.path.clone())
+            .collect();
+        let present: HashSet<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        stale.extend(self.files.keys().filter(|p| !present.contains(p.as_str())).cloned());
+        stale
+    }
+
+    fn id_for(&mut self, path: &str) -> u32 {
+        if let Some(id) = self.ids.get(path) {
+            return *id;
+        }
+        let id = self.paths.len() as u32;
+        self.paths.push(path.to_string());
+        self.ids.insert(path.to_string(), id);
+        id
+    }
+
+    fn insert(&mut self, fi: FileIndex) {
+        for s in &fi.symbols {
+            self.by_name.entry(s.name.clone()).or_default().push(s.id);
+        }
+        for (i, r) in fi.refs.iter().enumerate() {
+            self.refs_by_name.entry(r.name.clone()).or_default().push((fi.path.clone(), i));
+        }
+        self.files.insert(fi.path.clone(), fi);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,5 +594,91 @@ mod lang_tests {
             uniq.dedup();
             assert_eq!(uniq.len(), spans.len(), "{path}: refs deduped");
         }
+    }
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+    use crate::files::walk;
+
+    fn workspace() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.ts"), "export function alpha() { beta(); }\n").unwrap();
+        std::fs::write(dir.path().join("b.ts"), "export function beta() {}\n").unwrap();
+        std::fs::write(dir.path().join("c.py"), "def gamma():\n    beta()\n").unwrap();
+        std::fs::write(dir.path().join("notes.md"), "# not code\n").unwrap();
+        dir
+    }
+
+    fn build(dir: &tempfile::TempDir) -> SymbolIndex {
+        SymbolIndex::build(dir.path(), &walk(dir.path()).unwrap())
+    }
+
+    #[test]
+    fn build_indexes_three_files() {
+        let dir = workspace();
+        let index = build(&dir);
+        assert_eq!(index.symbol_count(), 3);
+        assert!(index.file("notes.md").is_none());
+        let beta: Vec<&Symbol> = index.definitions_named("beta").collect();
+        assert_eq!(beta.len(), 1);
+        assert_eq!(beta[0].path, "b.ts");
+        assert_eq!(index.references_named("beta").count(), 2);
+        assert_eq!(index.file_symbols("c.py").len(), 1);
+        assert!(index.file("a.ts").unwrap().mtime_ms > 0);
+    }
+
+    #[test]
+    fn reindex_replaces_a_files_symbols() {
+        let dir = workspace();
+        let mut index = build(&dir);
+        std::fs::write(dir.path().join("b.ts"), "export function beta2() {}\n").unwrap();
+        index.reindex(dir.path(), "b.ts");
+        assert_eq!(index.definitions_named("beta").count(), 0);
+        assert_eq!(index.definitions_named("beta2").count(), 1);
+        for r in index.references_named("beta") {
+            assert!(index.file(&r.path).is_some(), "reference points at an indexed file");
+        }
+    }
+
+    #[test]
+    fn remove_drops_file_and_names() {
+        let dir = workspace();
+        let mut index = build(&dir);
+        index.remove("a.ts");
+        assert!(index.file("a.ts").is_none());
+        assert_eq!(index.definitions_named("alpha").count(), 0);
+        assert_eq!(index.references_named("beta").count(), 1, "only c.py's call is left");
+        index.remove("never-there.ts"); // harmless
+    }
+
+    #[test]
+    fn file_ids_survive_reindex() {
+        let dir = workspace();
+        let mut index = build(&dir);
+        let before = index.definitions_named("beta").next().unwrap().id;
+        index.reindex(dir.path(), "b.ts");
+        let after = index.definitions_named("beta").next().unwrap().id;
+        assert_eq!(before, after);
+        assert_eq!(index.symbol(after).map(|s| s.name.as_str()), Some("beta"));
+        std::fs::write(dir.path().join("d.ts"), "export function delta() {}\n").unwrap();
+        index.reindex(dir.path(), "d.ts");
+        let delta = index.definitions_named("delta").next().unwrap().id;
+        assert_ne!(delta.file, after.file, "a new file gets a new id");
+        assert_eq!(index.symbol(delta).map(|s| s.path.as_str()), Some("d.ts"));
+    }
+
+    #[test]
+    fn stale_files_reports_changed_and_gone() {
+        let dir = workspace();
+        let mut index = build(&dir);
+        // Pretend b.ts was indexed long ago, and a.ts is gone.
+        index.files.get_mut("b.ts").unwrap().mtime_ms = 1;
+        std::fs::remove_file(dir.path().join("a.ts")).unwrap();
+        std::fs::write(dir.path().join("e.py"), "x = 1\n").unwrap();
+        let mut stale = index.stale_files(&walk(dir.path()).unwrap());
+        stale.sort();
+        assert_eq!(stale, ["a.ts", "b.ts", "e.py"]);
     }
 }

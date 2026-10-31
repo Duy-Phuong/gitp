@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 ignore = "0.4"
+rayon = "1"
 serde = { version = "1", features = ["derive"] }
 streaming-iterator = "0.1"
 tree-sitter = "0.25"
