@@ -21,6 +21,7 @@ import {
   loadCodePrefs,
   loadDateFormat,
   loadDefaultBranch,
+  loadReviewCommand,
   loadDetailTab,
   loadPullDefault,
   loadSyntaxHighlight,
@@ -34,6 +35,7 @@ import {
   saveCodePrefs,
   saveDateFormat,
   saveDefaultBranch,
+  saveReviewCommand,
   saveDetailTab,
   savePullDefault,
   saveSyntaxHighlight,
@@ -47,7 +49,7 @@ import {
   ZOOM_LEVELS,
 } from "../prefs";
 import type { DetailTab } from "./detail";
-import type { GhAccount } from "../types";
+import type { GhAccount, Hooks } from "../types";
 
 export interface SettingsActions {
   // Apply and persist a theme, redrawing whatever CSS alone can't restyle.
@@ -62,6 +64,11 @@ export interface SettingsActions {
   // is open; and writing it ("" unsets it).
   hooksPath: () => Promise<string | null>;
   setHooksPath: (path: string) => Promise<void>;
+  // The open repo's hooks, or null when no repo is open; switching one off or
+  // on; and opening its script in the editor.
+  hooks: () => Promise<Hooks | null>;
+  setHookEnabled: (name: string, enabled: boolean) => Promise<void>;
+  openHook: (name: string) => Promise<void>;
   browseFolder: (title: string) => Promise<string | null>;
   // Draw the diffs on screen again (syntax highlighting was switched).
   redrawDiffs: () => void;
@@ -280,6 +287,12 @@ export function openSettingsDialog(actions: SettingsActions): void {
           "block",
           "core.hooksPath in the open repository's own config. Empty uses .git/hooks.",
         ),
+        row(
+          "Hooks",
+          hooksList(actions),
+          "block",
+          "The scripts git runs in this repository. Off renames a hook to <name>.disabled, so it can come back as it was.",
+        ),
         row("Default branch", defaultBranchField(), "inline", "The branch Init Repository starts a new repository on."),
         row(
           "Text encoding",
@@ -292,6 +305,12 @@ export function openSettingsDialog(actions: SettingsActions): void {
           githubAccountField(actions),
           "inline",
           "Pull requests come through the GitHub CLI (gh), signed in as you. gitp stores no token.",
+        ),
+        row(
+          "Review command",
+          reviewCommandField(),
+          "block",
+          "Generate Drafts on a pull request runs this shell line with the diff on its stdin and reads its output as draft comments: \"### path:line\" blocks or a JSON list. GITP_PR_NUMBER, GITP_PR_REPO and GITP_PR_URL are set.",
         ),
         row("Git configuration", linkButton("Open Git Config", () => actions.openConfig("git"))),
         row("Dotfiles", linkButton("Open Dotfiles", () => actions.openConfig("dotfiles"))),
@@ -522,6 +541,62 @@ function hooksField(actions: SettingsActions): HTMLElement {
     () => (input.placeholder = "Couldn't read the repository's config"),
   );
   return el("div", { class: "settings-path-row" }, [input, browse]);
+}
+
+// The hooks git has in this repository, each with Off / On and Open.
+function hooksList(actions: SettingsActions): HTMLElement {
+  const host = el("div", { class: "settings-hooks" }, [el("span", { class: "settings-row-hint", text: "Checking…" })]);
+  const label: Record<string, string> = {
+    active: "on",
+    disabled: "off",
+    not_executable: "not executable — git skips it",
+  };
+  const show = (hooks: Hooks | null) => {
+    if (!hooks) {
+      host.replaceChildren(el("span", { class: "settings-row-hint", text: "No repository open" }));
+      return;
+    }
+    const present = hooks.hooks.filter((h) => h.state !== "missing");
+    if (present.length === 0) {
+      host.replaceChildren(el("span", { class: "settings-row-hint", text: `No hooks in ${hooks.dir}` }));
+      return;
+    }
+    const rows = present.map((h) => {
+      const on = h.state === "active";
+      const toggle = linkButton(on ? "Turn Off" : "Turn On", () =>
+        void actions.setHookEnabled(h.name, !on).then(() => actions.hooks().then(show, () => {})),
+      );
+      return el("div", { class: `settings-hook ${h.state}`, title: h.path }, [
+        el("code", { class: "settings-hook-name", text: h.name }),
+        el("span", { class: "settings-hook-state", text: label[h.state] ?? h.state }),
+        el("span", { class: "spacer" }),
+        toggle,
+        linkButton("Open", () => void actions.openHook(h.name)),
+      ]);
+    });
+    host.replaceChildren(el("div", { class: "settings-row-hint", text: hooks.dir }), ...rows);
+  };
+  actions.hooks().then(show, () => host.replaceChildren(el("span", { class: "settings-row-hint", text: "Couldn't read the hooks folder" })));
+  return host;
+}
+
+// The shell line Generate Drafts runs; blank restores the default.
+function reviewCommandField(): HTMLElement {
+  const area = el("textarea", {
+    class: "settings-select settings-command",
+    spellcheck: "false",
+    rows: 4,
+  }) as HTMLTextAreaElement;
+  area.value = loadReviewCommand();
+  area.addEventListener("change", () => {
+    saveReviewCommand(area.value);
+    area.value = loadReviewCommand();
+  });
+  const reset = linkButton("Reset to Default", () => {
+    saveReviewCommand("");
+    area.value = loadReviewCommand();
+  });
+  return el("div", { class: "settings-command-row" }, [area, reset]);
 }
 
 // Who gh is signed in as, with Sign In or Sign Out — or how to install gh.

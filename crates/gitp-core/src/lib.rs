@@ -24,6 +24,7 @@ mod gh;
 mod git_bin;
 mod gitflow;
 mod graph;
+mod hooks;
 mod hunk;
 mod identity;
 mod lfs;
@@ -72,6 +73,7 @@ pub use gh::{
     PrReviewComment, PullRequest, PullRequestDetail, ReviewVerdict, LOGIN_TIMEOUT,
 };
 pub use gitflow::{FlowKind, GitFlowConfig};
+pub use hooks::{Hook, HookState, Hooks, HOOK_NAMES};
 pub use identity::{global_identity, restore_local_identity, set_global_identity, Identity};
 pub use lfs::LfsStatus;
 pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope, LogWalk};

@@ -592,3 +592,25 @@ export function nextToggleTheme(current: ThemeChoice, osDark: boolean, lastDark:
 export function tildePath(path: string): string {
   return path.replace(/^\/(?:Users|home)\/[^/]+\//, "~/");
 }
+
+// The shell line that writes a review of a pull request's diff (on its
+// stdin), for "Generate Drafts". The default asks the Claude Code CLI for
+// findings in the shape the Drafts tab reads.
+const REVIEW_COMMAND_KEY = "gitp-review-command";
+
+export const DEFAULT_REVIEW_COMMAND =
+  "claude -p 'Review the pull request diff on stdin as a careful senior engineer. " +
+  "Report only real problems: bugs, missing error handling, security issues, broken tests. " +
+  "For each one write a block: a \"### path/to/file:line\" heading where line is in the new file, " +
+  "a \"**Severity:** blocking|minor|nit\" line, then \"**Comment to paste:**\" and the comment for the author " +
+  "between <!-- copy:start --> and <!-- copy:end --> markers, short and concrete, with a ```suggestion block when the fix is a few lines. " +
+  "If nothing is wrong print exactly: No findings.'";
+
+export function loadReviewCommand(): string {
+  return localStorage.getItem(REVIEW_COMMAND_KEY) ?? DEFAULT_REVIEW_COMMAND;
+}
+
+export function saveReviewCommand(command: string): void {
+  if (command.trim() === DEFAULT_REVIEW_COMMAND || !command.trim()) localStorage.removeItem(REVIEW_COMMAND_KEY);
+  else localStorage.setItem(REVIEW_COMMAND_KEY, command.trim());
+}

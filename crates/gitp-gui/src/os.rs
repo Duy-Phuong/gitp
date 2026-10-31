@@ -48,10 +48,16 @@ fn reveal_folder_impl(path: String) -> Result<(), String> {
 /// Falls back to the OS default application otherwise.
 fn open_in_editor_impl(state: &RepoState, path: String) -> Result<(), String> {
     let full = repo_path(state, &path)?;
-    if launch(std::process::Command::new("code").arg(&full)).is_ok() {
+    open_file_in_editor(&full)
+}
+
+/// Open `full` (a path the caller has already vetted) in VS Code when it is
+/// on PATH, else in the default app for the file.
+pub(crate) fn open_file_in_editor(full: &Path) -> Result<(), String> {
+    if launch(std::process::Command::new("code").arg(full)).is_ok() {
         return Ok(());
     }
-    open_in_default_app(&full)
+    open_in_default_app(full)
 }
 
 /// An editor or IDE the repository can be opened in (Quick Launch's "Open in

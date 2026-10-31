@@ -5765,3 +5765,43 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   font-size: 11px;
   color: var(--text-dim);
 }
+
+/* --- Hooks and the review command in Settings ------------------------------ */
+.settings-hooks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-hook {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.settings-hook-name {
+  font-family: var(--mono);
+}
+.settings-hook-state {
+  color: var(--text-dim);
+}
+.settings-hook.active .settings-hook-state {
+  color: var(--add-fg);
+}
+.settings-hook.not_executable .settings-hook-state {
+  color: var(--del-fg);
+}
+.settings-command-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.settings-command {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 12px;
+  resize: vertical;
+}
