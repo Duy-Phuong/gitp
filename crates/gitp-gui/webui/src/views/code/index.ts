@@ -6,9 +6,11 @@
 import { clear, el } from "../../dom";
 import type { CodeFile, CodeFilesChanged, CodeWorkspace, FileEntry, HierarchyNode, IndexReady, Location, SearchQuery, SearchResult, Symbol, UsagesResult } from "../../types";
 import { loadCodeLayout, saveCodeLayout } from "../../prefs";
+import { showDefinitionPicker } from "./definition-picker";
 import { AutoSave, CodeEditor, type CodeEditorDeps, type EditorLike } from "./editor";
 import { buildTree, renderExplorer, revealPath, type ExplorerState } from "./explorer";
 import { NavStack } from "./nav-stack";
+import { setupCodeShortcuts, type CodeAction } from "./shortcuts";
 import { Tabs } from "./tabs";
 
 /// The backend calls the view makes, so tests can hand it fakes.
@@ -45,6 +47,11 @@ export interface CodeViewHandle {
   openFile: (loc: Location, opts?: { endCol?: number; reveal?: boolean }) => Promise<void>;
   closeTab: (path: string) => Promise<void>;
   saveActive: () => Promise<void>;
+  gotoDefinition: (loc: Location) => Promise<void>;
+  goBack: () => Promise<void>;
+  goForward: () => Promise<void>;
+  // A Code-tab key was pressed (see shortcuts.ts).
+  runAction: (action: CodeAction) => void;
   readonly tabs: Tabs;
   readonly nav: NavStack;
   readonly editor: EditorLike;
@@ -72,7 +79,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   const editorDeps: CodeEditorDeps = {
     onEdit: (path) => autosave.edited(path),
     onSaveShortcut: (path) => void autosave.saveNow(path),
-    gotoDefinition: () => {}, // wired by the navigation module
+    gotoDefinition: (loc) => void gotoDefinition(loc),
     onCaretMoved: (loc) => nav.caretMoved(loc),
   };
   const editor: EditorLike = (deps.makeEditor ?? ((h, d) => new CodeEditor(h, d)))(editorHost, editorDeps);
@@ -143,6 +150,62 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     editor.close(path);
     showTab(tabs.close(path));
   };
+
+  /// The caret's place on screen, for the picker.
+  const caretPoint = (): { x: number; y: number } => {
+    const rect = editorHost.getBoundingClientRect();
+    return { x: rect.left + 60, y: rect.top + 40 };
+  };
+
+  const gotoDefinition: CodeViewHandle["gotoDefinition"] = async (loc) => {
+    if (autosave.isDirty(loc.path)) await autosave.saveNow(loc.path);
+    let found: Symbol[];
+    try {
+      found = await deps.api.codeDefinition(loc.path, loc.line, loc.col);
+    } catch (err) {
+      if (String(err).includes("indexing")) deps.toast("Still indexing the project, try again in a moment", "info");
+      else deps.reportError("Go to definition failed", err);
+      return;
+    }
+    if (found.length === 0) {
+      deps.toast("No definition found here", "info");
+      return;
+    }
+    const pick = found.length === 1 ? found[0] : await showDefinitionPicker(caretPoint(), found);
+    if (!pick) return;
+    await openFile({ path: pick.path, line: pick.name_range.start_line, col: pick.name_range.start_col }, { endCol: pick.name_range.end_col });
+  };
+
+  const goTo = async (loc: Location | null) => {
+    if (!loc) return;
+    await openFile(loc, { reveal: false });
+  };
+  const goBack = () => goTo(nav.back());
+  const goForward = () => goTo(nav.forward());
+
+  const runAction = (action: CodeAction) => {
+    switch (action) {
+      case "goToDefinition": {
+        const c = editor.caret();
+        if (c) void gotoDefinition(c);
+        break;
+      }
+      case "back":
+        void goBack();
+        break;
+      case "forward":
+        void goForward();
+        break;
+      case "closeTab": {
+        const a = tabs.active();
+        if (a) void closeTab(a);
+        break;
+      }
+      default:
+        deps.toast(`${action} is not available yet`, "info");
+    }
+  };
+  setupCodeShortcuts(deps.isShowing, runAction);
 
   const renderTabs = () => {
     clear(tabsHost);
@@ -245,6 +308,10 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
       const a = tabs.active();
       if (a) await autosave.saveNow(a);
     },
+    gotoDefinition,
+    goBack,
+    goForward,
+    runAction,
     tabs,
     nav,
     editor,

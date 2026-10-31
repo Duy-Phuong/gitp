@@ -149,6 +149,7 @@ const ACTIONS: Record<ShortcutId, () => void> = {
   cloneRepo: () => cloneRepoAction(),
   history: () => showView("history"),
   changes: () => showView("changes"),
+  code: () => showView("code"),
   searchCommits: () => {
     showView("history");
     const input = document.querySelector<HTMLInputElement>("#log-search");

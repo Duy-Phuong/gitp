@@ -6019,3 +6019,43 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   border-top: 1px solid var(--border);
   font-size: 12.5px;
 }
+.code-picker {
+  position: fixed;
+  z-index: 60;
+  min-width: 280px;
+  max-width: 420px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  padding: 4px;
+  font-size: 12.5px;
+}
+.code-picker-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.code-picker-row.active {
+  background: var(--accent-soft);
+}
+.code-picker-kind {
+  color: var(--text-dim);
+  font-size: 11px;
+  width: 64px;
+}
+.code-picker-name {
+  color: var(--text);
+}
+.code-picker-where {
+  color: var(--text-dim);
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}

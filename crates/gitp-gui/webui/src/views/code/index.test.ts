@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { setupCodeView, type CodeApi, type CodeViewDeps } from "./index";
 import type { EditorLike } from "./editor";
-import type { CodeFile, CodeFilesChanged, FileEntry, IndexReady, Location } from "../../types";
+import type { CodeFile, CodeFilesChanged, FileEntry, IndexReady, Location, Symbol } from "../../types";
 
 const entry = (path: string): FileEntry => ({ path, size: 1, lang: path.endsWith(".ts") ? "typescript" : null, mtime_ms: 5 });
 
@@ -148,5 +148,91 @@ describe("setupCodeView", () => {
     await view.closeTab("b.ts");
     expect(view.tabs.active()).toBe("a.ts");
     expect(editor.active()).toBe("a.ts");
+  });
+
+  const sym = (path: string, name: string, line: number): Symbol => ({
+    id: { file: 0, byte: 0 },
+    name,
+    kind: "function",
+    path,
+    lang: "typescript",
+    container: null,
+    range: { start_line: line, start_col: 0, end_line: line + 2, end_col: 1, start_byte: 0, end_byte: 1 },
+    name_range: { start_line: line, start_col: 9, end_line: line, end_col: 9 + name.length, start_byte: 0, end_byte: 1 },
+  });
+
+  describe("go to definition", () => {
+    it("one result jumps there and records a stop", async () => {
+      const { view, api, editor } = setup([entry("a.ts"), entry("b.ts")], { "a.ts": "x", "b.ts": "function total() {}" });
+      view.start();
+      await flush();
+      await view.openFile({ path: "a.ts", line: 0, col: 0 });
+      (api.codeDefinition as ReturnType<typeof vi.fn>).mockResolvedValueOnce([sym("b.ts", "total", 3)]);
+      await view.gotoDefinition({ path: "a.ts", line: 0, col: 2 });
+      expect(view.tabs.active()).toBe("b.ts");
+      expect(editor.revealed[editor.revealed.length - 1]).toEqual({ path: "b.ts", line: 3, col: 9 });
+      expect(view.nav.canBack()).toBe(true);
+      expect(view.nav.back()).toEqual({ path: "a.ts", line: 0, col: 0 });
+    });
+
+    it("several results open a picker, and picking one jumps", async () => {
+      const { view, api } = setup([entry("a.ts"), entry("b.ts"), entry("c.ts")], { "a.ts": "x", "b.ts": "y", "c.ts": "z" });
+      view.start();
+      await flush();
+      await view.openFile({ path: "a.ts", line: 0, col: 0 });
+      (api.codeDefinition as ReturnType<typeof vi.fn>).mockResolvedValueOnce([sym("b.ts", "save", 1), sym("c.ts", "save", 5)]);
+      const pending = view.gotoDefinition({ path: "a.ts", line: 0, col: 0 });
+      await flush();
+      const rows = [...document.querySelectorAll<HTMLElement>(".code-picker-row")];
+      expect(rows.map((r) => r.textContent)).toEqual([expect.stringContaining("b.ts:2"), expect.stringContaining("c.ts:6")]);
+      rows[1].click();
+      await pending;
+      expect(view.tabs.active()).toBe("c.ts");
+      expect(document.querySelector(".code-picker")).toBeNull();
+    });
+
+    it("no result toasts and records nothing", async () => {
+      const { view, toast } = setup();
+      view.start();
+      await flush();
+      await view.openFile({ path: "src/a.ts", line: 0, col: 0 });
+      await view.gotoDefinition({ path: "src/a.ts", line: 0, col: 0 });
+      expect(toast).toHaveBeenCalledWith("No definition found here", "info");
+      expect(view.nav.canBack()).toBe(false);
+    });
+
+    it("a dirty file is saved before the query", async () => {
+      const { view, api } = setup();
+      view.start();
+      await flush();
+      await view.openFile({ path: "src/a.ts", line: 0, col: 0 });
+      view.editorDeps.onEdit("src/a.ts");
+      await view.gotoDefinition({ path: "src/a.ts", line: 0, col: 0 });
+      const write = (api.codeWriteFile as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+      const def = (api.codeDefinition as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+      expect(write).toBeLessThan(def);
+    });
+
+    it("the indexing error toasts 'Still indexing'", async () => {
+      const { view, api, toast } = setup();
+      view.start();
+      await flush();
+      await view.openFile({ path: "src/a.ts", line: 0, col: 0 });
+      (api.codeDefinition as ReturnType<typeof vi.fn>).mockRejectedValueOnce("indexing");
+      await view.gotoDefinition({ path: "src/a.ts", line: 0, col: 0 });
+      expect(toast).toHaveBeenCalledWith("Still indexing the project, try again in a moment", "info");
+    });
+
+    it("back and forward reopen the recorded files", async () => {
+      const { view } = setup([entry("a.ts"), entry("b.ts")], { "a.ts": "x", "b.ts": "y" });
+      view.start();
+      await flush();
+      await view.openFile({ path: "a.ts", line: 0, col: 0 });
+      await view.openFile({ path: "b.ts", line: 0, col: 0 });
+      await view.goBack();
+      expect(view.tabs.active()).toBe("a.ts");
+      await view.goForward();
+      expect(view.tabs.active()).toBe("b.ts");
+    });
   });
 });
