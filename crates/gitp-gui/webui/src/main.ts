@@ -70,7 +70,9 @@ import {
   loadAllBranches,
   loadAutoFetchMinutes,
   loadDetailTab,
+  loadFavoriteRepos,
   loadPushAfterCommit,
+  loadRecentRepos,
   loadZoom,
   saveAllBranches,
   saveDetailTab,
@@ -142,7 +144,8 @@ import {
 import { createFileAction, editFileAction } from "./editor-actions";
 import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
-import { openQuickLaunch } from "./quick-launch-commands";
+import { browseAndOpen, openQuickLaunch, openRecentRepo } from "./quick-launch-commands";
+import { setupWelcome } from "./views/welcome";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { openWorkspacesAction } from "./local-workspace-actions";
 import { openInDiffTool, openInMergeTool } from "./external-tools";
@@ -462,6 +465,15 @@ async function init(): Promise<void> {
     reportError: readFailed,
   });
   ui.prView = setupPullRequestView($("#pr-view"), pullRequestCallbacks);
+  ui.welcomeView = setupWelcome($("#welcome-view"), {
+    open: (path) => void openRecentRepo(path),
+    browse: () => void browseAndOpen(),
+    clone: cloneRepoAction,
+    init: initRepoAction,
+    workspaces: openWorkspacesAction,
+    favorites: loadFavoriteRepos,
+    recent: loadRecentRepos,
+  });
   ui.activityView = setupActivity($("#activity-view"), {
     fetch: fetchActivityLog,
     clear: clearActivityLog,
@@ -472,9 +484,10 @@ async function init(): Promise<void> {
     if (await restoreWorkspace()) {
       warmTerminal();
     } else {
-      setStatus("Enter a repository path and press Open.");
+      setStatus("No repository open.");
       ui.detailView?.showEmpty();
       renderSidebarNow();
+      ui.welcomeView.sync(false);
     }
   } else {
     applyWorkspace(await listRepos());

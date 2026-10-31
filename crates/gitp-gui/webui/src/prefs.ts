@@ -572,3 +572,12 @@ export function nextToggleTheme(current: ThemeChoice, osDark: boolean, lastDark:
   const showingDark = DARK_THEMES.includes(current) || (current === "system" && osDark);
   return showingDark ? "light" : lastDark;
 }
+
+// `~/…` rather than the absolute path, the way every git client shows it.
+//
+// Matched structurally rather than against a known home directory, which the
+// webview has no way to ask for; a path under some *other* user's home would be
+// shortened too, but that only ever affects how it reads, never where it opens.
+export function tildePath(path: string): string {
+  return path.replace(/^\/(?:Users|home)\/[^/]+\//, "~/");
+}
