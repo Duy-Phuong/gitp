@@ -870,6 +870,11 @@ export interface CodeFilesChanged {
   paths: string[];
   // The paths not written by the Code tab itself.
   external: string[];
+  // The file list's patch: entries that are new or changed, and paths gone.
+  entries: FileEntry[];
+  removed: string[];
+  // Too many paths to patch: the backend rebuilt; fetch the list again.
+  rebuilt: boolean;
 }
 
 export interface SearchQuery {

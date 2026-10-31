@@ -29,7 +29,7 @@ export interface SidebarState {
   localChanges: number;
   repoName: string;
   // "config" (or anything not matching a nav row) leaves both nav rows unhighlighted.
-  activeView: SidebarView | "config" | "pr";
+  activeView: SidebarView | "config" | "pr" | "code";
   filter: string;
   collapsed: Set<string>;
   // Cmd/Shift-click multi-selection, Local Branches only (bulk delete is the

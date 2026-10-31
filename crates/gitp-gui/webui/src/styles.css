@@ -5903,3 +5903,119 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   font-size: 12px;
   white-space: pre;
 }
+
+/* Code tab ---------------------------------------------------------------- */
+.code-view:not(.hidden) {
+  display: grid;
+  grid-template-columns: var(--code-explorer-w, 240px) 6px 1fr;
+  height: 100%;
+  min-height: 0;
+}
+.code-explorer {
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  padding: 4px 0;
+  font-size: 12.5px;
+  user-select: none;
+}
+.code-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px calc(8px + var(--depth, 0) * 14px);
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--text);
+}
+.code-row:hover {
+  background: var(--bg-elev);
+}
+.code-row.selected {
+  background: var(--accent-soft);
+}
+.code-row-chevron {
+  width: 12px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.code-row.folder .code-row-name {
+  color: var(--text);
+}
+.code-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.code-tabs {
+  display: flex;
+  overflow-x: auto;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  min-height: 30px;
+}
+.code-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.code-tab.active {
+  color: var(--text);
+  background: var(--bg);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.code-tab.deleted .code-tab-name {
+  text-decoration: line-through;
+}
+.code-tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: transparent;
+}
+.code-tab-dot.on {
+  background: var(--accent);
+}
+.code-tab-close {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.code-tab-close:hover {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+.code-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+}
+.code-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.code-panel {
+  flex: 0 0 var(--code-panel-h, 220px);
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+}

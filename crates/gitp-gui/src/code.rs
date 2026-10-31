@@ -86,6 +86,11 @@ pub(crate) struct FilesChanged {
     pub(crate) paths: Vec<String>,
     /// The subset not written by the Code tab itself.
     pub(crate) external: Vec<String>,
+    /// The file list's patch: entries new or changed, and paths gone.
+    pub(crate) entries: Vec<FileEntry>,
+    pub(crate) removed: Vec<String>,
+    /// Too many paths to patch: everything was rebuilt; fetch the list again.
+    pub(crate) rebuilt: bool,
 }
 
 /// Something that takes an event name and payload: the app handle, or
@@ -264,6 +269,8 @@ pub(crate) fn on_worktree_changed(emit: &Emit, code: &CodeState, root: &Path, pa
             .cloned()
             .collect()
     };
+    let mut entries = Vec::new();
+    let mut removed = Vec::new();
     if overflow {
         if let Ok(files) = walk(root) {
             let built = SymbolIndex::build(root, &files);
@@ -279,20 +286,22 @@ pub(crate) fn on_worktree_changed(emit: &Emit, code: &CodeState, root: &Path, pa
                     index.reindex(root, p);
                     let entry = FileEntry { path: p.clone(), size: meta.len(), lang: gitp_code::lang::Lang::from_path(p), mtime_ms: gitp_code::files::mtime_ms(&meta) };
                     match files.binary_search_by(|f| f.path.cmp(p)) {
-                        Ok(i) => files[i] = entry,
-                        Err(i) => files.insert(i, entry),
+                        Ok(i) => files[i] = entry.clone(),
+                        Err(i) => files.insert(i, entry.clone()),
                     }
+                    entries.push(entry);
                 }
                 _ => {
                     index.remove(p);
                     if let Ok(i) = files.binary_search_by(|f| f.path.cmp(p)) {
                         files.remove(i);
                     }
+                    removed.push(p.clone());
                 }
             }
         }
     }
-    let payload = FilesChanged { paths: paths.to_vec(), external };
+    let payload = FilesChanged { paths: paths.to_vec(), external, entries, removed, rebuilt: overflow };
     emit(FILES_CHANGED_EVENT, serde_json::to_value(payload).unwrap_or_default());
 }
 
@@ -486,11 +495,15 @@ mod tests {
         let (name, payload) = seen.lock().unwrap().pop().unwrap();
         assert_eq!(name, FILES_CHANGED_EVENT);
         assert_eq!(payload["external"], serde_json::json!(["n.ts"]));
+        assert_eq!(payload["entries"][0]["path"], "n.ts");
+        assert_eq!(payload["rebuilt"], false);
 
         std::fs::remove_file(dir.path().join("n.ts")).unwrap();
         on_worktree_changed(&emit, &code, dir.path(), &["n.ts".into()], false);
         assert_eq!(code.index.read().unwrap().definitions_named("newer").count(), 0);
         assert!(!code.files.read().unwrap().iter().any(|f| f.path == "n.ts"));
+        let (_, payload) = seen.lock().unwrap().pop().unwrap();
+        assert_eq!(payload["removed"], serde_json::json!(["n.ts"]));
     }
 
     #[test]

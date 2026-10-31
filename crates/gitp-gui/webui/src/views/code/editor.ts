@@ -92,7 +92,20 @@ export interface CodeEditorDeps {
   onCaretMoved: (loc: Location) => void;
 }
 
-export class CodeEditor {
+/// What the Code tab needs from an editor; CodeEditor is the CodeMirror one.
+export interface EditorLike {
+  open(path: string, text: string, lang: Lang | null): void;
+  active(): string | null;
+  text(path: string): string | null;
+  replaceText(path: string, text: string): void;
+  setReadOnly(path: string, on: boolean): void;
+  reveal(loc: Location, endCol?: number): void;
+  caret(): Location | null;
+  focus(): void;
+  close(path: string): void;
+}
+
+export class CodeEditor implements EditorLike {
   readonly view: EditorView;
   private states = new Map<string, EditorState>();
   private activePath: string | null = null;
