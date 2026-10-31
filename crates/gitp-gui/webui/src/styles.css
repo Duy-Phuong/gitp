@@ -234,6 +234,13 @@ body {
   font-size: 12px;
   white-space: nowrap;
 }
+.branch-chip {
+  cursor: pointer;
+}
+.branch-chip:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
 .branch-chip::before {
   content: "⎇";
   font-size: 13px;

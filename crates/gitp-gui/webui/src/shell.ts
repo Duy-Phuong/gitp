@@ -871,7 +871,7 @@ function renderBranchIndicator(): void {
   const chip = $("#branch-indicator");
   const head = state.repoPath ? state.refs.head : null;
   chip.textContent = head ?? "";
-  chip.title = head ? `On branch ${head}` : "Current branch";
+  chip.title = head ? `On branch ${head} — click to copy the name or switch` : "Current branch";
   chip.classList.toggle("hidden", !head);
 }
 
