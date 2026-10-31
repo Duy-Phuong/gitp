@@ -33,7 +33,7 @@ fn display_name(path: &str) -> String {
 
 /// Open `path` as a new tab (or switch to it if already open) and make it active.
 pub(crate) fn open_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     if let Some(i) = guard.sessions.iter().position(|s| s.path == path) {
         guard.set_active(Some(i));
         return Ok(guard.view());
@@ -89,12 +89,12 @@ fn init_repository_impl(
 }
 
 fn list_repos_impl(state: &RepoState) -> Result<WorkspaceView, String> {
-    Ok(state.0.lock().map_err(to_message)?.view())
+    Ok(state.workspace().view())
 }
 
 /// Switch the active tab to the open repo at `path`.
 fn activate_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let i = guard
         .sessions
         .iter()
@@ -106,7 +106,7 @@ fn activate_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, 
 
 /// Close the tab for `path`, keeping the active selection sensible.
 fn close_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let i = guard
         .sessions
         .iter()
@@ -129,7 +129,7 @@ fn close_repo_impl(state: &RepoState, path: String) -> Result<WorkspaceView, Str
 /// the tab already taken out. The frontend saves the new order with the rest
 /// of the workspace, so it is also the order tabs reopen in.
 fn move_repo_impl(state: &RepoState, path: String, to: usize) -> Result<WorkspaceView, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let from = guard
         .sessions
         .iter()
@@ -170,7 +170,7 @@ pub(crate) struct WorkspaceSnapshot {
 /// Build the post-action snapshot in one lock acquisition, running `git status`
 /// exactly once (see `WorkspaceSnapshot`) — and only when something changed.
 pub(crate) fn workspace_snapshot_impl(state: &RepoState) -> Result<WorkspaceSnapshot, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
 

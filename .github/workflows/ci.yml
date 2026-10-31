@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Weekly, so an advisory against a dependency that hasn't changed still
+    # shows up.
+    - cron: "0 6 * * 1"
 
 jobs:
   check:
@@ -52,3 +56,26 @@ jobs:
 
       - name: Test Rust
         run: cargo test --workspace
+
+  audit:
+    # Known vulnerabilities in the dependencies. Linux is enough: the lockfiles
+    # are the same everywhere.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@cargo-audit
+
+      - name: Audit Rust dependencies
+        run: cargo audit
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Production dependencies only: a dev-only advisory (vite, vitest) can't
+      # reach the shipped app.
+      - name: Audit frontend dependencies
+        run: npm --prefix crates/gitp-gui/webui audit --omit=dev --audit-level=high

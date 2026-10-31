@@ -14,7 +14,7 @@ pub(crate) fn create_tag_at_impl(
     rev: String,
     message: Option<String>,
 ) -> Result<String, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let out = match message.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
@@ -57,7 +57,7 @@ fn push_tag_impl(state: &RepoState, name: String, remote: String) -> Result<Stri
 /// tagged commit stays reachable from whatever else points at it), so the log
 /// cache stays valid.
 pub(crate) fn delete_tag_impl(state: &RepoState, name: String) -> Result<String, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     // Captured before the delete: afterwards the ref is gone and with it any way

@@ -193,7 +193,7 @@ fn run_on_path<T>(
     // tab may spell the same folder differently (/tmp vs /private/tmp, a
     // trailing slash).
     let here = std::fs::canonicalize(repo.workdir()).ok();
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     if let Some(session) = guard
         .sessions
         .iter_mut()

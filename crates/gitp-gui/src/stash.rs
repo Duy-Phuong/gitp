@@ -15,7 +15,7 @@ fn stash_impl(
     staged: bool,
     include_untracked: bool,
 ) -> Result<String, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let message = message.as_deref().map(str::trim).filter(|m| !m.is_empty());
@@ -29,7 +29,7 @@ fn stash_impl(
 
 /// `git stash pop` on the active repo. Returns git's output.
 fn stash_pop_impl(state: &RepoState) -> Result<String, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let out = session.repo.stash_pop().map_err(to_message)?;
@@ -44,7 +44,7 @@ fn stash_apply_impl(state: &RepoState, index: usize, drop: bool) -> Result<Strin
 
 /// Drop stash `index` from the stack.
 fn stash_drop_impl(state: &RepoState, index: usize) -> Result<String, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     // The entry's commit and message, before dropping loses the reference to

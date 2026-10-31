@@ -86,7 +86,7 @@ pub(crate) fn with_recorded_head_move<T>(
     mode: HeadMoveMode,
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
 ) -> Result<T, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     record_head_move(session, label, mode, None, f)
@@ -101,7 +101,7 @@ pub(crate) fn with_recorded_hard_reset<T>(
     state: &RepoState,
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
 ) -> Result<T, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let backup = session.repo.backup_uncommitted_work().map_err(|e| {
@@ -180,7 +180,7 @@ pub(crate) fn with_recorded_index<T>(
     label: &str,
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
 ) -> Result<T, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let (before_slot, after_slot) = index_snapshot_slots();
@@ -224,7 +224,7 @@ pub(crate) fn with_recorded_upstream(
     label: String,
     f: impl FnOnce(&Repo, &str) -> gitp_core::Result<String>,
 ) -> Result<String, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let before = session.repo.branch_upstream(&branch).ok().flatten();
@@ -277,7 +277,7 @@ pub(crate) fn with_recorded_checkout<T>(
     label: impl FnOnce() -> String,
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
 ) -> Result<T, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let before = session.repo.head_ref_name().ok();
@@ -314,7 +314,7 @@ pub(crate) fn with_recorded_branch_create(
     at_rev: Option<&str>,
     f: impl FnOnce(&Repo) -> gitp_core::Result<String>,
 ) -> Result<String, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let prev = session.repo.head_ref_name().map_err(to_message)?;
@@ -366,7 +366,7 @@ pub(crate) fn with_recorded_files(
     paths: &[String],
     f: impl FnOnce(&Repo) -> gitp_core::Result<()>,
 ) -> Result<(), String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let (before_slot, after_slot) = index_snapshot_slots();
@@ -431,7 +431,7 @@ pub(crate) fn clear_undo(session: &mut Session) {
 }
 
 pub(crate) fn undo_state_impl(state: &RepoState) -> Result<UndoView, String> {
-    let guard = state.0.lock().map_err(to_message)?;
+    let guard = state.workspace();
     let Some(idx) = guard.active else {
         return Ok(UndoView::default());
     };
@@ -444,7 +444,7 @@ pub(crate) fn undo_state_impl(state: &RepoState) -> Result<UndoView, String> {
 /// then the action is stale for good, and the slot is cleared so the button
 /// greys out rather than offering the same refusal again.
 pub(crate) fn undo_impl(state: &RepoState) -> Result<UndoView, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let action = session.undo.take().ok_or("nothing to undo")?;
@@ -473,7 +473,7 @@ pub(crate) fn undo_impl(state: &RepoState) -> Result<UndoView, String> {
 
 /// Re-apply the action that was just undone.
 fn redo_impl(state: &RepoState) -> Result<UndoView, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let action = session.redo.take().ok_or("nothing to redo")?;

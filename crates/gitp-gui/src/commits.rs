@@ -50,7 +50,7 @@ pub(crate) fn cherry_pick_plan_impl(
 /// recorded as an undo of just that commit; once the plan finishes the slot
 /// is replaced by the whole run, back to the HEAD the plan started from.
 pub(crate) fn continue_cherry_pick_plan_impl(state: &RepoState) -> Result<PickPlanOutcome, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let out = session
