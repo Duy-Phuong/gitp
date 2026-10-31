@@ -4914,6 +4914,11 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   flex-direction: column;
   gap: 10px;
 }
+/* The body scrolls, so nothing in it should shrink to fit: a diff (`.file`
+   clips with overflow: hidden) would otherwise be squeezed to a sliver. */
+.pr-body > * {
+  flex-shrink: 0;
+}
 .pr-card {
   border: 1px solid var(--border);
   border-radius: 8px;
