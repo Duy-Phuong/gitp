@@ -208,6 +208,19 @@ describe("setupCodeView", () => {
       expect(document.querySelector(".code-picker")).toBeNull();
     });
 
+    it("on the declaration itself, shows its usages instead of jumping in place", async () => {
+      const { view, api } = setup([entry("a.ts")], { "a.ts": "x" });
+      view.start();
+      await flush();
+      await view.openFile({ path: "a.ts", line: 0, col: 0 });
+      const self = sym("a.ts", "total", 3);
+      (api.codeDefinition as ReturnType<typeof vi.fn>).mockResolvedValueOnce([self]);
+      (api.codeReferences as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ symbol: self, hits: [], truncated: false });
+      await view.gotoDefinition({ path: "a.ts", line: 3, col: 11 });
+      expect(api.codeReferences).toHaveBeenCalledWith("a.ts", 3, 11);
+      expect(view.nav.canBack()).toBe(false);
+    });
+
     it("no result toasts and records nothing", async () => {
       const { view, toast } = setup();
       view.start();

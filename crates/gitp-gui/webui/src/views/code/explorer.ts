@@ -70,7 +70,7 @@ export function renderExplorer(host: HTMLElement, tree: TreeNode, state: Explore
       const row = el(
         "div",
         {
-          class: `code-row${folder ? " folder" : " file"}${state.selected === child.path ? " selected" : ""}${open ? " open" : ""}`,
+          class: `code-row${folder ? " code-row-folder" : " code-row-file"}${state.selected === child.path ? " selected" : ""}${open ? " open" : ""}`,
           "data-path": child.path,
           title: child.path,
           style: `--depth:${depth}`,

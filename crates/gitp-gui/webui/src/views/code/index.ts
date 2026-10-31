@@ -215,6 +215,13 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
       deps.toast("No definition found here", "info");
       return;
     }
+    // On the declaration itself a jump would land where the caret already
+    // is; show who uses it instead, as IDEs do.
+    const r = found[0].name_range;
+    if (found.length === 1 && found[0].path === loc.path && r.start_line === loc.line && loc.col >= r.start_col && loc.col <= r.end_col) {
+      await findUsages(loc);
+      return;
+    }
     const pick = found.length === 1 ? found[0] : await showDefinitionPicker(caretPoint(), found);
     if (!pick) return;
     await openFile({ path: pick.path, line: pick.name_range.start_line, col: pick.name_range.start_col }, { endCol: pick.name_range.end_col });

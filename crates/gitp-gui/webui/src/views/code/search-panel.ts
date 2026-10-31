@@ -36,7 +36,7 @@ export function setupSearchPanel(host: HTMLElement, deps: SearchPanelDeps): Sear
   const summary = el("div", { class: "code-search-summary" });
   const results = el("div", { class: "code-search-results" });
   clear(host);
-  host.append(el("div", { class: "code-search-bar" }, [input, ...toggleButtons, glob]), summary, results);
+  host.append(el("div", { class: "code-search-bar" }, [el("div", { class: "code-search-field" }, [input, ...toggleButtons]), glob]), summary, results);
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   let seq = 0;
@@ -90,7 +90,11 @@ export function setupSearchPanel(host: HTMLElement, deps: SearchPanelDeps): Sear
       : `No hits in ${r.files_searched} files`;
     for (const [path, hits] of byFile) {
       const file = el("details", { class: "code-search-file", "data-path": path, open: "" }, [
-        el("summary", {}, [el("span", { class: "code-search-path" }, [path]), el("span", { class: "code-search-count" }, [String(hits.length)])]),
+        el("summary", {}, [
+          el("span", { class: "code-search-name" }, [path.slice(path.lastIndexOf("/") + 1)]),
+          el("span", { class: "code-search-path" }, [path.slice(0, path.lastIndexOf("/") + 1)]),
+          el("span", { class: "code-search-count" }, [String(hits.length)]),
+        ]),
       ]);
       for (const h of hits) {
         const row = el("div", { class: "code-search-hit", title: `${path}:${h.line + 1}:${h.col + 1}` }, [
