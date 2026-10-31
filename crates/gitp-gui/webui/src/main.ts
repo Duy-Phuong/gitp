@@ -1,50 +1,57 @@
 import "./styles.css";
 import {
+  abortConflict,
+  addToGitignore,
   browseForRepo,
+  clearActivityLog,
+  clearLocalHistory,
   commitChanges,
   confirmDialog,
+  conflictSides,
+  conflictStatus,
+  createBranchAt,
+  deleteFile,
+  discardFiles,
   discardHunk,
   discardLines,
+  fetchActivityLog,
   fetchBlame,
   fetchCommitDetail,
   fetchCommitFileDiff,
+  fetchCommitSignature,
+  fetchCommitTemplate,
   fetchCommitTree,
   fetchCompareFileDiff,
-  fetchFileHistory,
   fetchFileContent,
   fetchFileDiff,
-  fetchStatusSummary,
+  fetchFileHistory,
+  fetchFileVersions,
+  fetchLocalHistory,
   fetchReflog,
-  fetchActivityLog,
-  clearActivityLog,
+  fetchSigningConfig,
+  fetchSnapshotFile,
+  fetchStatusSummary,
+  finishConflict,
   isTauri,
   listRepos,
+  openInEditor,
+  resolveConflict,
+  resolveConflictSide,
+  restoreFromSnapshot,
+  revealPath,
+  saveFilesPatch,
+  setLocalHistoryEnabled,
+  snapshotNow,
   stage,
   stageAll,
   stageHunk,
   stageLines,
-  conflictStatus,
-  conflictSides,
-  resolveConflict,
-  resolveConflictSide,
-  abortConflict,
-  finishConflict,
-  discardFiles,
   stashFiles,
-  saveFilesPatch,
-  addToGitignore,
-  untrackFiles,
-  revealPath,
-  openInEditor,
-  deleteFile,
   unstage,
   unstageAll,
   unstageHunk,
   unstageLines,
-  fetchCommitSignature,
-  fetchSigningConfig,
-  fetchCommitTemplate,
-  createBranchAt,
+  untrackFiles,
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
@@ -71,6 +78,7 @@ import {
   loadAutoFetchMinutes,
   loadDetailTab,
   loadFavoriteRepos,
+  loadLocalHistoryEnabled,
   loadPushAfterCommit,
   loadRecentRepos,
   loadZoom,
@@ -82,24 +90,7 @@ import {
 import { refsAt } from "./commit-refs";
 import { setupConfigTabs } from "./config-panel";
 import { setupPaneResizer, setupSidebarResizer, setupTerminalResizer } from "./resizers";
-import {
-  applyWorkspace,
-  jumpToCommit,
-  leaveComparison,
-  loadRepo,
-  loadSidebar,
-  refreshHistory,
-  refreshUndoLabels,
-  refreshWipRow,
-  renderSidebarNow,
-  restoreWorkspace,
-  setRefActions,
-  showReflogDetail,
-  showStashDetail,
-  showView,
-  startAutoFetch,
-  updateLogView,
-} from "./shell";
+import { applyWorkspace, jumpToCommit, leaveComparison, loadChanges, loadRepo, loadSidebar, refreshHistory, refreshUndoLabels, refreshWipRow, renderSidebarNow, restoreWorkspace, setRefActions, showReflogDetail, showStashDetail, showView, startAutoFetch, updateLogView } from "./shell";
 import {
   popAction,
   pushAction,
@@ -151,6 +142,7 @@ import { openWorkspacesAction } from "./local-workspace-actions";
 import { openInDiffTool, openInMergeTool } from "./external-tools";
 import { setupLogKeyboardNav, setupShortcuts } from "./keyboard";
 import { ensureLanguages } from "./highlight";
+import { setupLocalHistory } from "./views/local-history";
 import { setupBranchMenu, setupPullMenu, setupSettingsMenu } from "./topbar-menus";
 import type { BranchRef } from "./types";
 import { setupProfileMenu } from "./profile-menu";
@@ -517,6 +509,42 @@ async function init(): Promise<void> {
     favorites: loadFavoriteRepos,
     recent: loadRecentRepos,
   });
+  ui.localHistoryView = setupLocalHistory($("#localhistory-view"), {
+    fetch: fetchLocalHistory,
+    versions: fetchFileVersions,
+    content: fetchSnapshotFile,
+    restore: async (snapshot, path) => {
+      if (!(await confirmDialog(`Put the snapshot's version of ${path} back on disk? The file as it is now can be brought back with Undo.`))) return false;
+      try {
+        await restoreFromSnapshot(snapshot, path);
+        reportDone(`Restored ${path} from the snapshot — Undo puts the current file back.`);
+        void loadSidebar();
+        if (state.view === "changes") void loadChanges();
+        return true;
+      } catch (err) {
+        opFailed(`Couldn't restore ${path}`, err);
+        return false;
+      }
+    },
+    snapshotNow: async () => {
+      const id = await snapshotNow();
+      setStatus(id ? "Snapshot taken." : "Nothing to snapshot: the working tree matches the last snapshot or HEAD.");
+      return id;
+    },
+    clear: async () => {
+      if (!(await confirmDialog("Delete every local history snapshot of this repository? This cannot be undone."))) return false;
+      try {
+        await clearLocalHistory();
+        reportDone("Local history cleared.");
+        return true;
+      } catch (err) {
+        opFailed("Couldn't clear the local history", err);
+        return false;
+      }
+    },
+    reportError: readFailed,
+  });
+  void setLocalHistoryEnabled(loadLocalHistoryEnabled());
   ui.activityView = setupActivity($("#activity-view"), {
     fetch: fetchActivityLog,
     clear: clearActivityLog,

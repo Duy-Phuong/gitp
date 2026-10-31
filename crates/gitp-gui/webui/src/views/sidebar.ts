@@ -22,7 +22,7 @@ import type {
   WorktreeSummary,
 } from "../types";
 
-export type SidebarView = "history" | "changes" | "reflog" | "activity";
+export type SidebarView = "history" | "changes" | "reflog" | "activity" | "localhistory";
 
 export interface SidebarState {
   refs: Refs;
@@ -161,6 +161,7 @@ export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCal
     navRow("All Commits", null, s.activeView === "history", () => cb.onSelectView("history")),
     navRow("Reflog", null, s.activeView === "reflog", () => cb.onSelectView("reflog")),
     navRow("Activity", null, s.activeView === "activity", () => cb.onSelectView("activity")),
+    navRow("Local History", null, s.activeView === "localhistory", () => cb.onSelectView("localhistory")),
   );
 
   const filter = el("input", {

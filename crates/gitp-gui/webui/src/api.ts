@@ -28,7 +28,9 @@ import type {
   DiffToolTarget,
   LogPage,
   MergeMode,
+  FileVersion,
   Hooks,
+  Snapshot,
   MergePreview,
   LogScope,
   PickPlanOutcome,
@@ -1978,6 +1980,72 @@ export async function commentOnLine(number: number, comment: LineComment): Promi
   }
   return invoke<PrReviewComment>("gh_line_comment", { number, comment });
 }
+
+// --- Local history ---------------------------------------------------------
+
+export async function fetchLocalHistory(): Promise<Snapshot[]> {
+  if (!isTauri()) return structuredClone(MOCK_SNAPSHOTS);
+  return invoke<Snapshot[]>("local_history", {});
+}
+
+export async function fetchFileVersions(path: string): Promise<FileVersion[]> {
+  if (!isTauri()) {
+    return MOCK_SNAPSHOTS.filter((s) => s.files.some((f) => f.path === path)).map((s) => ({ snapshot: s.id, time: s.time, blob: s.id, size: 42 }));
+  }
+  return invoke<FileVersion[]>("local_history_versions", { path });
+}
+
+export async function fetchSnapshotFile(snapshot: string, path: string): Promise<string> {
+  if (!isTauri()) return `// ${path} as it was in snapshot ${snapshot.slice(0, 7)} (preview mock)\nexport const draft = true;\n`;
+  return invoke<string>("local_history_file", { snapshot, path });
+}
+
+export async function restoreFromSnapshot(snapshot: string, path: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("local_history_restore", { snapshot, path });
+}
+
+export async function snapshotNow(): Promise<string | null> {
+  if (!isTauri()) {
+    MOCK_SNAPSHOTS.unshift({ id: Date.now().toString(16).padEnd(40, "0"), time: Date.now(), head: "ggggggg", files: [{ status: "M", path: "src/config.rs", from: null }] });
+    return MOCK_SNAPSHOTS[0].id;
+  }
+  return invoke<string | null>("local_history_snapshot", {});
+}
+
+export async function clearLocalHistory(): Promise<void> {
+  if (!isTauri()) {
+    MOCK_SNAPSHOTS.length = 0;
+    return;
+  }
+  await invoke<void>("local_history_clear", {});
+}
+
+export async function setLocalHistoryEnabled(enabled: boolean): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("local_history_set_enabled", { enabled });
+}
+
+const MOCK_SNAPSHOTS: Snapshot[] = [
+  {
+    id: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+    time: Date.now() - 6 * 60_000,
+    head: "ggggggg",
+    files: [
+      { status: "M", path: "src/config.rs", from: null },
+      { status: "A", path: "notes.md", from: null },
+    ],
+  },
+  {
+    id: "b2c3d4e5f60718293a4b5c6d7e8f901234567890",
+    time: Date.now() - 48 * 60_000,
+    head: "ggggggg",
+    files: [
+      { status: "M", path: "src/config.rs", from: null },
+      { status: "D", path: "assets/logo.svg", from: null },
+    ],
+  },
+];
 
 // The repository's git hooks and their state.
 export async function listHooks(): Promise<Hooks> {

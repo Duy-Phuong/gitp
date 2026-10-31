@@ -212,6 +212,29 @@ export type ConfigScope = "Local" | "Global" | "System" | "Other";
 // How far a reset moves the branch (mirrors gitp-core's ResetMode).
 export type ResetMode = "Soft" | "Mixed" | "Hard";
 
+// Local history: a snapshot of the working tree (gitp-core's Snapshot), the
+// files uncommitted in it, and one file's versions across the snapshots.
+export interface SnapshotFile {
+  status: string;
+  path: string;
+  from: string | null;
+}
+
+export interface Snapshot {
+  id: string;
+  // Milliseconds since the epoch.
+  time: number;
+  head: string;
+  files: SnapshotFile[];
+}
+
+export interface FileVersion {
+  snapshot: string;
+  time: number;
+  blob: string;
+  size: number;
+}
+
 // The repository's git hooks (gitp-core's Hooks).
 export type HookState = "active" | "disabled" | "not_executable" | "missing";
 

@@ -21,6 +21,7 @@ import {
   loadCodePrefs,
   loadDateFormat,
   loadDefaultBranch,
+  loadLocalHistoryEnabled,
   loadReviewCommand,
   loadDetailTab,
   loadPullDefault,
@@ -35,6 +36,7 @@ import {
   saveCodePrefs,
   saveDateFormat,
   saveDefaultBranch,
+  saveLocalHistoryEnabled,
   saveReviewCommand,
   saveDetailTab,
   savePullDefault,
@@ -67,6 +69,8 @@ export interface SettingsActions {
   // The open repo's hooks, or null when no repo is open; switching one off or
   // on; and opening its script in the editor.
   hooks: () => Promise<Hooks | null>;
+  // Turn the working-tree snapshots on or off.
+  setLocalHistory: (on: boolean) => void;
   setHookEnabled: (name: string, enabled: boolean) => Promise<void>;
   openHook: (name: string) => Promise<void>;
   browseFolder: (title: string) => Promise<string | null>;
@@ -292,6 +296,22 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
           hooksList(actions),
           "block",
           "The scripts git runs in this repository. Off renames a hook to <name>.disabled, so it can come back as it was.",
+        ),
+        row(
+          "Local history",
+          segToggle(
+            [
+              { value: true, label: "On" },
+              { value: false, label: "Off" },
+            ],
+            loadLocalHistoryEnabled(),
+            (on) => {
+              saveLocalHistoryEnabled(on);
+              actions.setLocalHistory(on);
+            },
+          ),
+          "inline",
+          "Snapshots of the working tree about twenty seconds after files change, kept 14 days in the repository's own .git, so an uncommitted edit that is overwritten or lost can be brought back from the Local History view.",
         ),
         row("Default branch", defaultBranchField(), "inline", "The branch Init Repository starts a new repository on."),
         row(

@@ -22,6 +22,7 @@ import {
   renameStash,
   revealPath,
   listPullRequests,
+  snapshotNow,
 } from "./api";
 import { showContextMenu } from "./views/context-menu";
 import { openStashApplyModal } from "./views/stash-apply";
@@ -438,6 +439,8 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Save Stash…", detail: shortcutHint("stash"), run: openStashDialogAction },
     { kind: "command", label: "Show Reflog", run: () => showReflog() },
     { kind: "command", label: "Show Activity Log", run: () => showView("activity") },
+    { kind: "command", label: "Local History", detail: "snapshots of the working tree, to bring a lost edit back", run: () => showView("localhistory") },
+    { kind: "command", label: "Snapshot Working Tree Now", run: () => void snapshotNow().then((id) => setStatus(id ? "Snapshot taken." : "Nothing new to snapshot.")) },
     { kind: "command", label: "Switch Repository", next: () => repoStage() },
     { kind: "command", label: "Open Repository…", detail: shortcutHint("openRepo"), run: () => void browseAndOpen() },
     { kind: "command", label: "Clone Repository…", detail: shortcutHint("cloneRepo"), run: cloneRepoAction },
