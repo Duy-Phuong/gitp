@@ -13,6 +13,7 @@ import {
   confirmDialog,
   fetchPullRequest,
   fetchPullRequestFiles,
+  generateReviewDrafts,
   ghAccount,
   ghLoginCancel,
   ghLoginStart,
@@ -34,6 +35,7 @@ import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { loadRepo, loadSidebar, refreshHistory, renderSidebarNow, showPullRequest, showView } from "./shell";
 import { defaultWorktreePath } from "./worktree-actions";
 import { parseReviewFile } from "./review-drafts";
+import { loadReviewCommand } from "./prefs";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
 import { showErrorDialog } from "./views/message-dialog";
@@ -248,6 +250,27 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
       return drafts;
     } catch (err) {
       readFailed("Couldn't read the review file", err);
+      return null;
+    }
+  },
+  generateDrafts: async (pr) => {
+    setStatus(`Generating review drafts for #${pr.number}… (Cancel in the status bar stops it)`);
+    try {
+      const out = await generateReviewDrafts(pr.number, loadReviewCommand());
+      const drafts = parseReviewFile(out);
+      if (drafts.length === 0) {
+        const head = out.trim().length > 600 ? `${out.trim().slice(0, 600)}…` : out.trim();
+        showErrorDialog(
+          "No draft comments in the review command's output",
+          `It printed no "### path/to/file:line" block and no JSON list of {path, line, body}:\n\n${head}`,
+        );
+        setStatus("The review command found nothing to comment on.");
+        return null;
+      }
+      reportDone(`Generated ${drafts.length} draft comment${drafts.length === 1 ? "" : "s"} for #${pr.number}.`);
+      return drafts;
+    } catch (err) {
+      opFailed(`Couldn't generate review drafts for #${pr.number}`, err);
       return null;
     }
   },

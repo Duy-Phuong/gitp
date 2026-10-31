@@ -945,7 +945,7 @@ export function contextControls(ctx: number, disabled: boolean, onChange: (next:
   ];
 }
 
-const WRAP_ICON = ["M4 6h16", "M4 12h13a3 3 0 0 1 0 6h-3", "M16 16l-2 2 2 2", "M4 18h6"];
+export const WRAP_ICON = ["M4 6h16", "M4 12h13a3 3 0 0 1 0 6h-3", "M16 16l-2 2 2 2", "M4 18h6"];
 const IGNORE_WS_ICON = ["M4 10v4h16v-4", "M4 5l16 14"];
 
 // Wrap long lines and Ignore whitespace — persisted preferences (prefs.ts),

@@ -1,6 +1,6 @@
 // The top bar's dropdown menus: Branch and the Pull caret; and the Settings gear.
 
-import { browseForFolder, fetchConfig, saveConfig, unsetConfig } from "./api";
+import { browseForFolder, fetchConfig, listHooks, openHook, saveConfig, setHookEnabled, unsetConfig } from "./api";
 import { clear, el, $ } from "./dom";
 import { state, ui } from "./app-state";
 import { ensureAvatars } from "./avatar";
@@ -167,6 +167,22 @@ export function setupSettingsMenu(): void {
         }
       },
       browseFolder: browseForFolder,
+      hooks: async () => (state.repoPath ? listHooks() : null),
+      setHookEnabled: async (name, enabled) => {
+        try {
+          await setHookEnabled(name, enabled);
+          reportDone(`${name} hook turned ${enabled ? "on" : "off"}`);
+        } catch (err) {
+          opFailed(`Couldn't change the ${name} hook`, err);
+        }
+      },
+      openHook: async (name) => {
+        try {
+          await openHook(name);
+        } catch (err) {
+          opFailed(`Couldn't open the ${name} hook`, err);
+        }
+      },
       redrawDiffs: () => {
         ui.detailView?.redraw();
         // Re-renders from the status it has; the diff itself isn't re-read.

@@ -212,6 +212,20 @@ export type ConfigScope = "Local" | "Global" | "System" | "Other";
 // How far a reset moves the branch (mirrors gitp-core's ResetMode).
 export type ResetMode = "Soft" | "Mixed" | "Hard";
 
+// The repository's git hooks (gitp-core's Hooks).
+export type HookState = "active" | "disabled" | "not_executable" | "missing";
+
+export interface Hook {
+  name: string;
+  state: HookState;
+  path: string;
+}
+
+export interface Hooks {
+  dir: string;
+  hooks: Hook[];
+}
+
 // What merging a branch would come to, without doing it (gitp-core's MergePreview).
 export interface MergePreview {
   clean: boolean;

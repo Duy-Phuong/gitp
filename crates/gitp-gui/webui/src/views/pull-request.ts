@@ -11,8 +11,8 @@
 
 import { clear, el, githubIcon } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
-import { iconBtn, renderFile, renderSplitDiff } from "./detail";
-import { loadPrDiffSplit, loadPrFilesTree, savePrDiffSplit, savePrFilesTree } from "../prefs";
+import { iconBtn, renderFile, renderSplitDiff, WRAP_ICON } from "./detail";
+import { loadDiffWrap, loadPrDiffSplit, loadPrFilesTree, saveDiffWrap, savePrDiffSplit, savePrFilesTree } from "../prefs";
 import { renderFileTree } from "./tree";
 import {
   checksSummary,
@@ -50,6 +50,9 @@ export interface PullRequestCallbacks {
   // Picks and reads a review file; its findings, or null when nothing was
   // picked (the caller has reported why).
   loadDrafts: (pr: PullRequestDetail) => Promise<DraftComment[] | null>;
+  // Runs the review command over the diff; its findings, or null when it
+  // failed or found nothing (the caller has reported why).
+  generateDrafts: (pr: PullRequestDetail) => Promise<DraftComment[] | null>;
   // Posts one review with `comments` after the user confirms; true once it is
   // on GitHub.
   postReview: (pr: PullRequestDetail, verdict: ReviewVerdict, body: string, comments: LineComment[]) => Promise<boolean>;
@@ -182,7 +185,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       button("Check Out", () => cb.checkout(pr), `gh pr checkout ${pr.number}: a local branch tracking ${pr.head}`),
       button("Check Out in New Worktree…", (e) => cb.checkoutInWorktree(pr, e.clientX, e.clientY)),
       button("Review ▾", (e) => cb.reviewMenu(pr, e.clientX, e.clientY), "Approve, request changes or comment"),
-      button("Load Review File…", () => void loadDrafts(pr), "Read a review's findings as draft comments, to approve or discard before posting"),
+      button("Generate Drafts", () => void loadDrafts(pr, cb.generateDrafts), "Run the review command (Settings → Git) over the diff; its findings become draft comments to approve or discard"),
+      button("Load Review File…", () => void loadDrafts(pr, cb.loadDrafts), "Read a review's findings as draft comments, to approve or discard before posting"),
       open,
       button("Refresh", () => void load(false), "Read it again from GitHub"),
     ]);
@@ -374,6 +378,18 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       iconBtn(["M4 6h16", "M4 12h16", "M4 18h16"], "Unified", false, () => setSplit(false), !split),
       iconBtn(["M4 5h16v14H4z", "M12 5v14"], "Split", false, () => setSplit(true), split),
     ]);
+    // The same Wrap setting as the commit and Local Changes diffs.
+    const wrap = loadDiffWrap();
+    const wrapToggle = iconBtn(
+      WRAP_ICON,
+      split ? "Wrap long lines (the split view always wraps)" : "Wrap long lines",
+      split,
+      () => {
+        saveDiffWrap(!wrap);
+        render();
+      },
+      wrap && !split,
+    );
     const treeToggle = iconBtn(
       ["M4 5h16v14H4z", "M9 5v14", "M5.5 9h2", "M5.5 12h2"],
       treeShown ? "Hide the file tree" : "Show the file tree",
@@ -387,11 +403,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     );
     const columns = el("div", { class: "pr-files-layout" });
     if (treeShown) columns.append(tree);
-    columns.append(el("div", { class: "pr-files-diffs" }, nodes));
+    columns.append(el("div", { class: `pr-files-diffs${wrap && !split ? " wrap-lines" : ""}` }, nodes));
     body.append(
       el("div", { class: "pr-files-bar" }, [
         el("div", { class: "tb-group" }, [treeToggle]),
         layout,
+        el("div", { class: "tb-group" }, [wrapToggle]),
         search,
         count,
         el("span", { class: "pr-files-hint", text: "Click a line to comment on it." }),
@@ -476,8 +493,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
 
   // Read a review file's findings into the Drafts tab. The changed files are
   // loaded too, so each draft can say whether its line is in the diff.
-  async function loadDrafts(pr: PullRequestDetail): Promise<void> {
-    const found = await cb.loadDrafts(pr);
+  async function loadDrafts(pr: PullRequestDetail, source: (pr: PullRequestDetail) => Promise<DraftComment[] | null>): Promise<void> {
+    const found = await source(pr);
     if (!found || number !== pr.number) return;
     if (!files) {
       try {

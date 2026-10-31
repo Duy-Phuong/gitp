@@ -28,6 +28,7 @@ import type {
   DiffToolTarget,
   LogPage,
   MergeMode,
+  Hooks,
   MergePreview,
   LogScope,
   PickPlanOutcome,
@@ -1973,6 +1974,48 @@ export async function commentOnLine(number: number, comment: LineComment): Promi
     return made;
   }
   return invoke<PrReviewComment>("gh_line_comment", { number, comment });
+}
+
+// The repository's git hooks and their state.
+export async function listHooks(): Promise<Hooks> {
+  if (!isTauri()) return structuredClone(MOCK_HOOKS);
+  return invoke<Hooks>("list_hooks", {});
+}
+
+// Switch a hook off (renamed to <name>.disabled) or back on.
+export async function setHookEnabled(name: string, enabled: boolean): Promise<void> {
+  if (!isTauri()) {
+    const hook = MOCK_HOOKS.hooks.find((h) => h.name === name);
+    if (hook) hook.state = enabled ? "active" : "disabled";
+    return;
+  }
+  await invoke<void>("set_hook_enabled", { name, enabled });
+}
+
+// Open a hook's script in the editor.
+export async function openHook(name: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("open_hook", { name });
+}
+
+const MOCK_HOOKS: Hooks = {
+  dir: "/Users/you/Documents/mideal/.git/hooks",
+  hooks: [
+    { name: "pre-commit", state: "active", path: "/Users/you/Documents/mideal/.git/hooks/pre-commit" },
+    { name: "commit-msg", state: "not_executable", path: "/Users/you/Documents/mideal/.git/hooks/commit-msg" },
+    { name: "pre-push", state: "disabled", path: "/Users/you/Documents/mideal/.git/hooks/pre-push" },
+    { name: "post-merge", state: "missing", path: "/Users/you/Documents/mideal/.git/hooks/post-merge" },
+  ],
+};
+
+// Run the review command over the pull request's diff; resolves with what it
+// printed. A network operation: progress in the status bar, Cancel stops it.
+export async function generateReviewDrafts(number: number, command: string): Promise<string> {
+  if (!isTauri()) {
+    await new Promise((r) => setTimeout(r, 800));
+    return MOCK_REVIEW_FILE;
+  }
+  return invoke<string>("gh_generate_review", { number, command });
 }
 
 // Pick a review file (Markdown or JSON) in the file dialog; null when the

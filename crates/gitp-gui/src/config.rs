@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use gitp_core::{ConfigEntry, ConfigScope, Identity};
+use gitp_core::{ConfigEntry, ConfigScope, Hooks, Identity};
 use serde::Deserialize;
 use tauri::State;
 
@@ -24,6 +24,37 @@ fn set_config_impl(
 
 fn unset_config_impl(state: &RepoState, scope: ConfigScope, name: String) -> Result<(), String> {
     with_repo(state, |repo| repo.unset_config(scope, &name))
+}
+
+// --- Hooks -------------------------------------------------------------------
+
+fn list_hooks_impl(state: &RepoState) -> Result<Hooks, String> {
+    with_repo(state, |repo| repo.hooks())
+}
+
+fn set_hook_enabled_impl(state: &RepoState, name: String, enabled: bool) -> Result<(), String> {
+    with_repo(state, |repo| repo.set_hook_enabled(&name, enabled))
+}
+
+/// Open hook `name`'s script in the editor (the disabled copy when that is
+/// what there is).
+fn open_hook_impl(state: &RepoState, name: String) -> Result<(), String> {
+    let hooks = list_hooks_impl(state)?;
+    let hook = hooks
+        .hooks
+        .iter()
+        .find(|h| h.name == name)
+        .ok_or_else(|| format!("{name} is not a git hook"))?;
+    let path = Path::new(&hook.path);
+    let disabled = path.with_file_name(format!("{name}.disabled"));
+    let target = if path.is_file() {
+        path
+    } else if disabled.is_file() {
+        &disabled
+    } else {
+        return Err(format!("there is no {name} hook to open"));
+    };
+    crate::os::open_file_in_editor(target)
 }
 
 // --- Profile identity (user.name / user.email / user.signingkey) -----------
@@ -95,6 +126,25 @@ fn home_dir() -> Result<std::path::PathBuf, String> {
 }
 
 // --- Tauri commands --------------------------------------------------------
+
+#[tauri::command(async)]
+pub(crate) fn list_hooks(state: State<RepoState>) -> Result<Hooks, String> {
+    list_hooks_impl(&state)
+}
+
+#[tauri::command(async)]
+pub(crate) fn set_hook_enabled(
+    name: String,
+    enabled: bool,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    set_hook_enabled_impl(&state, name, enabled)
+}
+
+#[tauri::command(async)]
+pub(crate) fn open_hook(name: String, state: State<RepoState>) -> Result<(), String> {
+    open_hook_impl(&state, name)
+}
 
 #[tauri::command(async)]
 pub(crate) fn get_config(state: State<RepoState>) -> Result<Vec<ConfigEntry>, String> {

@@ -814,6 +814,66 @@ impl Repo {
         Ok(self.gh_call(gh, &target, &args, input, TIMEOUT)?.combined())
     }
 
+    /// The diff of pull request `number` as `gh pr diff` prints it.
+    pub fn pull_request_diff(&self, gh: &Gh, number: u64) -> Result<String> {
+        let target = self.github_target()?;
+        let repo = target.repo_arg();
+        let n = number.to_string();
+        let args = ["pr", "diff", &n, "--repo", &repo];
+        Ok(
+            String::from_utf8_lossy(&self.gh_call(gh, &target, &args, None, TIMEOUT)?.stdout)
+                .into_owned(),
+        )
+    }
+
+    /// Run the user's review `command` over pull request `number`'s diff and
+    /// return what it printed — a review in the shape the Drafts tab reads.
+    ///
+    /// The command is a shell line, run by a login shell so it finds the same
+    /// programs a terminal would (`claude`, say). The diff arrives on its
+    /// stdin; `GITP_PR_NUMBER`, `GITP_PR_REPO` and `GITP_PR_URL` are set. It
+    /// gets [`REVIEW_TIMEOUT`], and Cancel stops it like a fetch.
+    pub fn generate_review_drafts(&self, gh: &Gh, number: u64, command: &str) -> Result<String> {
+        let command = command.trim();
+        if command.is_empty() {
+            return Err(Error::Message(
+                "Set a review command in Settings → Git first.".into(),
+            ));
+        }
+        let target = self.github_target()?;
+        let diff = self.pull_request_diff(gh, number)?;
+        if diff.trim().is_empty() {
+            return Err(Error::Message(
+                "The pull request has no diff to review.".into(),
+            ));
+        }
+        let url = format!("https://{}/{}/pull/{number}", target.host, target.path);
+        let env = [
+            ("GITP_PR_NUMBER", number.to_string()),
+            ("GITP_PR_REPO", target.repo_arg()),
+            ("GITP_PR_URL", url),
+        ];
+        let out = run_shell(
+            self.workdir(),
+            command,
+            diff.as_bytes(),
+            &env,
+            REVIEW_TIMEOUT,
+            self.net.cancel.as_deref(),
+        )?;
+        if out.stdout.trim().is_empty() {
+            return Err(Error::Message(format!(
+                "The review command printed nothing.{}",
+                if out.stderr.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("\n\n{}", out.stderr.trim())
+                }
+            )));
+        }
+        Ok(out.stdout)
+    }
+
     /// Review pull request `number` in one go: the verdict, an optional
     /// message and `comments` on lines of its diff, posted together as one
     /// review (`POST /pulls/{n}/reviews`), so the author gets one
@@ -927,6 +987,98 @@ impl Repo {
         let raw: RawReviewComment = parse_json(&out.stdout)?;
         Ok(raw.into())
     }
+}
+
+/// How long a review command may run: a model reading a big diff takes
+/// minutes, not seconds.
+pub const REVIEW_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
+/// Run shell line `command` in `dir` with `input` on stdin and `env` set,
+/// waiting at most `timeout` and only until `cancel` goes up. Fails with the
+/// command's stderr when it exits non-zero.
+fn run_shell(
+    dir: &Path,
+    command: &str,
+    input: &[u8],
+    env: &[(&str, String)],
+    timeout: Duration,
+    cancel: Option<&AtomicBool>,
+) -> Result<ShellOutput> {
+    let mut cmd = Command::new("/bin/sh");
+    cmd.args(["-lc", command])
+        .current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| Error::Message(format!("failed to run the review command: {e}")))?;
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    let input = input.to_vec();
+    thread::spawn(move || {
+        let _ = stdin.write_all(&input);
+    });
+    let stdout = drain(child.stdout.take().expect("stdout is piped"));
+    let stderr = drain(child.stderr.take().expect("stderr is piped"));
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(e) => {
+                return Err(Error::Message(format!(
+                    "failed to run the review command: {e}"
+                )))
+            }
+        }
+        if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+            return Err(kill(child));
+        }
+        if Instant::now() >= deadline {
+            kill(child);
+            return Err(Error::Message(format!(
+                "The review command didn't finish within {} minutes, so it was stopped.",
+                timeout.as_secs() / 60
+            )));
+        }
+        thread::sleep(POLL);
+    };
+    let out = ShellOutput {
+        stdout: String::from_utf8_lossy(&stdout.join().unwrap_or_default()).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr.join().unwrap_or_default()).into_owned(),
+    };
+    if status.success() {
+        Ok(out)
+    } else {
+        let detail = if out.stderr.trim().is_empty() {
+            out.stdout.trim().to_string()
+        } else {
+            out.stderr.trim().to_string()
+        };
+        Err(Error::Message(format!(
+            "The review command failed{}.{}",
+            status
+                .code()
+                .map(|c| format!(" (exit code {c})"))
+                .unwrap_or_default(),
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!("\n\n{detail}")
+            }
+        )))
+    }
+}
+
+struct ShellOutput {
+    stdout: String,
+    stderr: String,
 }
 
 const LIST_FIELDS: &str = "number,title,author,isDraft,reviewDecision,statusCheckRollup,\
@@ -1679,6 +1831,39 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         "path": "src/lib.rs", "line": 14, "original_line": 14, "side": "RIGHT",
         "created_at": "2026-10-30T09:00:00Z", "html_url": "https://github.com/octo/hello/pull/7#discussion_r101",
         "diff_hunk": "@@ -10,3 +10,5 @@"}"#;
+
+    #[test]
+    fn the_review_command_gets_the_diff_on_stdin_and_the_pull_request_in_its_environment() {
+        let fake = Fake::new();
+        fake.answer("pr diff", "diff --git a/x b/x\n+hello\n", "", 0);
+        let (_dir, repo) = github_repo();
+        let out = repo
+            .generate_review_drafts(
+                &fake.gh(),
+                7,
+                "printf '%s|%s|%s|' \"$GITP_PR_NUMBER\" \"$GITP_PR_REPO\" \"$GITP_PR_URL\"; cat",
+            )
+            .unwrap();
+        assert_eq!(
+            out,
+            "7|octo/hello|https://github.com/octo/hello/pull/7|diff --git a/x b/x\n+hello\n"
+        );
+        assert_eq!(fake.calls(), [["pr", "diff", "7", "--repo", "octo/hello"]]);
+
+        let err = repo
+            .generate_review_drafts(&fake.gh(), 7, "echo 'no model today' >&2; exit 3")
+            .unwrap_err();
+        let text = message(err);
+        assert!(
+            text.contains("exit code 3") && text.contains("no model today"),
+            "{text}"
+        );
+        let err = repo
+            .generate_review_drafts(&fake.gh(), 7, "true")
+            .unwrap_err();
+        assert!(message(err).contains("printed nothing"));
+        assert!(repo.generate_review_drafts(&fake.gh(), 7, "  ").is_err());
+    }
 
     #[test]
     fn a_review_with_comments_posts_them_all_as_one_review() {

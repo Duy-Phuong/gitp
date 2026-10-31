@@ -160,6 +160,22 @@ fn gh_review_with_comments_impl(
     })
 }
 
+/// Run the user's review command over the pull request's diff: a network
+/// operation like a fetch, so it shows progress, offers Cancel and holds no
+/// lock while the model thinks.
+fn gh_generate_review_impl(
+    state: &RepoState,
+    number: u64,
+    command: String,
+) -> Result<String, String> {
+    with_repo_networked(
+        state,
+        "review",
+        |repo| repo.generate_review_drafts(&Gh::system(), number, &command),
+        |_| {},
+    )
+}
+
 /// How big a review file may be: a review is text, and this is far past any.
 const REVIEW_FILE_LIMIT: u64 = 8 * 1024 * 1024;
 
@@ -318,6 +334,15 @@ pub(crate) fn gh_review_with_comments(
     state: State<RepoState>,
 ) -> Result<String, String> {
     gh_review_with_comments_impl(&state, number, verdict, body, comments)
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_generate_review(
+    number: u64,
+    command: String,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    gh_generate_review_impl(&state, number, command)
 }
 
 #[tauri::command(async)]
