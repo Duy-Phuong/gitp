@@ -11,6 +11,7 @@ import { AutoSave, CodeEditor, type CodeEditorDeps, type EditorLike } from "./ed
 import { buildTree, renderExplorer, revealPath, type ExplorerState } from "./explorer";
 import { NavStack } from "./nav-stack";
 import { openQuickOpen } from "./quick-open";
+import { setupSearchPanel } from "./search-panel";
 import { setupCodeShortcuts, type CodeAction } from "./shortcuts";
 import { Tabs } from "./tabs";
 
@@ -69,6 +70,37 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   const explorerHost = part("code-explorer");
   const tabsHost = part("code-tabs");
   const editorHost = part("code-editor");
+  const panelHost = part("code-panel");
+  const panelDivider = part("code-panel-divider");
+
+  // The bottom panel: one pane showing at a time, each with its own body.
+  type Pane = "search" | "usages" | "hierarchy";
+  const paneBar = el("div", { class: "code-pane-bar" });
+  const paneBodies: Record<Pane, HTMLElement> = {
+    search: el("div", { class: "code-pane" }),
+    usages: el("div", { class: "code-pane" }),
+    hierarchy: el("div", { class: "code-pane" }),
+  };
+  const paneButtons: Record<Pane, HTMLElement> = { search: el("button"), usages: el("button"), hierarchy: el("button") };
+  const showPane = (which: Pane | null) => {
+    panelHost.classList.toggle("hidden", !which);
+    panelDivider.classList.toggle("hidden", !which);
+    for (const [name, body] of Object.entries(paneBodies) as [Pane, HTMLElement][]) {
+      body.classList.toggle("hidden", name !== which);
+      paneButtons[name].classList.toggle("active", name === which);
+    }
+  };
+  for (const [name, label] of [["search", "Search"], ["usages", "Usages"], ["hierarchy", "Call hierarchy"]] as [Pane, string][]) {
+    const btn = el("button", { class: "code-pane-tab", type: "button" }, [label]);
+    btn.addEventListener("click", () => showPane(name));
+    paneButtons[name] = btn;
+    paneBar.append(btn);
+  }
+  const closePanel = el("button", { class: "code-pane-close", type: "button", title: "Close panel" }, ["×"]);
+  closePanel.addEventListener("click", () => showPane(null));
+  paneBar.append(closePanel);
+  clear(panelHost);
+  panelHost.append(paneBar, paneBodies.search, paneBodies.usages, paneBodies.hierarchy);
 
   let files: FileEntry[] = [];
   let opened = false;
@@ -202,6 +234,10 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
         if (a) void closeTab(a);
         break;
       }
+      case "findInFiles":
+        showPane("search");
+        searchPanel.focus();
+        break;
       case "quickOpen":
         openQuickOpen(files, (path, reveal) => {
           void openFile({ path, line: 0, col: 0 }).then(() => {
@@ -214,6 +250,11 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     }
   };
   setupCodeShortcuts(deps.isShowing, runAction);
+
+  const searchPanel = setupSearchPanel(paneBodies.search, {
+    search: (q) => deps.api.codeSearch(q),
+    jump: (loc, endCol) => void openFile(loc, { endCol }),
+  });
 
   const renderTabs = () => {
     clear(tabsHost);

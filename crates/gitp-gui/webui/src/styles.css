@@ -6059,3 +6059,122 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   font-family: var(--mono);
   font-size: 11.5px;
 }
+.code-pane-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  position: sticky;
+  top: 0;
+}
+.code-pane-tab {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 4px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.code-pane-tab.active {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+.code-pane-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0 6px;
+}
+.code-pane.hidden {
+  display: none;
+}
+.code-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+}
+.code-search-input {
+  flex: 1 1 auto;
+  min-width: 120px;
+}
+.code-search-glob {
+  flex: 0 1 220px;
+  min-width: 100px;
+}
+.code-search-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.code-search-toggle.on {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.code-search-summary {
+  padding: 0 10px 4px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+.code-search-error {
+  padding: 6px 10px;
+  color: var(--danger, #e5484d);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.code-search-file > summary {
+  display: flex;
+  gap: 8px;
+  padding: 3px 10px;
+  cursor: pointer;
+  color: var(--text);
+  list-style: none;
+}
+.code-search-file > summary::before {
+  content: "▾";
+  color: var(--text-dim);
+  width: 10px;
+}
+.code-search-file:not([open]) > summary::before {
+  content: "▸";
+}
+.code-search-count {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.code-search-hit {
+  display: flex;
+  gap: 10px;
+  padding: 1px 10px 1px 28px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.code-search-hit:hover {
+  background: var(--bg-elev);
+}
+.code-search-line {
+  color: var(--text-dim);
+  min-width: 3ch;
+  text-align: right;
+}
+.code-search-hit mark {
+  background: var(--accent-soft);
+  color: var(--text);
+  border-radius: 2px;
+}
