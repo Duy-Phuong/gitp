@@ -148,6 +148,36 @@ fn gh_line_comment_impl(
     })
 }
 
+fn gh_review_with_comments_impl(
+    state: &RepoState,
+    number: u64,
+    verdict: ReviewVerdict,
+    body: String,
+    comments: Vec<LineComment>,
+) -> Result<String, String> {
+    with_repo_unlocked(state, |repo| {
+        repo.review_with_comments(&Gh::system(), number, verdict, &body, &comments)
+    })
+}
+
+/// How big a review file may be: a review is text, and this is far past any.
+const REVIEW_FILE_LIMIT: u64 = 8 * 1024 * 1024;
+
+/// The text of a review file the user picked in the file dialog — the
+/// findings of a review written outside gitp, to load as draft comments. Any
+/// path: the dialog chose it, and the file is read as text only.
+fn read_review_file_impl(path: String) -> Result<String, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| format!("can't read {path}: {e}"))?;
+    if !meta.is_file() {
+        return Err(format!("{path} is not a file"));
+    }
+    if meta.len() > REVIEW_FILE_LIMIT {
+        return Err(format!("{path} is too big to be a review file"));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("can't read {path}: {e}"))?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 /// Start a sign-in, stopping one already waiting (a second click on Sign In).
 fn gh_login_start_impl(logins: &GhLoginState) -> Result<DeviceCode, String> {
     gh_login_cancel_impl(logins);
@@ -277,6 +307,22 @@ pub(crate) fn gh_reply(
     state: State<RepoState>,
 ) -> Result<PrReviewComment, String> {
     gh_reply_impl(&state, number, comment_id, body)
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_review_with_comments(
+    number: u64,
+    verdict: ReviewVerdict,
+    body: String,
+    comments: Vec<LineComment>,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    gh_review_with_comments_impl(&state, number, verdict, body, comments)
+}
+
+#[tauri::command(async)]
+pub(crate) fn read_review_file(path: String) -> Result<String, String> {
+    read_review_file_impl(path)
 }
 
 #[tauri::command(async)]

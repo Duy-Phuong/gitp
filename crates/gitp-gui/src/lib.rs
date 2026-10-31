@@ -208,6 +208,8 @@ pub fn run() {
             gh::gh_review,
             gh::gh_reply,
             gh::gh_line_comment,
+            gh::gh_review_with_comments,
+            gh::read_review_file,
             gh::gh_login_start,
             gh::gh_login_wait,
             gh::gh_login_cancel,

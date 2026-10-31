@@ -814,6 +814,63 @@ impl Repo {
         Ok(self.gh_call(gh, &target, &args, input, TIMEOUT)?.combined())
     }
 
+    /// Review pull request `number` in one go: the verdict, an optional
+    /// message and `comments` on lines of its diff, posted together as one
+    /// review (`POST /pulls/{n}/reviews`), so the author gets one
+    /// notification and one review to answer. Returns the review's URL.
+    /// Without comments it is a plain [`Repo::review_pull_request`].
+    pub fn review_with_comments(
+        &self,
+        gh: &Gh,
+        number: u64,
+        verdict: ReviewVerdict,
+        body: &str,
+        comments: &[LineComment],
+    ) -> Result<String> {
+        let body = body.trim();
+        if comments.is_empty() {
+            return self.review_pull_request(gh, number, verdict, body);
+        }
+        if body.is_empty() && verdict == ReviewVerdict::RequestChanges {
+            return Err(Error::Message(
+                "Write what the review says: GitHub needs a message to request changes.".into(),
+            ));
+        }
+        for c in comments {
+            required_body(&c.body)?;
+        }
+        let target = self.github_target()?;
+        let endpoint = format!("repos/{}/pulls/{number}/reviews", target.path);
+        let event = match verdict {
+            ReviewVerdict::Approve => "APPROVE",
+            ReviewVerdict::RequestChanges => "REQUEST_CHANGES",
+            ReviewVerdict::Comment => "COMMENT",
+        };
+        let input = serde_json::json!({
+            "commit_id": comments[0].commit_id,
+            "event": event,
+            "body": body,
+            "comments": comments.iter().map(|c| serde_json::json!({
+                "path": c.path,
+                "line": c.line,
+                "side": c.side,
+                "body": c.body.trim(),
+            })).collect::<Vec<_>>(),
+        })
+        .to_string();
+        let mut args = Vec::new();
+        target.api(&mut args);
+        args.extend(["--method", "POST", &endpoint, "--input", "-"]);
+        let out = self.gh_call(gh, &target, &args, Some(input.as_bytes()), TIMEOUT)?;
+        #[derive(Deserialize)]
+        struct RawReview {
+            #[serde(default)]
+            html_url: String,
+        }
+        let made: RawReview = parse_json(&out.stdout)?;
+        Ok(made.html_url)
+    }
+
     /// Reply in the thread of line comment `comment_id` on pull request
     /// `number`.
     pub fn reply_to_review_comment(
@@ -1622,6 +1679,82 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         "path": "src/lib.rs", "line": 14, "original_line": 14, "side": "RIGHT",
         "created_at": "2026-10-30T09:00:00Z", "html_url": "https://github.com/octo/hello/pull/7#discussion_r101",
         "diff_hunk": "@@ -10,3 +10,5 @@"}"#;
+
+    #[test]
+    fn a_review_with_comments_posts_them_all_as_one_review() {
+        let fake = Fake::new();
+        fake.answer(
+            "api --method",
+            r#"{"id": 9, "html_url": "https://github.com/octo/hello/pull/7#pullrequestreview-9"}"#,
+            "",
+            0,
+        );
+        let (_dir, repo) = github_repo();
+        let comment = |line: u32, body: &str| LineComment {
+            path: "src/lib.rs".into(),
+            line,
+            side: DiffSide::Right,
+            commit_id: "abc123".into(),
+            body: body.into(),
+        };
+        let url = repo
+            .review_with_comments(
+                &fake.gh(),
+                7,
+                ReviewVerdict::RequestChanges,
+                "Two things",
+                &[comment(14, "Nit"), comment(20, "  Bug  ")],
+            )
+            .unwrap();
+        assert_eq!(
+            url,
+            "https://github.com/octo/hello/pull/7#pullrequestreview-9"
+        );
+        assert_eq!(
+            fake.calls(),
+            [[
+                "api",
+                "--method",
+                "POST",
+                "repos/octo/hello/pulls/7/reviews",
+                "--input",
+                "-"
+            ]]
+        );
+        let sent: serde_json::Value = serde_json::from_str(&fake.read("stdin")).unwrap();
+        assert_eq!(
+            sent,
+            serde_json::json!({"commit_id": "abc123", "event": "REQUEST_CHANGES", "body": "Two things",
+            "comments": [
+                {"path": "src/lib.rs", "line": 14, "side": "RIGHT", "body": "Nit"},
+                {"path": "src/lib.rs", "line": 20, "side": "RIGHT", "body": "Bug"}
+            ]})
+        );
+
+        // Requesting changes needs a message; an empty comment is refused
+        // before anything is sent.
+        let err = repo
+            .review_with_comments(
+                &fake.gh(),
+                7,
+                ReviewVerdict::RequestChanges,
+                "",
+                &[comment(1, "x")],
+            )
+            .unwrap_err();
+        assert!(message(err).contains("needs a message"));
+        let err = repo
+            .review_with_comments(
+                &fake.gh(),
+                7,
+                ReviewVerdict::Comment,
+                "",
+                &[comment(1, " ")],
+            )
+            .unwrap_err();
+        assert!(message(err).contains("Write a comment first"));
+        assert_eq!(fake.calls().len(), 1);
+    }
 
     #[test]
     fn a_line_comment_posts_json_on_stdin_to_the_review_comments_endpoint() {
