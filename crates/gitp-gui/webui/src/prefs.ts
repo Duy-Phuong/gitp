@@ -614,3 +614,23 @@ export function saveReviewCommand(command: string): void {
   if (command.trim() === DEFAULT_REVIEW_COMMAND || !command.trim()) localStorage.removeItem(REVIEW_COMMAND_KEY);
   else localStorage.setItem(REVIEW_COMMAND_KEY, command.trim());
 }
+
+// The commands Quick Launch ran most recently, newest first, so they can be
+// offered at the top next time. By label: the command list is rebuilt on
+// every opening, and a label that no longer exists is simply not shown.
+const RECENT_COMMANDS_KEY = "gitp-ql-recent-commands";
+export const RECENT_COMMANDS_LIMIT = 6;
+
+export function loadRecentCommands(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENT_COMMANDS_KEY) ?? "[]");
+    return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function rememberCommand(label: string): void {
+  const next = [label, ...loadRecentCommands().filter((l) => l !== label)].slice(0, RECENT_COMMANDS_LIMIT);
+  localStorage.setItem(RECENT_COMMANDS_KEY, JSON.stringify(next));
+}

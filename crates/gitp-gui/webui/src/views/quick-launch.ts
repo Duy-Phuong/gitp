@@ -41,6 +41,9 @@ export interface QuickStage {
   /// Shown instead of "No matches." when the stage has no items at all, so an
   /// empty picker can explain itself ("this repository has no stashes").
   emptyNote?: string;
+  /// Called with the item picked in this stage (run, or its picker pushed) —
+  /// the first stage remembers commands this way.
+  onPick?: (item: QuickItem) => void;
 }
 
 /// How well `item` matches `query`, or null for no match.
@@ -54,21 +57,34 @@ export function scoreItem(item: QuickItem, query: string): number | null {
   if (!q) return 0;
   const label = item.label.toLowerCase();
 
-  if (label === q) return 1000;
-  if (label.startsWith(q)) return 900 - label.length;
-  if (label.includes(q)) return 700 - label.indexOf(q);
+  const whole = scoreLabel(label, q);
+  if (whole !== null) return whole;
 
-  // Word-initials: "cb" → "Checkout Branch".
-  const initials = label.split(/[^a-z0-9]+/).filter(Boolean).map((w) => w[0]).join("");
-  if (initials.startsWith(q)) return 600;
-
-  const sub = subsequenceScore(label, q);
-  if (sub !== null) return 400 + sub;
+  // Several words in any order: "branch create" finds Create Branch. Each word
+  // has to hit the label on its own; the weakest hit sets the score, kept
+  // under a substring hit of the whole phrase so the in-order spelling wins.
+  const words = q.split(/\s+/).filter(Boolean);
+  if (words.length > 1) {
+    const scores = words.map((w) => scoreLabel(label, w));
+    if (scores.every((s): s is number => s !== null)) return 650 + Math.min(...scores) / 10;
+  }
 
   // Detail text matches last: a path or directory is context, not the name.
   const detail = item.detail?.toLowerCase();
   if (detail?.includes(q)) return 200 - detail.indexOf(q);
   return null;
+}
+
+// How well `q` hits `label` alone: exact, prefix, substring, word initials
+// ("cb" → "checkout branch"), then scattered characters.
+function scoreLabel(label: string, q: string): number | null {
+  if (label === q) return 1000;
+  if (label.startsWith(q)) return 900 - label.length;
+  if (label.includes(q)) return 700 - label.indexOf(q);
+  const initials = label.split(/[^a-z0-9]+/).filter(Boolean).map((w) => w[0]).join("");
+  if (initials.startsWith(q)) return 600;
+  const sub = subsequenceScore(label, q);
+  return sub === null ? null : 400 + sub;
 }
 
 // Characters of `q` appearing in order in `text`; scored by how tightly
@@ -158,8 +174,15 @@ export function showQuickLaunch(first: QuickStage): void {
     spellcheck: "false",
     autocomplete: "off",
     "aria-label": "Quick Launch search",
+    role: "combobox",
+    "aria-expanded": "true",
+    "aria-controls": "ql-listbox",
+    "aria-autocomplete": "list",
   }) as HTMLInputElement;
-  const list = el("div", { class: "ql-list", role: "listbox" });
+  const list = el("div", { class: "ql-list", role: "listbox", id: "ql-listbox" });
+  // The rows on screen, by index, so moving the selection repaints two rows
+  // rather than the whole list.
+  let rows: HTMLElement[] = [];
   const hint = el("div", { class: "ql-hint", text: "↑↓ to move · ↵ to run · esc to close" });
 
   bar.append(searchIcon());
@@ -182,6 +205,23 @@ export function showQuickLaunch(first: QuickStage): void {
     bar.append(input);
   }
 
+  // Move the highlight to row `i`: the two rows change, the input says which
+  // option is current (for a screen reader), and the row is scrolled to.
+  function select(i: number): void {
+    rows[selected]?.classList.remove("selected");
+    rows[selected]?.setAttribute("aria-selected", "false");
+    selected = i;
+    const row = rows[i];
+    if (!row) {
+      input.removeAttribute("aria-activedescendant");
+      return;
+    }
+    row.classList.add("selected");
+    row.setAttribute("aria-selected", "true");
+    input.setAttribute("aria-activedescendant", row.id);
+    row.scrollIntoView({ block: "nearest" });
+  }
+
   function renderList(): void {
     const all = filterSections(stage().sections, input.value);
     const total = all.reduce((n, s) => n + s.items.length, 0);
@@ -190,7 +230,9 @@ export function showQuickLaunch(first: QuickStage): void {
     if (selected >= visible.length) selected = Math.max(0, visible.length - 1);
 
     clear(list);
+    rows = [];
     if (!visible.length) {
+      input.removeAttribute("aria-activedescendant");
       const nothingToShow = stage().sections.every((s) => s.items.length === 0);
       list.append(
         el("div", {
@@ -210,21 +252,21 @@ export function showQuickLaunch(first: QuickStage): void {
         const row = el("div", {
           class: `ql-row${i === selected ? " selected" : ""}`,
           role: "option",
+          id: `ql-opt-${i}`,
           "aria-selected": i === selected ? "true" : "false",
         });
         row.append(icon(item.kind), el("span", { class: "ql-label", text: item.label }));
         if (item.detail) row.append(el("span", { class: "ql-detail", text: item.detail }));
         // mousedown, not click: the input keeps focus and the row can't be
-        // "clicked" out from under a re-render triggered by hovering.
+        // "clicked" out from under a repaint triggered by hovering.
         row.addEventListener("mousedown", (e) => {
           e.preventDefault();
           void choose(item);
         });
         row.addEventListener("mousemove", () => {
-          if (selected === i) return;
-          selected = i;
-          renderList();
+          if (selected !== i) select(i);
         });
+        rows.push(row);
         list.append(row);
       }
     }
@@ -236,10 +278,12 @@ export function showQuickLaunch(first: QuickStage): void {
         }),
       );
     }
-    list.querySelector(".ql-row.selected")?.scrollIntoView({ block: "nearest" });
+    rows[selected]?.scrollIntoView({ block: "nearest" });
+    if (rows[selected]) input.setAttribute("aria-activedescendant", rows[selected].id);
   }
 
   async function choose(item: QuickItem): Promise<void> {
+    stage().onPick?.(item);
     if (item.next) {
       // Building a stage can mean a round trip (the file picker reads the whole
       // tree). Say so: without this the palette sits there looking as though
@@ -289,16 +333,31 @@ export function showQuickLaunch(first: QuickStage): void {
     renderList();
   });
 
+  // About a screen of rows, for PageUp / PageDown.
+  const PAGE = 10;
   onKey = (e: KeyboardEvent) => {
     if (!open) return;
+    const n = visible.length;
     if (e.key === "ArrowDown" || (e.key === "n" && e.ctrlKey)) {
       e.preventDefault();
-      if (visible.length) selected = (selected + 1) % visible.length;
-      renderList();
+      if (n) select((selected + 1) % n);
     } else if (e.key === "ArrowUp" || (e.key === "p" && e.ctrlKey)) {
       e.preventDefault();
-      if (visible.length) selected = (selected - 1 + visible.length) % visible.length;
-      renderList();
+      if (n) select((selected - 1 + n) % n);
+    } else if (e.key === "PageDown") {
+      e.preventDefault();
+      if (n) select(Math.min(n - 1, selected + PAGE));
+    } else if (e.key === "PageUp") {
+      e.preventDefault();
+      if (n) select(Math.max(0, selected - PAGE));
+    } else if (e.key === "Home" && input.selectionStart === 0 && input.selectionEnd === 0) {
+      // With the caret at the start, Home has nothing left to do in the
+      // field, so it takes the list to the top; End likewise at the end.
+      e.preventDefault();
+      if (n) select(0);
+    } else if (e.key === "End" && input.selectionStart === input.value.length) {
+      e.preventDefault();
+      if (n) select(n - 1);
     } else if (e.key === "Enter") {
       e.preventDefault();
       const item = visible[selected];
