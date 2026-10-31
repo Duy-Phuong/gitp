@@ -23,6 +23,9 @@ export interface FileTreeCallbacks {
   onFileContextMenu?: (path: string, e: MouseEvent) => void;
   // Optional: path of the currently selected file, to highlight its row.
   selectedPath?: string;
+  // Optional: something to show at the end of a changed file's row (a
+  // comment count, say); null for nothing.
+  trailing?: (path: string) => HTMLElement | null;
   // Optional multi-select checkboxes (changes view). When `checkable`, each file
   // row gets a checkbox and each folder a tri-state one that toggles its whole
   // subtree. `onToggleCheck` receives the affected file paths and the new state.
@@ -118,6 +121,8 @@ function renderLevel(host: HTMLElement, node: Node, depth: number, cb: FileTreeC
         status ? statusBadge(status) : el("span", { class: "tree-bullet" }),
       );
       row.append(el("span", { class: "tree-name", text: child.name }));
+      const trailing = status ? cb.trailing?.(child.path) : null;
+      if (trailing) row.append(trailing);
       if (status) {
         // Single-click must not rebuild this row (the caller updates only the
         // diff/selection), so the node survives and a native double-click fires

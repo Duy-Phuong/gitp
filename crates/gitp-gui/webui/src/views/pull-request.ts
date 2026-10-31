@@ -12,7 +12,8 @@
 import { clear, el, githubIcon } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
 import { iconBtn, renderFile, renderSplitDiff } from "./detail";
-import { loadPrDiffSplit, savePrDiffSplit } from "../prefs";
+import { loadPrDiffSplit, loadPrFilesTree, savePrDiffSplit, savePrFilesTree } from "../prefs";
+import { renderFileTree } from "./tree";
 import {
   checksSummary,
   isoSeconds,
@@ -85,6 +86,11 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // The Files tab's search, kept across re-renders (a layout switch).
   let filesQuery = "";
   let split = loadPrDiffSplit();
+  // The folder tree beside the diffs: shown or not, which folders are folded,
+  // and the file last picked in it.
+  let treeShown = loadPrFilesTree();
+  const treeCollapsed = new Set<string>();
+  let treeSelected: string | null = null;
   // Draft comments loaded from a review file, with the verdict and message
   // the review they'll be posted in will carry.
   let drafts: Draft[] = [];
@@ -295,7 +301,42 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     const threads = reviewThreads(pr.review_comments);
     const byLine = threadsByLine(threads);
     const counts = threadsPerFile(threads);
-    const nodes = shown.map((file) => annotatedFile(pr, file, byLine, counts.get(file.path) ?? 0));
+    const nodes = shown.map((file) => {
+      const node = annotatedFile(pr, file, byLine, counts.get(file.path) ?? 0);
+      node.dataset.path = file.path;
+      return node;
+    });
+
+    // The folder tree: a click scrolls its file's diff into view. Drawn on its
+    // own, so picking a file doesn't rebuild the diffs.
+    const byPath = new Map(shown.map((f) => [f.path, f]));
+    const tree = el("aside", { class: "pr-files-tree tree-view", "aria-label": "Changed files" });
+    const paintTree = () => {
+      clear(tree);
+      renderFileTree(tree, [...byPath.keys()].sort(), {
+        collapsed: treeCollapsed,
+        onToggle: (p) => {
+          if (treeCollapsed.has(p)) treeCollapsed.delete(p);
+          else treeCollapsed.add(p);
+          paintTree();
+        },
+        statusOf: (p) => byPath.get(p)?.status ?? null,
+        selectedPath: treeSelected ?? undefined,
+        trailing: (p) => {
+          const n = counts.get(p) ?? 0;
+          return n ? el("span", { class: "pr-tree-comments", text: String(n), title: `${n} comment${n === 1 ? "" : "s"}` }) : null;
+        },
+        onFileClick: (p) => {
+          treeSelected = p;
+          paintTree();
+          nodes.find((n) => n.dataset.path === p)?.scrollIntoView({ block: "start" });
+        },
+      });
+      // Files the search hid are dimmed in the tree too.
+      for (const row of tree.querySelectorAll<HTMLElement>(".tree-file")) {
+        row.classList.toggle("dim", nodes.find((n) => n.dataset.path === row.title)?.hidden ?? false);
+      }
+    };
 
     const count = el("span", { class: "pr-files-count" });
     const search = el("input", {
@@ -323,6 +364,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       count.textContent = filesQuery.trim()
         ? `${files} of ${shown.length} file${shown.length === 1 ? "" : "s"} · ${lines} matching line${lines === 1 ? "" : "s"}`
         : "";
+      if (treeShown) paintTree();
     };
     search.addEventListener("input", () => {
       filesQuery = search.value;
@@ -332,9 +374,29 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       iconBtn(["M4 6h16", "M4 12h16", "M4 18h16"], "Unified", false, () => setSplit(false), !split),
       iconBtn(["M4 5h16v14H4z", "M12 5v14"], "Split", false, () => setSplit(true), split),
     ]);
+    const treeToggle = iconBtn(
+      ["M4 5h16v14H4z", "M9 5v14", "M5.5 9h2", "M5.5 12h2"],
+      treeShown ? "Hide the file tree" : "Show the file tree",
+      false,
+      () => {
+        treeShown = !treeShown;
+        savePrFilesTree(treeShown);
+        render();
+      },
+      treeShown,
+    );
+    const columns = el("div", { class: "pr-files-layout" });
+    if (treeShown) columns.append(tree);
+    columns.append(el("div", { class: "pr-files-diffs" }, nodes));
     body.append(
-      el("div", { class: "pr-files-bar" }, [layout, search, count, el("span", { class: "pr-files-hint", text: "Click a line to comment on it." })]),
-      ...nodes,
+      el("div", { class: "pr-files-bar" }, [
+        el("div", { class: "tb-group" }, [treeToggle]),
+        layout,
+        search,
+        count,
+        el("span", { class: "pr-files-hint", text: "Click a line to comment on it." }),
+      ]),
+      columns,
     );
     applySearch();
   }
@@ -572,6 +634,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       if (n !== number) {
         drafts = [];
         draftsBody = "";
+        treeSelected = null;
+        treeCollapsed.clear();
       }
       if (n !== number) {
         number = n;
