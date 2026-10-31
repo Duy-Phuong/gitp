@@ -423,6 +423,100 @@ pub(crate) fn with_recorded_files(
     Ok(())
 }
 
+/// Where branch `name` stands before an operation that may move it: whether
+/// it is the checked-out branch, and its tip. Taken under the lock, before a
+/// network round trip; `record_branch_move` finishes the recording after.
+pub(crate) fn branch_move_snapshot(session: &Session, name: &str) -> BranchMoveSnapshot {
+    BranchMoveSnapshot {
+        is_head: session.repo.head_ref_name().ok().as_deref() == Some(name),
+        before: session.repo.branch_commit_id(name).ok(),
+    }
+}
+
+pub(crate) struct BranchMoveSnapshot {
+    is_head: bool,
+    before: Option<String>,
+}
+
+/// Record that branch `name` moved from where `snapshot` found it: as a HEAD
+/// move when it is the checked-out branch (its undo is a `--keep` reset, the
+/// working tree follows), else as a plain ref move. Nothing is recorded when
+/// the tip is where it was — nothing changed, so the older action still
+/// stands.
+pub(crate) fn record_branch_move(
+    session: &mut Session,
+    label: &str,
+    name: &str,
+    snapshot: BranchMoveSnapshot,
+) {
+    let Some(before) = snapshot.before else {
+        return;
+    };
+    let Ok(after) = session.repo.branch_commit_id(name) else {
+        return;
+    };
+    if before == after {
+        return;
+    }
+    let action = if snapshot.is_head {
+        Undoable::HeadMoved {
+            label: label.into(),
+            before,
+            after,
+            mode: HeadMoveMode::Keep,
+            backup: None,
+        }
+    } else {
+        Undoable::BranchMoved {
+            label: label.into(),
+            name: name.into(),
+            before,
+            after,
+        }
+    };
+    set_undo(session, action);
+}
+
+/// Run `f`, which moves branch `name` (a fast-forward), recording the move the
+/// way [`record_branch_move`] does.
+pub(crate) fn with_recorded_branch_move<T>(
+    state: &RepoState,
+    label: &str,
+    name: &str,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
+) -> Result<T, String> {
+    let mut guard = state.workspace();
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let snapshot = branch_move_snapshot(session, name);
+    let out = f(&session.repo).map_err(to_message)?;
+    record_branch_move(session, label, name, snapshot);
+    Ok(out)
+}
+
+/// Run `f`, which creates branch `name` at HEAD without checking it out,
+/// recording it so undo deletes the branch again.
+pub(crate) fn with_recorded_branch_add<T>(
+    state: &RepoState,
+    name: &str,
+    f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
+) -> Result<T, String> {
+    let mut guard = state.workspace();
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let at = session.repo.head_commit_id().map_err(to_message)?;
+    let out = f(&session.repo).map_err(to_message)?;
+    set_undo(
+        session,
+        Undoable::BranchAdded {
+            label: format!("Create branch {name}"),
+            name: name.into(),
+            at,
+        },
+    );
+    Ok(out)
+}
+
 /// Forget the undo/redo slots — used when a non-tracked op (pull, stash) moves
 /// HEAD or the working tree, which could make a stored action stale.
 pub(crate) fn clear_undo(session: &mut Session) {
@@ -455,7 +549,10 @@ pub(crate) fn undo_impl(state: &RepoState) -> Result<UndoView, String> {
     }
     match session.repo.undo(&action) {
         Ok(()) => {
-            session.redo = Some(action);
+            // Taking back a popped stash re-creates the entry under a new id;
+            // the record follows it so redo finds the right one.
+            let renewed = session.repo.after_undo(&action);
+            session.redo = Some(renewed.unwrap_or(action));
             // Undoing a discard restores worktree files, and an upstream change
             // lives in .git/config — which the ref fingerprint guarding the refs
             // cache can't see. Undo is rare and user-initiated, so dropping both
@@ -484,7 +581,8 @@ fn redo_impl(state: &RepoState) -> Result<UndoView, String> {
     }
     match session.repo.redo(&action) {
         Ok(()) => {
-            session.undo = Some(action);
+            let renewed = session.repo.after_redo(&action);
+            session.undo = Some(renewed.unwrap_or(action));
             invalidate_status(session);
             session.refs_cache = None; // same reasoning as undo_impl
             Ok(undo_view(session))
@@ -521,13 +619,21 @@ mod tests {
     use gitp_core::{PickAction, PickStep, RebaseAction, RebaseStep, ResetMode};
 
     use super::{redo_impl, undo_impl, undo_state_impl};
-    use crate::branches::{checkout_remote_impl, create_backup_branch_impl, create_branch_at_impl};
+    use crate::branches::{
+        checkout_remote_impl, create_backup_branch_impl, create_branch_at_impl,
+        fast_forward_branch_to_impl, stash_and_switch_impl,
+    };
     use crate::commits::{cherry_pick_plan_impl, continue_cherry_pick_plan_impl, reset_impl};
     use crate::history::get_log_page_impl;
     use crate::rebase::interactive_rebase_impl;
+    use crate::remote::{add_remote_impl, rename_remote_impl, set_remote_url_impl};
     use crate::staging::{
-        commit_changes_impl, discard_files_impl, discard_lines_impl,
-        restore_files_from_commit_impl, stage_all_impl, stage_impl, stage_lines_impl,
+        add_to_gitignore_impl, apply_patch_impl, commit_changes_impl, discard_files_impl,
+        discard_lines_impl, restore_files_from_commit_impl, stage_all_impl, stage_impl,
+        stage_lines_impl, untrack_files_impl,
+    };
+    use crate::stash::{
+        stash_apply_impl, stash_files_impl, stash_impl, stash_pop_impl, stash_rename_impl,
     };
     use crate::state::RepoState;
     use crate::tags::{create_tag_at_impl, delete_tag_impl};
@@ -1071,7 +1177,11 @@ mod tests {
         commit_changes_impl(&state, "c2".into(), String::new(), false, None, false).unwrap();
         assert!(undo_state_impl(&state).unwrap().undo.is_some());
 
-        create_backup_branch_impl(&state, "backup".into()).expect("backup branch");
+        // Stash & Switch moves HEAD and the working tree in one go, which undo
+        // doesn't track.
+        git(dir.path(), &["branch", "other"]);
+        std::fs::write(dir.path().join("f.txt"), "three\n").unwrap();
+        stash_and_switch_impl(&state, "branch".into(), "other".into()).expect("stash and switch");
         assert_eq!(
             undo_state_impl(&state).unwrap().undo,
             None,
@@ -1112,5 +1222,297 @@ mod tests {
             undo_state_impl(&state).unwrap().undo.as_deref(),
             Some("Checkout origin/feature")
         );
+    }
+
+    fn undo_label(state: &RepoState) -> Option<String> {
+        undo_state_impl(state).unwrap().undo
+    }
+
+    /// A staged edit, an unstaged edit and a new file.
+    fn dirty(dir: &Path, state: &RepoState) {
+        std::fs::write(dir.join("f.txt"), "staged\n").unwrap();
+        stage_impl(state, "f.txt".into()).unwrap();
+        std::fs::write(dir.join("f.txt"), "staged then edited\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "new\n").unwrap();
+    }
+
+    #[test]
+    fn a_stash_is_undone_by_popping_it_back_and_redone() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+        dirty(dir.path(), &state);
+        let status = git_out(dir.path(), &["status", "--porcelain"]);
+
+        let head = head_branch(dir.path());
+        stash_impl(&state, Some("wip".into()), false, true).expect("stash");
+        assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");
+        assert_eq!(undo_label(&state).as_deref(), Some("Stash"));
+
+        undo_impl(&state).expect("undo stash");
+        assert_eq!(
+            git_out(dir.path(), &["status", "--porcelain"]),
+            status,
+            "same split as before"
+        );
+        assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
+        assert_eq!(
+            undo_state_impl(&state).unwrap().redo.as_deref(),
+            Some("Stash")
+        );
+
+        redo_impl(&state).expect("redo stash");
+        assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");
+        assert_eq!(
+            git_out(dir.path(), &["stash", "list", "--format=%gs"]),
+            format!("On {head}: wip")
+        );
+        // The record followed the re-made entry: it can be undone again.
+        undo_impl(&state).expect("undo again");
+        assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), status);
+    }
+
+    #[test]
+    fn a_stash_that_saved_nothing_leaves_the_slot_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+        std::fs::write(dir.path().join("f.txt"), "two\n").unwrap();
+        stage_impl(&state, "f.txt".into()).unwrap();
+        commit_changes_impl(&state, "c2".into(), String::new(), false, None, false).unwrap();
+        assert_eq!(undo_label(&state).as_deref(), Some("Commit"));
+        stash_impl(&state, None, false, true).expect("nothing to stash is not an error");
+        assert_eq!(undo_label(&state).as_deref(), Some("Commit"));
+    }
+
+    #[test]
+    fn popping_a_stash_onto_a_clean_tree_is_undone_by_stashing_it_again() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+        let head = head_branch(dir.path());
+        dirty(dir.path(), &state);
+        stash_impl(&state, Some("wip".into()), false, true).unwrap();
+
+        stash_pop_impl(&state).expect("pop");
+        assert_eq!(undo_label(&state).as_deref(), Some("Pop stash"));
+        assert!(dir.path().join("new.txt").exists());
+        undo_impl(&state).expect("undo pop");
+        assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");
+        assert_eq!(
+            git_out(dir.path(), &["stash", "list", "--format=%gs"]),
+            format!("On {head}: wip")
+        );
+        redo_impl(&state).expect("redo pop");
+        assert!(dir.path().join("new.txt").exists());
+        assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
+
+        // An apply (entry kept) onto a tree with changes of its own mixes in:
+        // not recorded, and the previous action is dropped.
+        stash_impl(&state, None, false, true).unwrap();
+        std::fs::write(dir.path().join("other.txt"), "mine\n").unwrap();
+        stash_apply_impl(&state, 0, false).expect("apply");
+        assert_eq!(undo_label(&state), None);
+    }
+
+    #[test]
+    fn renaming_a_stash_is_undone_to_the_old_text() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+        std::fs::write(dir.path().join("f.txt"), "x\n").unwrap();
+        stash_impl(&state, None, false, true).unwrap();
+        let before = git_out(dir.path(), &["stash", "list", "--format=%gs"]);
+        stash_rename_impl(&state, 0, "named".into()).expect("rename");
+        assert_eq!(
+            git_out(dir.path(), &["stash", "list", "--format=%gs"]),
+            "named"
+        );
+        assert_eq!(undo_label(&state).as_deref(), Some("Rename stash"));
+        undo_impl(&state).expect("undo rename");
+        assert_eq!(
+            git_out(dir.path(), &["stash", "list", "--format=%gs"]),
+            before
+        );
+        redo_impl(&state).expect("redo rename");
+        assert_eq!(
+            git_out(dir.path(), &["stash", "list", "--format=%gs"]),
+            "named"
+        );
+    }
+
+    #[test]
+    fn stashing_some_files_is_undone_like_a_full_stash() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+        std::fs::write(dir.path().join("f.txt"), "x\n").unwrap();
+        std::fs::write(dir.path().join("keep.txt"), "k\n").unwrap();
+        stash_files_impl(&state, vec!["f.txt".into()]).expect("stash files");
+        assert_eq!(undo_label(&state).as_deref(), Some("Stash 1 file"));
+        assert_eq!(
+            git_out(dir.path(), &["status", "--porcelain"]),
+            "?? keep.txt"
+        );
+        undo_impl(&state).expect("undo");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+            "x\n"
+        );
+        assert!(dir.path().join("keep.txt").exists());
+    }
+
+    #[test]
+    fn ignoring_and_untracking_a_file_are_both_undoable() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+        std::fs::write(dir.path().join(".gitignore"), "*.log\n").unwrap();
+        git(dir.path(), &["add", ".gitignore"]);
+        git(dir.path(), &["commit", "-q", "-m", "ignore"]);
+
+        assert_eq!(
+            add_to_gitignore_impl(&state, vec!["f.txt".into()]).unwrap(),
+            1
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+            "*.log\nf.txt\n"
+        );
+        assert_eq!(undo_label(&state).as_deref(), Some("Ignore 1 file"));
+        undo_impl(&state).expect("undo ignore");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+            "*.log\n"
+        );
+        redo_impl(&state).expect("redo ignore");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+            "*.log\nf.txt\n"
+        );
+
+        untrack_files_impl(&state, vec!["f.txt".into()]).expect("untrack");
+        assert_eq!(
+            git_out(dir.path(), &["ls-files", "f.txt"]),
+            "",
+            "no longer tracked"
+        );
+        assert!(dir.path().join("f.txt").exists(), "but still on disk");
+        assert_eq!(undo_label(&state).as_deref(), Some("Stop tracking"));
+        undo_impl(&state).expect("undo untrack");
+        assert_eq!(git_out(dir.path(), &["ls-files", "f.txt"]), "f.txt");
+        // Only the redone ignore rule is left as a change.
+        assert_eq!(
+            git_out(dir.path(), &["status", "--porcelain"]),
+            "M .gitignore"
+        );
+    }
+
+    #[test]
+    fn applying_a_patch_is_undone_file_by_file() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+        std::fs::write(dir.path().join("f.txt"), "patched\n").unwrap();
+        std::fs::write(dir.path().join("added.txt"), "added\n").unwrap();
+        git(dir.path(), &["add", "-A"]);
+        let outside = tempfile::tempdir().unwrap();
+        let patch = outside.path().join("change.patch");
+        std::fs::write(&patch, git_out(dir.path(), &["diff", "--cached"]) + "\n").unwrap();
+        git(dir.path(), &["reset", "-q", "--hard"]);
+        let _ = std::fs::remove_file(dir.path().join("added.txt"));
+        let original = std::fs::read_to_string(dir.path().join("f.txt")).unwrap();
+
+        apply_patch_impl(&state, patch.to_str().unwrap().into()).expect("apply");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+            "patched\n"
+        );
+        assert!(dir.path().join("added.txt").exists());
+        assert_eq!(undo_label(&state).as_deref(), Some("Apply patch"));
+        undo_impl(&state).expect("undo patch");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+            original
+        );
+        assert!(!dir.path().join("added.txt").exists());
+        assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");
+        redo_impl(&state).expect("redo patch");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+            "patched\n"
+        );
+    }
+
+    #[test]
+    fn a_backup_branch_is_undone_by_deleting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+        let head = head_branch(dir.path());
+        create_backup_branch_impl(&state, "backup".into()).expect("backup");
+        assert!(branch_names(dir.path()).contains(&"backup".to_string()));
+        assert_eq!(undo_label(&state).as_deref(), Some("Create branch backup"));
+        undo_impl(&state).expect("undo");
+        assert!(!branch_names(dir.path()).contains(&"backup".to_string()));
+        assert_eq!(head_branch(dir.path()), head, "HEAD never moved");
+        redo_impl(&state).expect("redo");
+        assert!(branch_names(dir.path()).contains(&"backup".to_string()));
+    }
+
+    #[test]
+    fn fast_forwarding_another_branch_is_undone_by_pointing_it_back() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1", "c2"]);
+        let state = open(dir.path());
+        let head = head_branch(dir.path());
+        let old = git_out(dir.path(), &["rev-parse", "HEAD~1"]);
+        git(dir.path(), &["branch", "side", &old]);
+
+        fast_forward_branch_to_impl(&state, "side".into(), head.clone()).expect("ff");
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "side"]),
+            git_out(dir.path(), &["rev-parse", &head])
+        );
+        assert_eq!(undo_label(&state).as_deref(), Some("Fast-forward"));
+        undo_impl(&state).expect("undo");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "side"]), old);
+        assert_eq!(head_branch(dir.path()), head);
+        redo_impl(&state).expect("redo");
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "side"]),
+            git_out(dir.path(), &["rev-parse", &head])
+        );
+    }
+
+    #[test]
+    fn remote_changes_are_undoable() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        let state = open(dir.path());
+        add_remote_impl(&state, "up".into(), "https://example.com/a.git".into()).expect("add");
+        assert_eq!(undo_label(&state).as_deref(), Some("Add remote up"));
+        undo_impl(&state).expect("undo add");
+        assert_eq!(git_out(dir.path(), &["remote"]), "");
+        redo_impl(&state).expect("redo add");
+        assert_eq!(
+            git_out(dir.path(), &["remote", "get-url", "up"]),
+            "https://example.com/a.git"
+        );
+
+        set_remote_url_impl(&state, "up".into(), "https://example.com/b.git".into()).expect("url");
+        assert_eq!(undo_label(&state).as_deref(), Some("Change URL of up"));
+        undo_impl(&state).expect("undo url");
+        assert_eq!(
+            git_out(dir.path(), &["remote", "get-url", "up"]),
+            "https://example.com/a.git"
+        );
+
+        rename_remote_impl(&state, "up".into(), "origin".into()).expect("rename");
+        assert_eq!(undo_label(&state).as_deref(), Some("Rename remote up"));
+        undo_impl(&state).expect("undo rename");
+        assert_eq!(git_out(dir.path(), &["remote"]), "up");
+        redo_impl(&state).expect("redo rename");
+        assert_eq!(git_out(dir.path(), &["remote"]), "origin");
     }
 }

@@ -11,16 +11,17 @@ use std::sync::{Arc, Mutex};
 
 use gitp_core::{
     FileDiff, Gh, GhAccount, GhLogin, LineComment, PrFilter, PrReviewComment, PullRequest,
-    PullRequestDetail, ReviewVerdict, LOGIN_TIMEOUT,
+    PullRequestDetail, ReviewVerdict, Undoable, LOGIN_TIMEOUT,
 };
 use serde::Serialize;
 use tauri::State;
 
 use crate::os::open_in_browser;
 use crate::state::{
-    invalidate_status, to_message, with_repo, with_repo_networked, with_repo_unlocked, RepoState,
+    invalidate_status, to_message, with_repo, with_repo_networked, with_repo_networked_prepared,
+    with_repo_unlocked, RepoState,
 };
-use crate::undo::clear_undo;
+use crate::undo::{clear_undo, set_undo};
 
 /// The sign-in in progress, if any: the `gh auth login` between showing its
 /// code and finishing, and the flag that cancels it.
@@ -64,13 +65,31 @@ fn gh_pull_request_files_impl(state: &RepoState, number: u64) -> Result<Vec<File
 /// head, and switch to it — more than one undo step could put back — so undo
 /// is cleared, as for Stash & Switch.
 fn gh_checkout_pull_request_impl(state: &RepoState, number: u64) -> Result<String, String> {
-    with_repo_networked(
+    // A checkout like any other: undo switches back to the branch that was
+    // checked out before (the pull request's branch stays, for next time).
+    with_repo_networked_prepared(
         state,
         "fetch",
+        |session| session.repo.head_ref_name().ok(),
         |repo| repo.checkout_pull_request(&Gh::system(), number),
-        |session| {
-            clear_undo(session);
+        move |session, before| {
             invalidate_status(session);
+            let after = session.repo.head_ref_name().ok();
+            match (before, after) {
+                (Some(before), Some(after))
+                    if before != after && !session.repo.operation_in_progress() =>
+                {
+                    set_undo(
+                        session,
+                        Undoable::Switched {
+                            label: format!("Checkout pull request #{number}"),
+                            before,
+                            after,
+                        },
+                    )
+                }
+                _ => clear_undo(session),
+            }
         },
     )
 }

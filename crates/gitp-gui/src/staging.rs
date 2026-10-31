@@ -230,19 +230,39 @@ fn save_all_changes_patch_impl(state: &RepoState, dest: String) -> Result<String
 
 /// Apply the patch file at `path` (`git apply --3way`) to the working tree and
 /// index.
-fn apply_patch_impl(state: &RepoState, path: String) -> Result<(), String> {
-    with_repo_clearing_undo(state, |repo| repo.apply_patch(path.as_ref()))
+pub(crate) fn apply_patch_impl(state: &RepoState, path: String) -> Result<(), String> {
+    // The files the patch touches are snapshotted around applying it, like a
+    // discard's, so undo puts back exactly what was there — a patch that
+    // can't even be read for its paths is still applied, unrecorded.
+    let paths = with_repo(state, |repo| repo.patch_paths(path.as_ref())).unwrap_or_default();
+    if paths.is_empty() {
+        return with_repo_clearing_undo(state, |repo| repo.apply_patch(path.as_ref()));
+    }
+    with_recorded_files(state, "Apply patch".into(), &paths, |repo| {
+        repo.apply_patch(path.as_ref())
+    })
 }
 
-/// Append `paths` to the repo's `.gitignore`; returns the number added.
-fn add_to_gitignore_impl(state: &RepoState, paths: Vec<String>) -> Result<usize, String> {
-    with_repo_clearing_undo(state, |repo| repo.add_to_gitignore(&paths))
+/// Append `paths` to the repo's `.gitignore`; returns the number added. The
+/// file is snapshotted around the write, so undo restores it byte for byte.
+pub(crate) fn add_to_gitignore_impl(
+    state: &RepoState,
+    paths: Vec<String>,
+) -> Result<usize, String> {
+    let n = paths.len();
+    let label = format!("Ignore {n} file{}", if n == 1 { "" } else { "s" });
+    let added = std::cell::Cell::new(0);
+    with_recorded_files(state, label, &[".gitignore".to_string()], |repo| {
+        added.set(repo.add_to_gitignore(&paths)?);
+        Ok(())
+    })?;
+    Ok(added.get())
 }
 
 /// Stop tracking `paths`, keeping the files (the second half of "Ignore and
-/// Stop Tracking").
-fn untrack_files_impl(state: &RepoState, paths: Vec<String>) -> Result<(), String> {
-    with_repo_clearing_undo(state, |repo| repo.untrack_files(&paths))
+/// Stop Tracking"). Only the index changes, so it is undone like an unstage.
+pub(crate) fn untrack_files_impl(state: &RepoState, paths: Vec<String>) -> Result<(), String> {
+    with_recorded_index(state, "Stop tracking", |repo| repo.untrack_files(&paths))
 }
 
 // --- Tauri commands --------------------------------------------------------

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use gitp_core::{CloneOptions, PullMode, RemoteInfo, Repo};
+use gitp_core::{CloneOptions, PullMode, RemoteInfo, Repo, Undoable};
 use tauri::State;
 
 use crate::os::open_in_browser;
@@ -11,7 +11,7 @@ use crate::state::{
     run_networked_unopened, to_message, with_repo, with_repo_networked,
     with_repo_networked_background, with_repo_networked_prepared, RepoState,
 };
-use crate::undo::{clear_undo, record_pull};
+use crate::undo::{branch_move_snapshot, record_branch_move, record_pull, set_undo};
 
 /// `git pull` the active repo using `mode`. Invalidates the cached log because
 /// pulling can bring in new commits. Returns git's output for display. Runs
@@ -110,13 +110,16 @@ fn fetch_remote_impl(state: &RepoState, remote: String) -> Result<String, String
 /// Fetch and fast-forward `name`. Invalidates the cached log because the branch
 /// (possibly the current one) advances.
 fn fetch_and_update_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_repo_networked(
+    // The fast-forward moves a local branch: recorded as a HEAD move when it
+    // is the checked-out one, else as a ref move — either way undo points it
+    // back. The tip is noted under the lock before the fetch, so a move by
+    // something else during the round trip can't be mistaken for ours.
+    with_repo_networked_prepared(
         state,
         "fetch",
+        |session| branch_move_snapshot(session, &name),
         |repo| repo.fetch_and_update_branch(&name),
-        // The fast-forward advanced a local branch (ensure_log notices); an
-        // older recorded action may now be stale, so it is dropped.
-        clear_undo,
+        |session, snapshot| record_branch_move(session, "Fetch and update", &name, snapshot),
     )
 }
 
@@ -175,12 +178,52 @@ fn list_remotes_impl(state: &RepoState) -> Result<Vec<RemoteInfo>, String> {
     with_repo(state, Repo::list_remotes)
 }
 
-fn add_remote_impl(state: &RepoState, name: String, url: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.add_remote(&name, &url))
+pub(crate) fn add_remote_impl(
+    state: &RepoState,
+    name: String,
+    url: String,
+) -> Result<String, String> {
+    let mut guard = state.workspace();
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let out = session.repo.add_remote(&name, &url).map_err(to_message)?;
+    set_undo(
+        session,
+        Undoable::RemoteAdded {
+            label: format!("Add remote {name}"),
+            name,
+            url,
+        },
+    );
+    Ok(out)
 }
 
-fn set_remote_url_impl(state: &RepoState, name: String, url: String) -> Result<String, String> {
-    with_repo(state, |repo| repo.set_remote_url(&name, &url))
+pub(crate) fn set_remote_url_impl(
+    state: &RepoState,
+    name: String,
+    url: String,
+) -> Result<String, String> {
+    let mut guard = state.workspace();
+    let idx = guard.active.ok_or("no repository is open")?;
+    let session = &mut guard.sessions[idx];
+    let before = session.repo.remote_url(&name);
+    let out = session
+        .repo
+        .set_remote_url(&name, &url)
+        .map_err(to_message)?;
+    match before {
+        Some(before) if before != url => set_undo(
+            session,
+            Undoable::RemoteUrlChanged {
+                label: format!("Change URL of {name}"),
+                name,
+                before,
+                after: url,
+            },
+        ),
+        _ => {}
+    }
+    Ok(out)
 }
 
 /// Rename or remove a remote. Either rewrites the `branch.<name>.remote` lines
@@ -198,8 +241,24 @@ fn change_remote(
     Ok(out)
 }
 
-fn rename_remote_impl(state: &RepoState, old: String, new: String) -> Result<String, String> {
-    change_remote(state, |repo| repo.rename_remote(&old, &new))
+pub(crate) fn rename_remote_impl(
+    state: &RepoState,
+    old: String,
+    new: String,
+) -> Result<String, String> {
+    let out = change_remote(state, |repo| repo.rename_remote(&old, &new))?;
+    let mut guard = state.workspace();
+    if let Some(session) = guard.active.map(|i| &mut guard.sessions[i]) {
+        set_undo(
+            session,
+            Undoable::RemoteRenamed {
+                label: format!("Rename remote {old}"),
+                old,
+                new,
+            },
+        );
+    }
+    Ok(out)
 }
 
 fn remove_remote_impl(state: &RepoState, name: String) -> Result<String, String> {

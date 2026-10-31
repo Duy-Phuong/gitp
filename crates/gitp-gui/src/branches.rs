@@ -14,8 +14,9 @@ use crate::state::{
     with_repo_unlocked, RepoState,
 };
 use crate::undo::{
-    clear_undo, set_undo, with_recorded_branch_create, with_recorded_checkout,
-    with_recorded_head_move, with_recorded_upstream,
+    clear_undo, set_undo, with_recorded_branch_add, with_recorded_branch_create,
+    with_recorded_branch_move, with_recorded_checkout, with_recorded_head_move,
+    with_recorded_upstream,
 };
 
 /// Check out `name` on the active repo. Invalidates the cached log because HEAD
@@ -33,7 +34,7 @@ fn checkout_branch_impl(state: &RepoState, name: String) -> Result<(), String> {
 /// the uncommitted work stashed across the switch and popped there. Clears
 /// undo rather than recording the switch: undoing it would carry the popped
 /// work back as it stands, not reverse the stash.
-fn stash_and_switch_impl(
+pub(crate) fn stash_and_switch_impl(
     state: &RepoState,
     kind: String,
     target: String,
@@ -146,7 +147,7 @@ fn rename_remote_branch_impl(state: &RepoState, new: String) -> Result<String, S
 
 /// Create branch `name` at HEAD without checking it out (e.g. a rebase backup).
 pub(crate) fn create_backup_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
-    with_repo_clearing_undo(state, |repo| repo.create_branch_here(&name))
+    with_recorded_branch_add(state, &name, |repo| repo.create_branch_here(&name))
 }
 
 /// Delete branch `name` (force = `-D`). Doesn't move HEAD, so the log stays.
@@ -309,22 +310,21 @@ fn squash_message_impl(state: &RepoState) -> Result<Option<String>, String> {
 /// Fast-forward `name` to its upstream. Invalidates the cached log (it may be
 /// the current branch).
 fn fast_forward_branch_impl(state: &RepoState, name: String) -> Result<String, String> {
-    // Recorded as a HEAD move when it is the current branch that advances;
-    // undoing is then a plain reset back to the old tip.
-    with_recorded_head_move(state, "Fast-forward", HeadMoveMode::Keep, |repo| {
+    // Recorded as a HEAD move when it is the current branch that advances
+    // (undo is then a reset back to the old tip), else as a plain ref move.
+    with_recorded_branch_move(state, "Fast-forward", &name, |repo| {
         repo.fast_forward_branch(&name)
     })
 }
 
 /// Fast-forward `name` to `to` (a branch dropped on another in the graph).
-/// Recorded like `fast_forward_branch`, as a HEAD move when it is the current
-/// branch that advances.
-fn fast_forward_branch_to_impl(
+/// Recorded like `fast_forward_branch`.
+pub(crate) fn fast_forward_branch_to_impl(
     state: &RepoState,
     name: String,
     to: String,
 ) -> Result<String, String> {
-    with_recorded_head_move(state, "Fast-forward", HeadMoveMode::Keep, |repo| {
+    with_recorded_branch_move(state, "Fast-forward", &name, |repo| {
         repo.fast_forward_branch_to(&name, &to)
     })
 }
