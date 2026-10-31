@@ -1,0 +1,796 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gitp User Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:wght@600;700;900&family=Source+Sans+3:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper:     #ECEFF2;
+    --surface:   #FFFFFF;
+    --surface-2: #F5F7F9;
+    --ink:       #151F29;
+    --muted:     #54646E;
+    --line:      #CFD9E0;
+    --line-soft: #E1E8ED;
+    --accent:    #0B62BE;
+    --accent-sf: #E4EEF9;
+    --m:         #A2570A;
+    --t:         #5C31C4;
+    --l:         #14724A;
+    --m-sf:      #F8EEDD;
+    --t-sf:      #ECE6FB;
+    --l-sf:      #DEF0E8;
+    --warn:      #A2570A;
+    --shadow:    0 1px 2px rgba(21,31,41,.07), 0 10px 26px rgba(21,31,41,.08);
+    --display: 'Chivo', 'Helvetica Neue', Arial, sans-serif;
+    --body: 'Source Sans 3', -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'Roboto Mono', ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0F171E; --surface: #18232D; --surface-2: #1F2C37;
+      --ink: #E2E9EE; --muted: #93A5B0; --line: #2B3A46; --line-soft: #223140;
+      --accent: #64AEF5; --accent-sf: #17293C;
+      --m: #DFA455; --t: #A78BF7; --l: #4FBE8C;
+      --m-sf: #33280F80; --t-sf: #241C4380; --l-sf: #102E2280;
+      --warn: #DFA455;
+      --shadow: 0 1px 2px rgba(0,0,0,.35), 0 10px 26px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0F171E; --surface: #18232D; --surface-2: #1F2C37;
+    --ink: #E2E9EE; --muted: #93A5B0; --line: #2B3A46; --line-soft: #223140;
+    --accent: #64AEF5; --accent-sf: #17293C;
+    --m: #DFA455; --t: #A78BF7; --l: #4FBE8C;
+    --m-sf: #33280F80; --t-sf: #241C4380; --l-sf: #102E2280;
+    --warn: #DFA455;
+    --shadow: 0 1px 2px rgba(0,0,0,.35), 0 10px 26px rgba(0,0,0,.4);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper); color: var(--ink);
+    font-family: var(--body); font-size: 17px; line-height: 1.65;
+    margin: 0; padding: 0 22px 120px; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1140px; margin: 0 auto; }
+  .col { max-width: 700px; }
+
+  header.mast { padding: 70px 0 34px; }
+  .kicker {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .19em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 20px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 900;
+    font-size: clamp(38px, 6.6vw, 66px); line-height: 1.0;
+    letter-spacing: -.03em; margin: 0 0 22px; text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 20px; line-height: 1.5; color: var(--muted);
+    max-width: 660px; margin: 0;
+  }
+  .standfirst strong { color: var(--ink); font-weight: 600; }
+
+  .startbox {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 8px; padding: 22px 24px; margin: 34px 0 0;
+    box-shadow: var(--shadow); max-width: 700px;
+  }
+  .startbox h4 { margin-top: 0; }
+
+  nav.toc {
+    border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line);
+    margin: 46px 0 0; padding: 20px 0; columns: 2; column-gap: 40px;
+  }
+  nav.toc a {
+    display: block; color: var(--ink); text-decoration: none;
+    font-size: 15px; padding: 5px 0; break-inside: avoid;
+  }
+  nav.toc a:hover { color: var(--accent); }
+  nav.toc .n {
+    font-family: var(--mono); font-size: 11.5px; color: var(--accent);
+    font-weight: 600; margin-right: 10px;
+  }
+  nav.toc ul { list-style: none; margin: 0; padding: 0; }
+  nav.toc li { margin: 0; break-inside: avoid; }
+  @media (max-width: 660px) { nav.toc { columns: 1; } }
+
+  section.step { margin-top: 78px; }
+  .stephead { display: flex; align-items: baseline; gap: 16px; margin-bottom: 8px; }
+  .stepno {
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    letter-spacing: .14em; color: var(--surface);
+    background: var(--accent); padding: 5px 10px; border-radius: 4px;
+    white-space: nowrap; flex: none;
+  }
+  h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(26px, 4vw, 34px); line-height: 1.12;
+    letter-spacing: -.018em; margin: 0; text-wrap: balance;
+  }
+  .goal { color: var(--muted); font-size: 16.5px; margin: 6px 0 26px; max-width: 660px; }
+  h3 {
+    font-family: var(--body); font-weight: 700; font-size: 18px;
+    margin: 36px 0 10px; letter-spacing: -.003em;
+  }
+  h4 {
+    font-family: var(--mono); font-weight: 600; font-size: 11.5px;
+    letter-spacing: .13em; text-transform: uppercase; color: var(--muted);
+    margin: 28px 0 10px;
+  }
+  p { margin: 0 0 16px; }
+  strong { font-weight: 600; }
+  em.t { font-style: normal; font-weight: 600; color: var(--accent); }
+
+  code {
+    font-family: var(--mono); font-size: .845em;
+    background: var(--surface-2); border: 1px solid var(--line-soft);
+    border-radius: 3px; padding: .1em .34em; word-break: break-word;
+  }
+  pre {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 6px; padding: 15px 18px; overflow-x: auto;
+    font-family: var(--mono); font-size: 12.7px; line-height: 1.6;
+    margin: 0 0 18px; box-shadow: var(--shadow);
+  }
+  pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+  pre .c { color: var(--muted); }
+  pre .k { color: var(--accent); font-weight: 600; }
+  pre .s { color: var(--l); }
+  pre .w { color: var(--warn); font-weight: 600; }
+  .filename {
+    font-family: var(--mono); font-size: 11.5px; font-weight: 600;
+    color: var(--muted); background: var(--surface-2);
+    border: 1px solid var(--line); border-bottom: 0;
+    border-radius: 6px 6px 0 0; padding: 7px 14px; display: inline-block;
+    margin-bottom: -1px; position: relative; z-index: 1;
+  }
+  .filename + pre { border-radius: 0 6px 6px 6px; }
+
+  a { color: var(--accent); text-underline-offset: 2px; }
+  ul, ol { margin: 0 0 18px; padding-left: 22px; }
+  li { margin-bottom: 8px; }
+
+  .chip {
+    display: inline-block; font-family: var(--mono); font-size: 10.5px;
+    font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 3px; vertical-align: 2px;
+  }
+  .c-m { background: var(--m-sf); color: var(--m); }
+  .c-t { background: var(--t-sf); color: var(--t); }
+  .c-l { background: var(--l-sf); color: var(--l); }
+  .c-a { background: var(--accent-sf); color: var(--accent); }
+
+  figure { margin: 28px 0 8px; }
+  .figscroll { overflow-x: auto; }
+  figure svg { display: block; width: 100%; min-width: 660px; height: auto; color: var(--ink); }
+  .shot {
+    display: block; width: 100%; height: auto;
+    border: 1px solid var(--line); border-radius: 7px; box-shadow: var(--shadow);
+  }
+  figcaption {
+    font-size: 14.5px; color: var(--muted); margin-top: 13px;
+    max-width: 760px; line-height: 1.55;
+  }
+  figcaption b { color: var(--ink); font-weight: 600; }
+
+  .b   { fill: var(--surface); stroke: currentColor; stroke-width: 1.5; }
+  .b-m { fill: var(--m-sf); stroke: var(--m); stroke-width: 1.5; }
+  .b-t { fill: var(--t-sf); stroke: var(--t); stroke-width: 1.5; }
+  .b-l { fill: var(--l-sf); stroke: var(--l); stroke-width: 1.5; }
+  .b-a { fill: var(--accent-sf); stroke: var(--accent); stroke-width: 1.5; }
+  .dash { fill: none; stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 5 4; }
+  .tt  { font-family: 'Chivo', sans-serif; font-weight: 700; font-size: 13px; fill: var(--ink); }
+  .ts  { font-family: 'Roboto Mono', monospace; font-size: 10.5px; fill: var(--muted); }
+  .el  { font-family: 'Roboto Mono', monospace; font-size: 10px; fill: var(--muted); }
+  .zone{ font-family: 'Roboto Mono', monospace; font-size: 10.5px; font-weight: 600; fill: var(--muted); letter-spacing: .1em; }
+  .ln  { stroke: currentColor; stroke-width: 1.4; fill: none; }
+  .ln-m{ stroke: var(--m); stroke-width: 1.7; fill: none; }
+  .ln-t{ stroke: var(--t); stroke-width: 1.7; fill: none; }
+  .ln-l{ stroke: var(--l); stroke-width: 1.7; fill: none; }
+  .ln-a{ stroke: var(--accent); stroke-width: 1.6; fill: none; }
+  .ln-d{ stroke: var(--accent); stroke-width: 1.5; fill: none; stroke-dasharray: 4 3; }
+
+  .note {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0;
+    padding: 17px 21px; margin: 24px 0; font-size: 15.5px;
+  }
+  .note :last-child { margin-bottom: 0; }
+  .note h4.lbl, .check h4.lbl { margin: 0 0 8px; }
+  .note .lbl {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--accent);
+    display: block; margin-bottom: 8px;
+  }
+  .note.trap { border-left-color: var(--warn); }
+  .note.trap .lbl { color: var(--warn); }
+
+  .check {
+    background: var(--l-sf); border: 1px solid var(--l);
+    border-radius: 6px; padding: 16px 20px; margin: 24px 0; font-size: 15.5px;
+  }
+  .check :last-child { margin-bottom: 0; }
+  .check .lbl {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--l); font-weight: 600;
+    display: block; margin-bottom: 8px;
+  }
+  .check pre { box-shadow: none; margin-bottom: 12px; }
+
+  .tablescroll { overflow-x: auto; margin: 22px 0 10px; }
+  table { border-collapse: collapse; width: 100%; min-width: 600px; font-size: 15px; }
+  th, td { text-align: left; padding: 11px 15px 11px 0; vertical-align: top; border-bottom: 1px solid var(--line-soft); }
+  thead th {
+    font-family: var(--mono); font-weight: 600; font-size: 10.5px;
+    letter-spacing: .13em; text-transform: uppercase; color: var(--muted);
+    border-bottom: 1.5px solid var(--line); padding-bottom: 9px;
+  }
+  tbody th { font-weight: 600; width: 24%; }
+  td.sub { color: var(--muted); font-size: 14.3px; }
+  td.mono, th.mono { font-family: var(--mono); font-size: 12.5px; }
+  kbd {
+    font-family: var(--mono); font-size: .8em; background: var(--surface-2);
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px;
+  }
+
+  footer {
+    margin-top: 88px; padding-top: 22px; border-top: 1px solid var(--line);
+    font-size: 13.5px; color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<!-- ste-names: gitp, GitKraken, GitHub, Claude Code, Finder, Homebrew, macOS, Tauri, WebKit, Xcode, repository, repositories, commit, commits, branch, branches, tag, tags, remote, remotes, stash, stashes, worktree, worktrees, submodule, submodules, checkout, merge, merges, rebase, rebases, cherry-pick, cherry-picks, revert, reverts, reset, resets, pull request, pull requests, review, reviews, diff, diffs, hunk, hunks, block, blocks, conflict, conflicts, resolver, reflog, bisect, hook, hooks, draft, drafts, verdict, palette, chip, badge, badges, graph, lane, lanes, pane, panes, detail pane, main panel, sidebar, top bar, action bar, status bar, shortcut, shortcuts, cheat sheet, clipboard, profile, profiles, workspace, workspaces, favorite, favorites, upstream, fast-forward, fast-forwards, squash, amend, blame, patch, patches, encoding, terminal, editor, preview, theme, themes, zoom, undo, redo, index, working tree, HEAD, template, finding, findings, marker, markers, folder, folders, scope, picker, dialog, dialogs, dry run, command line, login shell, review command, review file, Quick Launch, Local Changes, Files changed, Drafts tab, Generate Drafts, Load Review File, Settings, Activity, Activity log, File Tree, Compare, Stash & Switch, Git Flow, Git LFS, gh, git, claude, CLI, staged, unstaged, staging, variable, variables, action, actions, state, states, option, options, heading, headings, comparison, comparisons, signing key, font size, duration, ahead, behind, split view, unified view, word diff, context lines, line comment, line comments, thread, threads, label, labels, author, authors, message, messages, approve, disable, enable, click, drag, drop, hover, scroll, type, copy, paste, select, stage, unstage, discard, commit, push, pull, fetch, merge, rebase, revert, stash, pop, apply, sign, pin, hide, solo, filter, search, toggle, zoom, post, generate, load, open, close, switch, checkout, cancel, confirm, reorder, undo, redo -->
+
+<header class="mast">
+  <p class="kicker">gitp · desktop git client · user guide</p>
+  <h1>Each feature of gitp, and how to use it</h1>
+  <p class="standfirst">gitp is a desktop git client for macOS with a commit graph, diffs and a commit box. It also has branch and tag menus, a 3-way <strong>conflict resolver</strong>, one-step <strong>undo</strong>, <strong>pull requests</strong> through the GitHub CLI, and an embedded terminal. This guide goes from the first window to the pull request review, one feature at a time. The facts come from the source files of revision <code>83d65ce</code>, with the file and the line at each step. The images are captures of the browser preview of the same revision, which shows example data. The text is written with ASD-STE100 rules, STE-style, and a person did not compare it with the full standard.</p>
+
+  <div class="startbox">
+    <h4>Start the app</h4>
+    <pre><code>npm --prefix crates/gitp-gui/webui install     <span class="c"># one time</span>
+npm --prefix crates/gitp-gui/webui run tauri dev <span class="c"># opens the native window</span></code></pre>
+    <p style="margin:0;font-size:15px;color:var(--muted)">The window opens with the welcome screen of step 01. After <code>run tauri build</code>, the built app is in <code>target/release/bundle/macos/gitp.app</code>, see <code>README.md · lines 48–71</code>.</p>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <ul>
+    <li><a href="#s0"><span class="n">00</span>The window, part by part.</a></li>
+    <li><a href="#s1"><span class="n">01</span>Open, clone and arrange repositories.</a></li>
+    <li><a href="#s2"><span class="n">02</span>Read the history.</a></li>
+    <li><a href="#s3"><span class="n">03</span>Stage, commit and stash.</a></li>
+    <li><a href="#s4"><span class="n">04</span>Branches, tags, remotes and worktrees.</a></li>
+    <li><a href="#s5"><span class="n">05</span>Change the history, and undo it.</a></li>
+    <li><a href="#s6"><span class="n">06</span>Pull requests and review drafts.</a></li>
+    <li><a href="#s7"><span class="n">07</span>Quick Launch, shortcuts, terminal and settings.</a></li>
+    <li><a href="#traps"><span class="n">--</span>Traps, collected.</a></li>
+  </ul>
+</nav>
+
+<!-- ============ 00 ============ -->
+<section class="step" id="s0">
+  <div class="stephead"><span class="stepno">STEP 00</span><h2>The window, part by part</h2></div>
+  <p class="goal">Know the 6 areas of the window, because each subsequent step names them.</p>
+
+  <h4>Diagram</h4>
+  <figure>
+    <div class="figscroll">
+      <svg viewBox="0 0 1040 520" role="img" aria-label="The gitp window: a top bar, an action bar, a sidebar on the left, the main panel with the commit graph above the detail pane, a terminal panel below, and a status bar at the bottom.">
+        <rect class="b-a" x="20" y="20" width="1000" height="44" rx="5"/>
+        <text class="tt" x="34" y="47">Top bar</text>
+        <text class="ts" x="130" y="47">path · Browse · Open · Clone · Init · Workspaces · branch chip · History / Config · Quick Launch · Terminal · profile · Settings</text>
+
+        <rect class="b" x="20" y="74" width="1000" height="44" rx="5"/>
+        <text class="tt" x="34" y="101">Action bar</text>
+        <text class="ts" x="140" y="101">Undo · Redo · Pull (with a default method) · Push · Branch · Stash · Pop · Refresh — badges show the commits to push and to pull</text>
+
+        <rect class="b-l" x="20" y="128" width="220" height="286" rx="5"/>
+        <text class="tt" x="34" y="155">Sidebar</text>
+        <text class="ts" x="34" y="176">Local Changes · All Commits</text>
+        <text class="ts" x="34" y="192">Reflog · Activity</text>
+        <text class="ts" x="34" y="216">Branches · Remotes</text>
+        <text class="ts" x="34" y="232">Pull Requests · Tags</text>
+        <text class="ts" x="34" y="248">Stashes · Worktrees</text>
+        <text class="ts" x="34" y="264">Submodules</text>
+        <text class="ts" x="34" y="296">Right-click a row for</text>
+        <text class="ts" x="34" y="312">its menu. Drag a branch</text>
+        <text class="ts" x="34" y="328">onto a branch to merge,</text>
+        <text class="ts" x="34" y="344">rebase, reset or push.</text>
+
+        <rect class="b-t" x="252" y="128" width="768" height="160" rx="5"/>
+        <text class="tt" x="266" y="155">Main panel — commit graph</text>
+        <text class="ts" x="266" y="176">All branches / Current · search box · WIP rows · stash nodes · columns for Author, Date and SHA</text>
+        <text class="ts" x="266" y="196">The same panel shows Local Changes, the Reflog, the Activity log, a pull request or Config.</text>
+
+        <rect class="b-m" x="252" y="298" width="768" height="116" rx="5"/>
+        <text class="tt" x="266" y="325">Detail pane</text>
+        <text class="ts" x="266" y="346">Commit · Changes · File Tree tabs for the selected commit · Blame and History for one file</text>
+        <text class="ts" x="266" y="366">Unified or split view · word diff · syntax colors · wrap · ignore whitespace · context lines</text>
+
+        <rect class="b" x="20" y="424" width="1000" height="40" rx="5"/>
+        <text class="tt" x="34" y="449">Terminal panel</text>
+        <text class="ts" x="170" y="449">tabs of login shells, each in the working tree of the repository (hidden until you open it)</text>
+
+        <rect class="b" x="20" y="474" width="1000" height="30" rx="5"/>
+        <text class="tt" x="34" y="494">Status bar</text>
+        <text class="ts" x="140" y="494">the last message · Cancel for a fetch, pull, push or review command · time since the last fetch · LFS</text>
+      </svg>
+    </div>
+    <figcaption><b>Six areas, one rule.</b> The sidebar selects what the main panel shows. The main panel selects what the detail pane shows. The action bar and the top bar act on the open repository, whatever the panels show. The names in this diagram are the names that this guide uses.</figcaption>
+  </figure>
+
+  <h4>Capture</h4>
+  <figure>
+    <img class="shot" src="img/history.png" alt="The gitp window in the browser preview with example data. The top bar shows the path /Users/you/Documents/mideal, the Browse, Open, Clone, Init and Workspaces buttons, the branch chip develop/3.33.0, the History and Config tabs, Quick Launch, Terminal and Settings. The action bar shows Undo, Redo, Pull, Push with a badge 2, Branch, Stash, Pop and Refresh. The sidebar lists Local Changes (5), All Commits, Reflog, Activity, the Branches folders bugifx, develop, development, draft-development, feature, hotfix and merge, then Remotes, Pull Requests, Tags, Stashes and Worktrees. The graph shows two WIP rows, the commit Merge branch 'feature/widget', bisect badges BAD, SKIP, TESTING and GOOD, the Changes tab with the diff of src/config.rs, and two banners for a bisect and for merge conflicts.">
+    <figcaption><b>The preview with example data.</b> This capture shows the graph, a bisect and a merge with conflicts at the same time, because the example repository has all three. Your repository shows only what applies to it. The Push badge with 2 says that the current branch is 2 commits ahead of its upstream, see <code>toolbar.ts · lines 36–45</code>.</figcaption>
+  </figure>
+
+  <div class="col">
+    <div class="note">
+      <h4 class="lbl">The sources of the facts in this guide</h4>
+      <p>The feature list is the table in <code>README.md · lines 17–29</code>. Each step gives the source file of the behavior that it tells. The captures come from the browser preview (<code>npm run dev</code> in <code>crates/gitp-gui/webui</code>). The preview shows example data and not a repository of your own.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 01 ============ -->
+<section class="step" id="s1">
+  <div class="stephead"><span class="stepno">STEP 01</span><h2>Open, clone and arrange repositories</h2></div>
+  <p class="goal">Get a repository into a tab, then keep the repositories that you use near.</p>
+
+  <h4>Capture</h4>
+  <figure>
+    <img class="shot" src="img/welcome.png" alt="The welcome screen of gitp with no repository open. The main panel shows the word gitp and the text Open a repository to see its history, or start a new one. Four buttons follow, Open, Clone, Init and Workspaces, each with a hint below it. A Recent section shows the repository mideal at ~/Documents/mideal, and a line reads ⌘K Quick Launch · ⌘/ Keyboard shortcuts. The sidebar shows No repository.">
+    <figcaption><b>The welcome screen is the empty state.</b> It shows when no tab is open, and it goes away when a repository opens, see <code>views/welcome.ts · lines 27–66</code>. The favorites, with their <kbd>⌘1</kbd> to <kbd>⌘9</kbd> keys, come before the recent repositories.</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>Open a repository</h3>
+    <ol>
+      <li>Click "Open" on the welcome screen, or "Browse" in the top bar, and select a folder.</li>
+      <li>Or type a path into the field of the top bar, then click "Open".</li>
+      <li>Or press <kbd>⌘O</kbd>.</li>
+    </ol>
+    <p>Each open repository is a tab below the top bar. Drag a tab to move it. Right-click a tab to give it a different name, or to make it a favorite.</p>
+
+    <h3>Clone or init</h3>
+    <p>"Clone" asks for a URL and a destination. The options are the branch, the depth, a single branch, and the submodules. "Init" makes a new repository with a <code>.gitignore</code> template and the default branch from Settings. The two commands open the result in a tab.</p>
+
+    <h3>Favorites and workspaces</h3>
+    <p>A <em class="t">favorite</em> is a repository with a number key. <kbd>⌘1</kbd> opens the first favorite, in a new tab if necessary. A <em class="t">workspace</em> is a named group of repositories. Open "Workspaces" to fetch, pull, open or show all of them in one step, see <code>README.md · line 19</code>.</p>
+
+    <div class="note trap">
+      <h4 class="lbl">Symptom: "Browse" does nothing in the browser preview</h4>
+      <p>The folder picker is a native dialog of the desktop app. The preview shows the message "The folder picker is only available in the desktop app.", see <code>main.ts · lines 159–163</code>. Use the desktop window for your own repositories.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 02 ============ -->
+<section class="step" id="s2">
+  <div class="stephead"><span class="stepno">STEP 02</span><h2>Read the history</h2></div>
+  <p class="goal">Find a commit, see what it changed, and compare two points of the history.</p>
+
+  <div class="col">
+    <h3>The commit graph</h3>
+    <p>The <em class="t">graph</em> in the main panel shows the commits, newest first, with one lane for each line of development. Click a commit to see it in the detail pane. The rows at the top with <code>// WIP</code> are the uncommitted changes of this worktree and of each other worktree. Stashes are nodes in the graph too.</p>
+    <ul>
+      <li>"All branches / Current" at the top of the graph sets the scope.</li>
+      <li>Right-click a branch label to hide it, to solo it, or to pin its lane to the left.</li>
+      <li>Hover a branch label: the commits that are not on that branch fade. Settings turns this off.</li>
+      <li>Right-click the column header to show or hide the Author, Date and SHA columns, and drag a header to move it.</li>
+      <li>Click the funnel in the Author column to show one author only.</li>
+    </ul>
+
+    <h3>Search</h3>
+    <p>Type in the search box above the graph. Each word must occur in the message, the author or the SHA. A prefix narrows the search, see <code>index.html · line 142</code>:</p>
+    <div class="tablescroll">
+      <table>
+        <thead><tr><th class="mono">Prefix</th><th>Finds</th></tr></thead>
+        <tbody>
+          <tr><th class="mono">author:name</th><td class="sub">Commits by that author, by name or email.</td></tr>
+          <tr><th class="mono">path:src/*.rs</th><td class="sub">Commits that touch files on that path or glob.</td></tr>
+          <tr><th class="mono">content:text</th><td class="sub">Commits that add or remove that text.</td></tr>
+          <tr><th class="mono">after:2026-01-01</th><td class="sub">Commits after that author date. <code>before:</code> is the opposite.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Keys in the graph</h3>
+    <p>Move with <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>J</kbd> <kbd>K</kbd>, one page with <kbd>PgUp</kbd> <kbd>PgDn</kbd>, and to the ends with <kbd>Home</kbd> <kbd>End</kbd>. <kbd>↵</kbd> moves the focus into the diff. <kbd>Esc</kbd> closes a comparison, see <code>keyboard.ts · lines 55–95</code>.</p>
+
+    <h3>The detail pane</h3>
+    <p>For the selected commit the pane has 3 tabs. "Commit" has the message, the author and the signature. "Changes" has the diffs. "File Tree" has the folders, see <code>views/detail.ts · line 279</code>. Open a file in the Changes tab, and the toolbar gives "Blame" and "History" for that file, see <code>views/detail.ts · lines 373–374</code>.</p>
+    <h4>Diff toolbar</h4>
+    <p>The diff toolbar has the unified view or the split view, the word diff and syntax colors. It also has <em class="t">wrap</em> for long lines, ignore whitespace, and more context lines. An image file shows the previous and the new image side by side. A diff longer than 5,000 lines stops with a notice and a "Show full diff" button, see <code>diff.rs · MAX_DIFF_LINES</code>.</p>
+
+    <h3>Compare</h3>
+    <p><kbd>⌘</kbd>-click two commits to compare them. <kbd>⇧</kbd>-click a range of commits for one diff of the full range. Right-click a branch or a commit and select "Compare" for a two-dot or a three-dot comparison. "Compare with Working Directory" compares with the working tree.</p>
+    <p>"Open in Diff Tool" opens an external diff tool, through <code>git difftool</code> and your <code>diff.tool</code> setting, see <code>external_tool.rs · lines 1–4</code>.</p>
+
+    <div class="note">
+      <h4 class="lbl">Why a long diff stops at 5,000 lines</h4>
+      <p>A file with 200,000 lines made the window slow for all other work. The backend cuts the diff at full hunks, so the hunk numbers stay correct, and the notice gives the remaining lines on request.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 03 ============ -->
+<section class="step" id="s3">
+  <div class="stephead"><span class="stepno">STEP 03</span><h2>Stage, commit and stash</h2></div>
+  <p class="goal">Make a commit from a part of your changes, and put the remaining changes away.</p>
+
+  <h4>Capture</h4>
+  <figure>
+    <img class="shot" src="img/changes.png" alt="The Local Changes view of the preview, with Local Changes (5) selected in the sidebar. The Unstaged (5) list shows the folders assets, libs and src, the files logo.svg, shared, config.rs, notes.md and README.md, each with a checkbox and a status icon, and a Stage All button. The Staged (0) list shows the text No staged changes and an Unstage All button. The right side shows the text Select a file to view its changes. The commit box has a summary field, a Description field, and the toggles Amend, Sign, Skip hooks and Push after commit.">
+    <figcaption><b>Two lists and one box.</b> The Unstaged list is the working tree, the Staged list is the index. Select a file, and its diff shows on the right. Each block and each line in that diff is a target for Stage, Unstage or Discard (views/changes.ts).</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>Stage and unstage</h3>
+    <ol>
+      <li>Select "Local Changes" in the sidebar.</li>
+      <li>Click the arrow of a file, or double-click the file, to move it between the lists.</li>
+      <li>In the diff, click "Stage block" on a hunk to stage that hunk only.</li>
+      <li>Select some lines in the diff, then click "Stage lines" to stage those lines only.</li>
+      <li>Click "Discard" on a file, a block or lines to remove the change from the working tree.</li>
+    </ol>
+    <p>Undo puts a discarded change back, see <code>undo.rs · lines 128–140</code>. The buttons "Stage all" and "Unstage all" move everything, and <kbd>⌘⇧A</kbd> and <kbd>⌘⇧U</kbd> do the same. A file in a different text encoding is staged by block and line too, with the encoding from Settings → Git.</p>
+
+    <h3>Commit</h3>
+    <p>Type the message in the commit box, then click "Commit" or press <kbd>⌘↵</kbd> in the message. The box has these options:</p>
+    <ul>
+      <li>"Amend" puts the staged changes into the last commit, and starts the message from its text.</li>
+      <li>"Sign" signs the commit with your GPG or SSH key. The toggle shows only when git has a key, see <code>signature.rs · lines 134–150</code>.</li>
+      <li>"Skip hooks" commits with <code>--no-verify</code>.</li>
+      <li>"Push after commit" pushes when the commit is complete.</li>
+    </ul>
+    <p>A <code>commit.template</code> in your config fills the message with the template text, without the comment lines.</p>
+
+    <h3>Stash</h3>
+    <p>Click "Stash" in the action bar, or press <kbd>⌘⇧S</kbd>. The dialog has a message field, and the options "staged only" and "include untracked files". "Pop" applies and removes the newest stash.</p>
+    <p>Right-click a stash in the sidebar to apply it, to rename it, to save it as a patch, or to drop it.</p>
+    <h4>Undo and Stash &amp; Switch</h4>
+    <p>Undo includes the save, the pop, the apply, the new name and the drop of a stash, see <code>undo.rs · lines 160–200</code>. When you switch to a branch and local changes block the switch, the dialog offers <em class="t">Stash &amp; Switch</em>. It stashes the changes, switches, and applies the changes on the new branch.</p>
+
+    <div class="note trap">
+      <h4 class="lbl">Symptom: Undo of a stash pop says "The repository changed since that action"</h4>
+      <p>Undo of a pop stashes the tree again. It does this only when the tree is as the pop made it. An edit after the pop blocks the undo, so the edit does not go into the stash by mistake, see <code>undo.rs · StashApplied</code>. In this condition, stash by hand.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 04 ============ -->
+<section class="step" id="s4">
+  <div class="stephead"><span class="stepno">STEP 04</span><h2>Branches, tags, remotes and worktrees</h2></div>
+  <p class="goal">Switch, merge and publish without the command line.</p>
+
+  <div class="col">
+    <h3>Switch and make branches</h3>
+    <ul>
+      <li>Click the <em class="t">branch chip</em> in the top bar. The menu has "Copy Branch Name", the branches that you selected lately, "All Branches" and "Create Branch", see <code>main.ts · openBranchChipMenu</code>.</li>
+      <li>Click "Branch" in the action bar, or press <kbd>⌘B</kbd>, for the list of local branches and a field for a new one.</li>
+      <li>Double-click a branch in the sidebar or in the graph to check it out.</li>
+      <li>Right-click a branch for its menu. The menu has Checkout, Compare, New Branch here, New Tag here, Merge into the current branch, Rebase, Fetch, Push, Set Upstream, Rename, and Delete.</li>
+    </ul>
+
+    <h3>Merge with a dry run</h3>
+    <p>The "Merge into" submenu and the drag-and-drop menu open below one line: "No conflicts expected", or "N files would conflict: a, b". The line comes from <code>git merge-tree</code>, which merges in memory and changes nothing, see <code>merge_preview.rs · lines 1–6</code>. The rebase confirmation has the same line. The modes are Merge, no fast-forward, fast-forward only and squash.</p>
+
+    <h3>Drag and drop</h3>
+    <p>Drag a branch label onto a different branch, in the graph or in the sidebar. The menu at the drop point shows the applicable actions, see <code>ref-drop.ts · lines 35–52</code>. They are: merge into the current branch, rebase the current branch, reset, fast-forward, or push to the remote branch.</p>
+
+    <h3>Tags, remotes, Git Flow and LFS</h3>
+    <ul>
+      <li>Tags: right-click a commit and select "New Tag here". A tag can be annotated with a message. Push a tag to a remote, or delete it there, from the menu of the tag.</li>
+      <li>Remotes: the Remotes section of the sidebar adds, renames and removes remotes, and sets a URL. Undo cancels an add, a rename and a URL change.</li>
+      <li>Git Flow: Quick Launch has Initialize, Start and Finish for features, releases and hotfixes, done with plain git, see <code>README.md · line 26</code>.</li>
+      <li>Git LFS: the status bar shows the LFS state. Quick Launch adds a pattern for LFS, and fetches or pulls the LFS objects. A pointer file shows as a pointer in the diff.</li>
+    </ul>
+
+    <h3>Worktrees</h3>
+    <p>The Worktrees section shows each worktree with its branch, the count of changed files, and the ahead and behind counts. Add a worktree from a branch, a commit or a tag, or drop a branch on the section. Double-click a worktree to open it as a tab.</p>
+    <p>The menu moves, locks, prunes with a dry run, or removes a worktree. A worktree with unsaved work gives a warning before the removal, see <code>README.md · line 27</code>.</p>
+
+    <div class="note">
+      <h4 class="lbl">Why a branch in a different worktree does not check out here</h4>
+      <p>Git lets one worktree have a branch. For that branch the menu offers "Open Worktree" and not a checkout, and a worktree badge identifies the branch in the graph.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 05 ============ -->
+<section class="step" id="s5">
+  <div class="stephead"><span class="stepno">STEP 05</span><h2>Change the history, and undo it</h2></div>
+  <p class="goal">Rewrite commits with a safety net: one Undo for the last action.</p>
+
+  <h4>Diagram</h4>
+  <figure>
+    <div class="figscroll">
+      <svg viewBox="0 0 1040 300" role="img" aria-label="How undo works: an action is recorded with its before state and its after state. Undo makes sure that the repository is in the after state, then moves it back to the before state. Redo makes sure of the before state and applies the after state again. A change from outside makes the record stale and the button grey.">
+        <defs>
+          <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+          <marker id="aw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--m)"/></marker>
+        </defs>
+        <rect class="b" x="20" y="90" width="200" height="90" rx="5"/>
+        <text class="tt" x="38" y="120">Before</text>
+        <text class="ts" x="38" y="142">the tip, the index, the files</text>
+        <text class="ts" x="38" y="160">as they were</text>
+
+        <rect class="b-a" x="420" y="90" width="200" height="90" rx="5"/>
+        <text class="tt" x="438" y="120">Action</text>
+        <text class="ts" x="438" y="142">commit, reset, merge, stash,</text>
+        <text class="ts" x="438" y="160">discard, delete branch …</text>
+
+        <rect class="b" x="820" y="90" width="200" height="90" rx="5"/>
+        <text class="tt" x="838" y="120">After</text>
+        <text class="ts" x="838" y="142">the record of the two sides</text>
+        <text class="ts" x="838" y="160">is kept, one at a time</text>
+
+        <path class="ln-a" d="M220 120 L420 120" marker-end="url(#ab)"/>
+        <text class="el" x="320" y="112" text-anchor="middle">the action operates</text>
+        <path class="ln-a" d="M620 120 L820 120" marker-end="url(#ab)"/>
+        <text class="el" x="720" y="112" text-anchor="middle">the state is recorded</text>
+
+        <path class="ln-m" d="M820 160 L620 160" marker-end="url(#aw)"/>
+        <text class="el" x="720" y="178" text-anchor="middle">Undo: if the state is "after"</text>
+        <path class="ln-m" d="M420 160 L220 160" marker-end="url(#aw)"/>
+        <text class="el" x="320" y="178" text-anchor="middle">a reset without data loss</text>
+
+        <rect class="dash" x="20" y="220" width="1000" height="56" rx="5"/>
+        <text class="zone" x="38" y="243">STALE</text>
+        <text class="ts" x="110" y="243">A commit from the terminal, an edit, or a tag made by hand after the action changes the "after" state.</text>
+        <text class="ts" x="110" y="262">Then Undo is grey, and nothing is undone — undo must never remove that other work (undo.rs · lines 380–400).</text>
+      </svg>
+    </div>
+    <figcaption><b>Undo is a record with a guard, not a second git.</b> Each reversible action stores its before state and its after state. Undo operates only when the repository is fully in the after state. It moves back with a reset that refuses to overwrite local edits (<code>--keep</code>). The arrows show the direction of the change, see <code>undo.rs · lines 1–12</code>.</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>Rewrite tools</h3>
+    <p>All of these are in the right-click menu of a commit in the graph:</p>
+    <ul>
+      <li>"Cherry-pick" one commit. Or select some commits and open an interactive plan, to pick, squash, reword or drop each one before it operates.</li>
+      <li>"Revert" makes a new commit that cancels the selected one.</li>
+      <li>"Reset" the current branch here: soft keeps the changes in the index, mixed keeps them in the working tree, hard discards them. Before a hard reset, gitp saves the uncommitted work in a hidden commit. Undo puts the commits and the work back, see <code>undo.rs · backup_uncommitted_work</code>.</li>
+      <li>"Interactive rebase" onto this commit opens the plan editor. Drag to reorder, and set pick, squash, fixup, reword, edit or drop for each row.</li>
+      <li>"Restore file from this commit" and "Revert block" act on one file or one hunk of a commit.</li>
+      <li>"Start bisect here", then mark each commit Good, Bad or Skip in the banner. The banner shows the commits that remain.</li>
+    </ul>
+
+    <h3>Conflicts</h3>
+    <p>When a merge, rebase, cherry-pick, revert or squash stops on a conflict, a banner offers "Resolve Conflicts" and "Abort". The <em class="t">resolver</em> shows the two sides and the result for each file. Select a side, a block, or "Take Ours" / "Take Theirs" for the full file. The resolver asks before it overwrites a file that you edited by hand. "Finish" commits with the message that git prepared, see <code>README.md · line 24</code>.</p>
+
+    <h3>Undo and redo</h3>
+    <p>The "Undo" and "Redo" buttons in the action bar, or <kbd>⌘Z</kbd> and <kbd>⌘⇧Z</kbd>, cancel the last action. The button label tells the action, for example "Undo Commit". One action is kept at a time. <code>README.md · line 25</code> has the list of reversible actions. They are: commits, resets, merges, checkouts, branch and tag changes, fast-forwards, staging, discards, file edits, patches, ignore and stop-tracking, the stash actions, and remote changes.</p>
+
+    <h3>Reflog and Activity</h3>
+    <p>"Reflog" in the sidebar shows where HEAD was, for the times when Undo cannot help. "Activity" shows each git command that gitp started, with the time, the duration and the last lines of its output, see <code>activity.rs · lines 1–10</code>. A hook that stopped with an error, or a rejected push, is there after its message is gone from the status bar.</p>
+
+    <div class="note trap">
+      <h4 class="lbl">Symptom: Undo is grey after a merge, rebase or bisect starts</h4>
+      <p>Undo must not operate in a session that git keeps in <code>.git</code>. While a merge, rebase, cherry-pick, revert or bisect is open, gitp refuses Undo and Redo, see <code>undo.rs · operation_in_progress</code>. Finish or abort the session first.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 06 ============ -->
+<section class="step" id="s6">
+  <div class="stephead"><span class="stepno">STEP 06</span><h2>Pull requests and review drafts</h2></div>
+  <p class="goal">Review a pull request in the app, with comments that you approve before they go to GitHub.</p>
+
+  <h4>Capture</h4>
+  <figure>
+    <img class="shot" src="img/pr-files.png" alt="Pull request #42 Retry the identity check when the provider times out, open in the main panel of the preview. The header shows the state Open, the author octocat, the branches main ← feature/identity-retry, the labels approved, enhancement and backend, and the buttons Check Out, Check Out in New Worktree, Review, Generate Drafts, Load Review File, Open on GitHub and Refresh. The Files changed (2) tab is active. On the left a folder tree shows src/identity with client.ts and retry.ts, and retry.ts has a comment count of 1. On the right the diff of src/identity/retry.ts shows the added retry loop, with a review thread from hubot and octocat below line 6.">
+    <figcaption><b>The Files changed tab is a diff with a tree and threads.</b> The tree on the left is the file tree of the commit view, with the comment counts of the pull request. The thread below line 6 is a review comment from GitHub, shown below the line that it refers to, see <code>views/pull-request.ts · annotatedFile</code>. Click a line to write a comment on it.</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>Sign in and list</h3>
+    <p>Pull requests come through the GitHub CLI, <code>gh</code>. gitp keeps no token, see <code>gh.rs · lines 1–3</code>. Install <code>gh</code> with Homebrew, then click "Sign In" in the Pull Requests section of the sidebar or in Settings → Git. The section shows the open pull requests with the filters "All", "Created by me" and "Review requested", and a search by title, number, author or branch.</p>
+
+    <h3>View and act</h3>
+    <ul>
+      <li>Click a pull request to open it in the main panel. The tabs are "Conversation", "Files changed" and "Checks".</li>
+      <li>"Check Out" makes a local branch with the head branch as its upstream. "Check Out in New Worktree" does the same in a new folder.</li>
+      <li>"Review ▾" opens Approve, Request Changes or Comment, each with a message dialog. gitp asks for a confirmation before each post.</li>
+      <li>Write a comment at the bottom of the conversation, reply in a thread, or click a diff line for a line comment.</li>
+      <li>The Files changed tab has the file tree, the unified or the split view, Wrap lines, and a search of file names and code.</li>
+    </ul>
+  </div>
+
+  <h4>Diagram</h4>
+  <figure>
+    <div class="figscroll">
+      <svg viewBox="0 0 1040 330" role="img" aria-label="The review drafts flow: a review file or the review command gives findings, the parser turns them into drafts in the Drafts tab, you edit, approve or discard each one, and the approved ones post as one review through gh to GitHub.">
+        <defs>
+          <marker id="ac" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+          <marker id="ag2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l)"/></marker>
+        </defs>
+        <rect class="dash" x="20" y="20" width="330" height="200" rx="5"/>
+        <text class="zone" x="36" y="44">SOURCES</text>
+        <rect class="b-t" x="36" y="60" width="298" height="64" rx="5"/>
+        <text class="tt" x="52" y="86">Load Review File…</text>
+        <text class="ts" x="52" y="106">Markdown "### path:line" blocks, or JSON</text>
+        <rect class="b-t" x="36" y="140" width="298" height="64" rx="5"/>
+        <text class="tt" x="52" y="166">Generate Drafts</text>
+        <text class="ts" x="52" y="186">review command with "gh pr diff" as input</text>
+
+        <rect class="b-a" x="400" y="100" width="220" height="80" rx="5"/>
+        <text class="tt" x="418" y="128">Drafts tab</text>
+        <text class="ts" x="418" y="150">one card for each finding</text>
+        <text class="ts" x="418" y="168">edit · Approve · Discard</text>
+
+        <rect class="b-l" x="700" y="100" width="150" height="80" rx="5"/>
+        <text class="tt" x="716" y="128">gh</text>
+        <text class="ts" x="716" y="150">one review:</text>
+        <text class="ts" x="716" y="168">verdict + comments</text>
+
+        <rect class="b" x="900" y="100" width="120" height="80" rx="5"/>
+        <text class="tt" x="916" y="128">GitHub</text>
+        <text class="ts" x="916" y="150">the pull</text>
+        <text class="ts" x="916" y="168">request</text>
+
+        <path class="ln-a" d="M334 92 L372 92 L372 140 L400 140" marker-end="url(#ac)"/>
+        <path class="ln-a" d="M334 172 L372 172 L372 140" />
+        <text class="el" x="372" y="80" text-anchor="middle">parser</text>
+
+        <path class="ln-l" d="M620 140 L700 140" marker-end="url(#ag2)"/>
+        <text class="el" x="660" y="130" text-anchor="middle">Post N</text>
+        <text class="el" x="660" y="158" text-anchor="middle">approved</text>
+        <path class="ln-l" d="M850 140 L900 140" marker-end="url(#ag2)"/>
+
+        <rect class="dash" x="20" y="240" width="1000" height="60" rx="5"/>
+        <text class="zone" x="36" y="264">GUARDS</text>
+        <text class="ts" x="110" y="264">A draft on a line that is not in the diff is marked and not posted. A confirmation dialog shows each comment before the post.</text>
+        <text class="ts" x="110" y="283">Nothing goes to GitHub without your click.</text>
+      </svg>
+    </div>
+    <figcaption><b>Two sources, one tab, one post.</b> A review from a different tool and a review command in gitp give the same thing. The result is findings with a path, a line and a text. The Drafts tab keeps them until you select, and the approved ones go to GitHub together as one review. Thus the author gets one notification, see <code>gh.rs · review_with_comments</code>. The arrows show the direction of the data.</figcaption>
+  </figure>
+
+  <h4>Capture</h4>
+  <figure>
+    <img class="shot" src="img/pr-drafts.png" alt="The Drafts tab of pull request #42 in the preview, after Generate Drafts and Approve All. The bar reads 3 drafts · 3 approved · 1 can't be posted (line not in this diff), with the buttons Approve All, Clear, a Comment verdict selector and Post 2 approved. A review message field is empty. Three cards follow: src/identity/retry.ts:6 with the tag blocking and a suggestion block, src/identity/client.ts:11 with the tag minor, and src/identity/retry.ts:40 with the tag nit and the warning line not in this diff.">
+    <figcaption><b>Three drafts, two that gitp can post.</b> The third draft names line 40, which is not part of the diff, so GitHub refuses it. The tab marks that draft and does not count it on the Post button, see <code>review-drafts.ts · checkAnchor</code>. You can edit the text of each card before the post.</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>Load a review file</h3>
+    <ol>
+      <li>Open the pull request, then click "Load Review File".</li>
+      <li>Select a Markdown or a JSON file.</li>
+      <li>In the Drafts tab, edit a text, and click "Approve" or "Discard" on each card.</li>
+      <li>Select the verdict. If the verdict is "Request changes", type a message.</li>
+      <li>Click "Post N approved", then confirm the dialog. The posted drafts go out of the tab.</li>
+    </ol>
+    <p>The Markdown shape is one <code>### path/to/file:line</code> heading for each finding, a <code>**Severity:**</code> line, and the comment between the <code>&lt;!-- copy:start --&gt;</code> and <code>&lt;!-- copy:end --&gt;</code> markers, see <code>review-drafts.ts · lines 6–15</code>.</p>
+
+    <h3>Generate drafts with a command</h3>
+    <p>"Generate Drafts" starts the review command from Settings → Git, with the diff of the pull request as its input. The command is a shell line in a login shell. The diff comes on its stdin.</p>
+    <p>The variables <code>GITP_PR_NUMBER</code>, <code>GITP_PR_REPO</code> and <code>GITP_PR_URL</code> are set, see <code>gh.rs · generate_review_drafts</code>. The default is the Claude Code CLI:</p>
+    <h4>Default command</h4>
+    <span class="filename">crates/gitp-gui/webui/src/prefs.ts · lines 601–602</span>
+    <pre><code>export const DEFAULT_REVIEW_COMMAND =
+  "claude -p --model opus --effort medium 'Review the pull request diff on stdin …'"  <span class="c">// the full prompt follows</span></code></pre>
+    <h4>While it operates</h4>
+    <p>The command has 15 minutes. "Cancel" in the status bar stops it. The CLI must be signed in: start <code>claude</code> one time in a terminal. The output goes through the same parser as a review file.</p>
+
+    <div class="note trap">
+      <h4 class="lbl">Symptom: the error dialog of Generate Drafts says "command not found: claude"</h4>
+      <p>The login shell did not find the CLI on its PATH. Make sure that <code>claude</code> starts in a new terminal window. If necessary, write the full path of the CLI in the review command in Settings.</p>
+    </div>
+
+    <div class="note trap">
+      <h4 class="lbl">Symptom: a draft shows "line not in this diff"</h4>
+      <p>GitHub accepts a comment only on a line that the diff contains. The review named a line that is not in the hunks. Change the line in the review, or write the comment on a line of the diff by hand.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 07 ============ -->
+<section class="step" id="s7">
+  <div class="stephead"><span class="stepno">STEP 07</span><h2>Quick Launch, shortcuts, terminal and settings</h2></div>
+  <p class="goal">Start each command from the keyboard, and set the app for your work.</p>
+
+  <h4>Capture</h4>
+  <figure>
+    <img class="shot" src="img/quick-launch.png" alt="Quick Launch open on the gitp window in the preview, with the query branch typed. The Commands section shows New Branch at ggggggg, Push Branch, Fetch Branch, Create Branch with the shortcut ⌘⇧N, Delete Branch, Rename Branch, Checkout Branch, Checkout Remote Branch, Fetch and Update Branch, and Clean up (prune remotes, delete gone branches). The first row is highlighted. The hint at the bottom reads ↑↓ to move · ↵ to run · esc to close.">
+    <figcaption><b>One keystroke to each command.</b> The list ranks a full match, a prefix and an in-text hit before word initials and scattered letters. The words of a query match in a different sequence too, see <code>views/quick-launch.ts · scoreItem</code>. A command that needs a target, for example a branch, opens a second list for the target and keeps its name as a chip.</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>Quick Launch</h3>
+    <p>Press <kbd>⌘K</kbd>. The palette shows your favorites, the recent repositories, the commands that you started lately, then all commands of the open repository, see <code>quick-launch-commands.ts · openQuickLaunch</code>. Type to filter. <kbd>↑</kbd> <kbd>↓</kbd>, <kbd>PgUp</kbd> <kbd>PgDn</kbd>, <kbd>Home</kbd> and <kbd>End</kbd> move. <kbd>↵</kbd> starts the command. <kbd>Esc</kbd> goes back one list, then closes.</p>
+
+    <h3>Keyboard shortcuts</h3>
+    <p>Press <kbd>⌘/</kbd> for the cheat sheet. The bindings are in <code>shortcuts.ts · lines 48–65</code>. On a Mac the key is <kbd>⌘</kbd>, on other systems <kbd>Ctrl</kbd>:</p>
+    <div class="tablescroll">
+      <table>
+        <thead><tr><th>Action</th><th class="mono">Keys</th><th>Action</th><th class="mono">Keys</th></tr></thead>
+        <tbody>
+          <tr><th>Quick Launch</th><td class="mono">⌘K</td><th>Keyboard shortcuts</th><td class="mono">⌘/</td></tr>
+          <tr><th>Undo / Redo</th><td class="mono">⌘Z / ⌘⇧Z</td><th>Settings</th><td class="mono">⌘,</td></tr>
+          <tr><th>Push / Pull / Fetch all</th><td class="mono">⌘⇧P / ⌘⇧L / ⌘⇧F</td><th>Search commits</th><td class="mono">⌘F</td></tr>
+          <tr><th>Switch branch / Create branch</th><td class="mono">⌘B / ⌘⇧N</td><th>History / Local changes</th><td class="mono">⌘⇧H / ⌘⇧C</td></tr>
+          <tr><th>Save stash</th><td class="mono">⌘⇧S</td><th>Terminal</th><td class="mono">⌃`</td></tr>
+          <tr><th>Stage all / Unstage all</th><td class="mono">⌘⇧A / ⌘⇧U</td><th>Open / Clone repository</th><td class="mono">⌘O / ⌘⇧O</td></tr>
+          <tr><th>Favorite repository 1 to 9</th><td class="mono">⌘1 … ⌘9</td><th>Next / previous tab</th><td class="mono">⌃Tab / ⌘⇧] ⌘⇧[</td></tr>
+          <tr><th>Zoom in / out / reset</th><td class="mono">⌘= / ⌘− / ⌘0</td><th>Commit</th><td class="mono">⌘↵ in the message</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>A letter shortcut does nothing while you type in a field, in the terminal, or below a dialog, see <code>keyboard.ts · packShortcutAllowed</code>.</p>
+
+    <h3>Terminal and file editor</h3>
+    <p>Click "Terminal" or press <kbd>⌃`</kbd>. Each tab is a login shell in the working tree of the open repository, so <code>git</code> and your tools are on the PATH, see <code>terminal.rs · lines 196–199</code>. The in-app editor opens a file from the detail pane or from Quick Launch, with Save, Save and Stage, and a Markdown preview. The editor asks before it overwrites a file that changed on disk.</p>
+  </div>
+
+  <h4>Capture</h4>
+  <figure>
+    <img class="shot" src="img/settings-git.png" alt="The Settings dialog of the preview on the Git section. The navigation on the left shows Appearance, Editor & Diff, Pull, History and Git. The section shows Hooks folder with the value .git/hooks and a Browse button. The Hooks list shows the folder path and three rows: pre-commit on with Turn Off and Open, commit-msg not executable — git skips it with Turn On and Open, and pre-push off with Turn On and Open. Default branch shows the value main.">
+    <figcaption><b>Hooks are files, and this list shows their state.</b> "off" means that the script has the name <code>&lt;name&gt;.disabled</code>, which git ignores. "not executable" means that git skips the script silently, which is a frequent cause of a hook that does not start, see <code>hooks.rs · lines 1–10</code>. "Turn On" sets the executable bit.</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>Settings</h3>
+    <p>Press <kbd>⌘,</kbd> or click the gear. The sections are, see <code>views/settings-dialog.ts · lines 139–282</code>:</p>
+    <ul>
+      <li>Appearance: the theme (Light, Dark, GitKraken, GitKraken Neon), the zoom, the date format, avatars or initials, and the branch hover fade.</li>
+      <li>Editor &amp; Diff: the font, the font size, the tab width, line numbers, syntax colors, and the terminal font.</li>
+      <li>Pull: the method of the Pull button, and the auto-fetch interval.</li>
+      <li>History: the branch scope and the columns of the graph.</li>
+      <li>Git: the hooks folder and the hooks list, the default branch for Init, and the text encoding of the repository.</li>
+      <li>Git, continued: the GitHub account, the review command, and the links to the Git Config and Dotfiles views.</li>
+    </ul>
+    <p>A <em class="t">profile</em>, from the top bar, has its own identity (name, email, signing key), settings and open tabs. Switch the profile to change the identity that signs your commits.</p>
+
+    <div class="check">
+      <h4 class="lbl">Checkpoint — the hook list follows git</h4>
+      <pre><code>git rev-parse --git-path hooks</code></pre>
+      <p>The folder that this prints is the folder that the Hooks list reads. Thus a <code>core.hooksPath</code> applies, see <code>hooks.rs · hooks_dir</code>. In the preview the list shows <code>/Users/you/Documents/mideal/.git/hooks</code> with 3 hooks, which is example data.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ appendix ============ -->
+<section class="step" id="traps">
+  <div class="stephead"><span class="stepno">APPENDIX</span><h2>Traps, collected</h2></div>
+  <p class="goal">Each trap of this guide, in one table, because they cost the most time.</p>
+  <div>
+    <div class="tablescroll">
+      <table>
+        <thead><tr><th>Symptom</th><th>Cause</th><th class="mono">Step</th></tr></thead>
+        <tbody>
+          <tr><th>"Browse" does nothing</th><td class="sub">You are in the browser preview. The folder picker is a native dialog of the desktop app.</td><td class="sub">01</td></tr>
+          <tr><th>A diff stops with a notice</th><td class="sub">The diff is more than 5,000 lines. Click "Show full diff".</td><td class="sub">02</td></tr>
+          <tr><th>gitp refuses the undo of a stash pop</th><td class="sub">The working tree changed after the pop. Stash by hand.</td><td class="sub">03</td></tr>
+          <tr><th>A branch does not check out</th><td class="sub">A different worktree has it. Open that worktree.</td><td class="sub">04</td></tr>
+          <tr><th>Undo is grey</th><td class="sub">A merge, rebase, cherry-pick, revert or bisect is open, or something changed the repository after the action.</td><td class="sub">05</td></tr>
+          <tr><th>"command not found: claude"</th><td class="sub">The login shell does not find the CLI. Write its full path in the review command.</td><td class="sub">06</td></tr>
+          <tr><th>A draft says "line not in this diff"</th><td class="sub">GitHub accepts a comment only on a line of the diff. Change the line in the review.</td><td class="sub">06</td></tr>
+          <tr><th>A hook does not start</th><td class="sub">The script is not executable, or its name ends with .disabled. Settings → Git shows which, and "Turn On" corrects the two.</td><td class="sub">07</td></tr>
+          <tr><th>A letter shortcut does nothing</th><td class="sub">The focus is in a field, in the terminal, or below a dialog. Shortcuts do not operate there.</td><td class="sub">07</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>gitp user guide as of 2026-10-31 — gitp 0.1.0 at revision 83d65ce, Tauri 2.11.5, git 2.50.1, Node v22.23.4. Excerpts and facts come from README.md, crates/gitp-gui/webui/src (shortcuts.ts, keyboard.ts, prefs.ts, review-drafts.ts, quick-launch-commands.ts, views/*.ts) and crates/gitp-core/src (undo.rs, hooks.rs, merge_preview.rs, gh.rs, diff.rs, activity.rs). The line numbers agree with that revision. The images are captures of the browser preview of that revision with its example data, not of a repository of your own. There is no capture of the native window. The images are in <code>img/</code> adjacent to this file.</p>
+</footer>
+
+</div>
+</body>
+</html>
