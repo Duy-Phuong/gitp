@@ -191,6 +191,13 @@ pub struct PullRequestDetail {
     pub additions: u64,
     pub deletions: u64,
     pub changed_files: u64,
+    /// Whether it merges cleanly: `MERGEABLE`, `CONFLICTING`, or `UNKNOWN`
+    /// while GitHub is still working it out.
+    pub mergeable: String,
+    /// GitHub's word on merging it now: `CLEAN`, `BLOCKED` (reviews or checks
+    /// it requires), `BEHIND`, `DIRTY` (conflicts), `DRAFT`, `UNSTABLE`
+    /// (failing checks it doesn't require), `HAS_HOOKS` or `UNKNOWN`.
+    pub merge_state: String,
 }
 
 /// What a review says.
@@ -200,6 +207,48 @@ pub enum ReviewVerdict {
     Approve,
     RequestChanges,
     Comment,
+}
+
+/// How a pull request is merged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeMethod {
+    /// A merge commit.
+    Merge,
+    Squash,
+    Rebase,
+}
+
+/// A pull request to open (see `Repo::create_pull_request`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct NewPullRequest {
+    /// The local branch it is made from.
+    pub branch: String,
+    /// The remote the branch is pushed to: a fork names it `owner:branch`.
+    pub remote: String,
+    /// The branch it is to merge into, on GitHub.
+    pub base: String,
+    pub title: String,
+    pub body: String,
+    pub draft: bool,
+}
+
+/// A title and description to start a new pull request from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PrDraft {
+    pub title: String,
+    pub body: String,
+}
+
+/// What the repository on GitHub allows when merging, and its default branch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GitHubRepoSettings {
+    pub default_branch: String,
+    pub merge_commit: bool,
+    pub squash: bool,
+    pub rebase: bool,
+    /// The repository deletes a merged pull request's branch by itself.
+    pub delete_branch_on_merge: bool,
 }
 
 /// A new comment on one line of a pull request's diff.
@@ -613,6 +662,11 @@ impl Repo {
     /// sets `remote.<name>.gh-resolved`), else `upstream` — in a fork, where
     /// the pull requests are — then `github`, then `origin`, then any other.
     fn find_github_repo(&self) -> Option<GitHubRepo> {
+        self.find_github_remote().map(|(_, repo)| repo)
+    }
+
+    /// `find_github_repo` with the name of the remote it was found on.
+    fn find_github_remote(&self) -> Option<(String, GitHubRepo)> {
         let names = self.inner.remotes().ok()?;
         let config = self.inner.config().ok();
         let rank = |name: &str| {
@@ -633,7 +687,7 @@ impl Repo {
         names.sort_by_key(|n| (rank(n), *n));
         names.into_iter().find_map(|name| {
             let remote = self.inner.find_remote(name).ok()?;
-            github_repo_from_url(remote.url()?)
+            Some((name.to_string(), github_repo_from_url(remote.url()?)?))
         })
     }
 
@@ -768,6 +822,151 @@ impl Repo {
             return Err(e);
         }
         Ok(full)
+    }
+
+    /// Open a pull request with `gh pr create`. The branch must be on GitHub
+    /// already (push it first). The title and branches go in as `--opt=value`,
+    /// so text that starts with a dash is never read as an option, and the
+    /// description goes in on stdin. Returns the new pull request's number.
+    pub fn create_pull_request(&self, gh: &Gh, pr: &NewPullRequest) -> Result<u64> {
+        let title = pr.title.trim();
+        if title.is_empty() {
+            return Err(Error::Message("Give the pull request a title.".into()));
+        }
+        let target = self.github_target()?;
+        let repo = target.repo_arg();
+        // Pushed to another GitHub repository than the one the pull request
+        // goes to — a fork — the branch is named with its owner.
+        let pushed_to = self
+            .inner
+            .find_remote(&pr.remote)
+            .ok()
+            .and_then(|r| r.url().and_then(github_repo_from_url));
+        let head = match pushed_to {
+            Some(fork) if fork.path != target.path => {
+                let owner = fork.path.split('/').next().unwrap_or_default();
+                format!("--head={owner}:{}", pr.branch)
+            }
+            _ => format!("--head={}", pr.branch),
+        };
+        let base = format!("--base={}", pr.base);
+        let title = format!("--title={title}");
+        let mut args = vec![
+            "pr",
+            "create",
+            "--repo",
+            &repo,
+            &head,
+            &base,
+            &title,
+            "--body-file",
+            "-",
+        ];
+        if pr.draft {
+            args.push("--draft");
+        }
+        let out = self.gh_call(gh, &target, &args, Some(pr.body.as_bytes()), TIMEOUT)?;
+        let said = out.text();
+        said.lines()
+            .rev()
+            .find_map(|line| line.trim().rsplit_once("/pull/")?.1.parse().ok())
+            .ok_or_else(|| {
+                Error::Message(format!(
+                    "gh didn't say which pull request it opened: {said}"
+                ))
+            })
+    }
+
+    /// The repository's default branch and which merges it allows.
+    pub fn github_repo_settings(&self, gh: &Gh) -> Result<GitHubRepoSettings> {
+        let target = self.github_target()?;
+        let repo = target.repo_arg();
+        let args = ["repo", "view", &repo, "--json", REPO_SETTINGS_FIELDS];
+        let out = self.gh_call(gh, &target, &args, None, TIMEOUT)?;
+        let raw: RawRepoSettings = parse_json(&out.stdout)?;
+        Ok(GitHubRepoSettings {
+            default_branch: raw.default_branch_ref.map(|b| b.name).unwrap_or_default(),
+            merge_commit: raw.merge_commit_allowed,
+            squash: raw.squash_merge_allowed,
+            rebase: raw.rebase_merge_allowed,
+            delete_branch_on_merge: raw.delete_branch_on_merge,
+        })
+    }
+
+    /// Merge pull request `number` on GitHub. With `delete_branch`, its
+    /// branch on GitHub goes too: given `--repo`, gh leaves local branches and
+    /// the checkout alone.
+    pub fn merge_pull_request(
+        &self,
+        gh: &Gh,
+        number: u64,
+        method: MergeMethod,
+        delete_branch: bool,
+    ) -> Result<String> {
+        let target = self.github_target()?;
+        let repo = target.repo_arg();
+        let n = number.to_string();
+        let flag = match method {
+            MergeMethod::Merge => "--merge",
+            MergeMethod::Squash => "--squash",
+            MergeMethod::Rebase => "--rebase",
+        };
+        let mut args = vec!["pr", "merge", &n, "--repo", &repo, flag];
+        if delete_branch {
+            args.push("--delete-branch");
+        }
+        Ok(self.gh_call(gh, &target, &args, None, TIMEOUT)?.combined())
+    }
+
+    /// A title and description for a pull request from `branch` into `base`
+    /// (a branch on GitHub), the way GitHub starts one: one commit gives its
+    /// message, several the branch name as a title and their list; the
+    /// repository's pull request template, if it has one, is the description.
+    /// No network: the commits are those not on the GitHub remote's `base` as
+    /// last fetched — all of the branch's when that isn't there.
+    pub fn pull_request_draft(&self, branch: &str, base: &str) -> Result<PrDraft> {
+        let tip = self
+            .inner
+            .find_branch(branch, git2::BranchType::Local)?
+            .get()
+            .peel_to_commit()?;
+        let base = self.find_github_remote().and_then(|(remote, _)| {
+            let r = self
+                .inner
+                .find_reference(&format!("refs/remotes/{remote}/{base}"))
+                .ok()?;
+            r.peel_to_commit().ok().map(|c| c.id())
+        });
+        let mut commits = Vec::new();
+        if let Some(base) = base {
+            let mut walk = self.inner.revwalk()?;
+            walk.push(tip.id())?;
+            walk.hide(base)?;
+            walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)?;
+            for oid in walk {
+                commits.push(self.inner.find_commit(oid?)?);
+            }
+        }
+        let template = PR_TEMPLATES
+            .iter()
+            .find_map(|path| std::fs::read_to_string(self.workdir().join(path)).ok());
+        let (title, body) = match commits.as_slice() {
+            [one] => (
+                one.summary().unwrap_or_default().to_string(),
+                one.body().unwrap_or_default().trim().to_string(),
+            ),
+            many => (
+                title_from_branch(branch),
+                many.iter()
+                    .map(|c| format!("- {}", c.summary().unwrap_or_default()))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+        };
+        Ok(PrDraft {
+            title,
+            body: template.unwrap_or(body),
+        })
     }
 
     /// Comment on pull request `number`. Returns the new comment's URL.
@@ -1086,7 +1285,51 @@ const LIST_FIELDS: &str = "number,title,author,isDraft,reviewDecision,statusChec
 
 const VIEW_FIELDS: &str = "number,title,body,state,isDraft,author,baseRefName,headRefName,\
      headRefOid,labels,url,createdAt,reviewDecision,statusCheckRollup,reviews,comments,\
-     additions,deletions,changedFiles";
+     additions,deletions,changedFiles,mergeable,mergeStateStatus";
+
+const REPO_SETTINGS_FIELDS: &str = "defaultBranchRef,mergeCommitAllowed,squashMergeAllowed,\
+     rebaseMergeAllowed,deleteBranchOnMerge";
+
+/// Where GitHub looks for a repository's pull request template.
+const PR_TEMPLATES: [&str; 6] = [
+    ".github/pull_request_template.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "pull_request_template.md",
+    "PULL_REQUEST_TEMPLATE.md",
+    "docs/pull_request_template.md",
+    "docs/PULL_REQUEST_TEMPLATE.md",
+];
+
+/// A pull request title from a branch name, as GitHub would offer it but
+/// keeping a ticket key whole: `feature/UBIID-8520-delete-old-data` gives
+/// "UBIID-8520 Delete old data".
+fn title_from_branch(branch: &str) -> String {
+    let name = branch.rsplit('/').next().unwrap_or(branch);
+    let words: Vec<&str> = name.split(['-', '_']).filter(|w| !w.is_empty()).collect();
+    let is_key = |w: &str| {
+        w.len() >= 2
+            && w.starts_with(|c: char| c.is_ascii_uppercase())
+            && w.chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    };
+    let (key, rest) = match words.as_slice() {
+        [project, number, rest @ ..]
+            if is_key(project) && number.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            (Some(format!("{project}-{number}")), rest)
+        }
+        all => (None, all),
+    };
+    let mut text = rest.join(" ");
+    if let Some(first) = text.chars().next() {
+        text.replace_range(..first.len_utf8(), &first.to_uppercase().to_string());
+    }
+    match key {
+        Some(key) if text.is_empty() => key,
+        Some(key) => format!("{key} {text}"),
+        None => text,
+    }
+}
 
 fn required_body(body: &str) -> Result<&str> {
     let body = body.trim();
@@ -1447,6 +1690,29 @@ struct RawPrDetail {
     deletions: u64,
     #[serde(default)]
     changed_files: u64,
+    #[serde(default)]
+    mergeable: String,
+    #[serde(default)]
+    merge_state_status: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawRepoSettings {
+    default_branch_ref: Option<RawBranchName>,
+    #[serde(default)]
+    merge_commit_allowed: bool,
+    #[serde(default)]
+    squash_merge_allowed: bool,
+    #[serde(default)]
+    rebase_merge_allowed: bool,
+    #[serde(default)]
+    delete_branch_on_merge: bool,
+}
+
+#[derive(Deserialize)]
+struct RawBranchName {
+    name: String,
 }
 
 impl RawPrDetail {
@@ -1495,6 +1761,8 @@ impl RawPrDetail {
             additions: self.additions,
             deletions: self.deletions,
             changed_files: self.changed_files,
+            mergeable: self.mergeable,
+            merge_state: self.merge_state_status,
         }
     }
 }
@@ -2019,7 +2287,8 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
                     "body": "Needs work", "submittedAt": "2026-10-29T08:00:00Z"}],
                 "comments": [{"id": "IC_1", "author": {"login": "hubot"}, "body": "Hi",
                     "createdAt": "2026-10-28T09:00:00Z", "url": "https://github.com/x"}],
-                "additions": 3, "deletions": 1, "changedFiles": 1}"#,
+                "additions": 3, "deletions": 1, "changedFiles": 1,
+                "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"}"#,
             "",
             0,
         );
@@ -2060,6 +2329,10 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert_eq!(pr.review_comments.len(), 2);
         assert_eq!(pr.review_comments[1].id, 102);
         assert_eq!(pr.review_comments[1].line, None, "outdated");
+        assert_eq!(
+            (pr.mergeable.as_str(), pr.merge_state.as_str()),
+            ("CONFLICTING", "DIRTY")
+        );
     }
 
     #[test]
@@ -2205,6 +2478,210 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             .unwrap();
         assert!(matches!(err, Error::Cancelled));
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    fn new_pr(title: &str) -> NewPullRequest {
+        NewPullRequest {
+            branch: "feat".into(),
+            remote: "origin".into(),
+            base: "main".into(),
+            title: title.into(),
+            body: "--repo evil/repo\n$(touch pwned)".into(),
+            draft: true,
+        }
+    }
+
+    #[test]
+    fn creating_a_pull_request_keeps_the_text_out_of_the_options_and_returns_its_number() {
+        let fake = Fake::new();
+        fake.answer(
+            "pr create",
+            "https://github.com/octo/hello/pull/57\n",
+            "",
+            0,
+        );
+        let (_dir, repo) = github_repo();
+        let number = repo
+            .create_pull_request(&fake.gh(), &new_pr("--draft=false Fix it"))
+            .unwrap();
+        assert_eq!(number, 57);
+        assert_eq!(
+            fake.calls(),
+            [[
+                "pr",
+                "create",
+                "--repo",
+                "octo/hello",
+                "--head=feat",
+                "--base=main",
+                "--title=--draft=false Fix it",
+                "--body-file",
+                "-",
+                "--draft"
+            ]]
+        );
+        assert_eq!(fake.read("stdin"), "--repo evil/repo\n$(touch pwned)");
+    }
+
+    #[test]
+    fn a_branch_pushed_to_a_fork_is_named_with_the_fork_owner() {
+        let fake = Fake::new();
+        fake.answer(
+            "pr create",
+            "https://github.com/octo/hello/pull/58\n",
+            "",
+            0,
+        );
+        let (_dir, repo) = repo_with(&[
+            ("origin", "git@github.com:me/hello.git"),
+            ("upstream", "https://github.com/octo/hello.git"),
+        ]);
+        let mut pr = new_pr("Fix");
+        pr.draft = false;
+        assert_eq!(repo.create_pull_request(&fake.gh(), &pr).unwrap(), 58);
+        let args = &fake.calls()[0];
+        assert_eq!(args[2..5], ["--repo", "octo/hello", "--head=me:feat"]);
+        assert!(!args.contains(&"--draft".to_string()));
+    }
+
+    #[test]
+    fn a_pull_request_without_a_title_is_refused_before_gh_runs() {
+        let fake = Fake::new();
+        let (_dir, repo) = github_repo();
+        let err = repo
+            .create_pull_request(&fake.gh(), &new_pr("  "))
+            .unwrap_err();
+        assert!(message(err).contains("title"));
+        assert!(fake.calls().is_empty());
+    }
+
+    #[test]
+    fn the_repository_settings_say_which_merges_github_allows() {
+        let fake = Fake::new();
+        fake.answer(
+            "repo view",
+            r#"{"defaultBranchRef": {"name": "master"}, "mergeCommitAllowed": false,
+                "squashMergeAllowed": true, "rebaseMergeAllowed": true, "deleteBranchOnMerge": true}"#,
+            "",
+            0,
+        );
+        let (_dir, repo) = github_repo();
+        let settings = repo.github_repo_settings(&fake.gh()).unwrap();
+        assert_eq!(
+            settings,
+            GitHubRepoSettings {
+                default_branch: "master".into(),
+                merge_commit: false,
+                squash: true,
+                rebase: true,
+                delete_branch_on_merge: true,
+            }
+        );
+        assert_eq!(fake.calls()[0][..3], ["repo", "view", "octo/hello"]);
+    }
+
+    #[test]
+    fn merging_names_the_method_and_deletes_the_branch_on_github_only() {
+        let fake = Fake::new();
+        fake.answer(
+            "pr merge",
+            "",
+            "✓ Squashed and merged pull request #57\n",
+            0,
+        );
+        let (_dir, repo) = github_repo();
+        let gh = fake.gh();
+        let said = repo
+            .merge_pull_request(&gh, 57, MergeMethod::Squash, true)
+            .unwrap();
+        assert_eq!(said, "✓ Squashed and merged pull request #57");
+        repo.merge_pull_request(&gh, 57, MergeMethod::Merge, false)
+            .unwrap();
+        repo.merge_pull_request(&gh, 57, MergeMethod::Rebase, false)
+            .unwrap();
+        // With --repo, gh deletes the branch on GitHub and leaves the local one.
+        assert_eq!(
+            fake.calls(),
+            [
+                vec![
+                    "pr",
+                    "merge",
+                    "57",
+                    "--repo",
+                    "octo/hello",
+                    "--squash",
+                    "--delete-branch"
+                ],
+                vec!["pr", "merge", "57", "--repo", "octo/hello", "--merge"],
+                vec!["pr", "merge", "57", "--repo", "octo/hello", "--rebase"],
+            ]
+        );
+    }
+
+    /// A repository whose `feat` branch has `messages` on top of
+    /// `origin/main`.
+    fn branch_with(branch: &str, messages: &[&str]) -> (tempfile::TempDir, Repo) {
+        let (dir, repo) = github_repo();
+        {
+            let git = &repo.inner;
+            let base = git.head().unwrap().peel_to_commit().unwrap();
+            git.reference("refs/remotes/origin/main", base.id(), true, "test")
+                .unwrap();
+            let sig = git2::Signature::now("T", "t@example.com").unwrap();
+            let mut parent = base;
+            for message in messages {
+                let tree = parent.tree().unwrap();
+                let id = git
+                    .commit(None, &sig, &sig, message, &tree, &[&parent])
+                    .unwrap();
+                parent = git.find_commit(id).unwrap();
+            }
+            git.branch(branch, &parent, true).unwrap();
+        }
+        (dir, repo)
+    }
+
+    #[test]
+    fn one_commit_gives_the_draft_its_message() {
+        let (_dir, repo) = branch_with("feat", &["Fix the retry\n\nIt gave up too soon."]);
+        let draft = repo.pull_request_draft("feat", "main").unwrap();
+        assert_eq!(draft.title, "Fix the retry");
+        assert_eq!(draft.body, "It gave up too soon.");
+    }
+
+    #[test]
+    fn several_commits_give_the_branch_name_and_a_list() {
+        let (_dir, repo) = branch_with(
+            "feature/UBIID-8520-delete-old-data",
+            &["Add the purge job", "Test it"],
+        );
+        let draft = repo
+            .pull_request_draft("feature/UBIID-8520-delete-old-data", "main")
+            .unwrap();
+        assert_eq!(draft.title, "UBIID-8520 Delete old data");
+        assert_eq!(draft.body, "- Add the purge job\n- Test it");
+    }
+
+    #[test]
+    fn the_repository_s_template_is_the_draft_s_description() {
+        let (dir, repo) = branch_with("fix_login", &["a", "b"]);
+        fs::create_dir_all(dir.path().join(".github")).unwrap();
+        fs::write(
+            dir.path().join(".github/pull_request_template.md"),
+            "## Why\n\n## How\n",
+        )
+        .unwrap();
+        let draft = repo.pull_request_draft("fix_login", "main").unwrap();
+        assert_eq!(draft.title, "Fix login");
+        assert_eq!(draft.body, "## Why\n\n## How\n");
+    }
+
+    #[test]
+    fn a_base_not_fetched_yet_still_gives_a_title() {
+        let (_dir, repo) = branch_with("fix-it", &["a"]);
+        let draft = repo.pull_request_draft("fix-it", "develop").unwrap();
+        assert_eq!(draft.title, "Fix it");
+        assert_eq!(draft.body, "");
     }
 
     #[test]

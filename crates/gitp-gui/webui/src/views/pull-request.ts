@@ -41,6 +41,8 @@ export interface PullRequestCallbacks {
   checkoutInWorktree: (pr: PullRequestDetail, x: number, y: number) => void;
   // Approve / Request Changes / Comment, from a menu at (x, y).
   reviewMenu: (pr: PullRequestDetail, x: number, y: number) => void;
+  // Asks how, then merges on GitHub and reloads the view.
+  merge: (pr: PullRequestDetail) => void;
   openUrl: (url: string) => void;
   // Each posts after the user confirms, resolving true once it's on GitHub;
   // the view then reloads the conversation.
@@ -192,8 +194,13 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       button("Generate Drafts", () => void loadDrafts(pr, cb.generateDrafts), "Run the review command (Settings → Git) over the diff; its findings become draft comments to approve or discard"),
       button("Load Review File…", () => void loadDrafts(pr, cb.loadDrafts), "Read a review's findings as draft comments, to approve or discard before posting"),
       open,
-      button("Refresh", () => void load(false), "Read it again from GitHub"),
     ]);
+    if (pr.state === "OPEN") {
+      const merge = button("Merge…", () => cb.merge(pr), `Merge #${pr.number} into ${pr.base} on GitHub`);
+      merge.classList.remove("ghost");
+      actions.prepend(merge);
+    }
+    actions.append(button("Refresh", () => void load(false), "Read it again from GitHub"));
     return el("div", { class: "pr-head" }, [
       el("div", { class: "pr-title-row" }, [
         el("span", { class: "pr-title", text: pr.title }),

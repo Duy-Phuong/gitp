@@ -3,7 +3,19 @@
 // and where on a diff a new comment goes. The DOM is in views/sidebar.ts and
 // views/pull-request.ts.
 
-import type { DiffLine, FileDiff, PrCheck, PrFilter, PrReview, PrComment, PrReviewComment, PullRequest, PullRequestDetail } from "./types";
+import type {
+  DiffLine,
+  FileDiff,
+  GitHubRepoSettings,
+  MergeMethod,
+  PrCheck,
+  PrFilter,
+  PrReview,
+  PrComment,
+  PrReviewComment,
+  PullRequest,
+  PullRequestDetail,
+} from "./types";
 
 export const PR_FILTERS: { value: PrFilter; label: string }[] = [
   { value: "all", label: "All" },
@@ -170,4 +182,60 @@ export function prMatches(pr: PullRequest, match: (text: string) => boolean): bo
 // "3h ago" for GitHub's ISO times.
 export function isoSeconds(iso: string): number {
   return Math.floor(time(iso) / 1000);
+}
+
+// Before a merge: what stops it (GitHub would refuse it outright) or what
+// GitHub may refuse it for, which the user can still try.
+export function mergeAdvice(pr: PullRequestDetail): { blocked: string | null; warning: string | null } {
+  const blocked = (text: string) => ({ blocked: text, warning: null });
+  const warning = (text: string) => ({ blocked: null, warning: text });
+  if (pr.state === "MERGED") return blocked(`#${pr.number} is already merged.`);
+  if (pr.state !== "OPEN") return blocked(`#${pr.number} is closed.`);
+  if (pr.is_draft || pr.merge_state === "DRAFT") return blocked(`#${pr.number} is a draft: mark it ready for review on GitHub first.`);
+  if (pr.mergeable === "CONFLICTING" || pr.merge_state === "DIRTY") {
+    return blocked(`#${pr.number} has conflicts with ${pr.base}: resolve them first.`);
+  }
+  switch (pr.merge_state) {
+    case "BLOCKED":
+      return warning("GitHub reports it blocked: a required review or check is missing, so the merge may be refused.");
+    case "BEHIND":
+      return warning(`${pr.head} is behind ${pr.base}; if the repository requires it up to date, the merge will be refused.`);
+    case "UNSTABLE":
+      return warning("Some checks are failing.");
+    case "UNKNOWN":
+      return warning("GitHub is still checking whether it merges cleanly.");
+  }
+  return { blocked: null, warning: null };
+}
+
+const MERGE_CHOICES: { value: MergeMethod; label: string; allowed: (s: GitHubRepoSettings) => boolean }[] = [
+  { value: "squash", label: "Squash and merge", allowed: (s) => s.squash },
+  { value: "merge", label: "Create a merge commit", allowed: (s) => s.merge_commit },
+  { value: "rebase", label: "Rebase and merge", allowed: (s) => s.rebase },
+];
+
+// The merge methods to offer: those the repository allows, squash first — or
+// every one, when GitHub didn't say (it then refuses any it doesn't allow).
+export function mergeChoices(settings: GitHubRepoSettings): { value: MergeMethod; label: string }[] {
+  const allowed = MERGE_CHOICES.filter((c) => c.allowed(settings));
+  return (allowed.length ? allowed : MERGE_CHOICES).map(({ value, label }) => ({ value, label }));
+}
+
+// The remote that holds `repo` ("owner/name", or "host/owner/name" off
+// github.com), the one the pull requests are in: its branches are the bases.
+export function githubRemoteName(remotes: { name: string; url: string | null }[], repo: string): string | null {
+  const path = repo.split("/").slice(-2).join("/").toLowerCase();
+  const found = remotes.find((r) => {
+    const url = (r.url ?? "").toLowerCase().replace(/\/+$/, "").replace(/\.git$/, "");
+    return url.endsWith(`/${path}`) || url.endsWith(`:${path}`);
+  });
+  return found?.name ?? null;
+}
+
+// The branches a pull request can go into: `remote`'s, as last fetched, with
+// the repository's default first (listed even when it isn't fetched).
+export function baseBranches(remoteBranches: string[], remote: string, defaultBranch: string): string[] {
+  const prefix = `${remote}/`;
+  const names = remoteBranches.filter((n) => n.startsWith(prefix)).map((n) => n.slice(prefix.length));
+  return [defaultBranch, ...names.filter((n) => n !== "HEAD" && n !== defaultBranch).sort()];
 }

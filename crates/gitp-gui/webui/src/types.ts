@@ -722,6 +722,38 @@ export interface PullRequestDetail {
   additions: number;
   deletions: number;
   changed_files: number;
+  // MERGEABLE / CONFLICTING / UNKNOWN (GitHub still working it out).
+  mergeable: string;
+  // GitHub's word on merging now: CLEAN, BLOCKED, BEHIND, DIRTY, DRAFT,
+  // UNSTABLE, HAS_HOOKS or UNKNOWN.
+  merge_state: string;
+}
+
+export type MergeMethod = "merge" | "squash" | "rebase";
+
+// What the repository on GitHub allows when merging, and its default branch.
+export interface GitHubRepoSettings {
+  default_branch: string;
+  merge_commit: boolean;
+  squash: boolean;
+  rebase: boolean;
+  delete_branch_on_merge: boolean;
+}
+
+// A title and description to start a new pull request from.
+export interface PrDraft {
+  title: string;
+  body: string;
+}
+
+export interface NewPullRequest {
+  branch: string;
+  // The remote the branch is pushed to (a fork's names it owner:branch).
+  remote: string;
+  base: string;
+  title: string;
+  body: string;
+  draft: boolean;
 }
 
 export type ReviewVerdict = "approve" | "request_changes" | "comment";

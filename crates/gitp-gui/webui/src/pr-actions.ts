@@ -1,6 +1,7 @@
 // GitHub pull requests through the user's own `gh` login: loading the
-// sidebar's Pull Requests section, the pull request view's actions (check out,
-// comment, reply, review, comment on a line), and signing gh in and out.
+// sidebar's Pull Requests section, opening a new pull request, the pull
+// request view's actions (check out, comment, reply, review, comment on a
+// line, merge), and signing gh in and out.
 //
 // Everything posted goes to GitHub under the user's name, so each post is
 // confirmed first and its result reported after.
@@ -11,6 +12,7 @@ import {
   commentOnLine,
   commentOnPullRequest,
   confirmDialog,
+  createPullRequestOnGitHub,
   fetchPullRequest,
   fetchPullRequestFiles,
   generateReviewDrafts,
@@ -20,10 +22,14 @@ import {
   ghLoginWait,
   ghLogout,
   ghRepo,
+  githubRepoSettings,
   isCancelled,
   listPullRequests,
+  mergePullRequest,
   openGithubUrl,
   pickReviewFile,
+  pullRequestDraft,
+  pushBranch,
   readReviewFile,
   replyToReviewComment,
   reviewPullRequest,
@@ -41,7 +47,8 @@ import { openFormDialog } from "./views/form-dialog";
 import { showErrorDialog } from "./views/message-dialog";
 import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
-import type { GhAccount, PrFilter, PullRequest, ReviewVerdict } from "./types";
+import { baseBranches, githubRemoteName, mergeAdvice, mergeChoices } from "./pull-requests";
+import type { BranchRef, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict } from "./types";
 
 // --- The sidebar section ----------------------------------------------------
 
@@ -216,6 +223,139 @@ async function openUrl(url: string): Promise<void> {
   }
 }
 
+// --- Opening and merging -----------------------------------------------------
+
+// "Create Pull Request…" on a branch of a GitHub repository: a form filled
+// from its commits, into the repository's default branch, then — after
+// pushing the branch to `remote` when GitHub hasn't all of it — the pull
+// request opened with gh, and shown.
+export async function createPullRequestDialog(b: BranchRef, remote: string): Promise<void> {
+  const repo = state.prs.repo!;
+  setStatus(`Preparing a pull request for ${b.name}…`);
+  let settings;
+  try {
+    settings = await githubRepoSettings();
+  } catch (err) {
+    opFailed(`Couldn't read ${repo} on GitHub`, err);
+    return;
+  }
+  const fallback = settings.default_branch || "main";
+  const draft = await pullRequestDraft(b.name, fallback).catch(() => ({ title: b.name, body: "" }));
+  const baseRemote = githubRemoteName(state.remoteList, repo) ?? remote;
+  const bases = baseBranches(
+    state.refs.remotes.map((r) => r.name),
+    baseRemote,
+    fallback,
+  );
+  const unpushed = !b.has_upstream || b.ahead > 0;
+  setStatus("");
+  openFormDialog(
+    {
+      title: `Create Pull Request from ${b.name}`,
+      sub: unpushed ? `On ${repo}. ${b.name} is pushed to ${remote} first.` : `On ${repo}.`,
+      fields: [
+        { label: "Into", choices: bases.map((n) => ({ value: n, label: n })), value: fallback },
+        { label: "Title", value: draft.title, required: true },
+        { label: "Description", value: draft.body, multiline: true, placeholder: "Markdown" },
+        {
+          label: "As",
+          choices: [
+            { value: "ready", label: "Ready for review" },
+            { value: "draft", label: "Draft" },
+          ],
+        },
+      ],
+      submitLabel: "Create Pull Request",
+    },
+    ([base, title, body, kind]) => void createPullRequestNow(b, remote, base, title, body, kind === "draft", unpushed),
+  );
+}
+
+async function createPullRequestNow(
+  b: BranchRef,
+  remote: string,
+  base: string,
+  title: string,
+  body: string,
+  draft: boolean,
+  unpushed: boolean,
+): Promise<void> {
+  if (unpushed) {
+    setStatus(`Pushing ${b.name} to ${remote}…`);
+    try {
+      await pushBranch(b.name, remote);
+    } catch (err) {
+      if (!isCancelled(err)) opFailed(`Couldn't push ${b.name}, so no pull request was opened`, err);
+      return;
+    }
+    void loadSidebar();
+  }
+  setStatus(`Opening a pull request from ${b.name} into ${base}…`);
+  let number;
+  try {
+    number = await createPullRequestOnGitHub({ branch: b.name, remote, base, title, body, draft });
+  } catch (err) {
+    opFailed(`Couldn't open a pull request from ${b.name}`, err);
+    return;
+  }
+  reportDone(`Opened ${draft ? "draft " : ""}pull request #${number}: ${title}`);
+  void loadPullRequests();
+  showPullRequest(number);
+}
+
+// The view's Merge button: say why it can't merge, or ask how — the methods
+// the repository allows, and whether its branch goes — then merge on GitHub.
+async function mergeAction(pr: PullRequestDetail): Promise<void> {
+  const advice = mergeAdvice(pr);
+  if (advice.blocked) {
+    showErrorDialog(`#${pr.number} can't be merged`, advice.blocked);
+    return;
+  }
+  setStatus(`Reading how ${state.prs.repo ?? "the repository"} merges…`);
+  let settings;
+  try {
+    settings = await githubRepoSettings();
+  } catch (err) {
+    opFailed("Couldn't read the repository on GitHub", err);
+    return;
+  }
+  setStatus("");
+  const choices = mergeChoices(settings);
+  openFormDialog(
+    {
+      title: `Merge #${pr.number} into ${pr.base}`,
+      sub: [pr.title, advice.warning].filter(Boolean).join(" — "),
+      fields: [
+        { label: "How", choices, value: choices[0].value },
+        {
+          label: "Then",
+          choices: [
+            { value: "delete", label: `Delete ${pr.head} on GitHub` },
+            { value: "keep", label: `Keep ${pr.head}` },
+          ],
+          value: settings.delete_branch_on_merge ? "delete" : "keep",
+        },
+      ],
+      submitLabel: "Merge",
+    },
+    ([method, then]) => void mergeNow(pr, method as MergeMethod, then === "delete"),
+  );
+}
+
+async function mergeNow(pr: PullRequestDetail, method: MergeMethod, deleteBranch: boolean): Promise<void> {
+  setStatus(`Merging #${pr.number} into ${pr.base}…`);
+  try {
+    const said = (await mergePullRequest(pr.number, method, deleteBranch)).trim();
+    reportDone(said || `Merged #${pr.number} into ${pr.base}.`);
+  } catch (err) {
+    opFailed(`Couldn't merge #${pr.number}`, err);
+    return;
+  }
+  ui.prView?.reload();
+  void loadPullRequests();
+  void loadSidebar();
+}
+
 // What the pull request view does, plugged in by main.ts.
 export const pullRequestCallbacks: PullRequestCallbacks = {
   fetchDetail: fetchPullRequest,
@@ -228,6 +368,7 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
       onSubmit: (path) => void checkoutPullRequestInWorktreeAction(pr.number, path),
     }),
   reviewMenu: (pr, x, y) => reviewMenu(pr.number, x, y),
+  merge: mergeAction,
   openUrl: (url) => void openUrl(url),
   comment: (pr, body) => post("a comment", pr.number, body, () => commentOnPullRequest(pr.number, body)),
   reply: (pr, root, body) =>
