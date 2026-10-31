@@ -46,6 +46,16 @@ import type {
   Refs,
   RemoteInfo,
   RepoChanged,
+  CodeFile,
+  CodeFilesChanged,
+  CodeWorkspace,
+  FileEntry,
+  HierarchyNode,
+  IndexReady,
+  SearchQuery,
+  SearchResult,
+  Symbol,
+  UsagesResult,
   RepoSummary,
   ResetMode,
   SigningConfig,
@@ -3150,3 +3160,109 @@ const MOCK_SUBMODULES: Submodule[] = [
     state: "modified",
   },
 ];
+
+// --- Code tab ---------------------------------------------------------------
+// In preview mode the workspace is MOCK_FILES; navigation finds nothing and
+// search is a plain substring scan, enough to click through the tab.
+
+const MOCK_MTIME = 1_700_000_000_000;
+
+function mockLang(path: string): FileEntry["lang"] {
+  const ext = path.split(".").pop() ?? "";
+  if (ext === "java") return "java";
+  if (["js", "mjs", "cjs", "jsx"].includes(ext)) return "javascript";
+  if (["ts", "mts", "cts"].includes(ext)) return "typescript";
+  if (ext === "tsx") return "tsx";
+  if (["py", "pyi"].includes(ext)) return "python";
+  return null;
+}
+
+function mockFileEntries(): FileEntry[] {
+  return [...MOCK_FILES.entries()]
+    .map(([path, text]) => ({ path, size: text.length, lang: mockLang(path), mtime_ms: MOCK_MTIME }))
+    .sort((a, b) => (a.path < b.path ? -1 : 1));
+}
+
+export async function codeOpenWorkspace(): Promise<CodeWorkspace> {
+  if (!isTauri()) return { files: mockFileEntries(), indexing: false };
+  return invoke<CodeWorkspace>("code_open_workspace", {});
+}
+
+export async function codeRefresh(): Promise<FileEntry[]> {
+  if (!isTauri()) return mockFileEntries();
+  return invoke<FileEntry[]>("code_refresh", {});
+}
+
+export async function codeReadFile(path: string): Promise<CodeFile | null> {
+  if (!isTauri()) {
+    const text = MOCK_FILES.get(path);
+    return text === undefined ? null : { text, crlf: false, mixed: false, mtime_ms: MOCK_MTIME };
+  }
+  return invoke<CodeFile | null>("code_read_file", { path });
+}
+
+// Saves and returns the file's new mtime; rejects with "changed_on_disk" when
+// the file no longer has `expectedMtimeMs`.
+export async function codeWriteFile(path: string, text: string, crlf: boolean, expectedMtimeMs: number): Promise<number> {
+  if (!isTauri()) {
+    MOCK_FILES.set(path, text);
+    mockMarkModified(path);
+    return MOCK_MTIME;
+  }
+  return invoke<number>("code_write_file", { path, text, crlf, expectedMtimeMs });
+}
+
+// Rejects with "indexing" until the first index is built.
+export async function codeDefinition(path: string, line: number, col: number): Promise<Symbol[]> {
+  if (!isTauri()) return [];
+  return invoke<Symbol[]>("code_definition", { path, line, col });
+}
+
+// Rejects with "indexing" or "no_symbol".
+export async function codeReferences(path: string, line: number, col: number): Promise<UsagesResult> {
+  if (!isTauri()) throw new Error("no_symbol");
+  return invoke<UsagesResult>("code_references", { path, line, col });
+}
+
+export async function codeCallers(path: string, line: number, col: number): Promise<HierarchyNode[]> {
+  if (!isTauri()) throw new Error("no_symbol");
+  return invoke<HierarchyNode[]>("code_callers", { path, line, col });
+}
+
+export async function codeCallees(path: string, line: number, col: number): Promise<HierarchyNode[]> {
+  if (!isTauri()) throw new Error("no_symbol");
+  return invoke<HierarchyNode[]>("code_callees", { path, line, col });
+}
+
+export async function codeFileSymbols(path: string): Promise<Symbol[]> {
+  if (!isTauri()) return [];
+  return invoke<Symbol[]>("code_file_symbols", { path });
+}
+
+export async function codeSearch(query: SearchQuery, limit = 2000): Promise<SearchResult> {
+  if (!isTauri()) {
+    const hits: SearchResult["hits"] = [];
+    const needle = query.case_sensitive ? query.pattern : query.pattern.toLowerCase();
+    for (const [path, text] of MOCK_FILES) {
+      text.split("\n").forEach((line, i) => {
+        const hay = query.case_sensitive ? line : line.toLowerCase();
+        const col = needle ? hay.indexOf(needle) : -1;
+        if (col >= 0) hits.push({ path, line: i, col, end_col: col + needle.length, text: line });
+      });
+    }
+    return { hits: hits.slice(0, limit), truncated: hits.length > limit, files_searched: MOCK_FILES.size };
+  }
+  return invoke<SearchResult>("code_search", { query, limit });
+}
+
+export async function onCodeIndexReady(cb: (ev: IndexReady) => void): Promise<void> {
+  if (!isTauri()) return;
+  const { listen } = await import("@tauri-apps/api/event");
+  await listen<IndexReady>("code-index-ready", (event) => cb(event.payload));
+}
+
+export async function onCodeFilesChanged(cb: (ev: CodeFilesChanged) => void): Promise<void> {
+  if (!isTauri()) return;
+  const { listen } = await import("@tauri-apps/api/event");
+  await listen<CodeFilesChanged>("code-files-changed", (event) => cb(event.payload));
+}

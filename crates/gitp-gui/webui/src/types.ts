@@ -772,3 +772,124 @@ export interface DeviceCode {
   code: string;
   url: string;
 }
+
+// --- Code tab (mirrors gitp-code and gitp-gui/src/code.rs) ------------------
+// Lines are 0-based; columns are UTF-16 code units, as CodeMirror counts.
+
+export type Lang = "java" | "javascript" | "typescript" | "tsx" | "python";
+
+export interface FileEntry {
+  path: string;
+  size: number;
+  lang: Lang | null;
+  mtime_ms: number;
+}
+
+export interface Location {
+  path: string;
+  line: number;
+  col: number;
+}
+
+export interface Range {
+  start_line: number;
+  start_col: number;
+  end_line: number;
+  end_col: number;
+  start_byte: number;
+  end_byte: number;
+}
+
+export type SymbolKind = "function" | "method" | "class" | "interface" | "enum" | "variable" | "field";
+
+export interface SymbolId {
+  file: number;
+  byte: number;
+}
+
+export interface Symbol {
+  id: SymbolId;
+  name: string;
+  kind: SymbolKind;
+  path: string;
+  range: Range;
+  // Just the identifier: where the caret lands.
+  name_range: Range;
+  container: SymbolId | null;
+  lang: Lang;
+}
+
+export interface Reference {
+  name: string;
+  kind: "call" | "ident" | "import";
+  path: string;
+  range: Range;
+  enclosing: SymbolId | null;
+  receiver: string | null;
+}
+
+export interface UsageHit {
+  reference: Reference;
+  // Scope or an import ties it to this definition; else the names merely match.
+  certain: boolean;
+}
+
+export interface UsagesResult {
+  symbol: Symbol;
+  hits: UsageHit[];
+  truncated: boolean;
+}
+
+export interface HierarchyNode {
+  symbol: Symbol | null;
+  reference: Reference;
+  certain: boolean;
+}
+
+export interface CodeFile {
+  text: string;
+  crlf: boolean;
+  mixed: boolean;
+  // What a save must present back; the backend refuses with "changed_on_disk" otherwise.
+  mtime_ms: number;
+}
+
+export interface CodeWorkspace {
+  files: FileEntry[];
+  // The first index is being built; "code-index-ready" follows.
+  indexing: boolean;
+}
+
+export interface IndexReady {
+  symbols: number;
+  files: number;
+  ms: number;
+}
+
+export interface CodeFilesChanged {
+  paths: string[];
+  // The paths not written by the Code tab itself.
+  external: string[];
+}
+
+export interface SearchQuery {
+  pattern: string;
+  regex: boolean;
+  case_sensitive: boolean;
+  whole_word: boolean;
+  include_glob: string | null;
+}
+
+export interface SearchHit {
+  path: string;
+  line: number;
+  col: number;
+  end_col: number;
+  text: string;
+}
+
+export interface SearchResult {
+  hits: SearchHit[];
+  truncated: boolean;
+  files_searched: number;
+}
