@@ -113,6 +113,8 @@ import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { openWorkspacesAction } from "./local-workspace-actions";
 import { addRemoteAction } from "./remote-actions";
 import { createFileAction, editFileStage } from "./editor-actions";
+import { shortcutHint } from "./shortcuts";
+import { openShortcutsDialog } from "./views/shortcuts-dialog";
 
 // --- Quick Launch -----------------------------------------------------------
 
@@ -194,12 +196,13 @@ export async function openRecentRepo(path: string): Promise<void> {
 
 function openOnlyCommands(): QuickItem[] {
   return [
-    { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
-    { kind: "command", label: "Clone Repository…", run: cloneRepoAction },
+    { kind: "command", label: "Open Repository…", detail: shortcutHint("openRepo"), run: () => void browseAndOpen() },
+    { kind: "command", label: "Clone Repository…", detail: shortcutHint("cloneRepo"), run: cloneRepoAction },
     { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Workspaces…", detail: "groups of repositories to fetch, pull or open together", run: openWorkspacesAction },
     { kind: "command", label: "Terminal", run: toggleTerminal },
     { kind: "command", label: "Toggle Theme", detail: "light ↔ your last dark theme", run: toggleTheme },
+    { kind: "command", label: "Keyboard Shortcuts", detail: shortcutHint("cheatSheet"), run: openShortcutsDialog },
   ];
 }
 
@@ -225,7 +228,13 @@ function detectEditors(): void {
 
 detectEditors();
 
-async function browseAndOpen(): Promise<void> {
+// Ask for a name and create the branch at HEAD — Quick Launch's "Create
+// Branch…" and its shortcut.
+export function createBranchPrompt(): void {
+  promptFor("New branch name", (name) => void createBranchAction(name));
+}
+
+export async function browseAndOpen(): Promise<void> {
   const path = await browseForRepo();
   if (path) await loadRepo(path);
 }
@@ -328,11 +337,7 @@ function repoCommands(): QuickItem[] {
           next: () => refStage(`Compare ${base} with`, (head) => ({ run: () => void compareRefsAction(base, head) })),
         })),
     },
-    {
-      kind: "command",
-      label: "Create Branch…",
-      run: () => promptFor("New branch name", (name) => void createBranchAction(name)),
-    },
+    { kind: "command", label: "Create Branch…", detail: shortcutHint("newBranch"), run: createBranchPrompt },
     { kind: "command", label: "Create File…", run: createFileAction },
     {
       kind: "command",
@@ -374,14 +379,15 @@ function repoCommands(): QuickItem[] {
       label: "File History…",
       next: () => fileStage("File History", "history"),
     },
-    { kind: "command", label: "Local Changes", run: () => showView("changes") },
-    { kind: "command", label: "Log (All Commits)", run: () => showView("history") },
+    { kind: "command", label: "Local Changes", detail: shortcutHint("changes"), run: () => showView("changes") },
+    { kind: "command", label: "Log (All Commits)", detail: shortcutHint("history"), run: () => showView("history") },
     {
       kind: "command",
       label: "Pull…",
+      detail: shortcutHint("pull"),
       next: () => pullStage(),
     },
-    { kind: "command", label: "Push", run: () => void pushAction() },
+    { kind: "command", label: "Push", detail: shortcutHint("push"), run: () => void pushAction() },
     { kind: "command", label: "Push (force-with-lease)", run: () => void pushForceAction() },
     {
       kind: "command",
@@ -402,7 +408,7 @@ function repoCommands(): QuickItem[] {
     },
     ...bisectCommands(),
     { kind: "command", label: "Clean up (prune remotes, delete gone branches)", run: () => void cleanUpAction() },
-    { kind: "command", label: "Refresh (fetch all remotes)", run: () => void refreshAllAction() },
+    { kind: "command", label: "Refresh (fetch all remotes)", detail: shortcutHint("fetch"), run: () => void refreshAllAction() },
     {
       kind: "command",
       label: "Rename Branch…",
@@ -419,12 +425,12 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Create Patch from All Changes…", run: () => void saveAllChangesPatchAction() },
     { kind: "command", label: "Discard All Changes…", run: () => void discardAllAction() },
     { kind: "command", label: "Toggle Theme", detail: "light ↔ your last dark theme", run: toggleTheme },
-    { kind: "command", label: "Save Stash…", run: openStashDialogAction },
+    { kind: "command", label: "Save Stash…", detail: shortcutHint("stash"), run: openStashDialogAction },
     { kind: "command", label: "Show Reflog", run: () => showReflog() },
     { kind: "command", label: "Show Activity Log", run: () => showView("activity") },
     { kind: "command", label: "Switch Repository", next: () => repoStage() },
-    { kind: "command", label: "Open Repository…", run: () => void browseAndOpen() },
-    { kind: "command", label: "Clone Repository…", run: cloneRepoAction },
+    { kind: "command", label: "Open Repository…", detail: shortcutHint("openRepo"), run: () => void browseAndOpen() },
+    { kind: "command", label: "Clone Repository…", detail: shortcutHint("cloneRepo"), run: cloneRepoAction },
     { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Workspaces…", detail: "groups of repositories to fetch, pull or open together", run: openWorkspacesAction },
     { kind: "command", label: "Close Repository", run: () => void closeRepoTab(state.repoPath) },
@@ -434,7 +440,8 @@ function repoCommands(): QuickItem[] {
       detail: isFavoriteRepo(state.repoPath) ? "remove this repository from Favorites" : "add this repository to Favorites",
       run: () => toggleFavorite(state.repoPath),
     },
-    { kind: "command", label: "Terminal", run: toggleTerminal },
+    { kind: "command", label: "Terminal", detail: shortcutHint("terminal"), run: toggleTerminal },
+    { kind: "command", label: "Keyboard Shortcuts", detail: shortcutHint("cheatSheet"), run: openShortcutsDialog },
     {
       kind: "command",
       label: "Checkout Remote Branch",
@@ -486,8 +493,8 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Add Remote…", run: addRemoteAction },
     { kind: "command", label: "Prune Worktrees…", run: () => void pruneWorktreesAction() },
     { kind: "command", label: "Apply Patch…", run: () => void applyPatchAction() },
-    { kind: "command", label: "Stage All Changes", run: () => void stageAllAction() },
-    { kind: "command", label: "Unstage All Changes", run: () => void unstageAllAction() },
+    { kind: "command", label: "Stage All Changes", detail: shortcutHint("stageAll"), run: () => void stageAllAction() },
+    { kind: "command", label: "Unstage All Changes", detail: shortcutHint("unstageAll"), run: () => void unstageAllAction() },
     ...gitflowCommands(),
     ...lfsCommands(),
     ...pullRequestCommands(),

@@ -3,11 +3,24 @@
 
 import { $ } from "./dom";
 import { state, ui } from "./app-state";
-import { cycleRepoTab, leaveComparison, selectCommit } from "./shell";
-import { redoAction, undoAction } from "./repo-actions";
-import { openQuickLaunch, openRecentRepo } from "./quick-launch-commands";
+import { cycleRepoTab, leaveComparison, selectCommit, showView } from "./shell";
+import {
+  openStashDialogAction,
+  pushAction,
+  redoAction,
+  refreshAllAction,
+  runPullDefault,
+  stageAllAction,
+  undoAction,
+  unstageAllAction,
+} from "./repo-actions";
+import { browseAndOpen, createBranchPrompt, openQuickLaunch, openRecentRepo } from "./quick-launch-commands";
+import { cloneRepoAction } from "./new-repo-actions";
+import { toggleTerminal } from "./terminal-panel";
 import { applyZoom, loadFavoriteRepos, loadZoom, steppedZoom } from "./prefs";
 import { setStatus } from "./report";
+import { SHORTCUTS, shortcutFor, shortcutHint, type ShortcutId } from "./shortcuts";
+import { openShortcutsDialog } from "./views/shortcuts-dialog";
 
 // --- Keyboard navigation in the commit log --------------------------------
 //
@@ -117,9 +130,88 @@ export function opensQuickLaunch(e: KeyboardEvent): boolean {
 // Cmd+Shift+] / [ only mean "next / previous tab" on a Mac.
 const IS_MAC = navigator.userAgent.includes("Mac");
 
+// --- The shortcut pack -------------------------------------------------------
+//
+// The bindings live in shortcuts.ts; this is what each one does. Most press
+// the toolbar button or run the Quick Launch command of the same name, so a
+// key and a click always do exactly the same thing.
+const ACTIONS: Record<ShortcutId, () => void> = {
+  push: () => void pushAction(),
+  pull: () => void runPullDefault(),
+  fetch: () => void refreshAllAction(),
+  branchMenu: () => $("#branch-btn").click(),
+  newBranch: () => createBranchPrompt(),
+  stash: () => openStashDialogAction(),
+  stageAll: () => void stageAllAction(),
+  unstageAll: () => void unstageAllAction(),
+  openRepo: () => void browseAndOpen(),
+  cloneRepo: () => cloneRepoAction(),
+  history: () => showView("history"),
+  changes: () => showView("changes"),
+  searchCommits: () => {
+    showView("history");
+    const input = document.querySelector<HTMLInputElement>("#log-search");
+    input?.focus();
+    input?.select();
+  },
+  terminal: () => toggleTerminal(),
+  settings: () => $("#settings-btn").click(),
+  cheatSheet: () => openShortcutsDialog(),
+};
+
+// Whether a pack shortcut may fire now: not while typing (a letter with Cmd
+// held is a text-editing key in a field), not in the terminal, not under a
+// dialog or the palette. The cheat sheet itself is the exception to the
+// dialog rule, so Cmd+/ toggles it closed again.
+export function packShortcutAllowed(e: KeyboardEvent, id: ShortcutId): boolean {
+  const t = e.target instanceof HTMLElement ? e.target : null;
+  if (t?.isContentEditable || t?.tagName === "INPUT" || t?.tagName === "TEXTAREA") return false;
+  if (t?.closest("#terminal-host")) return false;
+  if (document.querySelector(".ql-overlay")) return false;
+  if (document.querySelector(".modal-overlay")) return id === "cheatSheet" && !!document.querySelector(".shortcuts-dialog");
+  return true;
+}
+
+function setupPackShortcuts(): void {
+  document.addEventListener("keydown", (e) => {
+    const id = shortcutFor(e);
+    if (!id || !packShortcutAllowed(e, id)) return;
+    e.preventDefault();
+    if (SHORTCUTS[id].needsRepo && !state.repoPath) {
+      setStatus(`${SHORTCUTS[id].label}: open a repository first.`);
+      return;
+    }
+    // The toolbar is disabled while an operation runs; the keys respect that
+    // too, instead of queueing a second push behind the first.
+    if (ui.actionsBusy && (id === "push" || id === "pull" || id === "fetch")) return;
+    ACTIONS[id]();
+  });
+}
+
+// The toolbar buttons' tooltips end with their shortcut, so the keys are
+// discoverable where the mouse already is.
+const BUTTON_HINTS: [string, ShortcutId][] = [
+  ["#pull-btn", "pull"],
+  ["#push-btn", "push"],
+  ["#branch-btn", "branchMenu"],
+  ["#stash-btn", "stash"],
+  ["#refresh-btn", "fetch"],
+  ["#terminal-toggle", "terminal"],
+  ["#settings-btn", "settings"],
+];
+
+function applyButtonHints(): void {
+  for (const [sel, id] of BUTTON_HINTS) {
+    const btn = document.querySelector<HTMLElement>(sel);
+    if (btn) btn.title = `${btn.title} (${shortcutHint(id)})`;
+  }
+}
+
 // The global shortcuts: Undo / Redo, Quick Launch, the favorites, tab cycling
 // and zoom.
 export function setupShortcuts(): void {
+  setupPackShortcuts();
+  applyButtonHints();
   // Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y = redo. Ignored while
   // typing so the native text-editing undo (commit message, conflict editor)
   // still works.

@@ -6,8 +6,11 @@ vi.mock("./repo-actions", () => ({}));
 vi.mock("./quick-launch-commands", () => ({}));
 vi.mock("./prefs", () => ({}));
 vi.mock("./report", () => ({}));
+vi.mock("./terminal-panel", () => ({}));
+vi.mock("./new-repo-actions", () => ({}));
+vi.mock("./views/shortcuts-dialog", () => ({}));
 
-const { opensQuickLaunch } = await import("./keyboard");
+const { opensQuickLaunch, packShortcutAllowed } = await import("./keyboard");
 
 // Just enough of a focused element and of `document` for the predicate.
 class FakeElement {
@@ -18,10 +21,10 @@ class FakeElement {
   }
 }
 
-function withPage(dialogOpen: boolean): void {
+function withPage(dialogOpen: boolean, open: string[] = dialogOpen ? [".modal-overlay"] : []): void {
   vi.stubGlobal("HTMLElement", FakeElement);
   vi.stubGlobal("document", {
-    querySelector: (selector: string) => (dialogOpen && selector.includes(".modal-overlay") ? {} : null),
+    querySelector: (selector: string) => (open.some((cls) => selector.includes(cls)) ? {} : null),
   });
 }
 
@@ -52,5 +55,32 @@ describe("opensQuickLaunch", () => {
   it("ignores other keys", () => {
     withPage(false);
     expect(opensQuickLaunch({ ...cmdK(), key: "j" } as KeyboardEvent)).toBe(false);
+  });
+});
+
+describe("packShortcutAllowed", () => {
+  const anywhere = {} as KeyboardEvent;
+  const inField = { target: Object.assign(new FakeElement(), { tagName: "INPUT" }) } as unknown as KeyboardEvent;
+  const inTerminal = { target: new FakeElement(true) } as unknown as KeyboardEvent;
+
+  it("fires from the page, not while typing or in the terminal", () => {
+    withPage(false);
+    expect(packShortcutAllowed(anywhere, "push")).toBe(true);
+    expect(packShortcutAllowed(inField, "push")).toBe(false);
+    expect(packShortcutAllowed(inTerminal, "push")).toBe(false);
+  });
+
+  it("leaves the keyboard to an open dialog or the palette", () => {
+    withPage(true);
+    expect(packShortcutAllowed(anywhere, "push")).toBe(false);
+    expect(packShortcutAllowed(anywhere, "cheatSheet")).toBe(false);
+    withPage(false, [".ql-overlay"]);
+    expect(packShortcutAllowed(anywhere, "push")).toBe(false);
+  });
+
+  it("lets Cmd+/ close the cheat sheet it opened", () => {
+    withPage(false, [".modal-overlay", ".shortcuts-dialog"]);
+    expect(packShortcutAllowed(anywhere, "cheatSheet")).toBe(true);
+    expect(packShortcutAllowed(anywhere, "push")).toBe(false);
   });
 });
