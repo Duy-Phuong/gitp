@@ -8,7 +8,12 @@ use gitp_core::{
 use serde::Serialize;
 use tauri::State;
 
-use crate::state::{ensure_log, ensure_refs, to_message, with_repo, with_repo_unlocked, RepoState};
+use std::sync::Arc;
+
+use crate::state::{
+    adopt_finished_walk, ensure_log, ensure_refs, to_message, with_repo, with_repo_unlocked,
+    PendingLog, RepoState,
+};
 
 /// A page of log rows plus the total count, so the frontend knows when to stop.
 #[derive(Serialize)]
@@ -19,6 +24,9 @@ pub(crate) struct LogPage {
     /// branch. Sent with the page rather than read from the refs because a
     /// detached HEAD has no branch to read it from.
     pub(crate) head: Option<String>,
+    /// The rest of the log is still being read: `total` is only the rows read
+    /// so far. Asking again waits for the rest.
+    pub(crate) partial: bool,
 }
 
 /// Return the `[offset, offset+limit)` slice of the active repo's log, computing
@@ -31,7 +39,9 @@ pub(crate) fn get_log_page_impl(
     scope: impl Into<LogScope>,
 ) -> Result<LogPage, String> {
     let scope = scope.into();
-    walk_first_log_unlocked(state, &scope)?;
+    if let Some(page) = walk_first_log_unlocked(state, &scope, offset, limit)? {
+        return Ok(page);
+    }
     let mut guard = state.0.lock().map_err(to_message)?;
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
@@ -40,8 +50,18 @@ pub(crate) fn get_log_page_impl(
     let end = offset.saturating_add(limit).min(total);
     let rows = log.get(offset..end).map(<[_]>::to_vec).unwrap_or_default();
     let head = session.repo.resolve_commit("HEAD").ok();
-    Ok(LogPage { rows, total, head })
+    Ok(LogPage {
+        rows,
+        total,
+        head,
+        partial: false,
+    })
 }
+
+/// A history still being read after this many rows is served a page early
+/// (see `walk_first_log_unlocked`). Below it the whole walk is quick, and a
+/// partial page would only make the frontend ask twice.
+const EARLY_PAGE_AFTER: usize = 5_000;
 
 /// The first walk of a repository's log, run without the workspace lock.
 ///
@@ -53,29 +73,76 @@ pub(crate) fn get_log_page_impl(
 /// stored with the fingerprint taken before the walk, so refs that moved
 /// meanwhile only make the next `ensure_log` bring it up to date. Later walks
 /// (a refresh after the refs move) are short, and stay under the lock.
-fn walk_first_log_unlocked(state: &RepoState, scope: &LogScope) -> Result<(), String> {
-    let path = {
-        let guard = state.0.lock().map_err(to_message)?;
+///
+/// `git log` lists the log as it reads it, and with a commit-graph it lists
+/// the newest commits without reading the rest first. So a history still being
+/// read after `EARLY_PAGE_AFTER` rows is served its page from the rows read so
+/// far — `Some`, marked partial — while a thread of its own reads the rest, and
+/// then writes a commit-graph if there is none, so that the next open is quick
+/// too. A page asked for meanwhile waits for that thread rather than walk again.
+/// `None` means the log is in the session (or a failed walk left it for
+/// `ensure_log` to walk again).
+fn walk_first_log_unlocked(
+    state: &RepoState,
+    scope: &LogScope,
+    offset: usize,
+    limit: usize,
+) -> Result<Option<LogPage>, String> {
+    let (path, running, pending) = {
+        let mut guard = state.0.lock().map_err(to_message)?;
         let idx = guard.active.ok_or("no repository is open")?;
-        let session = &guard.sessions[idx];
+        let session = &mut guard.sessions[idx];
+        adopt_finished_walk(session);
         if session.log.is_some() {
-            return Ok(());
+            return Ok(None);
         }
-        session.path.clone()
+        let running = session.log_walk.is_some();
+        let pending = Arc::clone(session.log_walk.get_or_insert_with(Default::default));
+        (session.path.clone(), running, pending)
     };
-    let repo = Repo::open(&path).map_err(to_message)?;
-    let sig = repo.state_fingerprint().map_err(to_message)?;
-    let cache = repo.log_cache_scoped(scope).map_err(to_message)?;
-    // Re-found by path: the user may have switched or closed tabs meanwhile.
-    // A walk that finished first (two pages asked for at once) is kept.
-    let mut guard = state.0.lock().map_err(to_message)?;
-    if let Some(session) = guard.sessions.iter_mut().find(|s| s.path == path) {
-        if session.log.is_none() {
-            session.log = Some(cache);
-            session.log_sig = sig;
-        }
+    if running {
+        pending.wait();
+        return Ok(None);
     }
-    Ok(())
+    let first = (|| {
+        let repo = Repo::open(&path)?;
+        let sig = repo.state_fingerprint()?;
+        let mut walk = repo.start_log_walk(scope)?;
+        let rows = walk.first_rows(offset.saturating_add(limit).max(EARLY_PAGE_AFTER))?;
+        Ok::<_, gitp_core::Error>((repo, sig, walk, rows))
+    })();
+    let (repo, sig, walk, rows) = match first {
+        Ok(first) => first,
+        Err(e) => {
+            pending.finish(None);
+            return Err(to_message(e));
+        }
+    };
+    let Some(rows) = rows.filter(|_| !walk.is_complete()) else {
+        let log = walk.finish();
+        let failed = log.as_ref().err().map(to_message);
+        pending.finish(log.ok().map(|log| (sig, log)));
+        return failed.map_or(Ok(None), Err);
+    };
+    let head = repo.resolve_commit("HEAD").ok();
+    std::thread::spawn(move || finish_walk(repo, sig, walk, &pending));
+    Ok(Some(LogPage {
+        total: rows.len(),
+        rows: rows.into_iter().skip(offset).take(limit).collect(),
+        head,
+        partial: true,
+    }))
+}
+
+/// Read the rest of a first walk for `pending`, then write a commit-graph if
+/// the repository has none. Whatever happens, `pending` is finished: pages are
+/// waiting on it.
+fn finish_walk(repo: Repo, sig: u64, walk: gitp_core::LogWalk, pending: &PendingLog) {
+    let log = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| walk.finish()));
+    pending.finish(log.ok().and_then(Result::ok).map(|log| (sig, log)));
+    if repo.commit_graph_missing() {
+        let _ = repo.write_commit_graph();
+    }
 }
 
 /// A cheap stand-in for "has history changed?", for callers that would
@@ -373,6 +440,68 @@ mod tests {
         let past_end = get_log_page_impl(&state, 10, 2, true).expect("past end");
         assert!(past_end.rows.is_empty());
         assert_eq!(past_end.total, 5);
+    }
+
+    // A long history is paged from the rows read so far; the rest is read on
+    // a thread of its own, which the next page waits for — then a commit-graph
+    // is written, so the next open lists the newest commits straight away.
+    #[test]
+    fn a_long_history_is_paged_before_it_is_read_to_the_end() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q", "-b", "main"]);
+        let count = super::EARLY_PAGE_AFTER + 1000;
+        let mut stream = String::new();
+        for i in 1..=count {
+            let msg = format!("c{i}");
+            stream.push_str(&format!(
+                "commit refs/heads/main\nmark :{i}\ncommitter A <a@x> {} +0000\ndata {}\n{msg}\n",
+                1_000_000 + i,
+                msg.len()
+            ));
+            if i > 1 {
+                stream.push_str(&format!("from :{}\n", i - 1));
+            }
+        }
+        let mut import = std::process::Command::new("git")
+            .args(["fast-import", "--quiet"])
+            .current_dir(dir.path())
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        import
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stream.as_bytes())
+            .unwrap();
+        assert!(import.wait().unwrap().success());
+        git(dir.path(), &["checkout", "-q", "main"]);
+
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
+        let early = get_log_page_impl(&state, 0, 100, true).unwrap();
+        assert!(early.partial);
+        assert_eq!(early.total, super::EARLY_PAGE_AFTER, "the rows read so far");
+        assert_eq!(early.rows.len(), 100);
+        assert_eq!(early.rows[0].summary, format!("c{count}"));
+        assert_eq!(early.head.as_deref(), Some(early.rows[0].id.as_str()));
+
+        let full = get_log_page_impl(&state, 0, 100, true).unwrap();
+        assert!(!full.partial);
+        assert_eq!(full.total, count);
+        let ids =
+            |rows: &[gitp_core::CommitRow]| rows.iter().map(|r| r.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&full.rows), ids(&early.rows));
+        let last = get_log_page_impl(&state, count - 1, 100, true).unwrap();
+        assert_eq!(last.rows[0].summary, "c1");
+
+        let graph = dir.path().join(".git/objects/info/commit-graph");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !graph.is_file() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(graph.is_file(), "a commit-graph is written after the walk");
     }
 
     // Pinning a branch re-lays the cached log's lanes, whichever branch it is.

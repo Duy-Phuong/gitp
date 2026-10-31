@@ -330,7 +330,7 @@ export async function fetchLogPage(
   scope: LogScope,
 ): Promise<LogPage> {
   if (!isTauri()) {
-    return { rows: MOCK_LOG.slice(offset, offset + limit), total: MOCK_LOG.length, head: MOCK_LOG[0].id };
+    return { rows: MOCK_LOG.slice(offset, offset + limit), total: MOCK_LOG.length, head: MOCK_LOG[0].id, partial: false };
   }
   return invoke<LogPage>("get_log_page", { offset, limit, scope });
 }

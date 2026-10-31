@@ -29,6 +29,9 @@ export interface LogPage {
   total: number;
   // HEAD's commit, where the graph's WIP row hangs; null on an unborn branch.
   head: string | null;
+  // The backend is still reading the rest of a long history: `total` is only
+  // the rows read so far. Asking again waits for the rest.
+  partial: boolean;
 }
 
 export type ChangeKind =

@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use notify::RecommendedWatcher;
@@ -36,6 +36,9 @@ pub(crate) struct Session {
     pub(crate) log: Option<LogCache>,
     /// Fingerprint the cached `log` was last brought up to date at.
     pub(crate) log_sig: u64,
+    /// The first walk of `log`, still reading a large history on a thread of
+    /// its own after its first page was shown.
+    pub(crate) log_walk: Option<Arc<PendingLog>>,
     /// The sidebar's ref tree, with the fingerprint it was built at.
     pub(crate) refs_cache: Option<(u64, Refs)>,
     /// The last `git status` result, with the `.git/index` stamp it was taken
@@ -53,6 +56,57 @@ pub(crate) struct Session {
     /// undo), and the action just undone that Redo would re-apply.
     pub(crate) undo: Option<Undoable>,
     pub(crate) redo: Option<Undoable>,
+}
+
+/// A first log walk finishing on a thread of its own (see
+/// `history::walk_first_log_unlocked`), and the log it hands over.
+#[derive(Default)]
+pub(crate) struct PendingLog {
+    /// Whether the walk has ended, and the log it left — with the fingerprint
+    /// taken before it — until a session takes it. `None` if it failed.
+    done: Mutex<(bool, Option<(u64, LogCache)>)>,
+    ended: Condvar,
+}
+
+impl PendingLog {
+    pub(crate) fn finish(&self, log: Option<(u64, LogCache)>) {
+        if let Ok(mut done) = self.done.lock() {
+            *done = (true, log);
+        }
+        self.ended.notify_all();
+    }
+
+    /// Block until the walk has ended.
+    pub(crate) fn wait(&self) {
+        let Ok(mut done) = self.done.lock() else {
+            return;
+        };
+        while !done.0 {
+            match self.ended.wait(done) {
+                Ok(next) => done = next,
+                Err(_) => return,
+            }
+        }
+    }
+
+    /// `None` while the walk runs; then the log it left, once.
+    fn take(&self) -> Option<Option<(u64, LogCache)>> {
+        let mut done = self.done.lock().ok()?;
+        done.0.then(|| done.1.take())
+    }
+}
+
+/// Move a finished first walk's log into `session`, unless it has a log of its
+/// own by now.
+pub(crate) fn adopt_finished_walk(session: &mut Session) {
+    let Some(done) = session.log_walk.as_ref().and_then(|w| w.take()) else {
+        return;
+    };
+    session.log_walk = None;
+    if let (None, Some((sig, log))) = (&session.log, done) {
+        session.log = Some(log);
+        session.log_sig = sig;
+    }
 }
 
 /// All open repositories plus which one is active. Commands that read a repo
@@ -370,6 +424,7 @@ pub(crate) fn ensure_log<'a>(
     scope: &LogScope,
 ) -> Result<&'a [CommitRow], String> {
     let sig = session.repo.state_fingerprint().map_err(to_message)?;
+    adopt_finished_walk(session);
     match &mut session.log {
         Some(cache) if session.log_sig == sig && cache.scope() == scope => {}
         Some(cache) => {

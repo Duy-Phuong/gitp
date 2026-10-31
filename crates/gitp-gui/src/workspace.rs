@@ -55,6 +55,7 @@ pub(crate) fn open_repo_impl(state: &RepoState, path: String) -> Result<Workspac
         repo,
         log: None,
         log_sig: 0,
+        log_walk: None,
         refs_cache: None,
         status_cache: None,
         worktree_dirty: dirty,

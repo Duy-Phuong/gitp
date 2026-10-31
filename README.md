@@ -181,6 +181,11 @@ GITP_BENCH_REPO=/path/to/big cargo test -p gitp-core --release --test large_repo
 GITP_PERF=1 npm --prefix crates/gitp-gui/webui test -- large-repo-timing
 ```
 
+The graph's first page comes from `git log` as it lists the history, so it is
+quick only with a commit-graph (a fresh `git fast-import` or clone has none).
+gitp writes one, as `git gc` would, after its first full read of a history of
+5,000+ commits; `git commit-graph write --reachable` does the same by hand.
+
 ## Frontend-only development
 
 The frontend runs standalone in an ordinary browser: `api.ts` falls back to mock
