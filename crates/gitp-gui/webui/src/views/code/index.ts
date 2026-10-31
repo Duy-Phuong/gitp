@@ -10,6 +10,7 @@ import { showDefinitionPicker } from "./definition-picker";
 import { AutoSave, CodeEditor, type CodeEditorDeps, type EditorLike } from "./editor";
 import { buildTree, renderExplorer, revealPath, type ExplorerState } from "./explorer";
 import { NavStack } from "./nav-stack";
+import { openQuickOpen } from "./quick-open";
 import { setupCodeShortcuts, type CodeAction } from "./shortcuts";
 import { Tabs } from "./tabs";
 
@@ -201,6 +202,13 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
         if (a) void closeTab(a);
         break;
       }
+      case "quickOpen":
+        openQuickOpen(files, (path, reveal) => {
+          void openFile({ path, line: 0, col: 0 }).then(() => {
+            if (!reveal) editor.focus();
+          });
+        });
+        break;
       default:
         deps.toast(`${action} is not available yet`, "info");
     }
