@@ -167,6 +167,85 @@ pub enum Undoable {
         before: Option<String>,
         after: Option<String>,
     },
+    /// A branch that is *not* checked out moved `before` → `after` — a
+    /// fast-forward from the graph, or Fetch and Update. The working tree is
+    /// not involved, so undo is a guarded ref update, nothing more.
+    BranchMoved {
+        label: String,
+        name: String,
+        before: String,
+        after: String,
+    },
+    /// A branch was created at `at` without being checked out (a backup
+    /// branch). Undo deletes it again while it still points there.
+    BranchAdded {
+        label: String,
+        name: String,
+        at: String,
+    },
+    /// Local changes were stashed away as entry `oid`. Undo pops them back,
+    /// index split included; redo stashes them again with the same options,
+    /// which makes a new entry — see [`Repo::after_redo`].
+    ///
+    /// Both sides carry a fingerprint of `git status`: the stash only comes
+    /// back while the working tree is as the stash left it, and only goes
+    /// again while it is exactly what was stashed, so an edit made in between
+    /// is never swept into or clobbered by the entry.
+    StashSaved {
+        label: String,
+        oid: String,
+        /// The `-m` message, if one was given.
+        message: Option<String>,
+        staged: bool,
+        include_untracked: bool,
+        /// Only these paths, when it was a partial stash.
+        paths: Vec<String>,
+        status_before: String,
+        status_after: String,
+    },
+    /// A stash was applied (and dropped, when `dropped`) onto a *clean*
+    /// working tree — the only state from which "take it back" has one
+    /// meaning: stash everything again. Undo does that, re-creating the entry
+    /// if it had been dropped (a new id — see [`Repo::after_undo`]); redo
+    /// applies it again, which needs the tree clean once more.
+    StashApplied {
+        label: String,
+        oid: String,
+        /// The message to re-create the entry under, if it had one of its own.
+        message: Option<String>,
+        dropped: bool,
+        status_after: String,
+    },
+    /// A stash entry's message changed `before` → `after` (both the exact
+    /// reflog text). The commit stays the same, so `oid` finds it wherever
+    /// the re-store put it.
+    StashRenamed {
+        label: String,
+        oid: String,
+        before: String,
+        after: String,
+    },
+    /// A remote was added. Undo removes it — only while nothing has been
+    /// fetched from it, since removing a remote takes its tracking refs too.
+    RemoteAdded {
+        label: String,
+        name: String,
+        url: String,
+    },
+    /// A remote's URL changed `before` → `after`.
+    RemoteUrlChanged {
+        label: String,
+        name: String,
+        before: String,
+        after: String,
+    },
+    /// A remote was renamed `old` → `new`; git moves its tracking refs and
+    /// the branches' upstream settings along, both ways.
+    RemoteRenamed {
+        label: String,
+        old: String,
+        new: String,
+    },
 }
 
 impl Undoable {
@@ -184,7 +263,15 @@ impl Undoable {
             | Undoable::TagCreated { label, .. }
             | Undoable::TagDeleted { label, .. }
             | Undoable::StashDropped { label, .. }
-            | Undoable::UpstreamChanged { label, .. } => label,
+            | Undoable::UpstreamChanged { label, .. }
+            | Undoable::BranchMoved { label, .. }
+            | Undoable::BranchAdded { label, .. }
+            | Undoable::StashSaved { label, .. }
+            | Undoable::StashApplied { label, .. }
+            | Undoable::StashRenamed { label, .. }
+            | Undoable::RemoteAdded { label, .. }
+            | Undoable::RemoteUrlChanged { label, .. }
+            | Undoable::RemoteRenamed { label, .. } => label,
         }
     }
 }
@@ -286,6 +373,105 @@ impl Repo {
     pub fn stash_message(&self, index: usize) -> Result<String> {
         let out = self.run_git(&["log", "-1", "--format=%s", &format!("stash@{{{index}}}")])?;
         Ok(out.trim().to_string())
+    }
+
+    /// The subject of stash commit `oid` — the same text `git stash list`
+    /// showed for it while it was on the stack ("On main: fix"), readable
+    /// after a pop has taken it off.
+    pub fn stash_message_of(&self, oid: &str) -> Result<String> {
+        let out = self.run_git(&["log", "-1", "--format=%s", oid])?;
+        Ok(out.trim().to_string())
+    }
+
+    /// The reflog text of the stash entry whose commit is `oid` — what
+    /// `git stash list` shows ("On main: fix", or git's own "WIP on main: …").
+    /// `None` when it is not on the stack.
+    pub fn stash_reflog_message(&self, oid: &str) -> Option<String> {
+        let reflog = self.inner.reflog("refs/stash").ok()?;
+        reflog
+            .iter()
+            .find(|e| e.id_new().to_string() == oid)
+            .and_then(|e| e.message().map(str::to_string))
+    }
+
+    /// The `-m` part of a stash's reflog text: "On main: fix" → `fix`; `None`
+    /// for git's own "WIP on …" wording, which `stash push` makes anew.
+    pub fn stash_user_message(text: &str) -> Option<String> {
+        if text.starts_with("WIP on ") {
+            return None;
+        }
+        text.split_once(": ").map(|(_, m)| m.to_string())
+    }
+
+    /// A fingerprint of `git status`: every changed, staged or untracked path
+    /// with its state, sorted. Two equal fingerprints mean the index and the
+    /// working tree are in the same state (by content, not by stat data), which
+    /// is what the stash actions check before they put changes back or take
+    /// them away. `None` when the status can't be read.
+    pub fn status_fingerprint(&self) -> Option<String> {
+        let mut opts = git2::StatusOptions::new();
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .include_ignored(false);
+        let statuses = self.inner.statuses(Some(&mut opts)).ok()?;
+        let mut lines: Vec<String> = statuses
+            .iter()
+            .filter_map(|e| Some(format!("{:?} {}", e.status(), e.path()?)))
+            .collect();
+        lines.sort_unstable();
+        Some(lines.join("\n"))
+    }
+
+    /// The fetch URL of remote `name`, `None` when there is no such remote.
+    pub fn remote_url(&self, name: &str) -> Option<String> {
+        self.inner
+            .find_remote(name)
+            .ok()
+            .and_then(|r| r.url().map(str::to_string))
+    }
+
+    /// Whether anything has been fetched from remote `name`: it has
+    /// remote-tracking refs.
+    fn remote_has_refs(&self, name: &str) -> bool {
+        self.inner
+            .references_glob(&format!("refs/remotes/{name}/*"))
+            .map(|mut refs| refs.next().is_some())
+            .unwrap_or(false)
+    }
+
+    /// The paths a patch file touches, so the files can be snapshotted around
+    /// applying it: what `git apply --numstat` lists (the new name of a
+    /// rename), plus the old names its `rename from` / `copy from` headers
+    /// carry, since applying removes those files too.
+    pub fn patch_paths(&self, patch: &Path) -> Result<Vec<String>> {
+        let text = patch.to_string_lossy();
+        let out = self.run_git_raw(&["apply", "--numstat", "-z", "--", &text])?;
+        let mut paths: Vec<String> = out
+            .split(|b| *b == 0)
+            .filter(|t| !t.is_empty())
+            .filter_map(|record| {
+                // "<added>\t<deleted>\t<path>"
+                let record = String::from_utf8_lossy(record);
+                let (_, rest) = record.split_once('\t')?;
+                let (_, path) = rest.split_once('\t')?;
+                (!path.is_empty()).then(|| path.to_string())
+            })
+            .collect();
+        let bytes = fs::read(patch)
+            .map_err(|e| Error::Message(format!("can't read {}: {e}", patch.display())))?;
+        for line in String::from_utf8_lossy(&bytes).lines() {
+            let Some(name) = line
+                .strip_prefix("rename from ")
+                .or_else(|| line.strip_prefix("copy from "))
+            else {
+                continue;
+            };
+            let name = unquote_git_path(name);
+            if !paths.contains(&name) {
+                paths.push(name);
+            }
+        }
+        Ok(paths)
     }
 
     /// The working-tree bytes of `path`, or `None` if it doesn't exist — used to
@@ -458,6 +644,77 @@ impl Repo {
                 };
                 self.branch_upstream(branch).ok().as_ref() == Some(expected)
             }
+            Undoable::BranchMoved {
+                name,
+                before,
+                after,
+                ..
+            } => {
+                self.branch_commit_id(name).ok().as_deref() == Some(pick(before, after).as_str())
+                    && self.head_ref_name().ok().as_deref() != Some(name.as_str())
+            }
+            Undoable::BranchAdded { name, at, .. } => match side {
+                Side::After => {
+                    self.branch_commit_id(name).ok().as_deref() == Some(at.as_str())
+                        && self.head_ref_name().ok().as_deref() != Some(name.as_str())
+                }
+                Side::Before => self.branch_commit_id(name).is_err(),
+            },
+            Undoable::StashSaved {
+                oid,
+                status_before,
+                status_after,
+                ..
+            } => {
+                let status = self.status_fingerprint();
+                match side {
+                    Side::After => {
+                        self.stash_on_stack(oid) && status.as_deref() == Some(status_after)
+                    }
+                    Side::Before => {
+                        !self.stash_on_stack(oid) && status.as_deref() == Some(status_before)
+                    }
+                }
+            }
+            Undoable::StashApplied {
+                oid,
+                dropped,
+                status_after,
+                ..
+            } => {
+                let status = self.status_fingerprint();
+                match side {
+                    Side::After => {
+                        status.as_deref() == Some(status_after)
+                            && self.stash_on_stack(oid) != *dropped
+                    }
+                    // Applying needs the clean tree it was applied onto.
+                    Side::Before => status.as_deref() == Some("") && self.stash_on_stack(oid),
+                }
+            }
+            Undoable::StashRenamed {
+                oid, before, after, ..
+            } => self.stash_reflog_message(oid).as_deref() == Some(pick(before, after).as_str()),
+            Undoable::RemoteAdded { name, url, .. } => match side {
+                Side::After => {
+                    self.remote_url(name).as_deref() == Some(url.as_str())
+                        && !self.remote_has_refs(name)
+                }
+                Side::Before => self.remote_url(name).is_none(),
+            },
+            Undoable::RemoteUrlChanged {
+                name,
+                before,
+                after,
+                ..
+            } => self.remote_url(name).as_deref() == Some(pick(before, after).as_str()),
+            Undoable::RemoteRenamed { old, new, .. } => {
+                let (present, absent) = match side {
+                    Side::After => (new, old),
+                    Side::Before => (old, new),
+                };
+                self.remote_url(present).is_some() && self.remote_url(absent).is_none()
+            }
             Undoable::Discarded {
                 files,
                 index_before,
@@ -608,6 +865,40 @@ impl Repo {
             Undoable::UpstreamChanged { branch, before, .. } => {
                 self.apply_upstream(branch, before.as_deref())
             }
+            Undoable::BranchMoved {
+                name,
+                before,
+                after,
+                ..
+            } => self.move_branch(name, before, after),
+            Undoable::BranchAdded { name, .. } => self.run_git(&["branch", "-D", name]).map(|_| ()),
+            Undoable::StashSaved { oid, .. } => {
+                let at = self.stash_position(oid)?;
+                self.run_git(&["stash", "pop", "--index", &format!("stash@{{{at}}}")])
+                    .map(|_| ())
+            }
+            Undoable::StashApplied {
+                message, dropped, ..
+            } => {
+                // Everything in the tree is what the apply put there (it was
+                // clean before), so stashing it all is taking the apply back.
+                self.stash_push(message.as_deref(), false, true)?;
+                if !dropped {
+                    // The entry was never dropped, so the one just made is a
+                    // duplicate of it.
+                    self.run_git(&["stash", "drop", "stash@{0}"])?;
+                }
+                Ok(())
+            }
+            Undoable::StashRenamed { oid, before, .. } => {
+                let at = self.stash_position(oid)?;
+                self.stash_rename(at, before).map(|_| ())
+            }
+            Undoable::RemoteAdded { name, .. } => self.remove_remote(name).map(|_| ()),
+            Undoable::RemoteUrlChanged { name, before, .. } => {
+                self.set_remote_url(name, before).map(|_| ())
+            }
+            Undoable::RemoteRenamed { old, new, .. } => self.rename_remote(new, old).map(|_| ()),
         }
     }
 
@@ -661,7 +952,95 @@ impl Repo {
             Undoable::UpstreamChanged { branch, after, .. } => {
                 self.apply_upstream(branch, after.as_deref())
             }
+            Undoable::BranchMoved {
+                name,
+                before,
+                after,
+                ..
+            } => self.move_branch(name, after, before),
+            Undoable::BranchAdded { name, at, .. } => {
+                self.run_git(&["branch", name, at]).map(|_| ())
+            }
+            Undoable::StashSaved {
+                message,
+                staged,
+                include_untracked,
+                paths,
+                ..
+            } => if paths.is_empty() {
+                self.stash_push(message.as_deref(), *staged, *include_untracked)
+            } else {
+                self.stash_files(paths)
+            }
+            .map(|_| ()),
+            Undoable::StashApplied { oid, dropped, .. } => {
+                let at = self.stash_position(oid)?;
+                self.stash_apply(at, *dropped).map(|_| ())
+            }
+            Undoable::StashRenamed { oid, after, .. } => {
+                let at = self.stash_position(oid)?;
+                self.stash_rename(at, after).map(|_| ())
+            }
+            Undoable::RemoteAdded { name, url, .. } => self.add_remote(name, url).map(|_| ()),
+            Undoable::RemoteUrlChanged { name, after, .. } => {
+                self.set_remote_url(name, after).map(|_| ())
+            }
+            Undoable::RemoteRenamed { old, new, .. } => self.rename_remote(old, new).map(|_| ()),
         }
+    }
+
+    /// The record to keep after [`Repo::undo`] ran `action`, when undoing gave
+    /// it a new identity: taking back a *popped* stash re-creates the entry,
+    /// and the new commit on top of the stack is now the one to redo. `None`
+    /// when the record stands as it is.
+    pub fn after_undo(&self, action: &Undoable) -> Option<Undoable> {
+        match action {
+            Undoable::StashApplied { dropped: true, .. } => {
+                let top = self.stash_commit_id(0).ok()?;
+                Some(Self::with_stash_oid(action, top))
+            }
+            _ => None,
+        }
+    }
+
+    /// The record to keep after [`Repo::redo`] ran `action`: stashing again
+    /// makes a new entry, which is then the one to pop on the next undo.
+    pub fn after_redo(&self, action: &Undoable) -> Option<Undoable> {
+        match action {
+            Undoable::StashSaved { .. } => {
+                let top = self.stash_commit_id(0).ok()?;
+                Some(Self::with_stash_oid(action, top))
+            }
+            _ => None,
+        }
+    }
+
+    fn with_stash_oid(action: &Undoable, new_oid: String) -> Undoable {
+        let mut renewed = action.clone();
+        match &mut renewed {
+            Undoable::StashSaved { oid, .. } | Undoable::StashApplied { oid, .. } => {
+                *oid = new_oid;
+            }
+            _ => {}
+        }
+        renewed
+    }
+
+    /// Point `refs/heads/<name>` at `to`, but only if it still holds `from` —
+    /// git's compare-and-swap, so a branch moved by something else since is
+    /// left alone.
+    fn move_branch(&self, name: &str, to: &str, from: &str) -> Result<()> {
+        self.run_git(&["update-ref", &format!("refs/heads/{name}"), to, from])
+            .map(|_| ())
+    }
+
+    /// Where the stash entry whose commit is `oid` sits on the stack now — a
+    /// restore pushes an entry on top, so a recorded index can't be trusted.
+    fn stash_position(&self, oid: &str) -> Result<usize> {
+        let list = self.run_git(&["stash", "list", "--format=%H"])?;
+        list.lines()
+            .position(|line| line.trim() == oid)
+            .ok_or_else(|| Error::Message("that stash is no longer on the stack".into()))
     }
 
     /// Recreate `refs/tags/<name>` pointing at exactly the id it held before.
@@ -683,11 +1062,7 @@ impl Repo {
     /// Remove the stash entry whose commit is `oid`, wherever it now sits — a
     /// redo can't assume the index it had, since restoring pushed it on top.
     fn drop_stash_by_oid(&self, oid: &str) -> Result<()> {
-        let list = self.run_git(&["stash", "list", "--format=%H"])?;
-        let position = list
-            .lines()
-            .position(|line| line.trim() == oid)
-            .ok_or_else(|| Error::Message("that stash is no longer on the stack".into()))?;
+        let position = self.stash_position(oid)?;
         self.run_git(&["stash", "drop", &format!("stash@{{{position}}}")])
             .map(|_| ())
     }
@@ -972,6 +1347,43 @@ impl Repo {
         }
         Ok(())
     }
+}
+
+/// A path as a patch header spells it: bare, or C-quoted when it holds a
+/// space-like or non-ASCII character (`"dir/caf\\303\\251.txt"`). Only the
+/// escapes git writes are handled.
+fn unquote_git_path(name: &str) -> String {
+    let Some(inner) = name.strip_prefix('"').and_then(|n| n.strip_suffix('"')) else {
+        return name.to_string();
+    };
+    let mut bytes = Vec::with_capacity(inner.len());
+    let mut chars = inner.bytes().peekable();
+    while let Some(b) = chars.next() {
+        if b != b'\\' {
+            bytes.push(b);
+            continue;
+        }
+        match chars.next() {
+            Some(b'n') => bytes.push(b'\n'),
+            Some(b't') => bytes.push(b'\t'),
+            Some(d @ b'0'..=b'7') => {
+                let mut value = u32::from(d - b'0');
+                for _ in 0..2 {
+                    match chars.peek() {
+                        Some(d @ b'0'..=b'7') => {
+                            value = value * 8 + u32::from(d - b'0');
+                            chars.next();
+                        }
+                        _ => break,
+                    }
+                }
+                bytes.push(value as u8);
+            }
+            Some(other) => bytes.push(other),
+            None => break,
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// Where hard-reset backups live: a private namespace no log walk or sidebar
