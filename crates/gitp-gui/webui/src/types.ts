@@ -212,6 +212,12 @@ export type ConfigScope = "Local" | "Global" | "System" | "Other";
 // How far a reset moves the branch (mirrors gitp-core's ResetMode).
 export type ResetMode = "Soft" | "Mixed" | "Hard";
 
+// What merging a branch would come to, without doing it (gitp-core's MergePreview).
+export interface MergePreview {
+  clean: boolean;
+  conflicts: string[];
+}
+
 // How a merge combines the other branch (mirrors gitp-core's MergeMode).
 export type MergeMode = "Default" | "NoFastForward" | "FastForwardOnly" | "Squash";
 

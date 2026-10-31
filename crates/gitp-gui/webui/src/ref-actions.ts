@@ -22,6 +22,7 @@ import {
   fetchAndUpdateBranch,
   fetchBranch,
   mergeBranch,
+  mergePreview,
   pushBranch,
   pushBranchTo,
   rebaseOnto,
@@ -74,7 +75,8 @@ import { localBranchForRemote } from "./branch-worktree";
 import { worktreeName } from "./views/sidebar";
 import { allRefsAt } from "./commit-refs";
 import { pushTargets } from "./push-targets";
-import { dropActions, isAncestorInRows, pushDropQuestion, type DragRef, type DropRef } from "./ref-drop";
+import { dropActions, isAncestorInRows, pushDropQuestion, type DragRef, type DropAction, type DropRef } from "./ref-drop";
+import { previewSummary } from "./merge-preview";
 import { finishFlowItem, gitflowMenuItem } from "./gitflow-actions";
 import { addRemoteAction } from "./remote-actions";
 import { askSwitchWithChanges, reportStashSwitch } from "./stash-switch";
@@ -119,6 +121,19 @@ export async function checkoutBranchAction(b: BranchRef): Promise<void> {
 // Build and open the actions menu for a right-clicked branch.
 export function onBranchMenu(b: BranchRef, x: number, y: number): void {
   const current = state.refs.head;
+  // The merge and rebase entries say whether they'd conflict (a dry run,
+  // milliseconds on an ordinary repository) — looked up before the menu opens.
+  if (!b.is_head && current) {
+    void mergePreview(current, b.name)
+      .catch(() => null)
+      .then((preview) => showBranchMenu(b, x, y, previewSummary(preview)));
+  } else {
+    showBranchMenu(b, x, y, null);
+  }
+}
+
+function showBranchMenu(b: BranchRef, x: number, y: number, outlook: string | null): void {
+  const current = state.refs.head;
   const items: MenuItem[] = [];
   // Every operation in this menu acts on `b`, so they all route through one
   // wrapper that spins `b`'s sidebar row for the duration.
@@ -145,12 +160,12 @@ export function onBranchMenu(b: BranchRef, x: number, y: number): void {
 
   if (!b.is_head && current) {
     items.push({ separator: true });
-    items.push(mergeMenuItem(b.name, current, b.name));
+    items.push(mergeMenuItem(b.name, current, b.name, outlook));
     items.push({
       label: `Rebase ${current} onto ${b.name}`,
       run: () =>
         void confirmThenRun(
-          `Rebase ${current} onto ${b.name}? This rewrites commits on ${current}.`,
+          `Rebase ${current} onto ${b.name}? This rewrites commits on ${current}.${outlook ? ` ${outlook}.` : ""}`,
           `Rebasing ${current} onto ${b.name}`,
           () => rebaseOnto(b.name),
         ),
@@ -233,21 +248,35 @@ export function onRefDrop(srcRef: DragRef, dstRef: DragRef, x: number, y: number
     setStatus(`Nothing to do with ${src.name} on ${dst.name}.`);
     return;
   }
+  // Merge and rebase combine the two branches, so the menu says first whether
+  // that would conflict: a dry run, looked up before the menu opens.
+  if (actions.includes("merge") || actions.includes("rebase")) {
+    void mergePreview(dst.name, src.name)
+      .catch(() => null)
+      .then((preview) => showDropMenu(src, dst, actions, x, y, previewSummary(preview)));
+  } else {
+    showDropMenu(src, dst, actions, x, y, null);
+  }
+}
+
+function showDropMenu(src: DropRef, dst: DropRef, actions: DropAction[], x: number, y: number, outlook: string | null): void {
   const items: MenuItem[] = [];
   for (const action of actions) {
     switch (action) {
       case "merge":
+        if (outlook) items.push({ heading: outlook });
         items.push({
           label: `Merge ${src.name} into ${dst.name}`,
           run: () => void runBranchOp(`Merging ${src.name} into ${dst.name}`, () => mergeBranch(src.name), true, dst.name),
         });
         break;
       case "rebase":
+        if (outlook) items.push({ heading: outlook });
         items.push({
           label: `Rebase ${src.name} onto ${dst.name}`,
           run: () =>
             void confirmThenRun(
-              `Rebase ${src.name} onto ${dst.name}? This rewrites commits on ${src.name}.`,
+              `Rebase ${src.name} onto ${dst.name}? This rewrites commits on ${src.name}.${outlook ? ` ${outlook}.` : ""}`,
               `Rebasing ${src.name} onto ${dst.name}`,
               () => rebaseOnto(dst.name),
             ),
@@ -411,12 +440,14 @@ export const MERGE_MODES: { mode: MergeMode; label: string }[] = [
   { mode: "Squash", label: "Squash merge" },
 ];
 
-// "Merge into '<current>' ▸" for a branch or tag menu: the modes, in place.
-function mergeMenuItem(name: string, current: string, ref: string): MenuItem {
+// "Merge into '<current>' ▸" for a branch or tag menu: the modes, in place,
+// under the dry run's verdict when one was made.
+function mergeMenuItem(name: string, current: string, ref: string, outlook: string | null = null): MenuItem {
   return {
     label: `Merge into '${current}'`,
     submenu: [
       { heading: `Merge ${name} into ${current}` },
+      ...(outlook ? [{ heading: outlook }] : []),
       ...MERGE_MODES.map(({ mode, label }) => ({ label, run: () => void mergeAction(name, mode, ref) })),
     ],
   };

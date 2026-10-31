@@ -172,6 +172,7 @@ pub fn run() {
             branches::delete_remote_branch,
             branches::remote_branch_exists,
             branches::merge_branch,
+            branches::merge_preview,
             branches::squash_message,
             gitflow::gitflow_config,
             gitflow::gitflow_init,

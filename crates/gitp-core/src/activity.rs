@@ -279,9 +279,9 @@ fn is_quiet(args: &[Cow<str>]) -> bool {
     let next = rest.first().map(Cow::as_ref);
     match sub.as_ref() {
         "status" | "log" | "show" | "diff" | "rev-parse" | "rev-list" | "for-each-ref"
-        | "cat-file" | "ls-files" | "ls-tree" | "merge-base" | "blame" | "describe"
-        | "show-ref" | "symbolic-ref" | "name-rev" | "check-ignore" | "format-patch" | "var"
-        | "version" => true,
+        | "cat-file" | "ls-files" | "ls-tree" | "merge-base" | "merge-tree" | "blame"
+        | "describe" | "show-ref" | "symbolic-ref" | "name-rev" | "check-ignore"
+        | "format-patch" | "var" | "version" => true,
         "stash" => matches!(next, Some("list" | "show")),
         "worktree" => next == Some("list"),
         "submodule" => next == Some("status"),
