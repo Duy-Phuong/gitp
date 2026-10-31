@@ -12,6 +12,8 @@ import { buildTree, renderExplorer, revealPath, type ExplorerState } from "./exp
 import { NavStack } from "./nav-stack";
 import { openQuickOpen } from "./quick-open";
 import { setupSearchPanel } from "./search-panel";
+import { setupHierarchyPanel, setupUsagesPanel } from "./usages-panel";
+import { showContextMenu } from "../context-menu";
 import { setupCodeShortcuts, type CodeAction } from "./shortcuts";
 import { Tabs } from "./tabs";
 
@@ -234,6 +236,16 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
         if (a) void closeTab(a);
         break;
       }
+      case "findUsages": {
+        const c = editor.caret();
+        if (c) void findUsages(c);
+        break;
+      }
+      case "callHierarchy": {
+        const c = editor.caret();
+        if (c) void callHierarchy(c);
+        break;
+      }
       case "findInFiles":
         showPane("search");
         searchPanel.focus();
@@ -245,8 +257,6 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
           });
         });
         break;
-      default:
-        deps.toast(`${action} is not available yet`, "info");
     }
   };
   setupCodeShortcuts(deps.isShowing, runAction);
@@ -254,6 +264,57 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   const searchPanel = setupSearchPanel(paneBodies.search, {
     search: (q) => deps.api.codeSearch(q),
     jump: (loc, endCol) => void openFile(loc, { endCol }),
+  });
+  const usagesPanel = setupUsagesPanel(paneBodies.usages, { jump: (loc, endCol) => void openFile(loc, { endCol }) });
+  const hierarchyPanel = setupHierarchyPanel(paneBodies.hierarchy, {
+    jump: (loc, endCol) => void openFile(loc, { endCol }),
+    load: (symbol, mode) => (mode === "callers" ? deps.api.codeCallers : deps.api.codeCallees)(symbol.path, symbol.name_range.start_line, symbol.name_range.start_col),
+  });
+
+  /// A navigation query's failure, in words.
+  const explain = (what: string, err: unknown) => {
+    const msg = String(err);
+    if (msg.includes("indexing")) deps.toast("Still indexing the project, try again in a moment", "info");
+    else if (msg.includes("no_symbol")) deps.toast(`${what}: put the caret on a name first`, "info");
+    else deps.reportError(`${what} failed`, err);
+  };
+
+  const findUsages = async (loc: Location) => {
+    if (autosave.isDirty(loc.path)) await autosave.saveNow(loc.path);
+    try {
+      const result = await deps.api.codeReferences(loc.path, loc.line, loc.col);
+      usagesPanel.show(result);
+      showPane("usages");
+    } catch (err) {
+      explain("Find usages", err);
+    }
+  };
+
+  const callHierarchy = async (loc: Location) => {
+    if (autosave.isDirty(loc.path)) await autosave.saveNow(loc.path);
+    try {
+      const found = await deps.api.codeDefinition(loc.path, loc.line, loc.col);
+      const root = found.length === 1 ? found[0] : found.length ? await showDefinitionPicker(caretPoint(), found) : null;
+      if (!root) {
+        if (!found.length) deps.toast("Call hierarchy: put the caret on a function or method first", "info");
+        return;
+      }
+      await hierarchyPanel.show(root, "callers");
+      showPane("hierarchy");
+    } catch (err) {
+      explain("Call hierarchy", err);
+    }
+  };
+
+  editorHost.addEventListener("contextmenu", (e) => {
+    const c = editor.caret();
+    if (!c) return;
+    e.preventDefault();
+    showContextMenu(e.clientX, e.clientY, [
+      { label: "Go to Definition", run: () => void gotoDefinition(c) },
+      { label: "Find Usages", run: () => void findUsages(c) },
+      { label: "Call Hierarchy", run: () => void callHierarchy(c) },
+    ]);
   });
 
   const renderTabs = () => {
@@ -291,6 +352,8 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
       });
       return;
     }
+    const root = hierarchyPanel.root();
+    if (root && ev.paths.some((p) => p === root.symbol.path || files.some((f) => f.path === p && f.lang))) void hierarchyPanel.show(root.symbol, root.mode);
     const byPath = new Map(files.map((f) => [f.path, f]));
     for (const p of ev.removed) byPath.delete(p);
     for (const e of ev.entries) byPath.set(e.path, e);
@@ -340,6 +403,9 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     }
     files = [];
     opened = false;
+    usagesPanel.clear();
+    hierarchyPanel.clear();
+    showPane(null);
     explorer.expanded.clear();
     explorer.selected = null;
     renderTree();
