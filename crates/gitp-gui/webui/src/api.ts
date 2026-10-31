@@ -28,6 +28,7 @@ import type {
   DiffToolTarget,
   LogPage,
   MergeMode,
+  MergePreview,
   LogScope,
   PickPlanOutcome,
   PullMode,
@@ -906,6 +907,17 @@ export async function remoteBranchExists(name: string): Promise<string | null> {
 export async function mergeBranch(name: string, mode: MergeMode = "Default"): Promise<string> {
   if (!isTauri()) return `Merged ${name} (${mode}, preview mock)`;
   return invoke<string>("merge_branch", { name, mode });
+}
+
+// Whether merging `other` into `base` would conflict, and on which files —
+// a dry run, nothing is touched. The mock conflicts on "feature" branches so
+// the warning can be seen in the preview.
+export async function mergePreview(base: string, other: string): Promise<MergePreview> {
+  if (!isTauri()) {
+    const clean = !other.includes("feature");
+    return { clean, conflicts: clean ? [] : ["src/app.ts", "README.md"] };
+  }
+  return invoke<MergePreview>("merge_preview", { base, other });
 }
 
 // The commit message a squash merge prepared, or null when none is pending.

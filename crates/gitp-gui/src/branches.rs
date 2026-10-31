@@ -3,12 +3,15 @@
 
 use std::collections::HashSet;
 
-use gitp_core::{DeletedBranch, HeadMoveMode, MergeMode, Repo, StashSwitch, Undoable};
+use gitp_core::{
+    DeletedBranch, HeadMoveMode, MergeMode, MergePreview, Repo, StashSwitch, Undoable,
+};
 use serde::Serialize;
 use tauri::State;
 
 use crate::state::{
-    ensure_refs, to_message, with_repo, with_repo_clearing_undo, with_repo_networked, RepoState,
+    ensure_refs, to_message, with_repo, with_repo_clearing_undo, with_repo_networked,
+    with_repo_unlocked, RepoState,
 };
 use crate::undo::{
     clear_undo, set_undo, with_recorded_branch_create, with_recorded_checkout,
@@ -287,6 +290,17 @@ fn merge_branch_impl(state: &RepoState, name: String, mode: MergeMode) -> Result
     )
 }
 
+/// Whether merging `other` into `base` would conflict, and on which files.
+/// Read-only, and on a big repository not instant, so it runs without the
+/// workspace lock.
+fn merge_preview_impl(
+    state: &RepoState,
+    base: String,
+    other: String,
+) -> Result<MergePreview, String> {
+    with_repo_unlocked(state, |repo| repo.merge_preview(&base, &other))
+}
+
 /// The message a squash merge left for its commit, if one is pending.
 fn squash_message_impl(state: &RepoState) -> Result<Option<String>, String> {
     with_repo(state, |repo| Ok(repo.squash_message()))
@@ -437,6 +451,15 @@ pub(crate) fn merge_branch(
     state: State<RepoState>,
 ) -> Result<String, String> {
     merge_branch_impl(&state, name, mode)
+}
+
+#[tauri::command(async)]
+pub(crate) fn merge_preview(
+    base: String,
+    other: String,
+    state: State<RepoState>,
+) -> Result<MergePreview, String> {
+    merge_preview_impl(&state, base, other)
 }
 
 #[tauri::command(async)]
