@@ -133,6 +133,15 @@ export function filterSections(sections: QuickSection[], query: string): QuickSe
   return out;
 }
 
+/// The command list with the recently run ones first: the `recent` labels, in
+/// their order, that still exist, then the rest — each command listed once.
+export function arrangeCommands(commands: QuickItem[], recent: string[]): { recent: QuickItem[]; rest: QuickItem[] } {
+  const byLabel = new Map(commands.map((c) => [c.label, c]));
+  const picked = recent.flatMap((label) => byLabel.get(label) ?? []);
+  const rest = commands.filter((c) => !recent.includes(c.label));
+  return { recent: picked, rest };
+}
+
 // Most rows rendered at once.
 //
 // A real repository's file tree is thousands of entries — `commit_tree` on a

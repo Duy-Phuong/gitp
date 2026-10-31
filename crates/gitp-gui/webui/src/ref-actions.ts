@@ -77,6 +77,9 @@ import { allRefsAt } from "./commit-refs";
 import { pushTargets } from "./push-targets";
 import { dropActions, isAncestorInRows, pushDropQuestion, type DragRef, type DropAction, type DropRef } from "./ref-drop";
 import { previewSummary } from "./merge-preview";
+import { dropMenuItems, mergeMenuItem as buildMergeMenuItem, MERGE_MODES, rebaseQuestion } from "./ref-menus";
+
+export { MERGE_MODES };
 import { finishFlowItem, gitflowMenuItem } from "./gitflow-actions";
 import { addRemoteAction } from "./remote-actions";
 import { askSwitchWithChanges, reportStashSwitch } from "./stash-switch";
@@ -165,7 +168,7 @@ function showBranchMenu(b: BranchRef, x: number, y: number, outlook: string | nu
       label: `Rebase ${current} onto ${b.name}`,
       run: () =>
         void confirmThenRun(
-          `Rebase ${current} onto ${b.name}? This rewrites commits on ${current}.${outlook ? ` ${outlook}.` : ""}`,
+          rebaseQuestion(current, b.name, outlook),
           `Rebasing ${current} onto ${b.name}`,
           () => rebaseOnto(b.name),
         ),
@@ -260,62 +263,24 @@ export function onRefDrop(srcRef: DragRef, dstRef: DragRef, x: number, y: number
 }
 
 function showDropMenu(src: DropRef, dst: DropRef, actions: DropAction[], x: number, y: number, outlook: string | null): void {
-  const items: MenuItem[] = [];
-  for (const action of actions) {
-    switch (action) {
-      case "merge":
-        if (outlook) items.push({ heading: outlook });
-        items.push({
-          label: `Merge ${src.name} into ${dst.name}`,
-          run: () => void runBranchOp(`Merging ${src.name} into ${dst.name}`, () => mergeBranch(src.name), true, dst.name),
-        });
-        break;
-      case "rebase":
-        if (outlook) items.push({ heading: outlook });
-        items.push({
-          label: `Rebase ${src.name} onto ${dst.name}`,
-          run: () =>
-            void confirmThenRun(
-              `Rebase ${src.name} onto ${dst.name}? This rewrites commits on ${src.name}.${outlook ? ` ${outlook}.` : ""}`,
-              `Rebasing ${src.name} onto ${dst.name}`,
-              () => rebaseOnto(dst.name),
-            ),
-        });
-        break;
-      case "interactive-rebase":
-        items.push({ label: "Interactive Rebase…", run: () => void openInteractiveRebase(dst.name, dst.name) });
-        break;
-      case "reset":
-        items.push({ heading: `Reset ${src.name} to ${dst.name}` });
-        items.push({ label: "Soft (keep changes staged)…", run: () => void resetAction(dst.target, dst.name, "Soft") });
-        items.push({ label: "Mixed (keep changes unstaged)…", run: () => void resetAction(dst.target, dst.name, "Mixed") });
-        items.push({ label: "Hard (discard changes)…", danger: true, run: () => void resetAction(dst.target, dst.name, "Hard") });
-        break;
-      case "fast-forward":
-        items.push({
-          label: `Fast-forward ${dst.name} to ${src.name}`,
-          run: () => void runBranchOp(`Fast-forwarding ${dst.name} to ${src.name}`, () => fastForwardBranchTo(dst.name, src.name), true, dst.name),
-        });
-        break;
-      case "push": {
-        const remote = state.refs.remotes.find((r) => r.name === dst.name)?.remote ?? "origin";
-        const branch = dst.name.slice(remote.length + 1);
-        const question = pushDropQuestion(src.name, remote, branch);
-        items.push({
-          label: `Push ${src.name} to ${dst.name}`,
-          run: () =>
-            void (async () => {
-              if (question && !(await confirmDialog(question))) {
-                setStatus("Push cancelled.");
-                return;
-              }
-              await runBranchOp(`Pushing ${src.name} to ${dst.name}`, () => pushBranchTo(src.name, remote, branch), false, src.name);
-            })(),
-        });
-        break;
-      }
-    }
-  }
+  const remote = state.refs.remotes.find((r) => r.name === dst.name)?.remote ?? "origin";
+  const branch = dst.name.slice(remote.length + 1);
+  const question = pushDropQuestion(src.name, remote, branch);
+  const items = dropMenuItems(src, dst, actions, outlook, {
+    merge: () => void runBranchOp(`Merging ${src.name} into ${dst.name}`, () => mergeBranch(src.name), true, dst.name),
+    rebase: () => void confirmThenRun(rebaseQuestion(src.name, dst.name, outlook), `Rebasing ${src.name} onto ${dst.name}`, () => rebaseOnto(dst.name)),
+    interactiveRebase: () => void openInteractiveRebase(dst.name, dst.name),
+    reset: (mode) => void resetAction(dst.target, dst.name, mode),
+    fastForward: () => void runBranchOp(`Fast-forwarding ${dst.name} to ${src.name}`, () => fastForwardBranchTo(dst.name, src.name), true, dst.name),
+    push: () =>
+      void (async () => {
+        if (question && !(await confirmDialog(question))) {
+          setStatus("Push cancelled.");
+          return;
+        }
+        await runBranchOp(`Pushing ${src.name} to ${dst.name}`, () => pushBranchTo(src.name, remote, branch), false, src.name);
+      })(),
+  });
   showContextMenu(x, y, items);
 }
 
@@ -432,25 +397,9 @@ async function deleteSelectedBranchesAction(names: string[]): Promise<void> {
 
 // --- Merge ------------------------------------------------------------------
 
-// git's default merge and its three common variants, in menu order.
-export const MERGE_MODES: { mode: MergeMode; label: string }[] = [
-  { mode: "Default", label: "Merge" },
-  { mode: "NoFastForward", label: "Merge (no fast-forward)" },
-  { mode: "FastForwardOnly", label: "Fast-forward only" },
-  { mode: "Squash", label: "Squash merge" },
-];
-
-// "Merge into '<current>' ▸" for a branch or tag menu: the modes, in place,
-// under the dry run's verdict when one was made.
+// "Merge into '<current>' ▸" for a branch or tag menu, from ref-menus.ts.
 function mergeMenuItem(name: string, current: string, ref: string, outlook: string | null = null): MenuItem {
-  return {
-    label: `Merge into '${current}'`,
-    submenu: [
-      { heading: `Merge ${name} into ${current}` },
-      ...(outlook ? [{ heading: outlook }] : []),
-      ...MERGE_MODES.map(({ mode, label }) => ({ label, run: () => void mergeAction(name, mode, ref) })),
-    ],
-  };
+  return buildMergeMenuItem(name, current, outlook, (mode) => void mergeAction(name, mode, ref));
 }
 
 // Merge `name` into the current branch. A squash commits nothing: it stages

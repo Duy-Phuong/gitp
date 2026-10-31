@@ -72,7 +72,7 @@ export interface RefLabel {
 }
 
 // A tag chip's tooltip: its name, then the annotation when it has one.
-function tagTitle(name: string, message: string | null | undefined): string {
+export function tagTitle(name: string, message: string | null | undefined): string {
   return message ? `tag ${name}\n\n${message}` : `tag ${name}`;
 }
 
