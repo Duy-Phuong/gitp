@@ -33,7 +33,8 @@ pub fn definition(index: &SymbolIndex, path: &str, line: u32, col: u32) -> Vec<S
     // A caret right after the last character still means that name (an
     // editor's position is between characters); a strict hit comes first.
     let at = |r: &Range| contains(r, line, col);
-    let after = |r: &Range| (r.end_line, r.end_col) == (line, col) && !file.symbols.iter().any(|s| at(&s.name_range)) && !file.refs.iter().any(|x| at(&x.range));
+    let strict = file.symbols.iter().any(|s| at(&s.name_range)) || file.refs.iter().any(|x| at(&x.range));
+    let after = |r: &Range| !strict && (r.end_line, r.end_col) == (line, col);
     if let Some(s) = file.symbols.iter().find(|s| at(&s.name_range) || after(&s.name_range)) {
         return vec![s.clone()];
     }

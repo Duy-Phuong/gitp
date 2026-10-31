@@ -80,7 +80,7 @@ pub struct Reference {
     /// The symbol whose body contains it.
     pub enclosing: Option<SymbolId>,
     /// `foo` in `foo.save()`; `this` / `self` kept as written.
-    pub receiver: Option<String>,
+    pub receiver: Option<Arc<str>>,
 }
 
 pub struct FileIndex {
@@ -106,7 +106,6 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
         let bytes = &source[n.byte_range()];
         names.entry(bytes).or_insert_with(|| Arc::from(String::from_utf8_lossy(bytes).as_ref())).clone()
     };
-    let text = |n: Node| String::from_utf8_lossy(&source[n.byte_range()]).into_owned();
 
     let mut symbols: Vec<Symbol> = Vec::new();
     let mut cursor = QueryCursor::new();
@@ -176,7 +175,7 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
             let cap = &def.refs.capture_names()[c.index as usize];
             match *cap {
                 "name" => name = Some(c.node),
-                "receiver" => receiver = Some(text(c.node)),
+                "receiver" => receiver = Some(intern(c.node)),
                 "ref.call" => kind = Some(RefKind::Call),
                 "ref.import" => kind = Some(RefKind::Import),
                 "ref.ident" => kind = Some(RefKind::Ident),
@@ -365,7 +364,9 @@ impl SymbolIndex {
 
     pub fn symbol(&self, id: SymbolId) -> Option<&Symbol> {
         let path = self.paths.get(id.file as usize)?;
-        self.files.get(path)?.symbols.iter().find(|s| s.id == id)
+        // Symbols are sorted by start byte, and ids are unique per file.
+        let symbols = &self.files.get(path)?.symbols;
+        symbols.binary_search_by_key(&id.byte, |s| s.id.byte).ok().map(|i| &symbols[i])
     }
 
     pub fn definitions_named(&self, name: &str) -> impl Iterator<Item = &Symbol> {
@@ -382,6 +383,22 @@ impl SymbolIndex {
 
     pub fn symbol_count(&self) -> usize {
         self.files.values().map(|f| f.symbols.len()).sum()
+    }
+
+    /// Files, symbols and references indexed.
+    pub fn stats(&self) -> (usize, usize, usize) {
+        (self.files.len(), self.symbol_count(), self.files.values().map(|f| f.refs.len()).sum())
+    }
+
+    pub fn files(&self) -> impl Iterator<Item = &FileIndex> {
+        self.files.values()
+    }
+
+    /// The `n` names with the most references, most first.
+    pub fn top_names(&self, n: usize) -> Vec<String> {
+        let mut names: Vec<(&Arc<str>, usize)> = self.refs_by_name.iter().map(|(k, v)| (k, v.len())).collect();
+        names.sort_by(|a, b| b.1.cmp(&a.1));
+        names.into_iter().take(n).map(|(k, _)| k.to_string()).collect()
     }
 
     pub fn file_symbols(&self, path: &str) -> Vec<Symbol> {
