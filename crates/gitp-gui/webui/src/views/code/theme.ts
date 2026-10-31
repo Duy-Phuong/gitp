@@ -23,7 +23,9 @@ const chrome = EditorView.theme({
   ".cm-gutters": { backgroundColor: "var(--bg)", color: "var(--text-dim)", borderRight: "1px solid var(--border)" },
   ".cm-activeLineGutter": { backgroundColor: "var(--bg-elev)" },
   ".cm-activeLine": { backgroundColor: "var(--accent-soft)" },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--accent-soft)" },
+  // As specific as CodeMirror's own focused rule, whose light lavender would
+  // otherwise win and wash out the syntax colours in every theme.
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--selection)" },
   "&.cm-focused .cm-cursor": { borderLeftColor: "var(--text)" },
   ".cm-matchingBracket": { outline: "1px solid var(--accent)", backgroundColor: "transparent" },
   ".cm-def-link": { textDecoration: "underline", color: "var(--accent)", cursor: "pointer" },
