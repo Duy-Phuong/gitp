@@ -41,9 +41,11 @@ import {
   forgetRecentRepo,
   isFavoriteRepo,
   loadFavoriteRepos,
+  loadRecentCommands,
   loadRecentRepos,
   PULL_DEFAULT_LABEL,
   PULL_DEFAULTS,
+  rememberCommand,
   tildePath,
   toggledTheme,
 } from "./prefs";
@@ -116,6 +118,7 @@ import { addRemoteAction } from "./remote-actions";
 import { createFileAction, editFileStage } from "./editor-actions";
 import { shortcutHint } from "./shortcuts";
 import { openShortcutsDialog } from "./views/shortcuts-dialog";
+import { openSettings } from "./topbar-menus";
 
 // --- Quick Launch -----------------------------------------------------------
 
@@ -132,14 +135,24 @@ import { openShortcutsDialog } from "./views/shortcuts-dialog";
 export function openQuickLaunch(): void {
   if (isQuickLaunchOpen()) return closeQuickLaunch();
   detectEditors();
+  const commands = state.repoPath ? repoCommands() : openOnlyCommands();
+  // The commands run last time, first — each listed once, so a recent one
+  // leaves the main list.
+  const recentLabels = loadRecentCommands();
+  const recent = recentLabels.flatMap((label) => commands.filter((c) => c.label === label));
+  const rest = commands.filter((c) => !recentLabels.includes(c.label));
   showQuickLaunch({
     placeholder: state.repoPath ? "Command" : "Open a repository",
     sections: [
       { title: "Favorites", items: favoriteRepoItems() },
       // A favorite is already listed above; once is enough.
       { title: "Recent Repositories", items: recentRepoItems({ skipFavorites: true }) },
-      { title: "Commands", items: state.repoPath ? repoCommands() : openOnlyCommands() },
+      ...(recent.length ? [{ title: "Recent Commands", items: recent }] : []),
+      { title: "Commands", items: rest },
     ],
+    onPick: (item) => {
+      if (item.kind === "command") rememberCommand(item.label);
+    },
   });
 }
 
@@ -195,6 +208,7 @@ function openOnlyCommands(): QuickItem[] {
     { kind: "command", label: "Terminal", run: toggleTerminal },
     { kind: "command", label: "Toggle Theme", detail: "light ↔ your last dark theme", run: toggleTheme },
     { kind: "command", label: "Keyboard Shortcuts", detail: shortcutHint("cheatSheet"), run: openShortcutsDialog },
+    { kind: "command", label: "Settings…", detail: shortcutHint("settings"), run: () => openSettings() },
   ];
 }
 
@@ -434,6 +448,14 @@ function repoCommands(): QuickItem[] {
     },
     { kind: "command", label: "Terminal", detail: shortcutHint("terminal"), run: toggleTerminal },
     { kind: "command", label: "Keyboard Shortcuts", detail: shortcutHint("cheatSheet"), run: openShortcutsDialog },
+    { kind: "command", label: "Settings…", detail: shortcutHint("settings"), run: () => openSettings() },
+    { kind: "command", label: "Git Hooks…", detail: "turn the repository's hooks off and on", run: () => openSettings("Git") },
+    ...(state.prs.open !== null
+      ? [
+          { kind: "command" as const, label: "Pull Request: Generate Drafts", detail: "run the review command over the open pull request's diff", run: () => ui.prView?.generateDrafts() },
+          { kind: "command" as const, label: "Pull Request: Load Review File…", detail: "a review's findings as draft comments", run: () => ui.prView?.loadReviewFile() },
+        ]
+      : []),
     {
       kind: "command",
       label: "Checkout Remote Branch",

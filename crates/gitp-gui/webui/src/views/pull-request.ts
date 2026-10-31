@@ -68,6 +68,10 @@ interface Draft extends DraftComment {
 export interface PullRequestHandle {
   // Load and show pull request `number`.
   show: (number: number) => void;
+  // The header buttons' actions, for Quick Launch: run the review command, or
+  // pick a review file, into the Drafts tab of the pull request on screen.
+  generateDrafts: () => void;
+  loadReviewFile: () => void;
   // Read it again from GitHub — after a review posted from the menu, say.
   reload: () => void;
   // Forget it: the repo it belongs to is no longer the active one.
@@ -665,6 +669,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       void load(true);
     },
     reload: () => void load(true),
+    generateDrafts: () => {
+      if (detail) void loadDrafts(detail, cb.generateDrafts);
+    },
+    loadReviewFile: () => {
+      if (detail) void loadDrafts(detail, cb.loadDrafts);
+    },
     reset: () => {
       generation++;
       number = null;

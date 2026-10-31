@@ -126,8 +126,14 @@ function buildPullMenu(menu: HTMLElement, close: () => void): void {
 
 // The settings gear opens the Settings dialog.
 export function setupSettingsMenu(): void {
-  $("#settings-btn").addEventListener("click", () =>
-    openSettingsDialog({
+  $("#settings-btn").addEventListener("click", () => openSettings());
+}
+
+// Open the Settings dialog, at `section` ("Git", say) when given — also what
+// Quick Launch runs.
+export function openSettings(section?: string): void {
+  openSettingsDialog(
+    {
       setTheme: (choice: ThemeChoice) => {
         applyTheme(choice);
         // The GitKraken themes draw the graph differently, which CSS alone can't
@@ -212,6 +218,7 @@ export function setupSettingsMenu(): void {
       githubAccount: githubAccountForSettings,
       githubSignIn: signInToGitHub,
       githubSignOut: signOutOfGitHub,
-    }),
+    },
+    section,
   );
 }

@@ -52,6 +52,19 @@ describe("scoreItem", () => {
     expect(byLabel).toBeGreaterThan(byDetail);
   });
 
+  it("matches the words of a query in any order", () => {
+    expect(scoreItem(cmd("Create Branch…"), "branch create")).not.toBeNull();
+    expect(best(["Create Branch…", "Checkout Branch", "Create Tag…"], "branch create")).toBe("Create Branch…");
+    // Every word has to hit: a stray word still means no match.
+    expect(scoreItem(cmd("Create Branch…"), "branch zebra")).toBeNull();
+  });
+
+  it("ranks the in-order phrase above the same words out of order", () => {
+    const inOrder = scoreItem(cmd("Stage All Changes"), "stage all")!;
+    const outOfOrder = scoreItem(cmd("Stage All Changes"), "all stage")!;
+    expect(inOrder).toBeGreaterThan(outOfOrder);
+  });
+
   it("still finds a repository by its path when the name doesn't match", () => {
     expect(scoreItem(cmd("gitp", "~/private-source/gitp"), "private")).not.toBeNull();
   });

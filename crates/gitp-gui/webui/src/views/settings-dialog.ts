@@ -131,7 +131,7 @@ export function closeSettingsDialog(): void {
   onKey = null;
 }
 
-export function openSettingsDialog(actions: SettingsActions): void {
+export function openSettingsDialog(actions: SettingsActions, initial?: string): void {
   closeSettingsDialog();
 
   const sections: Section[] = [
@@ -337,7 +337,7 @@ export function openSettingsDialog(actions: SettingsActions): void {
     b.addEventListener("click", () => show(i));
     nav.append(b);
   });
-  show(0);
+  show(Math.max(0, sections.findIndex((s) => s.title === initial)));
 
   const done = el("button", { class: "btn", text: "Done" });
   done.addEventListener("click", closeSettingsDialog);
