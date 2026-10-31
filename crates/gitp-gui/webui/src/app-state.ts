@@ -112,7 +112,7 @@ export const state: State = {
   gitflow: null,
   lfs: null,
   remoteList: [],
-  prs: { repoPath: "", repo: null, account: null, filter: "all", list: null, loading: false, error: null, open: null },
+  prs: { repoPath: "", repo: null, account: null, filter: "all", list: null, loading: false, error: null, open: null, query: "" },
   rebase: null,
   conflict: null,
   bisect: null,

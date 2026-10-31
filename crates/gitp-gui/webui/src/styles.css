@@ -4817,6 +4817,13 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   padding: 2px 6px;
   font-size: 11px;
 }
+.sb-pr-search-wrap {
+  margin: 2px 6px 4px 22px;
+}
+.sb-pr-open {
+  color: var(--accent);
+  cursor: pointer;
+}
 .sb-pr .sb-leaf-label {
   overflow: hidden;
   text-overflow: ellipsis;

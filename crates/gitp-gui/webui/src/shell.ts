@@ -181,7 +181,7 @@ function resetRepoViews(): void {
   ui.activityView?.reset();
   ui.prView?.reset();
   // The account is gh's, the same in every repo; the rest is this repo's.
-  state.prs = { ...state.prs, repoPath: "", repo: null, list: null, loading: false, error: null, open: null };
+  state.prs = { ...state.prs, repoPath: "", repo: null, list: null, loading: false, error: null, open: null, query: "" };
   ui.pendingCherryPicks = [];
   ui.pickPlanRepo = "";
   conflictPrefill = null;
@@ -875,6 +875,7 @@ function renderBranchIndicator(): void {
 }
 
 let sbFilterDebounce: number | undefined;
+let prSearchDebounce: number | undefined;
 
 // Everything renderSidebar reads, flattened to a comparable string.
 //
@@ -924,6 +925,7 @@ function prsSignature(): string {
     p.loading,
     p.error,
     p.open,
+    p.query,
     p.list?.map((pr) => `${pr.number}:${pr.updated_at}:${pr.title}:${pr.checks}:${pr.review_decision}:${pr.is_draft}`).join(","),
   ].join(";");
 }
@@ -1010,6 +1012,15 @@ export function renderSidebarNow(): void {
       onPrOpen: (pr) => showPullRequest(pr.number),
       onPrMenu: (pr, x, y) => refActions.onPrMenu(pr, x, y),
       onPrFilter: (filter) => refActions.onPrFilter(filter),
+      // Debounced like the sidebar's own filter: each search redraws the tree.
+      onPrSearch: (text) => {
+        window.clearTimeout(prSearchDebounce);
+        prSearchDebounce = window.setTimeout(() => {
+          state.prs.query = text;
+          renderSidebarNow();
+        }, 120);
+      },
+      onPrOpenNumber: (n) => showPullRequest(n),
       onPrRefresh: () => refActions.onPrRefresh(),
       onGitHubSignIn: () => refActions.onGitHubSignIn(),
     },

@@ -5,7 +5,7 @@
 // (filter text, which sections/folders are collapsed) and re-renders on change.
 
 import { chevronIcon, clear, el, githubIcon, svg } from "../dom";
-import { PR_FILTERS, prMatches, reviewDecisionLabel } from "../pull-requests";
+import { PR_FILTERS, prMatches, prNumberQuery, reviewDecisionLabel } from "../pull-requests";
 import { branchRefName, refShown, remoteRefName, tagRefName, type RefFilter } from "../ref-visibility";
 import { refDragHandle, refDropZone } from "./ref-drag";
 import type { DragRef } from "../ref-drop";
@@ -77,6 +77,8 @@ export interface PrSectionState {
   error: string | null;
   // The pull request the PR view shows: its row is highlighted.
   open: number | null;
+  // The section's own search: it narrows the pull requests, nothing else.
+  query: string;
 }
 
 export interface SidebarCallbacks {
@@ -128,14 +130,20 @@ export interface SidebarCallbacks {
   // Right-click a pull request: check out, open on GitHub, copy.
   onPrMenu: (pr: PullRequest, x: number, y: number) => void;
   onPrFilter: (filter: PrFilter) => void;
+  // Typing in the Pull Requests search box.
+  onPrSearch: (text: string) => void;
+  // "Open #N" for a number the list doesn't have (closed, merged, or beyond it).
+  onPrOpenNumber: (n: number) => void;
   // The Pull Requests header's refresh: the account and the list again.
   onPrRefresh: () => void;
   onGitHubSignIn: () => void;
 }
 
 export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCallbacks): void {
-  // Re-rendering on each keystroke would drop focus; remember and restore it.
-  const filterWasFocused = host.querySelector("#sidebar-filter") === document.activeElement;
+  // Re-rendering on each keystroke would drop focus; remember and restore it
+  // (the sidebar's filter, or the Pull Requests search).
+  const focused = [...host.querySelectorAll<HTMLInputElement>("#sidebar-filter, .sb-pr-search")].find((i) => i === document.activeElement);
+  const refocus = focused ? (focused.id ? `#${focused.id}` : ".sb-pr-search") : null;
   // The list is drawn anew, so it would start at the top: a click that only
   // changes a highlight (opening a pull request, selecting a branch) or folds
   // a section would scroll it away from where the user is.
@@ -181,10 +189,11 @@ export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCal
   host.append(tree);
   tree.scrollTop = scrolled;
 
-  if (filterWasFocused) {
-    filter.focus({ preventScroll: true });
-    const end = filter.value.length;
-    filter.setSelectionRange(end, end);
+  const input = refocus ? host.querySelector<HTMLInputElement>(refocus) : null;
+  if (input) {
+    input.focus({ preventScroll: true });
+    const end = input.value.length;
+    input.setSelectionRange(end, end);
   }
 }
 
@@ -590,10 +599,30 @@ function buildPullRequests(
     filters.append(b);
   }
   tree.append(filters);
+  const search = el("input", {
+    class: "sb-filter sb-pr-search",
+    type: "search",
+    placeholder: "Search: title, #number, author, branch",
+    "aria-label": "Search pull requests",
+    spellcheck: "false",
+  });
+  search.value = p.query;
+  search.addEventListener("input", () => cb.onPrSearch(search.value));
+  tree.append(el("div", { class: "sb-pr-search-wrap" }, [search]));
   if (p.error) note(p.error, "sb-pr-error");
   if (!p.list) return void (p.loading && note("Loading…"));
-  const shown = p.list.filter((pr) => prMatches(pr, match));
-  if (shown.length === 0) note(p.list.length ? "No matches" : "No open pull requests");
+  const q = p.query.trim().toLowerCase();
+  const searched = (text: string) => text.toLowerCase().includes(q);
+  const shown = p.list.filter((pr) => prMatches(pr, match) && prMatches(pr, searched));
+  // A number the list doesn't hold (closed, merged, or past the open ones
+  // loaded): GitHub has it, so offer to open it.
+  const number = prNumberQuery(p.query);
+  if (number !== null && !p.list.some((pr) => pr.number === number)) {
+    const open = el("div", { class: "sb-leaf indent sb-pr-open", title: `Open pull request #${number} from GitHub` });
+    open.append(el("span", { class: "sb-leaf-label", text: `Open #${number}` }));
+    open.addEventListener("click", () => cb.onPrOpenNumber(number));
+    tree.append(open);
+  } else if (shown.length === 0) note(p.list.length ? "No matches" : "No open pull requests");
   for (const pr of shown) tree.append(prLeaf(pr, p.open === pr.number && s.activeView === "pr", cb));
 }
 

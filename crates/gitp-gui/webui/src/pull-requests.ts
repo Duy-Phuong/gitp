@@ -157,6 +157,12 @@ export function reviewVerb(state: string): string {
 
 // Whether the sidebar filter text matches a pull request: its number, title,
 // author or branch.
+// The pull request number a search names ("3531" or "#3531"), if it is one.
+export function prNumberQuery(query: string): number | null {
+  const m = /^#?(\d{1,9})$/.exec(query.trim());
+  return m ? Number(m[1]) : null;
+}
+
 export function prMatches(pr: PullRequest, match: (text: string) => boolean): boolean {
   return match(`#${pr.number}`) || match(pr.title) || match(pr.author) || match(pr.head);
 }
