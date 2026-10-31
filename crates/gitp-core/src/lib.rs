@@ -67,8 +67,9 @@ pub use file_content::{FileContent, FileSide, PREVIEW_MAX_BYTES};
 pub use file_edit::{TextFile, EDIT_MAX_BYTES};
 pub use filelog::FileCommit;
 pub use gh::{
-    DiffSide, Gh, GhAccount, GhLogin, LineComment, PrCheck, PrComment, PrFilter, PrLabel, PrReview,
-    PrReviewComment, PullRequest, PullRequestDetail, ReviewVerdict, LOGIN_TIMEOUT,
+    DiffSide, Gh, GhAccount, GhLogin, GitHubRepoSettings, LineComment, MergeMethod, NewPullRequest,
+    PrCheck, PrComment, PrDraft, PrFilter, PrLabel, PrReview, PrReviewComment, PullRequest,
+    PullRequestDetail, ReviewVerdict, LOGIN_TIMEOUT,
 };
 pub use gitflow::{FlowKind, GitFlowConfig};
 pub use identity::{global_identity, restore_local_identity, set_global_identity, Identity};

@@ -4,6 +4,10 @@
 
 import type {
   ActivityEntry,
+  GitHubRepoSettings,
+  MergeMethod,
+  NewPullRequest,
+  PrDraft,
   BisectMark,
   BisectStatus,
   BlameLine,
@@ -1929,6 +1933,56 @@ export async function reviewPullRequest(number: number, verdict: ReviewVerdict, 
   return invoke<string>("gh_review", { number, verdict, body });
 }
 
+// The repository's default branch and the merges it allows.
+export async function githubRepoSettings(): Promise<GitHubRepoSettings> {
+  if (!isTauri()) {
+    return { default_branch: "main", merge_commit: true, squash: true, rebase: false, delete_branch_on_merge: true };
+  }
+  return invoke<GitHubRepoSettings>("gh_repo_settings");
+}
+
+// A title and description for a pull request from `branch` into `base`, from
+// its commits (no network).
+export async function pullRequestDraft(branch: string, base: string): Promise<PrDraft> {
+  if (!isTauri()) return { title: `Changes from ${branch}`, body: `- First change\n- Second change` };
+  return invoke<PrDraft>("gh_pull_request_draft", { branch, base });
+}
+
+// Open a pull request on GitHub (the branch must be pushed). Its number.
+export async function createPullRequestOnGitHub(pr: NewPullRequest): Promise<number> {
+  if (!isTauri()) {
+    const number = Math.max(...MOCK_PULL_REQUESTS.map((p) => p.number)) + 1;
+    MOCK_PULL_REQUESTS.unshift({
+      number,
+      title: pr.title,
+      author: MOCK_GH_ACCOUNT.login ?? "you",
+      is_draft: pr.draft,
+      review_decision: null,
+      checks: null,
+      head: pr.branch,
+      base: pr.base,
+      updated_at: new Date().toISOString(),
+      url: `https://github.com/example/mideal/pull/${number}`,
+      labels: [],
+    });
+    mockPrDetailOf(number).body = pr.body;
+    return number;
+  }
+  return invoke<number>("gh_create_pull_request", { pr });
+}
+
+// Merge pull request `number` on GitHub; `deleteBranch` deletes its branch
+// there (never the local one). What gh said.
+export async function mergePullRequest(number: number, method: MergeMethod, deleteBranch: boolean): Promise<string> {
+  if (!isTauri()) {
+    mockPrDetailOf(number).state = "MERGED";
+    const at = MOCK_PULL_REQUESTS.findIndex((p) => p.number === number);
+    if (at !== -1) MOCK_PULL_REQUESTS.splice(at, 1);
+    return `✓ Merged pull request #${number} (${method}${deleteBranch ? ", branch deleted" : ""}, preview mock)`;
+  }
+  return invoke<string>("gh_merge_pull_request", { number, method, deleteBranch });
+}
+
 // Reply in a line comment's thread.
 export async function replyToReviewComment(number: number, commentId: number, body: string): Promise<PrReviewComment> {
   if (!isTauri()) {
@@ -2754,6 +2808,8 @@ function mockPrDetail(pr: PullRequest): PullRequestDetail {
     additions: 2,
     deletions: 1,
     changed_files: 1,
+    mergeable: "MERGEABLE",
+    merge_state: pr.is_draft ? "DRAFT" : "CLEAN",
   };
 }
 
@@ -2811,6 +2867,8 @@ const MOCK_PR_DETAILS = new Map<number, PullRequestDetail>([
       additions: 9,
       deletions: 2,
       changed_files: 2,
+      mergeable: "MERGEABLE",
+      merge_state: "CLEAN",
     },
   ],
 ]);

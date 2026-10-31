@@ -1,6 +1,7 @@
 //! GitHub pull requests through the user's own `gh` login (see gitp-core's
 //! `gh`): the account, signing in and out, the sidebar's list, the pull
-//! request view, checking one out, and commenting and reviewing.
+//! request view, checking one out, commenting and reviewing, and opening and
+//! merging one.
 //!
 //! The reads and posts run on a repo handle of their own, without the
 //! workspace lock — each is a round trip to GitHub. Checking out moves HEAD,
@@ -10,8 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use gitp_core::{
-    FileDiff, Gh, GhAccount, GhLogin, LineComment, PrFilter, PrReviewComment, PullRequest,
-    PullRequestDetail, ReviewVerdict, LOGIN_TIMEOUT,
+    FileDiff, Gh, GhAccount, GhLogin, GitHubRepoSettings, LineComment, MergeMethod, NewPullRequest,
+    PrDraft, PrFilter, PrReviewComment, PullRequest, PullRequestDetail, ReviewVerdict,
+    LOGIN_TIMEOUT,
 };
 use serde::Serialize;
 use tauri::State;
@@ -105,6 +107,33 @@ fn gh_review_impl(
 ) -> Result<String, String> {
     with_repo_unlocked(state, |repo| {
         repo.review_pull_request(&Gh::system(), number, verdict, &body)
+    })
+}
+
+fn gh_repo_settings_impl(state: &RepoState) -> Result<GitHubRepoSettings, String> {
+    with_repo_unlocked(state, |repo| repo.github_repo_settings(&Gh::system()))
+}
+
+fn gh_pull_request_draft_impl(
+    state: &RepoState,
+    branch: String,
+    base: String,
+) -> Result<PrDraft, String> {
+    with_repo(state, |repo| repo.pull_request_draft(&branch, &base))
+}
+
+fn gh_create_pull_request_impl(state: &RepoState, pr: NewPullRequest) -> Result<u64, String> {
+    with_repo_unlocked(state, |repo| repo.create_pull_request(&Gh::system(), &pr))
+}
+
+fn gh_merge_pull_request_impl(
+    state: &RepoState,
+    number: u64,
+    method: MergeMethod,
+    delete_branch: bool,
+) -> Result<String, String> {
+    with_repo_unlocked(state, |repo| {
+        repo.merge_pull_request(&Gh::system(), number, method, delete_branch)
     })
 }
 
@@ -248,6 +277,38 @@ pub(crate) fn gh_review(
     state: State<RepoState>,
 ) -> Result<String, String> {
     gh_review_impl(&state, number, verdict, body)
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_repo_settings(state: State<RepoState>) -> Result<GitHubRepoSettings, String> {
+    gh_repo_settings_impl(&state)
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_pull_request_draft(
+    branch: String,
+    base: String,
+    state: State<RepoState>,
+) -> Result<PrDraft, String> {
+    gh_pull_request_draft_impl(&state, branch, base)
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_create_pull_request(
+    pr: NewPullRequest,
+    state: State<RepoState>,
+) -> Result<u64, String> {
+    gh_create_pull_request_impl(&state, pr)
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_merge_pull_request(
+    number: u64,
+    method: MergeMethod,
+    delete_branch: bool,
+    state: State<RepoState>,
+) -> Result<String, String> {
+    gh_merge_pull_request_impl(&state, number, method, delete_branch)
 }
 
 #[tauri::command(async)]

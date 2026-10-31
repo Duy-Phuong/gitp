@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   checksSummary,
   lineKey,
+  baseBranches,
+  githubRemoteName,
+  mergeAdvice,
+  mergeChoices,
   lineTarget,
   prMatches,
   prTimeline,
@@ -53,6 +57,8 @@ function detail(over: Partial<PullRequestDetail> = {}): PullRequestDetail {
     additions: 0,
     deletions: 0,
     changed_files: 0,
+    mergeable: "MERGEABLE",
+    merge_state: "CLEAN",
     ...over,
   };
 }
@@ -219,5 +225,72 @@ describe("threadsPerFile", () => {
       lineComment(5, "2026-10-27T14:00:00Z", { path: "src/b.ts" }),
     ];
     expect(threadsPerFile(reviewThreads(comments))).toEqual(new Map([["src/a.ts", 2], ["src/b.ts", 1]]));
+  });
+});
+
+describe("mergeAdvice", () => {
+  it("lets a clean pull request merge without a word", () => {
+    expect(mergeAdvice(detail())).toEqual({ blocked: null, warning: null });
+  });
+
+  it("stops what GitHub can't merge", () => {
+    expect(mergeAdvice(detail({ state: "MERGED" })).blocked).toMatch(/already merged/);
+    expect(mergeAdvice(detail({ state: "CLOSED" })).blocked).toMatch(/closed/);
+    expect(mergeAdvice(detail({ is_draft: true, merge_state: "DRAFT" })).blocked).toMatch(/draft/);
+    expect(mergeAdvice(detail({ mergeable: "CONFLICTING", merge_state: "DIRTY" })).blocked).toMatch(/conflicts with main/);
+  });
+
+  it("warns of what GitHub may refuse, and lets the user try", () => {
+    for (const [state, words] of [
+      ["BLOCKED", /required review or check/],
+      ["BEHIND", /fix is behind main/],
+      ["UNSTABLE", /checks are failing/],
+      ["UNKNOWN", /still checking/],
+    ] as const) {
+      const advice = mergeAdvice(detail({ merge_state: state }));
+      expect(advice.blocked, state).toBeNull();
+      expect(advice.warning, state).toMatch(words);
+    }
+  });
+});
+
+describe("mergeChoices", () => {
+  const settings = { default_branch: "main", merge_commit: true, squash: true, rebase: true, delete_branch_on_merge: false };
+  it("offers what the repository allows, squash first", () => {
+    expect(mergeChoices(settings).map((c) => c.value)).toEqual(["squash", "merge", "rebase"]);
+    expect(mergeChoices({ ...settings, squash: false, rebase: false })).toEqual([{ value: "merge", label: "Create a merge commit" }]);
+  });
+
+  it("offers them all when GitHub didn't say", () => {
+    expect(mergeChoices({ ...settings, merge_commit: false, squash: false, rebase: false })).toHaveLength(3);
+  });
+});
+
+describe("githubRemoteName", () => {
+  const remotes = [
+    { name: "origin", url: "git@github.com:me/hello.git" },
+    { name: "upstream", url: "https://github.com/Octo/hello/" },
+    { name: "corp", url: "ssh://git@github.corp.example/team/app.git" },
+    { name: "none", url: null },
+  ];
+  it("finds the remote of the repository the pull requests are in", () => {
+    expect(githubRemoteName(remotes, "octo/hello")).toBe("upstream");
+    expect(githubRemoteName(remotes, "me/hello")).toBe("origin");
+    expect(githubRemoteName(remotes, "github.corp.example/team/app")).toBe("corp");
+    expect(githubRemoteName(remotes, "other/repo")).toBeNull();
+  });
+});
+
+describe("baseBranches", () => {
+  it("lists the remote's branches, the default first", () => {
+    expect(baseBranches(["origin/HEAD", "origin/develop", "upstream/main", "origin/master", "origin/release/1.2"], "origin", "master")).toEqual([
+      "master",
+      "develop",
+      "release/1.2",
+    ]);
+  });
+
+  it("keeps the default even when it isn't fetched", () => {
+    expect(baseBranches([], "origin", "main")).toEqual(["main"]);
   });
 });

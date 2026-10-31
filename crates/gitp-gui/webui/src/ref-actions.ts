@@ -43,6 +43,7 @@ import { openTagDetailsModal } from "./views/tag-details";
 import { openStashApplyModal } from "./views/stash-apply";
 import type { BranchRef, MergeMode, StashRef } from "./types";
 import { state, ui } from "./app-state";
+import { createPullRequestDialog } from "./pr-actions";
 import { opFailed, reportDone, setStatus } from "./report";
 import { branchRefName, remoteRefName, tagRefName, withHidden, withSolo } from "./ref-visibility";
 import { copyText } from "./clipboard";
@@ -924,9 +925,12 @@ export async function deleteLocalBranch(name: string): Promise<boolean> {
   }
 }
 
-// Open the branch's pull-request page in the browser, on its default remote
-// (the one the menu names — see pushTargets).
+// Open a pull request from the branch: in the app, through gh, for a GitHub
+// repository with gh signed in; otherwise its pull-request page in the
+// browser. Either way on its default remote (the one the menu names — see
+// pushTargets).
 export async function createPullRequestAction(b: BranchRef): Promise<void> {
+  if (state.prs.repo && state.prs.account?.signed_in) return createPullRequestDialog(b, branchPushTargets(b)[0]);
   setStatus(`Opening pull request for ${b.name}…`);
   try {
     const url = await createPullRequest(b.name, branchPushTargets(b)[0]);
