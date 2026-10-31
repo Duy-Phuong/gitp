@@ -44,6 +44,7 @@ import {
   loadRecentRepos,
   PULL_DEFAULT_LABEL,
   PULL_DEFAULTS,
+  tildePath,
   toggledTheme,
 } from "./prefs";
 import {
@@ -140,15 +141,6 @@ export function openQuickLaunch(): void {
       { title: "Commands", items: state.repoPath ? repoCommands() : openOnlyCommands() },
     ],
   });
-}
-
-// `~/…` rather than the absolute path, the way every git client shows it.
-//
-// Matched structurally rather than against a known home directory, which the
-// webview has no way to ask for; a path under some *other* user's home would be
-// shortened too, but that only ever affects how it reads, never where it opens.
-function tildePath(path: string): string {
-  return path.replace(/^\/(?:Users|home)\/[^/]+\//, "~/");
 }
 
 function recentRepoItems(opts: { skipActive?: boolean; skipFavorites?: boolean } = {}): QuickItem[] {

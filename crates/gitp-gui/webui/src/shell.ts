@@ -164,6 +164,7 @@ export function applyWorkspace(ws: Workspace): void {
   rememberRecentRepo(state.repoPath);
   renderRepoTabs();
   $("#action-bar").classList.toggle("hidden", state.repos.length === 0);
+  ui.welcomeView?.sync(state.repos.length > 0);
   $<HTMLInputElement>("#repo-input").value = state.repoPath;
   ui.terminal?.showRepo(state.repoPath);
   saveWorkspace();

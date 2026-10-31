@@ -12,6 +12,7 @@ import type { ReflogHandle } from "./views/reflog";
 import type { GraphPrefs } from "./prefs";
 import type { ActivityHandle } from "./views/activity";
 import type { PullRequestHandle } from "./views/pull-request";
+import type { WelcomeHandle } from "./views/welcome";
 import type { PrSectionState } from "./views/sidebar";
 import type {
   BisectStatus,
@@ -142,6 +143,7 @@ export const ui = {
   reflogView: null as ReflogHandle | null,
   activityView: null as ActivityHandle | null,
   prView: null as PullRequestHandle | null,
+  welcomeView: null as WelcomeHandle | null,
   // The live log's handle, from the most recent renderLog — the log view owns
   // keyboard movement through the rows it has on screen (see LogHandle).
   logView: null as LogHandle | null,
