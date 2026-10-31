@@ -8,7 +8,7 @@ import type { CodeFile, CodeFilesChanged, CodeWorkspace, FileEntry, HierarchyNod
 import { loadCodeLayout, saveCodeLayout } from "../../prefs";
 import { showDefinitionPicker } from "./definition-picker";
 import { AutoSave, CodeEditor, type CodeEditorDeps, type EditorLike } from "./editor";
-import { buildTree, renderExplorer, revealPath, type ExplorerState } from "./explorer";
+import { buildTree, explorerKey, renderExplorer, revealPath, type ExplorerState } from "./explorer";
 import { NavStack } from "./nav-stack";
 import { openQuickOpen } from "./quick-open";
 import { setupSearchPanel } from "./search-panel";
@@ -144,11 +144,23 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     },
   });
 
+  explorerHost.tabIndex = 0;
+  explorerHost.addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+    const r = explorerKey(buildTree(files), explorer, e.key);
+    if (r === "ignored") return;
+    e.preventDefault();
+    if (typeof r === "object") void openFile({ path: r.open, line: 0, col: 0 });
+    else renderTree();
+    explorerHost.querySelector(".code-row.selected")?.scrollIntoView({ block: "nearest" });
+  });
+
   const renderTree = () => {
     renderExplorer(explorerHost, buildTree(files), explorer, {
       open: (path) => void openFile({ path, line: 0, col: 0 }),
       toggle: (path) => {
         if (!explorer.expanded.delete(path)) explorer.expanded.add(path);
+        explorer.selected = path; // the keyboard carries on from here
         renderTree();
       },
     });

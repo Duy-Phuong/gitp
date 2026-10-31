@@ -60,6 +60,51 @@ export function revealPath(state: ExplorerState, path: string): void {
   state.selected = path;
 }
 
+/// Arrow keys move the selection over the visible rows without opening
+/// anything; Right/Left expand/collapse or step in/out a level, Enter opens
+/// a file or toggles a folder. Mutates `state`; the caller re-renders.
+export function explorerKey(tree: TreeNode, state: ExplorerState, key: string): "ignored" | "moved" | { open: string } {
+  if (!["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft", "Enter"].includes(key)) return "ignored";
+  const rows: { node: TreeNode; parent: TreeNode | null }[] = [];
+  const walk = (node: TreeNode, parent: TreeNode | null) => {
+    for (const child of node.children ?? []) {
+      rows.push({ node: child, parent });
+      if (child.children && state.expanded.has(child.path)) walk(child, child);
+    }
+  };
+  walk(tree, null);
+  if (!rows.length) return "ignored";
+  const i = rows.findIndex((r) => r.node.path === state.selected);
+  if (i < 0) {
+    state.selected = rows[0].node.path;
+    return "moved";
+  }
+  const { node, parent } = rows[i];
+  const open = !!node.children && state.expanded.has(node.path);
+  switch (key) {
+    case "ArrowDown":
+      state.selected = rows[Math.min(i + 1, rows.length - 1)].node.path;
+      break;
+    case "ArrowUp":
+      state.selected = rows[Math.max(i - 1, 0)].node.path;
+      break;
+    case "ArrowRight":
+      if (!node.children) break;
+      if (!open) state.expanded.add(node.path);
+      else if (node.children.length) state.selected = node.children[0].path;
+      break;
+    case "ArrowLeft":
+      if (open) state.expanded.delete(node.path);
+      else if (parent) state.selected = parent.path;
+      break;
+    case "Enter":
+      if (!node.children) return { open: node.path };
+      if (!state.expanded.delete(node.path)) state.expanded.add(node.path);
+      break;
+  }
+  return "moved";
+}
+
 export function renderExplorer(host: HTMLElement, tree: TreeNode, state: ExplorerState, cb: ExplorerCallbacks): void {
   clear(host);
   const frag = document.createDocumentFragment();

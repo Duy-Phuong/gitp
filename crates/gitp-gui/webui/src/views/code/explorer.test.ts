@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from "vitest";
 
-import { buildTree, renderExplorer, revealPath, type ExplorerState } from "./explorer";
+import { buildTree, explorerKey, renderExplorer, revealPath, type ExplorerState } from "./explorer";
 import type { FileEntry } from "../../types";
 
 const entry = (path: string): FileEntry => ({ path, size: 1, lang: null, mtime_ms: 1 });
@@ -49,5 +49,55 @@ describe("renderExplorer", () => {
     const tree = buildTree([entry("a.ts"), entry("b.ts")]);
     renderExplorer(host, tree, { expanded: new Set(), selected: "b.ts" }, { open: () => {}, toggle: () => {} });
     expect(host.querySelector(".code-row.selected")?.getAttribute("data-path")).toBe("b.ts");
+  });
+});
+
+describe("explorerKey", () => {
+  // src/ (lib/ (x.ts), a.ts), README.md
+  const tree = buildTree(["src/lib/x.ts", "src/a.ts", "README.md"].map(entry));
+  const fresh = (selected: string | null, expanded: string[] = []): ExplorerState => ({ expanded: new Set(expanded), selected });
+
+  it("Down and Up walk the visible rows and stop at the ends", () => {
+    const s = fresh(null, ["src"]);
+    expect(explorerKey(tree, s, "ArrowDown")).toBe("moved");
+    expect(s.selected).toBe("src");
+    explorerKey(tree, s, "ArrowDown");
+    explorerKey(tree, s, "ArrowDown");
+    expect(s.selected).toBe("src/a.ts"); // lib/ is closed, x.ts is skipped
+    explorerKey(tree, s, "ArrowDown");
+    explorerKey(tree, s, "ArrowDown");
+    expect(s.selected).toBe("README.md");
+    explorerKey(tree, s, "ArrowUp");
+    expect(s.selected).toBe("src/a.ts");
+  });
+
+  it("Right expands a closed folder, then steps into it", () => {
+    const s = fresh("src");
+    explorerKey(tree, s, "ArrowRight");
+    expect(s.expanded.has("src")).toBe(true);
+    expect(s.selected).toBe("src");
+    explorerKey(tree, s, "ArrowRight");
+    expect(s.selected).toBe("src/lib");
+  });
+
+  it("Left collapses an open folder, else goes to the parent", () => {
+    const s = fresh("src/lib/x.ts", ["src", "src/lib"]);
+    explorerKey(tree, s, "ArrowLeft");
+    expect(s.selected).toBe("src/lib");
+    explorerKey(tree, s, "ArrowLeft");
+    expect(s.expanded.has("src/lib")).toBe(false);
+    expect(s.selected).toBe("src/lib");
+  });
+
+  it("Enter opens a file and toggles a folder", () => {
+    const s = fresh("README.md");
+    expect(explorerKey(tree, s, "Enter")).toEqual({ open: "README.md" });
+    s.selected = "src";
+    explorerKey(tree, s, "Enter");
+    expect(s.expanded.has("src")).toBe(true);
+  });
+
+  it("ignores other keys", () => {
+    expect(explorerKey(tree, fresh("src"), "a")).toBe("ignored");
   });
 });

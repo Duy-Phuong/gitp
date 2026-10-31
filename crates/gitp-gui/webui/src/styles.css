@@ -5946,6 +5946,14 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   background: var(--accent-soft);
   box-shadow: inset 2px 0 0 var(--accent);
 }
+/* With the keyboard in the tree, the selected row is the focus mark. */
+.code-explorer:focus-visible {
+  box-shadow: none;
+  border-radius: 0;
+}
+.code-explorer:focus .code-row.selected {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
 .code-row-chevron {
   flex: 0 0 12px;
   display: inline-flex;
