@@ -12,6 +12,7 @@ mod activity;
 mod askpass;
 mod bisect;
 mod branches;
+mod code;
 mod commits;
 mod compare;
 mod config;
@@ -269,6 +270,16 @@ pub fn run() {
             editor::create_file,
             editor::delete_file,
             editor::list_work_files,
+            code::code_open_workspace,
+            code::code_refresh,
+            code::code_read_file,
+            code::code_write_file,
+            code::code_definition,
+            code::code_references,
+            code::code_callers,
+            code::code_callees,
+            code::code_file_symbols,
+            code::code_search,
             os::open_difftool,
             os::open_mergetool,
             config::read_dotfile,

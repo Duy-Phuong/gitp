@@ -1227,6 +1227,7 @@ dependencies = [
 name = "gitp-gui"
 version = "0.1.0"
 dependencies = [
+ "gitp-code",
  "gitp-core",
  "notify",
  "portable-pty",

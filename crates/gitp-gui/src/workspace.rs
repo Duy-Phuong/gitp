@@ -63,6 +63,7 @@ pub(crate) fn open_repo_impl(state: &RepoState, path: String) -> Result<Workspac
         watch_live: live,
         undo: None,
         redo: None,
+        code: None,
     });
     let last = guard.sessions.len() - 1;
     guard.set_active(Some(last));

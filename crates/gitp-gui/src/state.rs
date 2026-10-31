@@ -56,6 +56,8 @@ pub(crate) struct Session {
     /// undo), and the action just undone that Redo would re-apply.
     pub(crate) undo: Option<Undoable>,
     pub(crate) redo: Option<Undoable>,
+    /// The Code tab's index and files, once that tab has opened here.
+    pub(crate) code: Option<Arc<crate::code::CodeState>>,
 }
 
 /// A first log walk finishing on a thread of its own (see
