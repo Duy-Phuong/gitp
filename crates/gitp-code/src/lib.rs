@@ -4,4 +4,5 @@
 //! bridges it to the frontend.
 
 pub mod files;
+pub mod index;
 pub mod lang;
