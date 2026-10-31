@@ -3,7 +3,7 @@
 // reach it (the backend's walk skipped them), so a build directory is simply
 // absent, as an IDE's "excluded" folder.
 
-import { clear, el } from "../../dom";
+import { chevronIcon, clear, el } from "../../dom";
 import type { FileEntry, Lang } from "../../types";
 
 export interface TreeNode {
@@ -75,7 +75,7 @@ export function renderExplorer(host: HTMLElement, tree: TreeNode, state: Explore
           title: child.path,
           style: `--depth:${depth}`,
         },
-        [el("span", { class: "code-row-chevron" }, [folder ? (open ? "▾" : "▸") : ""]), el("span", { class: "code-row-name" }, [child.name])],
+        [el("span", { class: "code-row-chevron" }, folder ? [chevronIcon()] : []), el("span", { class: "code-row-name" }, [child.name])],
       );
       row.addEventListener("click", () => (folder ? cb.toggle(child.path) : cb.open(child.path)));
       frag.append(row);

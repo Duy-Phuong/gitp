@@ -5948,9 +5948,16 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 }
 .code-row-chevron {
   flex: 0 0 12px;
-  text-align: center;
+  display: inline-flex;
+  justify-content: center;
   color: var(--text-dim);
-  font-size: 10px;
+}
+/* The shared chevron points down; a closed folder turns it right. */
+.code-row-folder:not(.open) .code-row-chevron {
+  transform: rotate(-90deg);
+}
+.code-row-folder:hover .code-row-chevron {
+  color: var(--text);
 }
 .code-row-name {
   overflow: hidden;
