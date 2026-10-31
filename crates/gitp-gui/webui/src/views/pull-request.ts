@@ -1,8 +1,9 @@
 // The pull request view: a GitHub pull request's title, state, branches,
 // labels and actions, then three tabs — the conversation (description,
 // comments, reviews and line-comment threads in time order, with a box to
-// comment), the changed files as diffs (click a line to comment on it), and
-// the checks.
+// comment), the changed files as diffs — unified or side by side, filtered by
+// a search of their names and code, with each line's threads under it (click
+// a line to comment on it) — and the checks.
 //
 // Everything in it came from GitHub and was written by other people, so none
 // of it goes through innerHTML: Markdown is rendered by markdown-preview.ts,
@@ -10,7 +11,8 @@
 
 import { clear, el, githubIcon } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
-import { renderFile } from "./detail";
+import { iconBtn, renderFile, renderSplitDiff } from "./detail";
+import { loadPrDiffSplit, savePrDiffSplit } from "../prefs";
 import {
   checksSummary,
   isoSeconds,
@@ -21,7 +23,9 @@ import {
   reviewDecisionLabel,
   reviewThreads,
   reviewVerb,
+  searchFiles,
   threadsByLine,
+  threadsPerFile,
   type Thread,
 } from "../pull-requests";
 import { fullTime, relativeTime } from "../timeago";
@@ -65,6 +69,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // The comment box at the bottom of the conversation, kept across re-renders
   // so a reload doesn't throw away what's being written.
   let draft = "";
+  // The Files tab's search, kept across re-renders (a layout switch).
+  let filesQuery = "";
+  let split = loadPrDiffSplit();
 
   const message = (text: string) => {
     clear(host);
@@ -263,27 +270,92 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       body.append(el("div", { class: "pr-empty", text: "No changed files." }));
       return;
     }
-    body.append(el("div", { class: "pr-files-hint", text: "Click a line to comment on it." }));
-    const threads = threadsByLine(reviewThreads(pr.review_comments));
-    for (const file of files) body.append(annotatedFile(pr, file, threads));
+    const shown = files;
+    const threads = reviewThreads(pr.review_comments);
+    const byLine = threadsByLine(threads);
+    const counts = threadsPerFile(threads);
+    const nodes = shown.map((file) => annotatedFile(pr, file, byLine, counts.get(file.path) ?? 0));
+
+    const count = el("span", { class: "pr-files-count" });
+    const search = el("input", {
+      class: "pr-files-search",
+      type: "search",
+      placeholder: "Search file names and code",
+      "aria-label": "Search file names and code",
+    });
+    search.value = filesQuery;
+    // Hide the files that don't match, and mark the lines that do.
+    const applySearch = () => {
+      let files = 0;
+      let lines = 0;
+      searchFiles(shown, filesQuery).forEach((hits, i) => {
+        const node = nodes[i];
+        node.hidden = hits === null;
+        for (const row of node.querySelectorAll(".pr-search-hit")) row.classList.remove("pr-search-hit");
+        if (hits === null) return;
+        files++;
+        lines += hits.length;
+        for (const [h, k] of hits) {
+          for (const row of node.querySelectorAll(`.hunk[data-hunk="${h}"] [data-line="${k}"]`)) row.classList.add("pr-search-hit");
+        }
+      });
+      count.textContent = filesQuery.trim()
+        ? `${files} of ${shown.length} file${shown.length === 1 ? "" : "s"} · ${lines} matching line${lines === 1 ? "" : "s"}`
+        : "";
+    };
+    search.addEventListener("input", () => {
+      filesQuery = search.value;
+      applySearch();
+    });
+    const layout = el("div", { class: "tb-group" }, [
+      iconBtn(["M4 6h16", "M4 12h16", "M4 18h16"], "Unified", false, () => setSplit(false), !split),
+      iconBtn(["M4 5h16v14H4z", "M12 5v14"], "Split", false, () => setSplit(true), split),
+    ]);
+    body.append(
+      el("div", { class: "pr-files-bar" }, [layout, search, count, el("span", { class: "pr-files-hint", text: "Click a line to comment on it." })]),
+      ...nodes,
+    );
+    applySearch();
   }
 
-  // A file's diff, as elsewhere, with its threads under their lines and a
-  // comment box on any line clicked.
-  function annotatedFile(pr: PullRequestDetail, file: FileDiff, threads: Map<string, Thread[]>): HTMLElement {
-    const node = renderFile(file);
+  function setSplit(on: boolean): void {
+    if (split === on) return;
+    split = on;
+    savePrDiffSplit(on);
+    render();
+  }
+
+  // A file's diff, unified or side by side as elsewhere, with its threads
+  // under their lines, how many there are in its header, and a comment box on
+  // any line clicked.
+  function annotatedFile(pr: PullRequestDetail, file: FileDiff, threads: Map<string, Thread[]>, comments: number): HTMLElement {
+    const node = split ? renderSplitDiff(file) : renderFile(file);
+    if (comments) {
+      const label = `${comments} comment${comments === 1 ? "" : "s"}`;
+      node.querySelector(".file-head")?.append(el("span", { class: "pr-file-comments", text: label, title: `${label} on this file` }));
+    }
     const lineOf = (row: Element) => {
       const hunk = Number(row.closest<HTMLElement>(".hunk")?.dataset.hunk);
       const at = Number((row as HTMLElement).dataset.line);
       return file.hunks[hunk]?.lines[at];
     };
-    for (const row of node.querySelectorAll<HTMLElement>(".diff-line")) {
+    // What a thread or comment box goes under: the line, or in the split view
+    // the row holding both of its sides.
+    const anchorOf = (row: Element): Element => row.closest(".split-row") ?? row;
+    // A split row shows an unchanged line twice; its threads go under it once.
+    const placed = new Set<string>();
+    for (const row of node.querySelectorAll<HTMLElement>(".diff-line, .split-cell[data-line]")) {
       const line = lineOf(row);
       const target = line && lineTarget(line);
       if (!target) continue;
       row.classList.add("pr-commentable");
-      let after: Element = row;
-      for (const t of threads.get(lineKey(file.path, target.side, target.line)) ?? []) {
+      const key = lineKey(file.path, target.side, target.line);
+      if (placed.has(key)) continue;
+      placed.add(key);
+      // Below the threads the row's other side has put there already.
+      let after = anchorOf(row);
+      while (after.nextElementSibling?.classList.contains("pr-thread")) after = after.nextElementSibling;
+      for (const t of threads.get(key) ?? []) {
         const n = threadNode(pr, t, false);
         after.after(n);
         after = n;
@@ -293,10 +365,11 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       node.append(el("div", { class: "diff-truncated", text: "This diff is too long to show in full here; open it on GitHub for the rest." }));
     }
     node.addEventListener("click", (e) => {
-      const row = (e.target as HTMLElement).closest(".diff-line.pr-commentable");
+      const row = (e.target as HTMLElement).closest(".diff-line.pr-commentable, .split-cell.pr-commentable");
       // A drag that selected text is a copy, not a click on the line.
       if (!row || !window.getSelection()?.isCollapsed) return;
-      const next = row.nextElementSibling;
+      const anchor = anchorOf(row);
+      const next = anchor.nextElementSibling;
       if (next?.classList.contains("pr-line-composer")) {
         next.querySelector("textarea")?.focus();
         return;
@@ -311,7 +384,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         return ok;
       }, () => box.remove());
       box.classList.add("pr-line-composer");
-      row.after(box);
+      anchor.after(box);
     });
     return node;
   }
@@ -343,6 +416,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         detail = null;
         files = null;
         draft = "";
+        filesQuery = "";
         tab = "conversation";
       }
       void load(true);

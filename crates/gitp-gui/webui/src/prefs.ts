@@ -44,6 +44,17 @@ export function saveDiffWrap(on: boolean): void {
   localStorage.setItem(DIFF_WRAP_KEY, on ? "1" : "0");
 }
 
+// The pull request Files tab's layout: side by side, or unified (the default).
+const PR_DIFF_SPLIT_KEY = "gitp-pr-diff-split";
+
+export function loadPrDiffSplit(): boolean {
+  return localStorage.getItem(PR_DIFF_SPLIT_KEY) === "1";
+}
+
+export function savePrDiffSplit(on: boolean): void {
+  localStorage.setItem(PR_DIFF_SPLIT_KEY, on ? "1" : "0");
+}
+
 export function loadIgnoreWhitespace(): boolean {
   return localStorage.getItem(DIFF_IGNORE_WS_KEY) === "1";
 }

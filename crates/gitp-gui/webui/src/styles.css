@@ -5102,11 +5102,59 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   color: var(--text-dim);
 }
 /* A diff line in the Files tab takes a comment on click. */
-.diff-line.pr-commentable {
+.diff-line.pr-commentable,
+.split-cell.pr-commentable {
   cursor: pointer;
 }
-.diff-line.pr-commentable:hover {
+.diff-line.pr-commentable:hover,
+.split-cell.pr-commentable:hover {
   box-shadow: inset 3px 0 0 var(--accent);
+}
+/* The Files tab's layout switch, search and match count. */
+.pr-files-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pr-files-search {
+  flex: 1 1 220px;
+  max-width: 360px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.pr-files-count {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.pr-files-bar .pr-files-hint {
+  margin-left: auto;
+}
+/* A line the search matched, over its added/removed colour. */
+.diff-line.pr-search-hit,
+.split-cell.pr-search-hit {
+  background-image: linear-gradient(rgba(255, 196, 0, 0.28), rgba(255, 196, 0, 0.28));
+}
+.pr-file-comments {
+  margin-left: auto;
+  font-family: var(--sans);
+  font-size: 11px;
+  padding: 0 7px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+/* Threads and comment boxes between the rows of the side-by-side table, which
+   is set in the code font. */
+.split-table .pr-thread,
+.split-table .pr-line-composer {
+  font-family: var(--sans);
+  font-size: 13px;
+  white-space: normal;
 }
 .pr-checks {
   display: flex;

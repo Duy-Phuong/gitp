@@ -894,7 +894,7 @@ function textBtn(label: string, active: boolean, onClick: () => void): HTMLEleme
   return b;
 }
 
-function iconBtn(
+export function iconBtn(
   paths: string[],
   title: string,
   disabled: boolean,
