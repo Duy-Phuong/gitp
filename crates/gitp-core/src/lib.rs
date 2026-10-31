@@ -73,7 +73,7 @@ pub use gh::{
 pub use gitflow::{FlowKind, GitFlowConfig};
 pub use identity::{global_identity, restore_local_identity, set_global_identity, Identity};
 pub use lfs::LfsStatus;
-pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope};
+pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope, LogWalk};
 pub use pick_plan::{PickAction, PickPlanOutcome, PickStep};
 pub use progress::{NetworkHooks, Progress, ProgressFn};
 pub use rebase::{RebaseAction, RebaseCommit, RebaseStatus, RebaseStep};

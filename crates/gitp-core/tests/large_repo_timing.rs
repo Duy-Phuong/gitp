@@ -58,6 +58,11 @@ fn large_repo_timings() {
     }
 
     let scope = LogScope::from(true);
+    println!("  commit-graph: {}", !repo.commit_graph_missing());
+    time("first page (5000 rows read, all branches)", || {
+        let mut walk = repo.start_log_walk(&scope).unwrap();
+        walk.first_rows(5000).unwrap().unwrap()
+    });
     let mut cache = time("log_cache (all branches: walk + lanes)", || {
         repo.log_cache_scoped(&scope).unwrap()
     });

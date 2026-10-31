@@ -1,12 +1,20 @@
 //! History walk. Produces flat `CommitRow`s newest-first.
 //!
-//! Graph-lane data (for rendering branch lanes) is layered on in `graph.rs`.
+//! The walk is `git log --date-order`, read as git lists it: with a
+//! commit-graph, git lists the newest commits without reading the rest of the
+//! history first, so the first page of a large log can be shown long before
+//! the whole of it is read (see `LogWalk`). Graph-lane data (for rendering
+//! branch lanes) is layered on in `graph.rs`.
 
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::process::{Child, ChildStdout, Stdio};
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use crate::activity;
+use crate::error::{Error, Result};
+use crate::git_bin::git_command;
 use crate::repo::Repo;
 
 /// Options controlling a history walk.
@@ -127,6 +135,155 @@ pub enum LogRefresh {
     Full,
 }
 
+/// A log walk in progress: `git log` running, and the rows read from it so
+/// far. Lanes depend only on the rows above, so the first rows can be laid out
+/// and shown while the rest is still being read (`first_rows`).
+pub struct LogWalk {
+    /// `None` once git has listed everything (or there was nothing to walk).
+    git: Option<GitLog>,
+    rows: Vec<CommitRow>,
+    scope: LogScope,
+    tips: Vec<git2::Oid>,
+    pinned_tip: Option<String>,
+}
+
+impl LogWalk {
+    /// The first `n` rows (fewer if the log is shorter), laid out as they will
+    /// be in the full log — or `None` when that can't be known yet: the pinned
+    /// branch decides the layout from the top row down, and whether it is in
+    /// the walk at all is only known once its tip has been read.
+    pub fn first_rows(&mut self, n: usize) -> Result<Option<Vec<CommitRow>>> {
+        self.read_until(n)?;
+        let mut rows = self.rows[..n.min(self.rows.len())].to_vec();
+        if let Some(tip) = self.pinned_tip.as_deref() {
+            let read = |rows: &[CommitRow]| rows.iter().any(|r| r.id == tip);
+            let known_absent = self.git.is_none() && !read(&self.rows);
+            if !read(&rows) && !known_absent {
+                return Ok(None);
+            }
+        }
+        crate::graph::assign_lanes(&mut rows, self.pinned_tip.as_deref());
+        Ok(Some(rows))
+    }
+
+    /// Whether git has listed the whole log.
+    pub fn is_complete(&self) -> bool {
+        self.git.is_none()
+    }
+
+    /// Read the rest of the log and lay it out.
+    pub fn finish(mut self) -> Result<LogCache> {
+        self.read_until(usize::MAX)?;
+        let mut rows = std::mem::take(&mut self.rows);
+        crate::graph::assign_lanes(&mut rows, self.pinned_tip.as_deref());
+        Ok(LogCache {
+            rows,
+            scope: std::mem::take(&mut self.scope),
+            tips: std::mem::take(&mut self.tips),
+            pinned_tip: self.pinned_tip.take(),
+            bodies: HashMap::new(),
+        })
+    }
+
+    fn read_until(&mut self, n: usize) -> Result<()> {
+        while self.rows.len() < n {
+            let Some(git) = self.git.as_mut() else { break };
+            match git.next_row()? {
+                Some(row) => self.rows.push(row),
+                None => self.git.take().unwrap().wait()?,
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The fields of a log row, one record per commit (NUL-terminated by `-z`).
+/// The summary goes last: it is the only field that can hold anything.
+const LOG_FORMAT: &str = "--format=%H%x1f%P%x1f%at%x1f%an%x1f%ae%x1f%s";
+
+/// A running `git log`. Stopped if dropped before it has listed everything.
+struct GitLog {
+    child: Child,
+    stdout: BufReader<ChildStdout>,
+    run: Option<activity::Run>,
+}
+
+impl GitLog {
+    fn next_row(&mut self) -> Result<Option<CommitRow>> {
+        let mut record = Vec::new();
+        loop {
+            record.clear();
+            let read = self
+                .stdout
+                .read_until(0, &mut record)
+                .map_err(|e| Error::Message(format!("failed to read git log: {e}")))?;
+            if read == 0 {
+                return Ok(None);
+            }
+            if record.last() == Some(&0) {
+                record.pop();
+            }
+            if !record.is_empty() {
+                return parse_row(&record).map(Some);
+            }
+        }
+    }
+
+    /// Wait for git to exit, once it has listed everything.
+    fn wait(mut self) -> Result<()> {
+        let mut stderr = Vec::new();
+        if let Some(mut pipe) = self.child.stderr.take() {
+            let _ = pipe.read_to_end(&mut stderr);
+        }
+        let status = self
+            .child
+            .wait()
+            .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+        if let Some(run) = self.run.take() {
+            run.finish(status.code(), status.success(), b"", &stderr);
+        }
+        if status.success() {
+            Ok(())
+        } else {
+            Err(Error::Message(
+                String::from_utf8_lossy(&stderr).trim().to_string(),
+            ))
+        }
+    }
+}
+
+impl Drop for GitLog {
+    fn drop(&mut self) {
+        if let Some(run) = self.run.take() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            run.fail("stopped after the rows needed");
+        }
+    }
+}
+
+fn parse_row(record: &[u8]) -> Result<CommitRow> {
+    let text = String::from_utf8_lossy(record);
+    let mut fields = text.splitn(6, '\x1f');
+    let mut next = || fields.next().unwrap_or("");
+    let (id, parents, time, name, email, summary) =
+        (next(), next(), next(), next(), next(), next());
+    if id.len() < 7 {
+        return Err(Error::Message(format!("unexpected git log output: {text}")));
+    }
+    Ok(CommitRow {
+        id: id.to_string(),
+        short_id: id[..7].to_string(),
+        summary: summary.to_string(),
+        author_name: name.to_string(),
+        author_email: email.to_string(),
+        time: time.parse().unwrap_or(0),
+        parents: parents.split_whitespace().map(str::to_string).collect(),
+        lane: 0,
+        color: 0,
+    })
+}
+
 impl Repo {
     /// Walk history newest-first (topological + time ordered), starting from
     /// HEAD. With `options.all_branches`, also seed from every local and
@@ -135,10 +292,73 @@ impl Repo {
     /// Missing categories (say, no remotes) are skipped; an empty repo yields
     /// an empty log.
     pub fn log(&self, options: LogOptions) -> Result<Vec<CommitRow>> {
-        let tips = self.log_tips(&options.all_branches.into())?;
-        let mut rows = self.walk_rows(&tips, options.max_count)?;
-        crate::graph::assign_lanes(&mut rows, None);
-        Ok(rows)
+        let mut walk = self.start_log_walk(&options.all_branches.into())?;
+        let rows = walk.first_rows(options.max_count.unwrap_or(usize::MAX))?;
+        Ok(rows.unwrap_or_default())
+    }
+
+    /// Start walking the log for `scope`: `git log --date-order` from its tips,
+    /// read as git lists it. Nothing is read until asked for.
+    pub fn start_log_walk(&self, scope: &LogScope) -> Result<LogWalk> {
+        let tips = self.log_tips(scope)?;
+        let git = if tips.is_empty() {
+            None
+        } else {
+            Some(self.spawn_log(&tips)?)
+        };
+        Ok(LogWalk {
+            git,
+            rows: Vec::new(),
+            scope: scope.clone(),
+            tips,
+            pinned_tip: self.pinned_tip(scope),
+        })
+    }
+
+    /// `git log` from `tips`: newest first, never a parent above its child —
+    /// the rule `topo_order` follows for the commits a refresh adds — and the
+    /// commits as libgit2 reads them there (no replace refs, no mailmap). The
+    /// tips go in on stdin: a big repo has hundreds.
+    fn spawn_log(&self, tips: &[git2::Oid]) -> Result<GitLog> {
+        let mut cmd = git_command();
+        cmd.current_dir(self.workdir())
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .args([
+                "--no-replace-objects",
+                "log",
+                "--date-order",
+                "--no-show-signature",
+                "--no-use-mailmap",
+                "-z",
+                LOG_FORMAT,
+                "--stdin",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let run = activity::Run::of(&cmd);
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                run.fail(format_args!("failed to run git: {e}"));
+                return Err(Error::Message(format!("failed to run git: {e}")));
+            }
+        };
+        let mut stdin = child.stdin.take().expect("stdin is piped");
+        let stdout = BufReader::new(child.stdout.take().expect("stdout is piped"));
+        let git = GitLog {
+            child,
+            stdout,
+            run: Some(run),
+        };
+        let written = tips.iter().try_for_each(|tip| writeln!(stdin, "{tip}"));
+        drop(stdin);
+        if let Err(e) = written {
+            // git stopped reading them: it has exited, and says why.
+            git.wait()?;
+            return Err(Error::Message(format!("failed to start git log: {e}")));
+        }
+        Ok(git)
     }
 
     /// The full log (as `log` with no `max_count`), kept with the tips it was
@@ -149,17 +369,31 @@ impl Repo {
 
     /// `log_cache` for a full `LogScope`.
     pub fn log_cache_scoped(&self, scope: &LogScope) -> Result<LogCache> {
-        let tips = self.log_tips(scope)?;
-        let mut rows = self.walk_rows(&tips, None)?;
-        let pinned_tip = self.pinned_tip(scope);
-        crate::graph::assign_lanes(&mut rows, pinned_tip.as_deref());
-        Ok(LogCache {
-            rows,
-            scope: scope.clone(),
-            tips,
-            pinned_tip,
-            bodies: HashMap::new(),
-        })
+        self.start_log_walk(scope)?.finish()
+    }
+
+    /// Whether git has no commit-graph to read here, and would read one. Without
+    /// it `git log --date-order` reads every commit before listing the first —
+    /// about a second per 100k commits.
+    pub fn commit_graph_missing(&self) -> bool {
+        let enabled = self
+            .inner
+            .config()
+            .and_then(|c| c.get_bool("core.commitGraph"))
+            .unwrap_or(true);
+        let info = self.common_dir().join("objects").join("info");
+        enabled
+            && !info.join("commit-graph").is_file()
+            && !info
+                .join("commit-graphs")
+                .join("commit-graph-chain")
+                .is_file()
+    }
+
+    /// Write a commit-graph of every reachable commit, as `git gc` would.
+    pub fn write_commit_graph(&self) -> Result<()> {
+        self.run_git(&["commit-graph", "write", "--reachable"])
+            .map(|_| ())
     }
 
     /// The commit the scope's pinned branch points at, if it still exists.
@@ -323,27 +557,6 @@ impl Repo {
         tips.sort();
         tips.dedup();
         Ok(tips)
-    }
-
-    /// Rows for every commit reachable from `tips`, newest first (topological +
-    /// time ordered), lanes not yet assigned.
-    fn walk_rows(&self, tips: &[git2::Oid], max_count: Option<usize>) -> Result<Vec<CommitRow>> {
-        let mut walk = self.inner.revwalk()?;
-        for tip in tips {
-            walk.push(*tip)?;
-        }
-        walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
-
-        let mut rows = Vec::new();
-        for oid in walk {
-            if let Some(max) = max_count {
-                if rows.len() >= max {
-                    break;
-                }
-            }
-            rows.push(row_for(&self.inner.find_commit(oid?)?));
-        }
-        Ok(rows)
     }
 }
 

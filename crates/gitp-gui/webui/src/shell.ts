@@ -402,6 +402,13 @@ export async function refreshHistory(opts: { keepSelection?: boolean } = {}): Pr
   await ensureAvatars(state.rows.map((r) => r.author_email));
   rebuildCommitRefs();
   await updateLogView();
+  // A long history's first page comes before the backend has read the rest:
+  // learn its real total while the selection is shown, so callers that report
+  // "N commits" once this returns have it.
+  await Promise.all([showSelectionAfterRefresh(keep), page.partial ? finishPartialLog(repoPath, scopeKey) : null]);
+}
+
+async function showSelectionAfterRefresh(keep: boolean): Promise<void> {
   // The open Reflog owns the detail pane (an undo refreshes history under it);
   // showView puts the selection back there on the way out.
   if (state.view === "reflog") return;
@@ -414,6 +421,27 @@ export async function refreshHistory(opts: { keepSelection?: boolean } = {}): Pr
     shownDetailId = null;
     ui.detailView?.showEmpty();
   }
+}
+
+// A partial first page's `total` is only the rows read so far, which keeps
+// scrolling from asking for more. Asking again waits for the backend to read
+// the rest; the rows shown stay, and only the total changes — unless history
+// moved meanwhile, when the log is refreshed.
+async function finishPartialLog(repoPath: string, scopeKey: string): Promise<void> {
+  let page: LogPage;
+  try {
+    page = await fetchLogPage(0, PAGE_SIZE, logScope());
+  } catch (err) {
+    readFailed("Failed to load the rest of the history", err);
+    return;
+  }
+  if (repoPath !== state.repoPath || rowsRepoPath !== repoPath || rowsScope !== scopeKey) return;
+  if (page.rows.every((r, i) => state.rows[i]?.id === r.id)) {
+    state.total = page.total;
+    return;
+  }
+  lastHistoryFingerprint = ""; // the rows on screen aren't the log's: reload them
+  await refreshHistory({ keepSelection: true });
 }
 
 function renderLogSkeleton(pane: HTMLElement): void {
