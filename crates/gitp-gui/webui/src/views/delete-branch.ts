@@ -115,7 +115,7 @@ function openDeleteRefModal(
       if (closed) return;
       remoteSlot.replaceChildren();
       if (!remoteBranch) return; // not on the remote — local-only delete
-      const box = el("input", { type: "checkbox" }) as HTMLInputElement;
+      const box = el("input", { type: "checkbox" });
       box.addEventListener("change", () => (deleteRemote = box.checked));
       remoteSlot.append(
         el("label", { class: "delete-remote-row" }, [

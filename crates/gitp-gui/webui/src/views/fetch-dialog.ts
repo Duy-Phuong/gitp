@@ -35,14 +35,14 @@ export function openFetchDialog(remotes: string[], onFetch: (remote: string | nu
     el("div", { class: "modal-sub", text: "Fetch latest changes from the remote repository" }),
   );
 
-  const select = el("select", { class: "fetch-remote" }) as HTMLSelectElement;
+  const select = el("select", { class: "fetch-remote" });
   for (const name of remotes) select.append(el("option", { value: name, text: name }));
   const row = el("div", { class: "fetch-row" }, [
     el("label", { class: "fetch-row-label", text: "Remote:" }),
     select,
   ]);
 
-  const all = el("input", { type: "checkbox" }) as HTMLInputElement;
+  const all = el("input", { type: "checkbox" });
   // Only one remote to choose from means the choice is already made: default to
   // all (identical in effect) and grey the dropdown out rather than presenting
   // a control that can't change anything.

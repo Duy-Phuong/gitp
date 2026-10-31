@@ -63,7 +63,7 @@ function buildBranchMenu(menu: HTMLElement, close: () => void): void {
   const input = el("input", {
     placeholder: "New branch name",
     spellcheck: "false",
-  }) as HTMLInputElement;
+  });
   const create = el("button", { class: "btn small", text: "Create" });
   const submit = () => {
     const name = input.value.trim();

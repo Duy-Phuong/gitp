@@ -6,7 +6,8 @@
 // there carries on in the background. Closing a repo tab kills its shells.
 
 import { $, clear, el } from "./dom";
-import { setupTerminal, type TerminalHandle } from "./views/terminal";
+import type { TerminalHandle } from "./views/terminal";
+import { setupTerminal } from "./views/terminal-lazy";
 import { state, ui, type TerminalPanel } from "./app-state";
 import { loadChanges, loadSidebar, refreshHistory, renderTerminalCwd } from "./shell";
 import { shellQuote, tabNumber } from "./terminal-text";

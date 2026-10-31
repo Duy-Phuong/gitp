@@ -44,7 +44,7 @@ function renderRow(
   const input = el("input", {
     class: "config-value-input",
     value: entry.value,
-  }) as HTMLInputElement;
+  });
   input.disabled = !editable;
   valueCell.append(input);
   tr.append(valueCell);
@@ -68,17 +68,17 @@ function renderAddRow(
 ): HTMLElement {
   const wrap = el("div", { class: "config-add" });
 
-  const scopeSel = el("select") as HTMLSelectElement;
+  const scopeSel = el("select");
   for (const s of EDITABLE_SCOPES) scopeSel.append(el("option", { value: s, text: s }));
 
   const keyInput = el("input", {
     class: "key-input",
     placeholder: "section.key",
-  }) as HTMLInputElement;
+  });
   const valInput = el("input", {
     class: "val-input",
     placeholder: "value",
-  }) as HTMLInputElement;
+  });
 
   const addBtn = el("button", { class: "btn", text: "Add" });
   addBtn.addEventListener("click", () => {

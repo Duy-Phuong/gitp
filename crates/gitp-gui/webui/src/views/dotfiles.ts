@@ -37,8 +37,8 @@ export function renderDotfiles(host: HTMLElement, files: DotfileEntry[], cb: Dot
 // Export both files as one JSON template, or apply such a template from
 // another machine. The native save/open dialogs live in template-api.
 function renderTemplateBar(files: DotfileEntry[], cb: DotfilesCallbacks): HTMLElement {
-  const exportBtn = el("button", { class: "btn small", text: "Export template…" }) as HTMLButtonElement;
-  const applyBtn = el("button", { class: "btn small", text: "Apply template…" }) as HTMLButtonElement;
+  const exportBtn = el("button", { class: "btn small", text: "Export template…" });
+  const applyBtn = el("button", { class: "btn small", text: "Apply template…" });
   const setBusy = (busy: boolean) => {
     exportBtn.disabled = busy;
     applyBtn.disabled = busy;
@@ -107,11 +107,11 @@ function renderPanel(file: DotfileEntry, cb: DotfilesCallbacks): HTMLElement {
     class: "dotfile-textarea",
     spellcheck: "false",
     placeholder: `${file.path} doesn't exist yet — Save will create it.`,
-  }) as HTMLTextAreaElement;
+  });
   textarea.value = file.content;
 
   const status = el("span", { class: "dotfile-status" });
-  const saveBtn = el("button", { class: "btn small", text: "Save" }) as HTMLButtonElement;
+  const saveBtn = el("button", { class: "btn small", text: "Save" });
   saveBtn.addEventListener("click", () => {
     void (async () => {
       const ok = await cb.confirm(`Overwrite ${file.path} with this content?`);

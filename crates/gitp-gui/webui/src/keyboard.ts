@@ -57,7 +57,7 @@ export function setupLogKeyboardNav(): void {
     const log = ui.logView;
     if (!log) return;
 
-    let id: string | null = null;
+    let id: string | null;
     switch (e.key) {
       case "ArrowDown":
       case "j":

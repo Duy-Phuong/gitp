@@ -89,12 +89,12 @@ export function parseInline(text: string): Inline[] {
   const out: Inline[] = [];
   let last = 0;
   for (const m of text.matchAll(INLINE)) {
-    if (m.index! > last) out.push({ kind: "text", text: text.slice(last, m.index) });
+    if (m.index > last) out.push({ kind: "text", text: text.slice(last, m.index) });
     if (m[1] !== undefined) out.push({ kind: "code", text: m[1] });
     else if (m[2] !== undefined || m[3] !== undefined) out.push({ kind: "strong", text: m[2] ?? m[3] });
     else if (m[4] !== undefined || m[5] !== undefined) out.push({ kind: "em", text: m[4] ?? m[5] });
     else out.push({ kind: "link", text: m[6], href: m[7] });
-    last = m.index! + m[0].length;
+    last = m.index + m[0].length;
   }
   if (last < text.length) out.push({ kind: "text", text: text.slice(last) });
   return out;

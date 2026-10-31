@@ -41,11 +41,11 @@ export function openStashDialog(onStash: (opts: StashOptions) => void): void {
     placeholder: "Message (optional)",
     spellcheck: "false",
     autocomplete: "off",
-  }) as HTMLInputElement;
+  });
 
-  const untracked = el("input", { type: "checkbox" }) as HTMLInputElement;
+  const untracked = el("input", { type: "checkbox" });
   untracked.checked = true;
-  const staged = el("input", { type: "checkbox" }) as HTMLInputElement;
+  const staged = el("input", { type: "checkbox" });
   // git refuses --staged together with untracked files, and a staged-only
   // stash has no untracked files to take anyway — so the one rules out the other.
   staged.addEventListener("change", () => (untracked.disabled = staged.checked));

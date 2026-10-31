@@ -54,7 +54,7 @@ describe("opensQuickLaunch", () => {
 
   it("ignores other keys", () => {
     withPage(false);
-    expect(opensQuickLaunch({ ...cmdK(), key: "j" } as KeyboardEvent)).toBe(false);
+    expect(opensQuickLaunch({ ...cmdK(), key: "j" })).toBe(false);
   });
 });
 

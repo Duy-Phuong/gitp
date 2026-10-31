@@ -436,7 +436,7 @@ function defaultBranchField(): HTMLElement {
     spellcheck: "false",
     autocomplete: "off",
     "aria-label": "Default branch",
-  }) as HTMLInputElement;
+  });
   input.value = loadDefaultBranch();
   input.addEventListener("change", () => {
     saveDefaultBranch(input.value);
@@ -449,7 +449,7 @@ function defaultBranchField(): HTMLElement {
 // in as Custom (saved when the field changes).
 function fontPicker(current: string, onChange: (font: string) => void): HTMLElement {
   const CUSTOM = "(custom)";
-  const select = el("select", { class: "settings-select" }) as HTMLSelectElement;
+  const select = el("select", { class: "settings-select" });
   select.append(el("option", { value: "", text: "Default monospace" }));
   for (const f of FONT_FAMILIES) select.append(el("option", { value: f, text: f }));
   select.append(el("option", { value: CUSTOM, text: "Custom…" }));
@@ -458,7 +458,7 @@ function fontPicker(current: string, onChange: (font: string) => void): HTMLElem
     placeholder: "Font family, e.g. Iosevka",
     spellcheck: "false",
     autocomplete: "off",
-  }) as HTMLInputElement;
+  });
   const preset = current === "" || FONT_FAMILIES.includes(current);
   select.value = preset ? current : CUSTOM;
   custom.value = preset ? "" : current;
@@ -473,7 +473,7 @@ function fontPicker(current: string, onChange: (font: string) => void): HTMLElem
 }
 
 function sizeSelect(current: number, onChange: (size: number) => void): HTMLElement {
-  const select = el("select", { class: "settings-select" }) as HTMLSelectElement;
+  const select = el("select", { class: "settings-select" });
   for (const n of FONT_SIZES) select.append(el("option", { value: String(n), text: `${n} px` }));
   select.value = String(current);
   select.addEventListener("change", () => onChange(Number(select.value)));
@@ -484,7 +484,7 @@ function sizeSelect(current: number, onChange: (size: number) => void): HTMLElem
 // and when no repo is open. A label set by hand that isn't offered is shown as
 // it is, so the list never claims UTF-8 for it.
 function encodingSelect(actions: SettingsActions): HTMLElement {
-  const select = el("select", { class: "settings-select", disabled: true }) as HTMLSelectElement;
+  const select = el("select", { class: "settings-select", disabled: true });
   for (const e of ENCODINGS) select.append(el("option", { value: e.label, text: e.name }));
   select.addEventListener("change", () => void actions.setEncoding(select.value));
   void actions.encoding().then(
@@ -513,8 +513,8 @@ function hooksField(actions: SettingsActions): HTMLElement {
     spellcheck: "false",
     autocomplete: "off",
     disabled: true,
-  }) as HTMLInputElement;
-  const browse = el("button", { class: "btn ghost small", text: "Browse…", disabled: true }) as HTMLButtonElement;
+  });
+  const browse = el("button", { class: "btn ghost small", text: "Browse…", disabled: true });
   let saved = "";
   const save = () => {
     const path = input.value.trim();
@@ -586,7 +586,7 @@ function reviewCommandField(): HTMLElement {
     class: "settings-select settings-command",
     spellcheck: "false",
     rows: 4,
-  }) as HTMLTextAreaElement;
+  });
   area.value = loadReviewCommand();
   area.addEventListener("change", () => {
     saveReviewCommand(area.value);

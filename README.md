@@ -162,6 +162,7 @@ repositories gitp has opened — gitp only ever reads and writes them through gi
 cargo test                                        # Rust: gitp-core + gitp-gui
 npm --prefix crates/gitp-gui/webui test           # frontend unit tests (Vitest)
 npm --prefix crates/gitp-gui/webui run typecheck   # type-check only
+npm --prefix crates/gitp-gui/webui run lint       # ESLint, the same rules as CI
 ```
 
 CI also runs `cargo fmt --all --check` and

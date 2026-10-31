@@ -150,6 +150,7 @@ import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { openWorkspacesAction } from "./local-workspace-actions";
 import { openInDiffTool, openInMergeTool } from "./external-tools";
 import { setupLogKeyboardNav, setupShortcuts } from "./keyboard";
+import { ensureLanguages } from "./highlight";
 import { setupBranchMenu, setupPullMenu, setupSettingsMenu } from "./topbar-menus";
 import type { BranchRef } from "./types";
 import { setupProfileMenu } from "./profile-menu";
@@ -225,6 +226,12 @@ function wireUi(): void {
   setupBranchToggle();
   setupLogSearch();
   setupConfigTabs();
+  // The syntax grammars are a chunk of their own, fetched after the window is
+  // up; a diff drawn before they arrive is redrawn with colors.
+  void ensureLanguages().then(() => {
+    ui.detailView?.redraw();
+    void ui.changesView?.reload();
+  });
 }
 
 // How many recently switched-to branches the branch chip's menu lists before

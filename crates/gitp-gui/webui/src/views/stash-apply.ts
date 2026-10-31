@@ -38,7 +38,7 @@ export function openStashApplyModal(stash: StashRef, onApply: (drop: boolean) =>
     el("div", { class: "stash-apply-name", text: `stash@{${stash.index}}  ${stash.message}` }),
   );
 
-  const checkbox = el("input", { type: "checkbox" }) as HTMLInputElement;
+  const checkbox = el("input", { type: "checkbox" });
   const label = el("label", { class: "stash-apply-check" }, [
     checkbox,
     el("span", { text: "Delete stash after applying" }),

@@ -99,8 +99,8 @@ describe("checkAnchor", () => {
           ],
         },
       ],
-    } as FileDiff,
-    { path: "big.ts", old_path: null, status: "Modified", hunks: [], truncated: true } as FileDiff,
+    },
+    { path: "big.ts", old_path: null, status: "Modified", hunks: [], truncated: true },
   ];
   const at = (path: string, line: number, side: "LEFT" | "RIGHT" = "RIGHT") => ({ path, line, side, body: "x", severity: null });
 

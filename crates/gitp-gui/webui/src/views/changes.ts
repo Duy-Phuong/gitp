@@ -663,7 +663,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       const btn = (label: string, danger: boolean, onClick: () => void) => {
         const b = el("button", { class: `hunk-btn${danger ? " danger" : ""}`, text: label });
         if (blocked) {
-          (b as HTMLButtonElement).disabled = true;
+          (b).disabled = true;
           b.title = blocked;
           return b;
         }
@@ -1094,7 +1094,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     const allBtn = el("button", {
       class: "btn ghost small",
       text: which === "unstaged" ? "Stage All" : "Unstage All",
-    }) as HTMLButtonElement;
+    });
     allBtn.disabled = files.length === 0;
     allBtn.addEventListener("click", () =>
       which === "unstaged" ? stageAllAction() : unstageAllAction(),
@@ -1142,7 +1142,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         checkable: !(which === "staged" && amend),
         checkedPaths: checked[which],
         onToggleCheck: (paths, on) => {
-          for (const p of paths) on ? checked[which].add(p) : checked[which].delete(p);
+          for (const p of paths) {
+            if (on) checked[which].add(p);
+            else checked[which].delete(p);
+          }
           render();
         },
       });
@@ -1184,7 +1187,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       autocapitalize: "none",
       autocorrect: "off",
       autocomplete: "off",
-    }) as HTMLInputElement;
+    });
     subjectInput.addEventListener("input", () => {
       subject = subjectInput.value;
       commitBtn.disabled = !canCommit();
@@ -1205,7 +1208,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       spellcheck: "false",
       autocapitalize: "none",
       autocorrect: "off",
-    }) as HTMLTextAreaElement;
+    });
     bodyInput.value = body;
     bodyInput.addEventListener("input", () => {
       body = bodyInput.value;
@@ -1213,13 +1216,13 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     bodyInput.addEventListener("keydown", commitOnShortcut);
     autoGrowTextarea(bodyInput);
 
-    const amendBox = el("input", { type: "checkbox" }) as HTMLInputElement;
+    const amendBox = el("input", { type: "checkbox" });
     amendBox.checked = amend;
     amendBox.addEventListener("change", () => void toggleAmend(amendBox.checked));
     const amendLabel = el("label", { class: "commit-amend" }, [amendBox, "Amend"]);
     const signLabel = signToggle();
 
-    const skipBox = el("input", { type: "checkbox" }) as HTMLInputElement;
+    const skipBox = el("input", { type: "checkbox" });
     skipBox.checked = skipHooks;
     skipBox.addEventListener("change", () => {
       skipHooks = skipBox.checked;
@@ -1229,7 +1232,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       { class: "commit-amend", title: "Skip the pre-commit and commit-msg hooks (git commit --no-verify)" },
       [skipBox, "Skip hooks"],
     );
-    const pushBox = el("input", { type: "checkbox" }) as HTMLInputElement;
+    const pushBox = el("input", { type: "checkbox" });
     pushBox.checked = cb.pushAfterCommit();
     pushBox.addEventListener("change", () => cb.setPushAfterCommit(pushBox.checked));
     const pushLabel = el("label", { class: "commit-amend", title: "Push the branch after committing" }, [
@@ -1237,7 +1240,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       "Push after commit",
     ]);
 
-    const commitBtn = el("button", { class: "btn commit-btn", text: "Commit" }) as HTMLButtonElement;
+    const commitBtn = el("button", { class: "btn commit-btn", text: "Commit" });
     commitBtn.disabled = !canCommit();
     commitBtn.addEventListener("click", () => {
       if (!canCommit()) return;
@@ -1247,7 +1250,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       const sg = signing?.can_sign ? sign : null;
       const noVerify = skipHooks;
       const pushAfter = cb.pushAfterCommit();
-      run(
+      void run(
         async () => {
           const out = await cb.commit(subj, bdy, am, sg, noVerify);
           cb.reportDone(out || "Committed.");
@@ -1275,7 +1278,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   // signing key is configured; hidden until the repo's setup has loaded.
   function signToggle(): HTMLElement | null {
     if (!signing) return null;
-    const box = el("input", { type: "checkbox", disabled: !signing.can_sign }) as HTMLInputElement;
+    const box = el("input", { type: "checkbox", disabled: !signing.can_sign });
     box.checked = signing.can_sign && sign;
     box.addEventListener("change", () => {
       sign = box.checked;

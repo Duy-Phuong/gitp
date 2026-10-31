@@ -210,7 +210,7 @@ export function openRebaseModal(
     });
     const cancel = el("button", { class: "btn ghost", text: "Cancel" });
     cancel.addEventListener("click", closeRebaseModal);
-    start = el("button", { class: "btn", text: cherryPick ? "Cherry-pick" : "Rebase" }) as HTMLButtonElement;
+    start = el("button", { class: "btn", text: cherryPick ? "Cherry-pick" : "Rebase" });
     start.addEventListener("click", () => {
       const steps: RebaseStep[] = rows.map((r) => ({
         sha: r.commit.sha,
@@ -358,7 +358,7 @@ export function openRebaseModal(
       class: "rebase-move-btn up",
       title: "Move up (Alt+↑)",
       "aria-label": "Move up",
-    }) as HTMLButtonElement;
+    });
     up.append(chevron());
     up.disabled = i === 0;
     up.addEventListener("click", () => move(i, -1));
@@ -367,7 +367,7 @@ export function openRebaseModal(
       class: "rebase-move-btn",
       title: "Move down (Alt+↓)",
       "aria-label": "Move down",
-    }) as HTMLButtonElement;
+    });
     down.append(chevron());
     down.disabled = i === rows.length - 1;
     down.addEventListener("click", () => move(i, 1));
@@ -382,7 +382,7 @@ export function openRebaseModal(
         class: "rebase-message",
         value: row.message,
         spellcheck: "false",
-      }) as HTMLInputElement;
+      });
       inp.addEventListener("input", () => (row.message = inp.value));
       // Typing in the message shouldn't be interrupted by a drag starting.
       inp.addEventListener("mousedown", () => (wrap.draggable = false));
@@ -411,20 +411,20 @@ export function openRebaseModal(
     const sel = el("select", {
       class: "rebase-action-select",
       "aria-label": `Action for ${row.commit.short_sha}`,
-    }) as HTMLSelectElement;
+    });
     for (const a of actions) {
-      const opt = el("option", { value: a.value, text: a.label }) as HTMLOptionElement;
+      const opt = el("option", { value: a.value, text: a.label });
       if (a.value === row.action) opt.selected = true;
       sel.append(opt);
     }
     sel.addEventListener("change", () => setAction(i, sel.value as RebaseAction));
     // A native dropdown can't open if the pointer starts a row drag instead.
     sel.addEventListener("mousedown", () => {
-      const rowEl = chip.closest(".rebase-row") as HTMLElement | null;
+      const rowEl = chip.closest<HTMLElement>(".rebase-row");
       if (rowEl) rowEl.draggable = false;
     });
     sel.addEventListener("blur", () => {
-      const rowEl = chip.closest(".rebase-row") as HTMLElement | null;
+      const rowEl = chip.closest<HTMLElement>(".rebase-row");
       if (rowEl) rowEl.draggable = true;
     });
     chip.append(sel);
@@ -475,7 +475,7 @@ export function openRebaseModal(
 
 // A small labelled checkbox that reports its state through `onChange`.
 function checkbox(label: string, checked: boolean, onChange: (v: boolean) => void): HTMLElement {
-  const input = el("input", { type: "checkbox" }) as HTMLInputElement;
+  const input = el("input", { type: "checkbox" });
   input.checked = checked;
   input.addEventListener("change", () => onChange(input.checked));
   return el("label", { class: "rebase-check" }, [input, el("span", { text: label })]);
