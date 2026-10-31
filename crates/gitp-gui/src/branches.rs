@@ -55,7 +55,7 @@ fn stash_and_switch_impl(
 /// Recorded as a branch creation when a local branch was created, so undo
 /// removes it again rather than leaving it behind; as a plain switch otherwise.
 pub(crate) fn checkout_remote_impl(state: &RepoState, name: String) -> Result<String, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let before = session.repo.head_ref_name().ok();
@@ -116,7 +116,7 @@ pub(crate) fn create_branch_at_impl(
 /// Rename branch `old` to `new`. Invalidates the cached log (HEAD's branch name
 /// may change).
 fn rename_branch_impl(state: &RepoState, old: String, new: String) -> Result<String, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let out = session.repo.rename_branch(&old, &new).map_err(to_message)?;
@@ -196,7 +196,7 @@ fn delete_branches_recorded(
     force: bool,
     label: String,
 ) -> Result<(String, Vec<String>), String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
 
@@ -272,7 +272,7 @@ fn merge_branch_impl(state: &RepoState, name: String, mode: MergeMode) -> Result
     if let MergeMode::Squash = mode {
         // A squash moves no ref, only the index and working tree — under any
         // stored undo, which is therefore dropped, conflicts or not.
-        let mut guard = state.0.lock().map_err(to_message)?;
+        let mut guard = state.workspace();
         let idx = guard.active.ok_or("no repository is open")?;
         let session = &mut guard.sessions[idx];
         let out = session.repo.merge_branch(&name, mode);

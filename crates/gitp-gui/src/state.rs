@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use notify::RecommendedWatcher;
@@ -149,6 +149,16 @@ impl Workspace {
 #[derive(Default)]
 pub(crate) struct RepoState(pub(crate) Mutex<Workspace>, pub(crate) NetworkOps);
 
+impl RepoState {
+    /// The open repositories. A command that panicked while holding the lock
+    /// leaves it poisoned; the workspace is still usable (every mutation goes
+    /// through git, which is atomic on disk), so later commands carry on with
+    /// it instead of all failing until the app is restarted.
+    pub(crate) fn workspace(&self) -> MutexGuard<'_, Workspace> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 /// The network operations in flight — kept outside the workspace lock, which
 /// they deliberately don't hold (see [`with_repo_networked`]) — so Cancel can
 /// reach them, plus where their progress is sent.
@@ -266,7 +276,7 @@ pub(crate) fn with_repo<T>(
     state: &RepoState,
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
 ) -> Result<T, String> {
-    let guard = state.0.lock().map_err(to_message)?;
+    let guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     f(&guard.sessions[idx].repo).map_err(to_message)
 }
@@ -280,7 +290,7 @@ pub(crate) fn with_repo_clearing_undo<T>(
     state: &RepoState,
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
 ) -> Result<T, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let out = f(&session.repo);
@@ -299,7 +309,7 @@ pub(crate) fn with_repo_unlocked<T>(
     f: impl FnOnce(&Repo) -> gitp_core::Result<T>,
 ) -> Result<T, String> {
     let path = {
-        let guard = state.0.lock().map_err(to_message)?;
+        let guard = state.workspace();
         let idx = guard.active.ok_or("no repository is open")?;
         guard.sessions[idx].path.clone()
     };
@@ -370,7 +380,7 @@ fn run_networked<P, T>(
     after: impl FnOnce(&mut Session, P),
 ) -> Result<T, String> {
     let (path, prepared) = {
-        let guard = state.0.lock().map_err(to_message)?;
+        let guard = state.workspace();
         let idx = guard.active.ok_or("no repository is open")?;
         let session = &guard.sessions[idx];
         (session.path.clone(), prepare(session))
@@ -386,7 +396,7 @@ fn run_networked<P, T>(
     state.1.end(&cancel);
     let out = out.map_err(to_message)?;
     {
-        let mut guard = state.0.lock().map_err(to_message)?;
+        let mut guard = state.workspace();
         if let Some(session) = guard.sessions.iter_mut().find(|s| s.path == path) {
             after(session, prepared);
         }
@@ -518,6 +528,19 @@ mod tests {
     use crate::remote::{cancel_network_op_impl, clone_repository_impl, fetch_all_impl};
     use gitp_core::Progress;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn a_command_that_panicked_under_the_lock_does_not_take_the_workspace_down() {
+        let state = std::sync::Arc::new(RepoState::default());
+        let poisoner = std::sync::Arc::clone(&state);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.workspace();
+            panic!("a command bug");
+        })
+        .join();
+        assert!(state.0.lock().is_err(), "the lock should be poisoned");
+        assert!(state.workspace().sessions.is_empty());
+    }
 
     fn meter(phase: &str, percent: u8) -> Progress {
         Progress {

@@ -129,7 +129,7 @@ fn fetch_and_update_branch_impl(state: &RepoState, name: String) -> Result<Strin
 /// open tab is taken to be one.
 pub(crate) fn cancel_network_op_impl(state: &RepoState) -> Result<(), String> {
     let (active, open): (Option<String>, Vec<String>) = {
-        let guard = state.0.lock().map_err(to_message)?;
+        let guard = state.workspace();
         let active = guard.active.map(|i| guard.sessions[i].path.clone());
         (
             active,
@@ -190,7 +190,7 @@ fn change_remote(
     state: &RepoState,
     f: impl FnOnce(&Repo) -> gitp_core::Result<String>,
 ) -> Result<String, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let out = f(&session.repo).map_err(to_message)?;

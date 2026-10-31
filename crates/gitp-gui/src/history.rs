@@ -42,7 +42,7 @@ pub(crate) fn get_log_page_impl(
     if let Some(page) = walk_first_log_unlocked(state, &scope, offset, limit)? {
         return Ok(page);
     }
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let log = ensure_log(session, &scope)?;
@@ -89,7 +89,7 @@ fn walk_first_log_unlocked(
     limit: usize,
 ) -> Result<Option<LogPage>, String> {
     let (path, running, pending) = {
-        let mut guard = state.0.lock().map_err(to_message)?;
+        let mut guard = state.workspace();
         let idx = guard.active.ok_or("no repository is open")?;
         let session = &mut guard.sessions[idx];
         adopt_finished_walk(session);
@@ -169,7 +169,7 @@ fn log_index_of_impl(
     rev: String,
     scope: impl Into<LogScope>,
 ) -> Result<Option<usize>, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let id = session.repo.resolve_commit(&rev).map_err(to_message)?;
@@ -193,7 +193,7 @@ fn search_log_impl(
         return Ok(Vec::new());
     }
     let path = {
-        let guard = state.0.lock().map_err(to_message)?;
+        let guard = state.workspace();
         let idx = guard.active.ok_or("no repository is open")?;
         guard.sessions[idx].path.clone()
     };
@@ -206,7 +206,7 @@ fn search_log_impl(
             .map_err(to_message)?;
     }
     // Re-found by path: the user may have switched or closed tabs meanwhile.
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let Some(session) = guard.sessions.iter_mut().find(|s| s.path == path) else {
         return Ok(Vec::new());
     };
@@ -271,7 +271,7 @@ fn get_file_content_impl(
 }
 
 fn get_refs_impl(state: &RepoState) -> Result<Refs, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     ensure_refs(&mut guard.sessions[idx])
 }

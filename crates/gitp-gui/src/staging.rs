@@ -5,7 +5,7 @@
 use gitp_core::{FileDiff, HeadMoveMode, Repo, SigningConfig, StatusLists};
 use tauri::State;
 
-use crate::state::{ensure_status, to_message, with_repo, with_repo_clearing_undo, RepoState};
+use crate::state::{ensure_status, with_repo, with_repo_clearing_undo, RepoState};
 use crate::undo::{
     with_recorded_discard, with_recorded_files, with_recorded_head_move, with_recorded_index,
 };
@@ -19,7 +19,7 @@ fn get_status_impl(state: &RepoState) -> Result<StatusLists, String> {
 }
 
 fn get_status_summary_impl(state: &RepoState) -> Result<StatusLists, String> {
-    let mut guard = state.0.lock().map_err(to_message)?;
+    let mut guard = state.workspace();
     let idx = guard.active.ok_or("no repository is open")?;
     ensure_status(&mut guard.sessions[idx])
 }
