@@ -646,3 +646,25 @@ export function loadLocalHistoryEnabled(): boolean {
 export function saveLocalHistoryEnabled(on: boolean): void {
   localStorage.setItem(LOCAL_HISTORY_KEY, on ? "1" : "0");
 }
+
+// The Code tab's splitter positions.
+const CODE_LAYOUT_KEY = "gitp.codeLayout";
+
+export interface CodeLayout {
+  explorerW: number;
+  panelH: number;
+}
+
+export function loadCodeLayout(): CodeLayout {
+  try {
+    const raw = localStorage.getItem(CODE_LAYOUT_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Partial<CodeLayout>) : {};
+    return { explorerW: parsed.explorerW ?? 240, panelH: parsed.panelH ?? 220 };
+  } catch {
+    return { explorerW: 240, panelH: 220 };
+  }
+}
+
+export function saveCodeLayout(layout: CodeLayout): void {
+  localStorage.setItem(CODE_LAYOUT_KEY, JSON.stringify(layout));
+}

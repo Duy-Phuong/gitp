@@ -181,6 +181,7 @@ function resetRepoViews(): void {
   ui.reflogView?.reset();
   ui.activityView?.reset();
   ui.localHistoryView?.reset();
+  ui.codeView?.reset();
   ui.prView?.reset();
   // The account is gh's, the same in every repo; the rest is this repo's.
   state.prs = { ...state.prs, repoPath: "", repo: null, list: null, loading: false, error: null, open: null, query: "" };
@@ -265,6 +266,9 @@ export function cycleRepoTab(step: 1 | -1): void {
 export async function switchRepo(path: string): Promise<void> {
   if (path === state.repoPath) return;
   try {
+    // The Code tab's unsaved edits belong to this repository: write them
+    // before the backend's "active repo" moves.
+    await ui.codeView?.saveAll();
     applyWorkspace(await activateRepo(path));
     showView("history");
     await Promise.all([refreshHistory(), loadSidebar()]);
@@ -700,6 +704,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   $("#activity-view").classList.toggle("hidden", view !== "activity");
   $("#localhistory-view").classList.toggle("hidden", view !== "localhistory");
   $("#pr-view").classList.toggle("hidden", view !== "pr");
+  $("#code-view").classList.toggle("hidden", view !== "code");
   // The Reflog lists in the log's place and shares History's detail pane.
   $("#log-col").classList.toggle("hidden", view === "reflog");
   $("#reflog-col").classList.toggle("hidden", view !== "reflog");
@@ -718,6 +723,8 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   else ui.activityView?.stop();
   if (view === "localhistory") ui.localHistoryView?.start();
   else ui.localHistoryView?.stop();
+  if (view === "code") ui.codeView?.start();
+  else ui.codeView?.stop();
   // Back from the Reflog, which borrowed the detail pane: show the selected
   // commit there again.
   if (view === "history" && state.selectedId && shownDetailId !== state.selectedId) void selectCommit(state.selectedId);

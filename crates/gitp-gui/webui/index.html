@@ -20,6 +20,7 @@
         <nav class="tabs">
           <button class="tab active" data-tab="history">History</button>
           <button class="tab" data-tab="config">Config</button>
+          <button class="tab" data-tab="code" title="Browse and edit the project's code (⌘⇧E)">Code</button>
         </nav>
         <button id="quick-launch-btn" class="btn ghost quick-launch-btn" title="Quick Launch (⌘K)">
           <svg class="ql-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -171,6 +172,17 @@
           <section id="activity-view" class="view hidden"></section>
           <section id="localhistory-view" class="view hidden"></section>
           <section id="pr-view" class="view hidden"></section>
+          <section id="code-view" class="view code-view hidden">
+            <div id="code-explorer" class="code-explorer" role="tree"></div>
+            <div id="code-explorer-divider" class="pane-divider" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
+            <div class="code-main">
+              <div id="code-tabs" class="code-tabs" role="tablist"></div>
+              <div id="code-banner" class="code-banner hidden"></div>
+              <div id="code-editor" class="code-editor"></div>
+              <div id="code-panel-divider" class="pane-divider horizontal hidden" role="separator" aria-orientation="horizontal" title="Drag to resize"></div>
+              <div id="code-panel" class="code-panel hidden"></div>
+            </div>
+          </section>
           <section id="welcome-view" class="view welcome hidden" aria-label="Welcome"></section>
         </div>
       </main>

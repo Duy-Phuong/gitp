@@ -1,0 +1,3 @@
+class Far {
+    void save() {}
+}

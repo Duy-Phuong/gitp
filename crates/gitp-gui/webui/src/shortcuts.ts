@@ -18,6 +18,7 @@ export type ShortcutId =
   | "cloneRepo"
   | "history"
   | "changes"
+  | "code"
   | "searchCommits"
   | "terminal"
   | "settings"
@@ -58,6 +59,7 @@ export const SHORTCUTS: Record<ShortcutId, ShortcutDef> = {
   cloneRepo: { label: "Clone repository…", group: "Repositories", keys: { key: "o", shift: true } },
   history: { label: "History", group: "Views", keys: { key: "h", shift: true }, needsRepo: true },
   changes: { label: "Local changes", group: "Views", keys: { key: "c", shift: true }, needsRepo: true },
+  code: { label: "Code", group: "Views", keys: { key: "e", shift: true }, needsRepo: true },
   searchCommits: { label: "Search commits", group: "Views", keys: { key: "f" }, needsRepo: true },
   terminal: { label: "Terminal", group: "Views", keys: { key: "`", modifier: "ctrl" }, needsRepo: true },
   settings: { label: "Settings", group: "App", keys: { key: "," } },
@@ -69,7 +71,7 @@ export const SHORTCUTS: Record<ShortcutId, ShortcutDef> = {
 /// per platform.
 export interface BuiltIn {
   label: string;
-  group: ShortcutGroup | "Commit log";
+  group: ShortcutGroup | "Commit log" | "Code";
   mac: string;
   other: string;
 }
@@ -87,6 +89,14 @@ export const BUILT_IN: BuiltIn[] = [
   { label: "First / last loaded commit", group: "Commit log", mac: "Home End", other: "Home End" },
   { label: "Focus the diff", group: "Commit log", mac: "↩", other: "Enter" },
   { label: "Leave a comparison", group: "Commit log", mac: "Esc", other: "Esc" },
+  { label: "Quick open file", group: "Code", mac: "⌘P", other: "Ctrl+P" },
+  { label: "Find in files (instead of Fetch, in this tab)", group: "Code", mac: "⌘⇧F in the Code tab", other: "Ctrl+Shift+F in the Code tab" },
+  { label: "Save", group: "Code", mac: "⌘S", other: "Ctrl+S" },
+  { label: "Go to definition", group: "Code", mac: "F12 or ⌘-click", other: "F12 or Ctrl-click" },
+  { label: "Back / forward", group: "Code", mac: "⌘⌥← / ⌘⌥→", other: "Ctrl+Alt+← / Ctrl+Alt+→" },
+  { label: "Find usages", group: "Code", mac: "⌥F7", other: "Alt+F7" },
+  { label: "Call hierarchy", group: "Code", mac: "⌃⌥H", other: "Ctrl+Alt+H" },
+  { label: "Close file", group: "Code", mac: "⌘⇧W", other: "Ctrl+Shift+W" },
 ];
 
 export const IS_MAC = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");

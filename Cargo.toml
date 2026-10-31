@@ -1,3 +1,3 @@
 [workspace]
 resolver = "2"
-members = ["crates/gitp-core", "crates/gitp-gui"]
+members = ["crates/gitp-core", "crates/gitp-code", "crates/gitp-gui"]

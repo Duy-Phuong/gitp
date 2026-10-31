@@ -52,6 +52,17 @@ import {
   unstageHunk,
   unstageLines,
   untrackFiles,
+  codeCallees,
+  codeCallers,
+  codeDefinition,
+  codeOpenWorkspace,
+  codeReadFile,
+  codeReferences,
+  codeRefresh,
+  codeSearch,
+  codeWriteFile,
+  onCodeFilesChanged,
+  onCodeIndexReady,
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
@@ -142,6 +153,8 @@ import { openWorkspacesAction } from "./local-workspace-actions";
 import { openInDiffTool, openInMergeTool } from "./external-tools";
 import { setupLogKeyboardNav, setupShortcuts } from "./keyboard";
 import { ensureLanguages } from "./highlight";
+import { setupCodeView } from "./views/code/index";
+import { toast } from "./views/toast";
 import { setupLocalHistory } from "./views/local-history";
 import { setupBranchMenu, setupPullMenu, setupSettingsMenu } from "./topbar-menus";
 import type { BranchRef } from "./types";
@@ -508,6 +521,12 @@ async function init(): Promise<void> {
     workspaces: openWorkspacesAction,
     favorites: loadFavoriteRepos,
     recent: loadRecentRepos,
+  });
+  ui.codeView = setupCodeView($("#code-view"), {
+    api: { codeOpenWorkspace, codeRefresh, codeReadFile, codeWriteFile, codeDefinition, codeReferences, codeCallers, codeCallees, codeSearch, onCodeIndexReady, onCodeFilesChanged },
+    toast: (message, kind = "info") => toast(message, { kind }),
+    reportError: opFailed,
+    isShowing: () => state.view === "code",
   });
   ui.localHistoryView = setupLocalHistory($("#localhistory-view"), {
     fetch: fetchLocalHistory,

@@ -11,6 +11,7 @@ import type { ConflictHandle } from "./views/conflict";
 import type { ReflogHandle } from "./views/reflog";
 import type { GraphPrefs } from "./prefs";
 import type { ActivityHandle } from "./views/activity";
+import type { CodeViewHandle } from "./views/code/index";
 import type { LocalHistoryHandle } from "./views/local-history";
 import type { PullRequestHandle } from "./views/pull-request";
 import type { WelcomeHandle } from "./views/welcome";
@@ -31,7 +32,7 @@ import type {
   LfsStatus,
 } from "./types";
 
-export type View = "history" | "changes" | "config" | "conflict" | "reflog" | "activity" | "localhistory" | "pr";
+export type View = "history" | "changes" | "config" | "conflict" | "reflog" | "activity" | "localhistory" | "pr" | "code";
 
 export const EMPTY_REFS: Refs = { head: null, branches: [], remotes: [], tags: [], stashes: [], recent: [] };
 
@@ -144,6 +145,7 @@ export const ui = {
   reflogView: null as ReflogHandle | null,
   activityView: null as ActivityHandle | null,
   localHistoryView: null as LocalHistoryHandle | null,
+  codeView: null as CodeViewHandle | null,
   prView: null as PullRequestHandle | null,
   welcomeView: null as WelcomeHandle | null,
   // The live log's handle, from the most recent renderLog — the log view owns

@@ -12,6 +12,7 @@ mod activity;
 mod askpass;
 mod bisect;
 mod branches;
+mod code;
 mod commits;
 mod compare;
 mod config;
@@ -90,13 +91,19 @@ pub fn run() {
             // Repository watchers push changes on disk to the frontend (see
             // `watch`); they need the app handle to emit, which exists only now.
             let handle = app.handle().clone();
+            let code_handle = app.handle().clone();
             let sink: ChangeSink = Arc::new(move |change| {
                 // A working-tree change also arms that repository's local
-                // history snapshot (see `local_history`).
-                if change.kinds.contains(&"worktree") {
+                // history snapshot (see `local_history`), and feeds the Code
+                // tab's index when that tab has opened the repository.
+                let worktree = change.kinds.contains(&"worktree");
+                if worktree {
                     local_history::note_change(&change.path);
                 }
-                let _ = handle.emit(REPO_CHANGED_EVENT, change);
+                let _ = handle.emit(REPO_CHANGED_EVENT, change.clone());
+                if worktree {
+                    code::feed_index(&code_handle, &change);
+                }
             });
             app.state::<RepoState>()
                 .0
@@ -269,6 +276,16 @@ pub fn run() {
             editor::create_file,
             editor::delete_file,
             editor::list_work_files,
+            code::code_open_workspace,
+            code::code_refresh,
+            code::code_read_file,
+            code::code_write_file,
+            code::code_definition,
+            code::code_references,
+            code::code_callers,
+            code::code_callees,
+            code::code_file_symbols,
+            code::code_search,
             os::open_difftool,
             os::open_mergetool,
             config::read_dotfile,
