@@ -235,7 +235,9 @@ impl Repo {
         } else if git_dir.join("REVERT_HEAD").exists() {
             self.continue_without_editor(&["revert", "--continue"])
         } else {
-            let out = self.run_git(&["rebase", "--continue"]);
+            // A rebase stopped on a conflict asks to confirm the commit's
+            // message in an editor too; there is none here.
+            let out = self.continue_without_editor(&["rebase", "--continue"]);
             self.cleanup_rebase_scratch();
             out
         }
