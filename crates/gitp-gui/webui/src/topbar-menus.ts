@@ -1,6 +1,6 @@
 // The top bar's dropdown menus: Branch and the Pull caret; and the Settings gear.
 
-import { browseForFolder, fetchConfig, listHooks, openHook, saveConfig, setHookEnabled, unsetConfig } from "./api";
+import { browseForFolder, fetchConfig, listHooks, openHook, saveConfig, setHookEnabled, setLocalHistoryEnabled, unsetConfig } from "./api";
 import { clear, el, $ } from "./dom";
 import { state, ui } from "./app-state";
 import { ensureAvatars } from "./avatar";
@@ -174,6 +174,7 @@ export function openSettings(section?: string): void {
       },
       browseFolder: browseForFolder,
       hooks: async () => (state.repoPath ? listHooks() : null),
+      setLocalHistory: (on) => void setLocalHistoryEnabled(on),
       setHookEnabled: async (name, enabled) => {
         try {
           await setHookEnabled(name, enabled);

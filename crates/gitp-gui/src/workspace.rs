@@ -66,6 +66,8 @@ pub(crate) fn open_repo_impl(state: &RepoState, path: String) -> Result<Workspac
     });
     let last = guard.sessions.len() - 1;
     guard.set_active(Some(last));
+    // Whatever is uncommitted right now is worth a snapshot soon.
+    crate::local_history::note_change(&guard.sessions[last].path);
     Ok(guard.view())
 }
 

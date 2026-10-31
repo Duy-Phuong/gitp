@@ -5812,3 +5812,94 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   font-size: 12px;
   resize: vertical;
 }
+
+/* --- Local History ----------------------------------------------------------- */
+#localhistory-view .hidden {
+  display: none;
+}
+.lh-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px 24px;
+}
+.lh-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  margin-bottom: 8px;
+}
+.lh-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.lh-head:hover {
+  background: var(--bg-elev-2);
+}
+.lh-chevron {
+  display: inline-block;
+  width: 12px;
+  color: var(--text-dim);
+  transition: transform 0.12s ease;
+}
+.lh-chevron.open {
+  transform: rotate(90deg);
+}
+.lh-time {
+  color: var(--text-dim);
+  min-width: 90px;
+}
+.lh-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.lh-head-sha {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.lh-files {
+  border-top: 1px solid var(--border);
+  padding: 4px 8px 6px;
+}
+.lh-file,
+.lh-version {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+.lh-path {
+  font-family: var(--mono);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lh-version {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  margin-bottom: 8px;
+  padding: 8px 12px;
+}
+.lh-size {
+  color: var(--text-dim);
+}
+.lh-viewer {
+  width: min(900px, 92vw);
+}
+.lh-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 10px 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre;
+}

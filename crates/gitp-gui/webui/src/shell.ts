@@ -180,6 +180,7 @@ function resetRepoViews(): void {
   ui.conflictView?.reset();
   ui.reflogView?.reset();
   ui.activityView?.reset();
+  ui.localHistoryView?.reset();
   ui.prView?.reset();
   // The account is gh's, the same in every repo; the rest is this repo's.
   state.prs = { ...state.prs, repoPath: "", repo: null, list: null, loading: false, error: null, open: null, query: "" };
@@ -697,6 +698,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   $("#config-view").classList.toggle("hidden", view !== "config");
   $("#conflict-view").classList.toggle("hidden", view !== "conflict");
   $("#activity-view").classList.toggle("hidden", view !== "activity");
+  $("#localhistory-view").classList.toggle("hidden", view !== "localhistory");
   $("#pr-view").classList.toggle("hidden", view !== "pr");
   // The Reflog lists in the log's place and shares History's detail pane.
   $("#log-col").classList.toggle("hidden", view === "reflog");
@@ -714,6 +716,8 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   // The Activity view polls only while it's showing.
   if (view === "activity") ui.activityView?.start();
   else ui.activityView?.stop();
+  if (view === "localhistory") ui.localHistoryView?.start();
+  else ui.localHistoryView?.stop();
   // Back from the Reflog, which borrowed the detail pane: show the selected
   // commit there again.
   if (view === "history" && state.selectedId && shownDetailId !== state.selectedId) void selectCommit(state.selectedId);

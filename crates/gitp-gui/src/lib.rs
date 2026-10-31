@@ -21,6 +21,7 @@ mod gh;
 mod gitflow;
 mod history;
 mod lfs;
+mod local_history;
 mod local_workspaces;
 mod os;
 mod rebase;
@@ -90,6 +91,11 @@ pub fn run() {
             // `watch`); they need the app handle to emit, which exists only now.
             let handle = app.handle().clone();
             let sink: ChangeSink = Arc::new(move |change| {
+                // A working-tree change also arms that repository's local
+                // history snapshot (see `local_history`).
+                if change.kinds.contains(&"worktree") {
+                    local_history::note_change(&change.path);
+                }
                 let _ = handle.emit(REPO_CHANGED_EVENT, change);
             });
             app.state::<RepoState>()
@@ -286,6 +292,13 @@ pub fn run() {
             config::restore_local_identity,
             reflog::get_reflog,
             activity::get_activity_log,
+            local_history::local_history,
+            local_history::local_history_versions,
+            local_history::local_history_file,
+            local_history::local_history_restore,
+            local_history::local_history_snapshot,
+            local_history::local_history_clear,
+            local_history::local_history_set_enabled,
             activity::clear_activity_log,
             terminal::terminal_spawn,
             terminal::terminal_write,

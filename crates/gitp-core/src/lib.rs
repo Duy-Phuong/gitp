@@ -29,6 +29,7 @@ mod hunk;
 mod identity;
 mod lfs;
 mod line_staging;
+mod local_history;
 mod log;
 mod merge_preview;
 mod pick_plan;
@@ -76,6 +77,9 @@ pub use gitflow::{FlowKind, GitFlowConfig};
 pub use hooks::{Hook, HookState, Hooks, HOOK_NAMES};
 pub use identity::{global_identity, restore_local_identity, set_global_identity, Identity};
 pub use lfs::LfsStatus;
+pub use local_history::{
+    FileVersion, Snapshot, SnapshotFile, HISTORY_KEEP_DAYS, HISTORY_MAX, HISTORY_MAX_NEW_FILE,
+};
 pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope, LogWalk};
 pub use merge_preview::MergePreview;
 pub use pick_plan::{PickAction, PickPlanOutcome, PickStep};

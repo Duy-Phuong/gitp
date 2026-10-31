@@ -634,3 +634,15 @@ export function rememberCommand(label: string): void {
   const next = [label, ...loadRecentCommands().filter((l) => l !== label)].slice(0, RECENT_COMMANDS_LIMIT);
   localStorage.setItem(RECENT_COMMANDS_KEY, JSON.stringify(next));
 }
+
+// Local history: snapshots of the working tree as files change. On unless
+// turned off in Settings → Git.
+const LOCAL_HISTORY_KEY = "gitp-local-history";
+
+export function loadLocalHistoryEnabled(): boolean {
+  return localStorage.getItem(LOCAL_HISTORY_KEY) !== "0";
+}
+
+export function saveLocalHistoryEnabled(on: boolean): void {
+  localStorage.setItem(LOCAL_HISTORY_KEY, on ? "1" : "0");
+}
