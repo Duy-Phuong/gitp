@@ -19,7 +19,7 @@ import { cloneRepoAction } from "./new-repo-actions";
 import { toggleTerminal } from "./terminal-panel";
 import { applyZoom, loadFavoriteRepos, loadZoom, steppedZoom } from "./prefs";
 import { setStatus } from "./report";
-import { SHORTCUTS, shortcutFor, shortcutHint, type ShortcutId } from "./shortcuts";
+import { IS_MAC, SHORTCUTS, shortcutFor, shortcutHint, type ShortcutId } from "./shortcuts";
 import { openShortcutsDialog } from "./views/shortcuts-dialog";
 
 // --- Keyboard navigation in the commit log --------------------------------
@@ -127,8 +127,9 @@ export function opensQuickLaunch(e: KeyboardEvent): boolean {
   return !document.querySelector(".modal-overlay");
 }
 
-// Cmd+Shift+] / [ only mean "next / previous tab" on a Mac.
-const IS_MAC = navigator.userAgent.includes("Mac");
+// Cmd+Shift+] / [ only mean "next / previous tab" on a Mac. (IS_MAC comes
+// from shortcuts.ts, which reads it only where a `navigator` exists: the
+// tests run on Node, which had none before Node 21.)
 
 // --- The shortcut pack -------------------------------------------------------
 //
