@@ -136,6 +136,10 @@ export interface SidebarCallbacks {
 export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCallbacks): void {
   // Re-rendering on each keystroke would drop focus; remember and restore it.
   const filterWasFocused = host.querySelector("#sidebar-filter") === document.activeElement;
+  // The list is drawn anew, so it would start at the top: a click that only
+  // changes a highlight (opening a pull request, selecting a branch) or folds
+  // a section would scroll it away from where the user is.
+  const scrolled = host.querySelector<HTMLElement>(".sb-tree")?.scrollTop ?? 0;
   clear(host);
 
   host.append(
@@ -175,6 +179,7 @@ export function renderSidebar(host: HTMLElement, s: SidebarState, cb: SidebarCal
   buildWorktrees(tree, s, cb, match);
   buildSubmodules(tree, s, cb, match);
   host.append(tree);
+  tree.scrollTop = scrolled;
 
   if (filterWasFocused) {
     filter.focus({ preventScroll: true });
