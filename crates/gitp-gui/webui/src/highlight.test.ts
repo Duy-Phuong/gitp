@@ -20,6 +20,21 @@ describe("languageFor", () => {
     expect(languageFor("Dockerfile")).toBe("dockerfile");
     expect(languageFor("docker/Dockerfile.dev")).toBe("dockerfile");
     expect(languageFor("Makefile")).toBe("makefile");
+    expect(languageFor("ci/Jenkinsfile")).toBe("groovy");
+    expect(languageFor("Jenkinsfile.release")).toBe("groovy");
+    expect(languageFor("nginx.conf")).toBe("nginx");
+  });
+
+  it("highlights .conf as nginx only under an nginx folder", () => {
+    expect(languageFor("docker/nginx/default.conf")).toBe("nginx");
+    expect(languageFor("etc/app.conf")).toBe("ini");
+  });
+
+  it("knows the Spring, Groovy and Helm files", () => {
+    expect(languageFor("src/main/resources/application.properties")).toBe("properties");
+    expect(languageFor("build.gradle")).toBe("gradle");
+    expect(languageFor("scripts/deploy.groovy")).toBe("groovy");
+    expect(languageFor("chart/templates/_helpers.tpl")).toBe("yaml");
   });
 
   it("has nothing for unknown or extensionless files and dotfiles", () => {

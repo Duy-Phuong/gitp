@@ -10,6 +10,14 @@ describe("languageFor", () => {
     }
     expect(languageFor(null)).toEqual([]);
   });
+
+  it("goes by the file name when the host has no language for it", () => {
+    for (const path of ["README.md", "chart/values.yaml", "chart/templates/_helpers.tpl", "Dockerfile", "ci/Jenkinsfile", "docker/nginx/default.conf", "nginx.conf", "build.gradle", "src/main/resources/application.properties", "scripts/run.sh"]) {
+      expect(languageFor(null, path), path).not.toEqual([]);
+    }
+    expect(languageFor(null, "LICENSE")).toEqual([]);
+    expect(languageFor(null, "etc/other.conf")).not.toEqual([]);
+  });
 });
 
 describe("AutoSave", () => {

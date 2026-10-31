@@ -311,7 +311,7 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
             },
           ),
           "inline",
-          "Snapshots of the working tree about twenty seconds after files change, kept 14 days in the repository's own .git, so an uncommitted edit that is overwritten or lost can be brought back from the Local History view.",
+          "Snapshots of the working tree about twenty seconds after files change, kept 14 days (and the newest ten whatever their age) in the repository's own .git, so an uncommitted edit that is overwritten or lost can be brought back from the Local History view.",
         ),
         row("Default branch", defaultBranchField(), "inline", "The branch Init Repository starts a new repository on."),
         row(

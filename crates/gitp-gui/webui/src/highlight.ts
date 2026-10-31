@@ -25,6 +25,8 @@ type Language =
   | "diff"
   | "dockerfile"
   | "go"
+  | "gradle"
+  | "groovy"
   | "ini"
   | "java"
   | "javascript"
@@ -32,7 +34,9 @@ type Language =
   | "kotlin"
   | "makefile"
   | "markdown"
+  | "nginx"
   | "php"
+  | "properties"
   | "python"
   | "ruby"
   | "rust"
@@ -61,7 +65,9 @@ const BY_EXTENSION: Record<string, Language> = {
   css: "css", scss: "scss",
   diff: "diff", patch: "diff",
   go: "go",
-  ini: "ini", toml: "ini", cfg: "ini", conf: "ini", properties: "ini",
+  gradle: "gradle",
+  groovy: "groovy", gvy: "groovy", gy: "groovy", gsh: "groovy",
+  ini: "ini", toml: "ini", cfg: "ini", conf: "ini",
   java: "java",
   js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "javascript",
   ts: "typescript", mts: "typescript", cts: "typescript", tsx: "typescript",
@@ -70,13 +76,14 @@ const BY_EXTENSION: Record<string, Language> = {
   mk: "makefile",
   md: "markdown", markdown: "markdown",
   php: "php",
+  properties: "properties",
   py: "python", pyi: "python",
   rb: "ruby",
   rs: "rust",
   sql: "sql",
   swift: "swift",
   html: "xml", htm: "xml", xml: "xml", svg: "xml", plist: "xml", vue: "xml",
-  yml: "yaml", yaml: "yaml",
+  yml: "yaml", yaml: "yaml", tpl: "yaml",
 };
 
 // Files known by their whole name rather than an extension.
@@ -84,6 +91,8 @@ const BY_NAME: Record<string, Language> = {
   dockerfile: "dockerfile",
   makefile: "makefile",
   gnumakefile: "makefile",
+  jenkinsfile: "groovy",
+  "nginx.conf": "nginx",
   ".gitconfig": "ini",
   ".editorconfig": "ini",
   ".bashrc": "bash",
@@ -97,6 +106,8 @@ export function languageFor(path: string): Language | null {
   const name = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
   if (BY_NAME[name]) return BY_NAME[name];
   if (name.startsWith("dockerfile.")) return "dockerfile";
+  if (name.startsWith("jenkinsfile.")) return "groovy";
+  if (name.endsWith(".conf") && /(^|\/)nginx(\/|$)/.test(path.toLowerCase())) return "nginx";
   const dot = name.lastIndexOf(".");
   if (dot <= 0) return null;
   return BY_EXTENSION[name.slice(dot + 1)] ?? null;

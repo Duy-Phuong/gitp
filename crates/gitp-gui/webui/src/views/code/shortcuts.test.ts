@@ -15,6 +15,7 @@ describe("codeActionFor", () => {
     expect(codeActionFor(ev("F7", { alt: true }), true)).toBe("findUsages");
     expect(codeActionFor(ev("h", { ctrl: true, alt: true }), true)).toBe("callHierarchy");
     expect(codeActionFor(ev("w", { meta: true, shift: true }), true)).toBe("closeTab");
+    expect(codeActionFor(ev("v", { meta: true, shift: true }), true)).toBe("togglePreview");
   });
 
   it("uses Ctrl instead of Cmd elsewhere", () => {

@@ -40,6 +40,7 @@ import {
   restoreFromSnapshot,
   revealPath,
   saveFilesPatch,
+  openGithubUrl,
   setLocalHistoryEnabled,
   snapshotNow,
   stage,
@@ -530,6 +531,7 @@ async function init(): Promise<void> {
     reportError: opFailed,
     isShowing: () => state.view === "code",
     recentFiles: { load: () => loadCodeRecent(state.repoPath), save: (paths) => saveCodeRecent(state.repoPath, paths) },
+    openUrl: (url) => openGithubUrl(url).catch((err) => opFailed("Couldn't open the page", err)),
   });
   ui.localHistoryView = setupLocalHistory($("#localhistory-view"), {
     fetch: fetchLocalHistory,

@@ -97,6 +97,7 @@ export const BUILT_IN: BuiltIn[] = [
   { label: "Find usages", group: "Code", mac: "⌥F7", other: "Alt+F7" },
   { label: "Call hierarchy", group: "Code", mac: "⌃⌥H", other: "Ctrl+Alt+H" },
   { label: "Close file", group: "Code", mac: "⌘⇧W", other: "Ctrl+Shift+W" },
+  { label: "Markdown: preview / edit", group: "Code", mac: "⌘⇧V", other: "Ctrl+Shift+V" },
 ];
 
 export const IS_MAC = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");

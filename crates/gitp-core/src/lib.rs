@@ -79,7 +79,8 @@ pub use hooks::{Hook, HookState, Hooks, HOOK_NAMES};
 pub use identity::{global_identity, restore_local_identity, set_global_identity, Identity};
 pub use lfs::LfsStatus;
 pub use local_history::{
-    FileVersion, Snapshot, SnapshotFile, HISTORY_KEEP_DAYS, HISTORY_MAX, HISTORY_MAX_NEW_FILE,
+    FileVersion, Snapshot, SnapshotFile, HISTORY_KEEP_DAYS, HISTORY_KEEP_MIN, HISTORY_MAX,
+    HISTORY_MAX_NEW_FILE,
 };
 pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope, LogWalk};
 pub use merge_preview::MergePreview;

@@ -12,8 +12,9 @@
 //! `git diff-tree` against the parent the list of what was uncommitted then.
 //!
 //! Two snapshots with the same tree are one: nothing is stored when nothing
-//! changed. Old snapshots go after [`HISTORY_KEEP_DAYS`] days, and the count is
-//! capped at [`HISTORY_MAX`], so the store stays small and gc reclaims the rest.
+//! changed. Old snapshots go after [`HISTORY_KEEP_DAYS`] days — but never the
+//! newest [`HISTORY_KEEP_MIN`], however old — and the count is capped at
+//! [`HISTORY_MAX`], so the store stays small and gc reclaims the rest.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,6 +29,9 @@ use crate::repo::Repo;
 pub const HISTORY_REFS: &str = "refs/gitp/history/";
 /// Snapshots older than this are dropped when a new one is taken.
 pub const HISTORY_KEEP_DAYS: u64 = 14;
+/// The newest snapshots stay whatever their age: a repository left alone for
+/// a month still has something to go back to.
+pub const HISTORY_KEEP_MIN: usize = 10;
 /// The most snapshots kept per repository.
 pub const HISTORY_MAX: usize = 400;
 /// A new (untracked) file bigger than this is left out of a snapshot: a
@@ -303,8 +307,9 @@ impl Repo {
             .collect())
     }
 
-    /// Delete the snapshots older than [`HISTORY_KEEP_DAYS`], and the oldest
-    /// beyond [`HISTORY_MAX`]. Best effort.
+    /// Delete the snapshots older than [`HISTORY_KEEP_DAYS`] (keeping the
+    /// newest [`HISTORY_KEEP_MIN`] regardless), and the oldest beyond
+    /// [`HISTORY_MAX`]. Best effort.
     fn prune_history(&self, now: u128) {
         let Ok(refs) = self.history_refs() else {
             return;
@@ -313,10 +318,12 @@ impl Repo {
         names.sort_unstable();
         let cutoff = now.saturating_sub(HISTORY_KEEP_DAYS as u128 * 24 * 3600 * 1000) as i64;
         let over = names.len().saturating_sub(HISTORY_MAX);
+        // Names sort by time: the last HISTORY_KEEP_MIN are the newest.
+        let aged = names.len().saturating_sub(HISTORY_KEEP_MIN);
         let stale: Vec<&str> = names
             .iter()
             .enumerate()
-            .filter(|(i, n)| *i < over || millis_of(n) < cutoff)
+            .filter(|(i, n)| *i < over || (*i < aged && millis_of(n) < cutoff))
             .map(|(_, n)| *n)
             .collect();
         if stale.is_empty() {

@@ -7,8 +7,16 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { java } from "@codemirror/lang-java";
 import { javascript } from "@codemirror/lang-javascript";
+import { markdown } from "@codemirror/lang-markdown";
 import { python } from "@codemirror/lang-python";
-import { bracketMatching, indentOnInput } from "@codemirror/language";
+import { yaml } from "@codemirror/lang-yaml";
+import { bracketMatching, indentOnInput, StreamLanguage } from "@codemirror/language";
+import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
+import { groovy } from "@codemirror/legacy-modes/mode/groovy";
+import { nginx } from "@codemirror/legacy-modes/mode/nginx";
+import { properties } from "@codemirror/legacy-modes/mode/properties";
+import { shell } from "@codemirror/legacy-modes/mode/shell";
+import { toml } from "@codemirror/legacy-modes/mode/toml";
 import { Annotation, Compartment, EditorState, type Extension } from "@codemirror/state";
 import { Decoration, type DecorationSet, drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers, ViewPlugin } from "@codemirror/view";
 
@@ -21,7 +29,11 @@ export const AUTOSAVE_MS = 1500;
 // edit, and it does not go into the undo history.
 const programmatic = Annotation.define<boolean>();
 
-export function languageFor(lang: Lang | null): Extension {
+/// The grammar the editor colours `path` with. `lang` is what the host
+/// indexes (Java, JS/TS, Python — the languages Go to Definition knows); the
+/// rest go by the file name: config, scripts, Markdown and the like, which
+/// the host has no symbols for but the editor can still highlight.
+export function languageFor(lang: Lang | null, path = ""): Extension {
   switch (lang) {
     case "java":
       return java();
@@ -33,6 +45,37 @@ export function languageFor(lang: Lang | null): Extension {
       return javascript({ typescript: true, jsx: true });
     case "python":
       return python();
+  }
+  const name = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
+  if (name === "dockerfile" || name.startsWith("dockerfile.")) return StreamLanguage.define(dockerFile);
+  if (name === "jenkinsfile" || name.startsWith("jenkinsfile.")) return StreamLanguage.define(groovy);
+  if (name === "nginx.conf" || (name.endsWith(".conf") && /(^|\/)nginx(\/|$)/.test(path.toLowerCase()))) return StreamLanguage.define(nginx);
+  switch (name.slice(name.lastIndexOf(".") + 1)) {
+    case "md":
+    case "markdown":
+      return markdown();
+    case "yml":
+    case "yaml":
+    case "tpl":
+      return yaml();
+    case "sh":
+    case "bash":
+    case "zsh":
+      return StreamLanguage.define(shell);
+    case "groovy":
+    case "gradle":
+    case "gvy":
+    case "gy":
+    case "gsh":
+      return StreamLanguage.define(groovy);
+    case "properties":
+    case "ini":
+    case "cfg":
+    case "conf":
+    case "env":
+      return StreamLanguage.define(properties);
+    case "toml":
+      return StreamLanguage.define(toml);
     default:
       return [];
   }
@@ -136,7 +179,7 @@ export class CodeEditor implements EditorLike {
     this.view = new EditorView({ parent: host, state: this.blankState() });
   }
 
-  private extensions(lang: Lang | null): Extension {
+  private extensions(lang: Lang | null, path: string): Extension {
     return [
       lineNumbers(),
       highlightActiveLineGutter(),
@@ -146,7 +189,7 @@ export class CodeEditor implements EditorLike {
       bracketMatching(),
       indentOnInput(),
       codeTheme,
-      languageFor(lang),
+      languageFor(lang, path),
       keymap.of([
         {
           key: "Mod-s",
@@ -196,7 +239,7 @@ export class CodeEditor implements EditorLike {
     // Already shown: its state is the view's, not in `states`.
     if (this.activePath === path) return;
     if (this.activePath) this.states.set(this.activePath, this.view.state);
-    const state = this.states.get(path) ?? EditorState.create({ doc: text, extensions: this.extensions(lang) });
+    const state = this.states.get(path) ?? EditorState.create({ doc: text, extensions: this.extensions(lang, path) });
     this.activePath = path;
     this.view.setState(state);
   }

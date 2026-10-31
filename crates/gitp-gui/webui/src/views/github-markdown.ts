@@ -33,7 +33,18 @@ const DROP = new Set([
 const SAFE_URL = /^https:\/\//i;
 
 export function renderGitHubMarkdown(src: string): HTMLElement {
-  const html = marked.parse(src, { gfm: true, breaks: true, async: false });
+  return renderMarkdown(src, { breaks: true });
+}
+
+/// A Markdown file as a page (the Code tab's preview): the same rendering
+/// and the same allowlist, but a newline inside a paragraph is a space, as
+/// in a README, not a line break as in a comment.
+export function renderMarkdownFile(src: string): HTMLElement {
+  return renderMarkdown(src, { breaks: false });
+}
+
+function renderMarkdown(src: string, opts: { breaks: boolean }): HTMLElement {
+  const html = marked.parse(src, { gfm: true, breaks: opts.breaks, async: false });
   const doc = new DOMParser().parseFromString(html, "text/html");
   const root = el("div", { class: "markdown-preview github-markdown" });
   copyAllowed(doc.body, root);

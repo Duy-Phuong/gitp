@@ -165,3 +165,56 @@ fn a_big_new_file_is_left_out_and_a_conflict_in_progress_takes_no_snapshot() {
         .is_err());
     assert_eq!(repo.snapshot_working_tree().unwrap(), None);
 }
+
+/// Snapshots past the age limit go, except the newest ten: they stay however
+/// old, so a repository left alone for weeks still has versions to go back to.
+#[test]
+fn the_newest_ten_snapshots_outlive_the_age_limit() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("a.txt", "one\n", "c1");
+    let repo = Repo::open(fx.path()).unwrap();
+    let git = git2::Repository::open(fx.path()).unwrap();
+    let head = git.head().unwrap().target().unwrap();
+    // Eleven snapshots, each a month old and a day apart.
+    let month_ago = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        - 30 * 24 * 3600 * 1000;
+    for i in 0..11u64 {
+        let at = month_ago + i * 24 * 3600 * 1000;
+        git.reference(
+            &format!("refs/gitp/history/{at}"),
+            head,
+            true,
+            "old snapshot",
+        )
+        .unwrap();
+    }
+    write(&fx, "a.txt", "two\n");
+    repo.snapshot_working_tree().unwrap().expect("a snapshot");
+
+    // Counted by ref: the old snapshots all point at HEAD, so the log shows
+    // them as one.
+    let mut names: Vec<String> = git
+        .references_glob(&"refs/gitp/history/*")
+        .unwrap()
+        .filter_map(|r| r.ok().and_then(|r| r.name().map(str::to_string)))
+        .collect();
+    names.sort();
+    assert_eq!(
+        names.len(),
+        gitp_core::HISTORY_KEEP_MIN,
+        "ten newest stay: the new one and the nine youngest old ones"
+    );
+    assert!(
+        !names.iter().any(|n| n.ends_with(&month_ago.to_string())),
+        "the oldest was pruned"
+    );
+    assert!(
+        names
+            .iter()
+            .any(|n| n.ends_with(&(month_ago + 2 * 24 * 3600 * 1000).to_string())),
+        "the third-oldest stays"
+    );
+}

@@ -12,6 +12,8 @@ import css from "highlight.js/lib/languages/css";
 import diff from "highlight.js/lib/languages/diff";
 import dockerfile from "highlight.js/lib/languages/dockerfile";
 import go from "highlight.js/lib/languages/go";
+import gradle from "highlight.js/lib/languages/gradle";
+import groovy from "highlight.js/lib/languages/groovy";
 import ini from "highlight.js/lib/languages/ini";
 import java from "highlight.js/lib/languages/java";
 import javascript from "highlight.js/lib/languages/javascript";
@@ -19,7 +21,9 @@ import json from "highlight.js/lib/languages/json";
 import kotlin from "highlight.js/lib/languages/kotlin";
 import makefile from "highlight.js/lib/languages/makefile";
 import markdown from "highlight.js/lib/languages/markdown";
+import nginx from "highlight.js/lib/languages/nginx";
 import php from "highlight.js/lib/languages/php";
+import properties from "highlight.js/lib/languages/properties";
 import python from "highlight.js/lib/languages/python";
 import ruby from "highlight.js/lib/languages/ruby";
 import rust from "highlight.js/lib/languages/rust";
@@ -31,7 +35,7 @@ import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 
 const LANGUAGES = {
-  bash, c, cpp, csharp, css, diff, dockerfile, go, ini, java, javascript, json, kotlin, makefile, markdown, php, python, ruby, rust, scss, sql, swift, typescript, xml, yaml,
+  bash, c, cpp, csharp, css, diff, dockerfile, go, gradle, groovy, ini, java, javascript, json, kotlin, makefile, markdown, nginx, php, properties, python, ruby, rust, scss, sql, swift, typescript, xml, yaml,
 };
 
 export function registerAll(): void {

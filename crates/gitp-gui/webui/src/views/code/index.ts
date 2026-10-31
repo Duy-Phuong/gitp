@@ -14,6 +14,7 @@ import { openQuickOpen } from "./quick-open";
 import { setupSearchPanel } from "./search-panel";
 import { setupHierarchyPanel, setupUsagesPanel } from "./usages-panel";
 import { showContextMenu } from "../context-menu";
+import { renderMarkdownFile } from "../github-markdown";
 import { setupCodeShortcuts, type CodeAction } from "./shortcuts";
 import { Tabs } from "./tabs";
 
@@ -42,6 +43,8 @@ export interface CodeViewDeps {
   recentFiles?: { load: () => string[]; save: (paths: string[]) => void };
   // Tests hand in a fake editor; the app builds CodeMirror.
   makeEditor?: (host: HTMLElement, deps: CodeEditorDeps) => EditorLike;
+  // A link in a Markdown preview: opened in the browser.
+  openUrl?: (url: string) => void;
 }
 
 export interface CodeViewHandle {
@@ -136,6 +139,44 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   };
   const editor: EditorLike = (deps.makeEditor ?? ((h, d) => new CodeEditor(h, d)))(editorHost, editorDeps);
 
+  // Markdown preview: a .md tab shows either the editor or the rendered
+  // page, per file (Cmd/Ctrl+Shift+V or the corner button). The page is
+  // drawn from the buffer when the tab shows, so it always matches the text.
+  const previewHost = el("div", { class: "code-preview markdown-preview github-markdown hidden" });
+  const previewToggle = el("button", { class: "code-preview-toggle hidden", type: "button" });
+  editorHost.after(previewHost);
+  editorHost.parentElement!.append(previewToggle);
+  const previewing = new Set<string>();
+  const isMarkdown = (path: string) => /\.(md|markdown)$/i.test(path);
+  const syncPreview = () => {
+    const path = tabs.active();
+    const md = path !== null && isMarkdown(path);
+    const on = md && previewing.has(path);
+    previewToggle.classList.toggle("hidden", !md);
+    previewToggle.textContent = on ? "Edit" : "Preview";
+    previewToggle.title = on ? "Edit the file" : "Preview the rendered Markdown";
+    editorHost.classList.toggle("hidden", on);
+    previewHost.classList.toggle("hidden", !on);
+    if (on) {
+      clear(previewHost);
+      previewHost.append(...renderMarkdownFile(editor.text(path) ?? "").childNodes);
+      previewHost.scrollTop = 0;
+    }
+  };
+  const togglePreview = () => {
+    const path = tabs.active();
+    if (!path || !isMarkdown(path)) return;
+    if (previewing.has(path)) previewing.delete(path);
+    else previewing.add(path);
+    syncPreview();
+    if (!previewing.has(path)) editor.focus();
+  };
+  previewToggle.addEventListener("click", togglePreview);
+  previewHost.addEventListener("click", (e) => {
+    const link = (e.target as HTMLElement).closest<HTMLElement>("[data-href]");
+    if (link?.dataset.href) deps.openUrl?.(link.dataset.href);
+  });
+
   const autosave = new AutoSave({
     save: async (path) => {
       const text = editor.text(path);
@@ -196,6 +237,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
       tabs.open(loc.path, tabs.get(loc.path)!);
       editor.open(loc.path, "", langOf(loc.path));
     }
+    syncPreview();
     nav.silently(() => editor.reveal(loc, opts.endCol));
     if (opts.reveal !== false) nav.push(from, loc);
     touchRecent(loc.path);
@@ -207,6 +249,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     if (path) touchRecent(path);
     if (path) editor.open(path, "", langOf(path));
     if (path) explorer.selected = path;
+    syncPreview();
     renderTree();
   };
 
@@ -214,6 +257,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     if (!(await autosave.saveNow(path))) return; // the banner says what to do
     autosave.forget(path);
     editor.close(path);
+    previewing.delete(path);
     showTab(tabs.close(path));
   };
 
@@ -274,6 +318,9 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
         if (a) void closeTab(a);
         break;
       }
+      case "togglePreview":
+        togglePreview();
+        break;
       case "findUsages": {
         const c = editor.caret();
         if (c) void findUsages(c);
@@ -403,6 +450,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     tabs.setCrlf(path, file.crlf);
     tabs.setDirty(path, false);
     tabs.setChangedOnDisk(path, false);
+    if (path === tabs.active()) syncPreview();
   };
 
   /// Write the buffer over whatever is on disk now.
@@ -553,6 +601,8 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
       editor.close(t.path);
       tabs.close(t.path);
     }
+    previewing.clear();
+    syncPreview();
     files = [];
     opened = false;
     usagesPanel.clear();

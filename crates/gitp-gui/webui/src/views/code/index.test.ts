@@ -168,6 +168,38 @@ describe("setupCodeView", () => {
     expect(editor.active()).toBe("a.ts");
   });
 
+  it("a Markdown tab can switch to a rendered preview and back, per file", async () => {
+    const { view, editor, h } = setup([entry("README.md"), entry("a.ts")], { "README.md": "# Title\n\nSome *text*.", "a.ts": "a" });
+    view.start();
+    await flush();
+    await view.openFile({ path: "a.ts", line: 0, col: 0 });
+    const toggle = h.querySelector<HTMLElement>(".code-preview-toggle")!;
+    expect(toggle.classList.contains("hidden"), "no toggle for TypeScript").toBe(true);
+    view.runAction("togglePreview");
+    expect(h.querySelector("#code-editor")!.classList.contains("hidden")).toBe(false);
+
+    await view.openFile({ path: "README.md", line: 0, col: 0 });
+    expect(toggle.classList.contains("hidden")).toBe(false);
+    expect(toggle.textContent).toBe("Preview");
+    view.runAction("togglePreview");
+    const preview = h.querySelector<HTMLElement>(".code-preview")!;
+    expect(preview.classList.contains("hidden")).toBe(false);
+    expect(h.querySelector("#code-editor")!.classList.contains("hidden")).toBe(true);
+    expect(preview.querySelector("h1")?.textContent).toBe("Title");
+    expect(preview.querySelector("em")?.textContent).toBe("text");
+    expect(toggle.textContent).toBe("Edit");
+
+    // Another tab shows the editor; coming back, the preview is still on.
+    await view.openFile({ path: "a.ts", line: 0, col: 0 });
+    expect(preview.classList.contains("hidden")).toBe(true);
+    expect(h.querySelector("#code-editor")!.classList.contains("hidden")).toBe(false);
+    await view.openFile({ path: "README.md", line: 0, col: 0 });
+    expect(preview.classList.contains("hidden")).toBe(false);
+    toggle.click();
+    expect(preview.classList.contains("hidden")).toBe(true);
+    expect(editor.active()).toBe("README.md");
+  });
+
   const sym = (path: string, name: string, line: number): Symbol => ({
     id: { file: 0, byte: 0 },
     name,
