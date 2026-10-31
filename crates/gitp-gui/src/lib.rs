@@ -57,8 +57,28 @@ use watch::{ChangeSink, REPO_CHANGED_EVENT};
 // runtime's thread pool instead, so the UI keeps painting and scrolling while
 // git works. The bodies stay synchronous; only where they run changes.
 
+/// How many async workers run command bodies.
+///
+/// A body holds its worker until it returns, so Tauri's default runtime — one
+/// worker per CPU core — let a handful of slow commands (pushes, a first log
+/// walk, waits on the workspace lock) take every worker, and every other
+/// command, however quick, queued behind them. Idle workers cost only a parked
+/// thread, so the pool is sized for bursts rather than for the cores.
+const COMMAND_WORKERS: usize = 64;
+
+/// The runtime Tauri dispatches command bodies to.
+fn command_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(COMMAND_WORKERS)
+        .enable_all()
+        .build()
+        .expect("failed to start the async runtime")
+}
+
 /// Build and run the desktop app.
 pub fn run() {
+    let runtime = command_runtime();
+    tauri::async_runtime::set(runtime.handle().clone());
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(RepoState::default())
@@ -296,4 +316,31 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running gitp");
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    // Every command body is synchronous and runs on an async worker, so a slow
+    // one (a push, a full log walk, a wait on the workspace lock) holds its
+    // worker until it returns. More slow commands than the default runtime
+    // has workers must still leave a quick one free to run.
+    #[test]
+    fn slow_commands_leave_a_worker_for_a_quick_one() {
+        let runtime = super::command_runtime();
+        let busy = std::thread::available_parallelism().map_or(8, |n| n.get()) + 1;
+        assert!(busy < super::COMMAND_WORKERS);
+        for _ in 0..busy {
+            runtime.spawn(async { std::thread::sleep(Duration::from_millis(1500)) });
+        }
+        let (tx, rx) = mpsc::channel();
+        runtime.spawn(async move { tx.send(()) });
+        assert!(
+            rx.recv_timeout(Duration::from_millis(500)).is_ok(),
+            "{busy} slow commands held every worker"
+        );
+        runtime.shutdown_background();
+    }
 }
