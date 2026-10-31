@@ -60,4 +60,26 @@ describe("openQuickOpen", () => {
     type("file");
     expect(rows().length).toBe(50);
   });
+
+  it("an empty query lists recent files first, newest first, then the rest", () => {
+    openQuickOpen(files, () => {}, ["README.md", "src/cart.ts", "gone.ts"]);
+    expect(rows().slice(0, 3).map((r) => r.dataset.path)).toEqual(["README.md", "src/cart.ts", expect.any(String)]);
+    expect([...document.querySelectorAll(".ql-overlay .ql-section")].map((h) => h.textContent)).toEqual(["Recently opened", "Files"]);
+    expect(rows().filter((r) => r.dataset.path === "README.md")).toHaveLength(1); // not again under Files
+    expect(rows().some((r) => r.dataset.path === "gone.ts")).toBe(false); // deleted since
+  });
+
+  it("Enter on an empty query opens the most recent file", () => {
+    const pick = vi.fn();
+    openQuickOpen(files, pick, ["docs/notes.md"]);
+    key("Enter");
+    expect(pick).toHaveBeenCalledWith("docs/notes.md", false);
+  });
+
+  it("typing searches all files and drops the sections", () => {
+    openQuickOpen(files, () => {}, ["README.md"]);
+    type("cart");
+    expect(rows().map((r) => r.dataset.path)).toEqual(["src/cart.ts", "src/chart.ts"]);
+    expect(document.querySelector(".ql-overlay .ql-section")).toBeNull();
+  });
 });

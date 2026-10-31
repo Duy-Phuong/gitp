@@ -113,6 +113,11 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   let opened = false;
   let indexing = false;
   const explorer: ExplorerState = { expanded: new Set(), selected: null };
+  // Files shown in the editor, newest first, for Quick Open.
+  let recent: string[] = [];
+  const touchRecent = (path: string) => {
+    recent = [path, ...recent.filter((p) => p !== path)].slice(0, 20);
+  };
   const tabs = new Tabs();
   const nav = new NavStack();
 
@@ -190,11 +195,13 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     }
     nav.silently(() => editor.reveal(loc, opts.endCol));
     if (opts.reveal !== false) nav.push(from, loc);
+    touchRecent(loc.path);
     revealPath(explorer, loc.path);
     renderTree();
   };
 
   const showTab = (path: string | null) => {
+    if (path) touchRecent(path);
     if (path) editor.open(path, "", langOf(path));
     if (path) explorer.selected = path;
     renderTree();
@@ -283,7 +290,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
           void openFile({ path, line: 0, col: 0 }).then(() => {
             if (!reveal) editor.focus();
           });
-        });
+        }, recent.filter((p) => p !== tabs.active()));
         break;
     }
   };
@@ -549,6 +556,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     showPane(null);
     explorer.expanded.clear();
     explorer.selected = null;
+    recent = [];
     renderTree();
   };
 

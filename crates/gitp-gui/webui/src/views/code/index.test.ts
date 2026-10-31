@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { setupCodeView, type CodeApi, type CodeViewDeps } from "./index";
+import { IS_MAC } from "../../shortcuts";
 import type { CodeEditorDeps, EditorLike } from "./editor";
 import type { CodeFile, CodeFilesChanged, FileEntry, IndexReady, Location, Symbol } from "../../types";
 
@@ -176,6 +177,22 @@ describe("setupCodeView", () => {
     container: null,
     range: { start_line: line, start_col: 0, end_line: line + 2, end_col: 1, start_byte: 0, end_byte: 1 },
     name_range: { start_line: line, start_col: 9, end_line: line, end_col: 9 + name.length, start_byte: 0, end_byte: 1 },
+  });
+
+  it("Quick Open offers the files opened before, newest first, not the current one", async () => {
+    const { view } = setup([entry("a.ts"), entry("b.ts"), entry("c.ts")], { "a.ts": "x", "b.ts": "y", "c.ts": "z" });
+    view.start();
+    await flush();
+    await view.openFile({ path: "a.ts", line: 0, col: 0 });
+    await view.openFile({ path: "b.ts", line: 0, col: 0 });
+    await view.openFile({ path: "c.ts", line: 0, col: 0 });
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "p", metaKey: IS_MAC, ctrlKey: !IS_MAC, bubbles: true }));
+    // Earlier tests' views listen too; this view's overlay is the last one.
+    const overlay = [...document.querySelectorAll<HTMLElement>(".ql-overlay")].pop()!;
+    const rows = [...overlay.querySelectorAll<HTMLElement>(".ql-row")].map((r) => r.dataset.path);
+    expect(rows.slice(0, 2)).toEqual(["b.ts", "a.ts"]);
+    expect(rows.filter((p) => p === "c.ts")).toHaveLength(1); // only under Files
+    document.querySelectorAll(".ql-overlay").forEach((o) => o.remove());
   });
 
   describe("go to definition", () => {
