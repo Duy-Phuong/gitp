@@ -9,6 +9,7 @@ import { java } from "@codemirror/lang-java";
 import { javascript } from "@codemirror/lang-javascript";
 import { markdown } from "@codemirror/lang-markdown";
 import { python } from "@codemirror/lang-python";
+import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
 import { bracketMatching, indentOnInput, StreamLanguage } from "@codemirror/language";
 import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
@@ -76,6 +77,16 @@ export function languageFor(lang: Lang | null, path = ""): Extension {
       return StreamLanguage.define(properties);
     case "toml":
       return StreamLanguage.define(toml);
+    case "xml":
+    case "html":
+    case "htm":
+    case "svg":
+    case "xsd":
+    case "xsl":
+    case "xslt":
+    case "plist":
+    case "pom":
+      return xml();
     default:
       return [];
   }

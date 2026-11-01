@@ -12,7 +12,7 @@ describe("languageFor", () => {
   });
 
   it("goes by the file name when the host has no language for it", () => {
-    for (const path of ["README.md", "chart/values.yaml", "chart/templates/_helpers.tpl", "Dockerfile", "ci/Jenkinsfile", "docker/nginx/default.conf", "nginx.conf", "build.gradle", "src/main/resources/application.properties", "scripts/run.sh"]) {
+    for (const path of ["README.md", "chart/values.yaml", "chart/templates/_helpers.tpl", "Dockerfile", "ci/Jenkinsfile", "docker/nginx/default.conf", "nginx.conf", "build.gradle", "src/main/resources/application.properties", "scripts/run.sh", "pom.xml", "src/main/resources/logback.xml", "public/index.html"]) {
       expect(languageFor(null, path), path).not.toEqual([]);
     }
     expect(languageFor(null, "LICENSE")).toEqual([]);

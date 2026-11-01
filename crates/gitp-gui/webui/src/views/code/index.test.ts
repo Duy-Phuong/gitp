@@ -168,6 +168,26 @@ describe("setupCodeView", () => {
     expect(editor.active()).toBe("a.ts");
   });
 
+  it("a tab's context menu closes it, the others, or all", async () => {
+    const { view, h } = setup([entry("a.ts"), entry("b.ts"), entry("c.ts")], { "a.ts": "a", "b.ts": "b", "c.ts": "c" });
+    view.start();
+    await flush();
+    for (const p of ["a.ts", "b.ts", "c.ts"]) await view.openFile({ path: p, line: 0, col: 0 });
+    const menuItem = (label: string) => [...document.querySelectorAll<HTMLElement>(".menu *")].find((n) => n.textContent === label)!;
+    const tab = (p: string) => h.querySelector<HTMLElement>(`.code-tab[title="${p}"]`)!;
+
+    tab("b.ts").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    expect(menuItem("Close")).toBeTruthy();
+    menuItem("Close Others").click();
+    await flush();
+    expect(view.tabs.list().map((t) => t.path)).toEqual(["b.ts"]);
+
+    tab("b.ts").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    menuItem("Close All").click();
+    await flush();
+    expect(view.tabs.list()).toEqual([]);
+  });
+
   it("a Markdown tab can switch to a rendered preview and back, per file", async () => {
     const { view, editor, h } = setup([entry("README.md"), entry("a.ts")], { "README.md": "# Title\n\nSome *text*.", "a.ts": "a" });
     view.start();

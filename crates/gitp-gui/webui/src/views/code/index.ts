@@ -261,6 +261,10 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     showTab(tabs.close(path));
   };
 
+  const closeTabs = async (paths: string[]) => {
+    for (const p of paths) await closeTab(p);
+  };
+
   /// The caret's place on screen, for the picker.
   const caretPoint = (): { x: number; y: number } => {
     const rect = editorHost.getBoundingClientRect();
@@ -419,6 +423,15 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
       });
       btn.addEventListener("auxclick", (e) => {
         if (e.button === 1) void closeTab(t.path);
+      });
+      btn.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showContextMenu(e.clientX, e.clientY, [
+          { label: "Close", run: () => void closeTab(t.path) },
+          { label: "Close Others", run: () => void closeTabs(tabs.list().filter((o) => o.path !== t.path).map((o) => o.path)) },
+          { label: "Close All", run: () => void closeTabs(tabs.list().map((o) => o.path)) },
+        ]);
       });
       btn.querySelector(".code-tab-close")!.addEventListener("click", (e) => {
         e.stopPropagation();
