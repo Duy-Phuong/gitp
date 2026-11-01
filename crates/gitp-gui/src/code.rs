@@ -16,7 +16,7 @@ use gitp_code::files::{walk, FileEntry};
 use gitp_code::grep::{self, Query, SearchResult};
 use gitp_code::lang::{Family, Lang};
 use gitp_code::index::{reindex_many, RefKind, Reference, Range, Symbol, SymbolIndex, SymbolKind};
-use gitp_code::resolve::{self, HierarchyNode, UsageHit};
+use gitp_code::resolve::{self, Access, HierarchyNode, UsageHit};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -246,10 +246,11 @@ pub(crate) fn code_references_impl(state: &RepoState, path: String, line: u32, c
     };
     // Plain identifiers are not indexed (a 20k-file repo has millions): a
     // variable's or field's uses come from a whole-word grep over the same
-    // language's files, and are never more than "possible".
+    // language's files, and are never more than "possible". A Java field is
+    // mostly used through its accessors, so those names are searched too.
     let query = Query {
-        pattern: symbol.name.to_string(),
-        regex: false,
+        pattern: field_pattern(&symbol.name, symbol.lang.family()),
+        regex: true,
         case_sensitive: true,
         whole_word: true,
         include_glob: Some(family_glob(symbol.lang.family()).to_string()),
@@ -262,6 +263,7 @@ pub(crate) fn code_references_impl(state: &RepoState, path: String, line: u32, c
         .take(USAGES_LIMIT)
         .filter(|h| !(h.path == symbol.path.as_ref() && h.line == symbol.name_range.start_line && h.col == symbol.name_range.start_col))
         .map(|h| UsageHit {
+            access: Some(classify_access(&h.text, h.col, h.end_col)),
             reference: Reference {
                 name: symbol.name.clone(),
                 kind: RefKind::Ident,
@@ -271,9 +273,56 @@ pub(crate) fn code_references_impl(state: &RepoState, path: String, line: u32, c
                 receiver: None,
             },
             certain: false,
+            text: Some(h.text),
         })
         .collect();
     Ok(UsagesResult { symbol, hits, truncated })
+}
+
+/// The grep for a field or variable named `name`: the name itself, plus
+/// `getName`/`setName`/`isName` in Java, where a field is reached through
+/// them (and through a Lombok builder's `.name(...)`).
+fn field_pattern(name: &str, family: Family) -> String {
+    let escaped = regex_syntax::escape(name);
+    if family != Family::Java {
+        return escaped;
+    }
+    let mut chars = name.chars();
+    let cap: String = match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => return escaped,
+    };
+    let cap = regex_syntax::escape(&cap);
+    format!("{escaped}|get{cap}|set{cap}|is{cap}")
+}
+
+/// Whether the match at `col..end_col` (UTF-16 units) of `line` writes the
+/// value: a setter, an assignment or increment, or a builder's `.name(...)`.
+/// Everything else — a getter, a bare mention — reads it.
+fn classify_access(line: &str, col: u32, end_col: u32) -> Access {
+    let units: Vec<u16> = line.encode_utf16().collect();
+    let at = |i: u32| String::from_utf16_lossy(&units[..(i as usize).min(units.len())]).len();
+    let (start, end) = (at(col), at(end_col));
+    let token = &line[start..end];
+    let before = line[..start].trim_end();
+    let after = line[end..].trim_start();
+    if token.starts_with("set") && token.len() > 3 {
+        return Access::Write;
+    }
+    if token.starts_with("get") || token.starts_with("is") {
+        return Access::Read;
+    }
+    let assignment = ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>=", "++", "--"];
+    if after.starts_with('=') && !after.starts_with("==") {
+        return Access::Write;
+    }
+    if assignment.iter().any(|op| after.starts_with(op)) || before.ends_with("++") || before.ends_with("--") {
+        return Access::Write;
+    }
+    if before.ends_with('.') && after.starts_with('(') {
+        return Access::Write;
+    }
+    Access::Read
 }
 
 fn family_glob(family: Family) -> &'static str {
@@ -660,6 +709,44 @@ mod tests {
         let hits: Vec<(&str, u32, bool)> = r.hits.iter().map(|h| (h.reference.path.as_ref(), h.reference.range.start_line, h.certain)).collect();
         assert_eq!(hits, [("a.ts", 1, false)], "the use on line 2, not `rates`, not the Python file, not the definition");
         assert_eq!(r.hits[0].reference.range.start_col, 10);
+    }
+
+    #[test]
+    fn a_java_field_is_found_through_its_accessors_and_sorted_into_reads_and_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        std::fs::write(
+            dir.path().join("E.java"),
+            "class E {\n  private String secret;\n  void f() {\n    secret = \"a\";\n    String s = secret;\n    this.secret += s;\n    if (secret == null) {}\n  }\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("U.java"),
+            "class U {\n  void g(E e) {\n    e.setSecret(\"x\");\n    String s = e.getSecret();\n    E.builder().secret(\"b\").build();\n  }\n}\n",
+        )
+        .unwrap();
+        let (state, _code) = ready_state(dir.path());
+        let r = code_references_impl(&state, "E.java".into(), 1, 20).unwrap();
+        assert_eq!(r.symbol.name.as_ref(), "secret");
+        // (file, line, writes?, the line)
+        let mut hits: Vec<(&str, u32, bool, &str)> = r
+            .hits
+            .iter()
+            .map(|h| (h.reference.path.as_ref(), h.reference.range.start_line, h.access == Some(Access::Write), h.text.as_deref().unwrap().trim()))
+            .collect();
+        hits.sort();
+        assert_eq!(
+            hits,
+            [
+                ("E.java", 3, true, "secret = \"a\";"),
+                ("E.java", 4, false, "String s = secret;"),
+                ("E.java", 5, true, "this.secret += s;"),
+                ("E.java", 6, false, "if (secret == null) {}"),
+                ("U.java", 2, true, "e.setSecret(\"x\");"),
+                ("U.java", 3, false, "String s = e.getSecret();"),
+                ("U.java", 4, true, "E.builder().secret(\"b\").build();"),
+            ]
+        );
     }
 
     #[test]

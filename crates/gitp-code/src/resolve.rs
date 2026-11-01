@@ -14,6 +14,19 @@ use crate::index::{Range, RefKind, Reference, Symbol, SymbolId, SymbolIndex};
 pub struct UsageHit {
     pub reference: Reference,
     pub certain: bool,
+    /// Whether the use reads or writes the value, for a field or variable
+    /// found by grep; None for the indexed references.
+    pub access: Option<Access>,
+    /// The line the use is on, when it came from grep.
+    pub text: Option<String>,
+}
+
+/// How a use treats a field or variable's value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Access {
+    Read,
+    Write,
 }
 
 /// One level of a call hierarchy: the call site, and the symbol on the other
@@ -101,7 +114,7 @@ pub fn references(index: &SymbolIndex, s: &Symbol, limit: usize) -> (Vec<UsageHi
         let certain = r.path == s.path
             || imported
             || (matches!(r.receiver.as_deref(), Some("this" | "self")) && s.container.is_some_and(|c| chain(index, r.enclosing).contains(&c)));
-        hits.push(UsageHit { reference: r.clone(), certain });
+        hits.push(UsageHit { reference: r.clone(), certain, access: None, text: None });
     }
     (hits, truncated)
 }

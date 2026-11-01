@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setupHierarchyPanel, setupUsagesPanel } from "./usages-panel";
-import type { HierarchyNode, Reference, Symbol, UsagesResult } from "../../types";
+import type { HierarchyNode, Symbol, UsageHit, UsagesResult } from "../../types";
 
 const sym = (path: string, name: string, line = 0): Symbol => ({
   id: { file: 0, byte: line },
@@ -14,14 +14,30 @@ const sym = (path: string, name: string, line = 0): Symbol => ({
   range: { start_line: line, start_col: 0, end_line: line + 1, end_col: 0, start_byte: line, end_byte: line + 1 },
   name_range: { start_line: line, start_col: 9, end_line: line, end_col: 9 + name.length, start_byte: line, end_byte: line + 1 },
 });
-const ref = (path: string, line: number, certain: boolean): { reference: Reference; certain: boolean } => ({
+const ref = (path: string, line: number, certain: boolean): UsageHit => ({
   certain,
+  access: null,
+  text: null,
   reference: { name: "save", kind: "call", path, enclosing: null, receiver: null, range: { start_line: line, start_col: 2, end_line: line, end_col: 6, start_byte: 0, end_byte: 1 } },
 });
 
 afterEach(() => (document.body.innerHTML = ""));
 
 describe("setupUsagesPanel", () => {
+  it("sorts a field's uses into writes and reads, showing the line", () => {
+    const host = document.createElement("div");
+    const panel = setupUsagesPanel(host, { jump: () => {} });
+    const hit = (line: number, access: "read" | "write", text: string): UsageHit => ({ ...ref("a.java", line, false), access, text });
+    panel.show({ symbol: { ...sym("a.java", "secret"), kind: "field" }, hits: [hit(3, "read", "  s = secret;"), hit(1, "write", "  secret = s;"), hit(9, "write", "  e.setSecret(s);")], truncated: false });
+    const groups = [...host.querySelectorAll<HTMLElement>(".code-usages-group")].map((g) => [g.dataset.kind, g.querySelector(".code-usages-group-title")?.textContent]);
+    expect(groups).toEqual([
+      ["write", "Value write · 2"],
+      ["read", "Value read · 1"],
+    ]);
+    expect([...host.querySelectorAll(".code-usages-hit .code-search-text")].map((n) => n.textContent)).toEqual(["secret = s;", "e.setSecret(s);", "s = secret;"]);
+    expect(host.querySelector(".code-usages-access")?.textContent).toBe("→");
+  });
+
   it("lists certain usages above possible ones, grouped by file", () => {
     const host = document.createElement("div");
     const panel = setupUsagesPanel(host, { jump: () => {} });

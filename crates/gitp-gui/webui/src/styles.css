@@ -6349,6 +6349,15 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+.code-usages-access {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  color: var(--text-muted);
+}
+.code-usages-access[data-access="write"] {
+  color: var(--syn-string, var(--accent));
+}
 .code-usages-file > summary {
   display: flex;
   gap: 8px;

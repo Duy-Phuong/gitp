@@ -21,11 +21,22 @@ export function setupUsagesPanel(host: HTMLElement, deps: { jump: (loc: Location
         r.truncated ? el("span", { class: "code-usages-note" }, [" · narrowed to the first 2 000"]) : "",
       ]),
     );
-    for (const kind of ["certain", "possible"] as const) {
-      const hits = r.hits.filter((h) => h.certain === (kind === "certain"));
+    // A field's or variable's uses are sorted into writes and reads, as an
+    // IDE does; a function's into the certain and the merely same-named.
+    const byAccess = r.hits.some((h) => h.access);
+    const groups: { kind: string; title: string; hits: typeof r.hits }[] = byAccess
+      ? [
+          { kind: "write", title: "Value write", hits: r.hits.filter((h) => h.access === "write") },
+          { kind: "read", title: "Value read", hits: r.hits.filter((h) => h.access !== "write") },
+        ]
+      : [
+          { kind: "certain", title: "Usages", hits: r.hits.filter((h) => h.certain) },
+          { kind: "possible", title: "Possible usages (same name, not tied to this definition)", hits: r.hits.filter((h) => !h.certain) },
+        ];
+    for (const { kind, title, hits } of groups) {
       if (!hits.length) continue;
       const group = el("div", { class: "code-usages-group", "data-kind": kind }, [
-        el("div", { class: "code-usages-group-title" }, [kind === "certain" ? "Usages" : "Possible usages (same name, not tied to this definition)"]),
+        el("div", { class: "code-usages-group-title" }, [`${title} · ${hits.length}`]),
       ]);
       const byFile = new Map<string, typeof hits>();
       for (const h of hits) byFile.set(h.reference.path, [...(byFile.get(h.reference.path) ?? []), h]);
@@ -34,9 +45,11 @@ export function setupUsagesPanel(host: HTMLElement, deps: { jump: (loc: Location
           el("summary", {}, [el("span", { class: "code-search-path" }, [path]), el("span", { class: "code-search-count" }, [String(list.length)])]),
         ]);
         for (const h of list) {
+          const label = h.text?.trim() || `${h.reference.receiver ? h.reference.receiver + "." : ""}${h.reference.name}${h.reference.kind === "call" ? "(…)" : ""}`;
           const row = el("div", { class: "code-usages-hit code-search-hit" }, [
             el("span", { class: "code-search-line" }, [String(h.reference.range.start_line + 1)]),
-            el("span", { class: "code-search-text" }, [`${h.reference.receiver ? h.reference.receiver + "." : ""}${h.reference.name}${h.reference.kind === "call" ? "(…)" : ""}`]),
+            h.access ? el("span", { class: "code-usages-access", "data-access": h.access, title: h.access === "write" ? "Writes the value" : "Reads the value" }, [h.access === "write" ? "→" : "←"]) : "",
+            el("span", { class: "code-search-text" }, [label]),
           ]);
           row.addEventListener("click", () => deps.jump({ path, line: h.reference.range.start_line, col: h.reference.range.start_col }, h.reference.range.end_col));
           file.append(row);

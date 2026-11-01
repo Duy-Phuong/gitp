@@ -832,6 +832,10 @@ export interface UsageHit {
   reference: Reference;
   // Scope or an import ties it to this definition; else the names merely match.
   certain: boolean;
+  // For a field or variable (found by grep): whether the use reads or writes it.
+  access: "read" | "write" | null;
+  // The line the use is on, when grep found it.
+  text: string | null;
 }
 
 export interface UsagesResult {

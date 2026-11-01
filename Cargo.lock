@@ -1231,6 +1231,7 @@ dependencies = [
  "gitp-core",
  "notify",
  "portable-pty",
+ "regex-syntax",
  "serde",
  "serde_json",
  "tauri",
