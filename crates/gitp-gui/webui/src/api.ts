@@ -2153,7 +2153,8 @@ export async function generateReviewDrafts(number: number, command: string): Pro
   return invoke<string>("gh_generate_review", { number, command });
 }
 
-// Pick a review file (Markdown or JSON) in the file dialog; null when the
+// Pick a review file (Markdown, JSON, or the HTML review page that embeds
+// its Markdown source) in the file dialog; null when the
 // dialog was cancelled. The preview has a sample file of its own.
 export async function pickReviewFile(): Promise<string | null> {
   if (!isTauri()) return "/Users/you/review/pr-review-42.md";
@@ -2162,7 +2163,7 @@ export async function pickReviewFile(): Promise<string | null> {
     multiple: false,
     directory: false,
     title: "Load review comments",
-    filters: [{ name: "Review", extensions: ["md", "markdown", "json", "txt"] }],
+    filters: [{ name: "Review", extensions: ["md", "markdown", "json", "txt", "html", "htm"] }],
   });
   return typeof selected === "string" ? selected : null;
 }

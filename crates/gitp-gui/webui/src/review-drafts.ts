@@ -13,6 +13,8 @@
 //   is kept as a tag.
 // - JSON: an array of `{path, line, body, severity?, side?}`, or an object
 //   holding one under `findings` or `comments`.
+// - An HTML review page (the review skills' output) carries its Markdown in
+//   `<script type="text/plain" id="markdown-source">`; that is read as above.
 
 import type { FileDiff } from "./types";
 
@@ -30,7 +32,18 @@ export interface DraftComment {
 export function parseReviewFile(text: string): DraftComment[] {
   const trimmed = text.trim();
   if (trimmed.startsWith("[") || trimmed.startsWith("{")) return parseJson(trimmed);
+  if (/^<(!doctype|html)/i.test(trimmed)) {
+    const source = embeddedMarkdown(trimmed);
+    return source === null ? [] : parseMarkdown(source);
+  }
   return parseMarkdown(text);
+}
+
+/// The Markdown an HTML review page embeds, or null when it has none.
+function embeddedMarkdown(html: string): string | null {
+  const m = /<script[^>]*\bid="markdown-source"[^>]*>([\s\S]*?)<\/script>/i.exec(html);
+  if (!m) return null;
+  return m[1].replace(/<\\\/script>/gi, "</script>");
 }
 
 function parseJson(text: string): DraftComment[] {
@@ -109,8 +122,15 @@ function commentOf(block: string): string {
     return inner.trim();
   }
   const label = /\*\*Comment to paste:?\*\*:?\s*/i.exec(block);
-  if (label) return block.slice(label.index + label[0].length).trim();
+  if (label) return unwrapCopyBlock(block.slice(label.index + label[0].length));
   return block.trim();
+}
+
+/// The review pages wrap the comment in `<div class="copy-block">` for their
+/// Copy button; the comment is what's inside.
+function unwrapCopyBlock(text: string): string {
+  const m = /^\s*<div class="copy-block"[^>]*>([\s\S]*?)<\/div>\s*$/i.exec(text);
+  return (m ? m[1] : text).trim();
 }
 
 /// "blocking" from `**Severity:** 🔴 blocking`; the emoji and spaces are

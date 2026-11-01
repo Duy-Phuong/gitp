@@ -77,6 +77,13 @@ describe("parseReviewFile", () => {
     expect(parseReviewFile("{not json")).toEqual([]);
   });
 
+  it("reads the Markdown an HTML review page embeds", () => {
+    const md = "# PR Review\n\n### `src/a.ts:6`\n\n**Severity:** 🟡 minor\n\n**Explained simply:**\n\nWhy.\n\n**Comment to paste:**\n\n<div class=\"copy-block\" data-i=\"0\">\n\nOff by one.\n\n</div>\n";
+    const html = `<!doctype html>\n<html><head><script>const x = 1;</script></head><body><div id="root"></div>\n<script type="text/plain" id="markdown-source">${md}</script>\n</body></html>`;
+    expect(parseReviewFile(html)).toEqual([{ path: "src/a.ts", line: 6, side: "RIGHT", body: "Off by one.", severity: "minor" }]);
+    expect(parseReviewFile("<!doctype html><html><body>no review here</body></html>")).toEqual([]);
+  });
+
   it("gives nothing for text without findings", () => {
     expect(parseReviewFile("# Nothing here\n\nAll good.")).toEqual([]);
   });
