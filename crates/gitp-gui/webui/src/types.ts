@@ -865,9 +865,16 @@ export interface CodeFile {
   mtime_ms: number;
 }
 
+// What gitignore hid: the explorer's entries, and the files under them for
+// Quick Open (cut at 50 000; dependency caches left out).
+export interface Ignored {
+  entries: IgnoredEntry[];
+  files: string[];
+}
+
 export interface CodeWorkspace {
   files: FileEntry[];
-  ignored: IgnoredEntry[];
+  ignored: Ignored;
   // The first index is being built; "code-index-ready" follows.
   indexing: boolean;
 }

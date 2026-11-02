@@ -1,6 +1,7 @@
 // Quick open (Cmd/Ctrl+P): a file by fuzzy name, in Quick Launch's clothes.
 // Enter opens; Cmd/Ctrl+Enter opens and reveals it in the explorer. With no
-// query, the recently opened files come first, newest first.
+// query, the recently opened files come first, newest first. Gitignored
+// files are listed too, greyed, after the tracked ones on a tie.
 
 import { clear, el } from "../../dom";
 import { rankFuzzy } from "../../fuzzy";
@@ -8,7 +9,9 @@ import type { FileEntry } from "../../types";
 
 const LIMIT = 50;
 
-export function openQuickOpen(files: FileEntry[], onPick: (path: string, reveal: boolean) => void, recent: string[] = []): void {
+export function openQuickOpen(files: FileEntry[], onPick: (path: string, reveal: boolean) => void, recent: string[] = [], ignoredFiles: string[] = []): void {
+  const ignored = new Set(ignoredFiles);
+  const all: FileEntry[] = [...files, ...ignoredFiles.map((path) => ({ path, size: 0, lang: null, mtime_ms: 0 }))];
   const overlay = el("div", { class: "ql-overlay" });
   const panel = el("div", { class: "ql-panel", role: "dialog", "aria-label": "Open file" });
   const input = el("input", { class: "ql-input", type: "text", placeholder: "Open file by name…", autocomplete: "off", spellcheck: "false" });
@@ -34,11 +37,11 @@ export function openQuickOpen(files: FileEntry[], onPick: (path: string, reveal:
   const render = () => {
     clear(list);
     const query = input.value.trim();
-    let ranked = rankFuzzy(query, files, (f) => f.path, LIMIT);
+    let ranked = rankFuzzy(query, all, (f) => f.path, LIMIT);
     // Recent files that still exist head the list; the rest follow under "Files".
     let recentCount = 0;
     if (!query) {
-      const byPath = new Map(files.map((f) => [f.path, f]));
+      const byPath = new Map(all.map((f) => [f.path, f]));
       const head = recent.flatMap((p) => (byPath.has(p) ? [{ item: byPath.get(p)!, match: { score: 0, positions: [] } }] : []));
       const seen = new Set(head.map((r) => r.item.path));
       ranked = [...head, ...ranked.filter((r) => !seen.has(r.item.path))].slice(0, LIMIT);
@@ -53,7 +56,7 @@ export function openQuickOpen(files: FileEntry[], onPick: (path: string, reveal:
     ranked.forEach(({ item, match }, i) => {
       if (recentCount && i === 0) list.append(el("div", { class: "ql-section", text: "Recently opened" }));
       if (recentCount && i === recentCount) list.append(el("div", { class: "ql-section", text: "Files" }));
-      const row = el("div", { class: `ql-row${i === selected ? " selected" : ""}`, role: "option", "data-path": item.path });
+      const row = el("div", { class: `ql-row${ignored.has(item.path) ? " ql-row-ignored" : ""}${i === selected ? " selected" : ""}`, role: "option", "data-path": item.path });
       const label = el("span", { class: "ql-label" });
       const hits = new Set(match.positions);
       for (let j = 0; j < item.path.length; j++) {

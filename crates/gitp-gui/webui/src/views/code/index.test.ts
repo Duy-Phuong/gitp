@@ -56,9 +56,9 @@ function host(): HTMLElement {
 function fakeApi(files: FileEntry[], contents: Record<string, string>) {
   const listeners = { ready: [] as ((e: IndexReady) => void)[], changed: [] as ((e: CodeFilesChanged) => void)[] };
   const api: CodeApi = {
-    codeOpenWorkspace: vi.fn(async () => ({ files, ignored: [], indexing: false })),
+    codeOpenWorkspace: vi.fn(async () => ({ files, ignored: { entries: [], files: [] }, indexing: false })),
     codeRefresh: vi.fn(async () => files),
-    codeIgnored: vi.fn(async () => []),
+    codeIgnored: vi.fn(async () => ({ entries: [], files: [] })),
     codeListDir: vi.fn(async () => []),
     codeReadFile: vi.fn(async (p: string): Promise<CodeFile | null> => (p in contents ? { text: contents[p], crlf: false, mixed: false, mtime_ms: 5 } : null)),
     codeWriteFile: vi.fn(async () => 6),

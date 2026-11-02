@@ -4,7 +4,7 @@
 // events do to the tree and the tabs — and leaves rendering to its parts.
 
 import { clear, el } from "../../dom";
-import type { CodeFile, CodeFilesChanged, CodeWorkspace, FileEntry, HierarchyNode, IgnoredEntry, IndexReady, Location, SearchQuery, SearchResult, Symbol, UsagesResult } from "../../types";
+import type { CodeFile, CodeFilesChanged, CodeWorkspace, FileEntry, HierarchyNode, Ignored, IgnoredEntry, IndexReady, Location, SearchQuery, SearchResult, Symbol, UsagesResult } from "../../types";
 import { loadCodeLayout, saveCodeLayout } from "../../prefs";
 import { showDefinitionPicker } from "./definition-picker";
 import { AutoSave, CodeEditor, type CodeEditorDeps, type EditorLike } from "./editor";
@@ -22,7 +22,7 @@ import { Tabs } from "./tabs";
 export interface CodeApi {
   codeOpenWorkspace: () => Promise<CodeWorkspace>;
   codeRefresh: () => Promise<FileEntry[]>;
-  codeIgnored: () => Promise<IgnoredEntry[]>;
+  codeIgnored: () => Promise<Ignored>;
   codeListDir: (path: string) => Promise<IgnoredEntry[]>;
   codeReadFile: (path: string) => Promise<CodeFile | null>;
   codeWriteFile: (path: string, text: string, crlf: boolean, expectedMtimeMs: number) => Promise<number>;
@@ -117,15 +117,18 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   panelHost.append(paneBar, paneBodies.search, paneBodies.usages, paneBodies.hierarchy);
 
   let files: FileEntry[] = [];
-  // Gitignored paths, and the contents of those directories opened so far.
+  // Gitignored paths, the contents of those directories opened so far, and
+  // the files under them for Quick Open.
   let ignored: IgnoredEntry[] = [];
+  let ignoredFiles: string[] = [];
   const listed = new Map<string, IgnoredEntry[]>();
   const ignoredDirs = new Set<string>();
-  const setIgnored = (entries: IgnoredEntry[]) => {
-    ignored = entries;
+  const setIgnored = (ig: Ignored) => {
+    ignored = ig.entries;
+    ignoredFiles = ig.files;
     listed.clear();
     ignoredDirs.clear();
-    for (const e of entries) if (e.dir) ignoredDirs.add(e.path);
+    for (const e of ig.entries) if (e.dir) ignoredDirs.add(e.path);
   };
   let opened = false;
   let indexing = false;
@@ -372,7 +375,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
           void openFile({ path, line: 0, col: 0 }).then(() => {
             if (!reveal) editor.focus();
           });
-        }, recent.filter((p) => p !== tabs.active()));
+        }, recent.filter((p) => p !== tabs.active()), ignoredFiles);
         break;
     }
   };
@@ -647,7 +650,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     previewing.clear();
     syncPreview();
     files = [];
-    setIgnored([]);
+    setIgnored({ entries: [], files: [] });
     opened = false;
     usagesPanel.clear();
     hierarchyPanel.clear();

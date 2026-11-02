@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-use gitp_code::files::{self, walk, FileEntry, IgnoredEntry};
+use gitp_code::files::{self, walk, FileEntry, IgnoredEntry, IGNORED_FILES_MAX};
 use gitp_code::grep::{self, Query, SearchResult};
 use gitp_code::lang::{Family, Lang};
 use gitp_code::index::{reindex_many, RefKind, Reference, Range, Symbol, SymbolIndex, SymbolKind};
@@ -58,9 +58,22 @@ impl CodeState {
 #[derive(Serialize)]
 pub(crate) struct Workspace {
     files: Vec<FileEntry>,
-    /// What gitignore hid, for the explorer alone.
-    ignored: Vec<IgnoredEntry>,
+    ignored: Ignored,
     indexing: bool,
+}
+
+/// What gitignore hid: the explorer's entries, and the files under them for
+/// quick open. The index and the search never see either.
+#[derive(Serialize)]
+pub(crate) struct Ignored {
+    entries: Vec<IgnoredEntry>,
+    files: Vec<String>,
+}
+
+fn ignored_of(root: &Path, files: &[FileEntry]) -> Ignored {
+    let entries = files::ignored(root, files);
+    let files = files::ignored_files(root, &entries, IGNORED_FILES_MAX);
+    Ignored { entries, files }
 }
 
 /// A file as the editor holds it, with the mtime a save must present.
@@ -147,7 +160,7 @@ fn ready_index(state: &RepoState) -> Result<(Arc<CodeState>, PathBuf), String> {
 pub(crate) fn code_open_workspace_impl(state: &RepoState, emit: Emit) -> Result<Workspace, String> {
     let (code, root) = code_state_or_init(state)?;
     let files = walk(&root)?;
-    let ignored = files::ignored(&root, &files);
+    let ignored = ignored_of(&root, &files);
     *code.files.write().unwrap() = files.clone();
     if code.ready.load(Ordering::SeqCst) {
         // Back from another repository tab, whose watcher was not live: the
@@ -190,10 +203,10 @@ pub(crate) fn code_refresh_impl(state: &RepoState) -> Result<Vec<FileEntry>, Str
 }
 
 /// The gitignored paths beside the files listed last, for the explorer.
-pub(crate) fn code_ignored_impl(state: &RepoState) -> Result<Vec<IgnoredEntry>, String> {
+pub(crate) fn code_ignored_impl(state: &RepoState) -> Result<Ignored, String> {
     let (code, root) = code_state_or_init(state)?;
     let files = code.files.read().unwrap();
-    Ok(files::ignored(&root, &files))
+    Ok(ignored_of(&root, &files))
 }
 
 /// The contents of an ignored directory, listed as the explorer opens it.
@@ -488,7 +501,7 @@ pub(crate) fn code_refresh(state: State<RepoState>) -> Result<Vec<FileEntry>, St
 }
 
 #[tauri::command(async)]
-pub(crate) fn code_ignored(state: State<RepoState>) -> Result<Vec<IgnoredEntry>, String> {
+pub(crate) fn code_ignored(state: State<RepoState>) -> Result<Ignored, String> {
     code_ignored_impl(&state)
 }
 

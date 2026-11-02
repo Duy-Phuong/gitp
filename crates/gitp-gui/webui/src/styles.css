@@ -5979,7 +5979,8 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   color: var(--text);
 }
 /* Gitignored: there, but out of the index, like an IDE's excluded folder. */
-.code-row-ignored .code-row-name {
+.code-row-ignored .code-row-name,
+.ql-row-ignored .ql-label {
   color: var(--text-dim);
   opacity: 0.6;
 }

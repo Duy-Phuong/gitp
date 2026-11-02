@@ -50,6 +50,7 @@ import type {
   CodeFilesChanged,
   CodeWorkspace,
   FileEntry,
+  Ignored,
   IgnoredEntry,
   HierarchyNode,
   IndexReady,
@@ -3186,7 +3187,7 @@ function mockFileEntries(): FileEntry[] {
 }
 
 export async function codeOpenWorkspace(): Promise<CodeWorkspace> {
-  if (!isTauri()) return { files: mockFileEntries(), ignored: [], indexing: false };
+  if (!isTauri()) return { files: mockFileEntries(), ignored: { entries: [], files: [] }, indexing: false };
   return invoke<CodeWorkspace>("code_open_workspace", {});
 }
 
@@ -3195,9 +3196,9 @@ export async function codeRefresh(): Promise<FileEntry[]> {
   return invoke<FileEntry[]>("code_refresh", {});
 }
 
-export async function codeIgnored(): Promise<IgnoredEntry[]> {
-  if (!isTauri()) return [];
-  return invoke<IgnoredEntry[]>("code_ignored", {});
+export async function codeIgnored(): Promise<Ignored> {
+  if (!isTauri()) return { entries: [], files: [] };
+  return invoke<Ignored>("code_ignored", {});
 }
 
 export async function codeListDir(path: string): Promise<IgnoredEntry[]> {

@@ -99,6 +99,46 @@ pub fn ignored(root: &Path, files: &[FileEntry]) -> Vec<IgnoredEntry> {
     out
 }
 
+/// Quick open stops collecting ignored files here: enough for release notes
+/// and generated sources, not a copy of every dependency.
+pub const IGNORED_FILES_MAX: usize = 50_000;
+
+/// Dependency and build caches that quick open never lists.
+const SKIPPED_DIRS: &[&str] = &["node_modules", "target", ".gradle", ".git"];
+
+/// Every file under the ignored entries, for quick open: `ignored` itself
+/// lists no contents. Sorted by path; cut at `max` files.
+pub fn ignored_files(root: &Path, ignored: &[IgnoredEntry], max: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for e in ignored {
+        if out.len() >= max {
+            break;
+        }
+        if !e.dir {
+            out.push(e.path.clone());
+            continue;
+        }
+        if SKIPPED_DIRS.contains(&e.path.rsplit('/').next().unwrap_or("")) {
+            continue;
+        }
+        let walker = ignore::WalkBuilder::new(root.join(&e.path))
+            .standard_filters(false)
+            .filter_entry(|d| !(d.file_type().is_some_and(|t| t.is_dir()) && SKIPPED_DIRS.contains(&d.file_name().to_string_lossy().as_ref())))
+            .build();
+        for entry in walker.flatten() {
+            if out.len() >= max {
+                break;
+            }
+            if entry.file_type().is_some_and(|t| t.is_file()) {
+                let rel = entry.path().strip_prefix(root).unwrap_or(entry.path()).to_string_lossy().replace('\\', "/");
+                out.push(rel);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 /// The direct children of `dir` (repository-relative), sorted by path.
 pub fn list_dir(root: &Path, dir: &str) -> Result<Vec<IgnoredEntry>, String> {
     let mut out = Vec::new();
@@ -166,6 +206,19 @@ mod tests {
         );
         let inside = list_dir(dir.path(), "build").unwrap();
         assert_eq!(inside.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), vec!["build/deep.log", "build/x.class"]);
+    }
+
+    #[test]
+    fn ignored_files_descend_for_quick_open_but_skip_dependency_caches() {
+        let dir = tree();
+        std::fs::create_dir_all(dir.path().join("build/node_modules/x")).unwrap();
+        std::fs::write(dir.path().join("build/node_modules/x/i.js"), "x").unwrap();
+        std::fs::create_dir_all(dir.path().join("build/notes")).unwrap();
+        std::fs::write(dir.path().join("build/notes/3.36.0.md"), "x").unwrap();
+        let files = walk(dir.path()).unwrap();
+        let ignored = ignored(dir.path(), &files);
+        assert_eq!(ignored_files(dir.path(), &ignored, 100), vec!["build/notes/3.36.0.md", "build/x.class", "run.log"]);
+        assert_eq!(ignored_files(dir.path(), &ignored, 1).len(), 1);
     }
 
     #[test]

@@ -27,6 +27,16 @@ describe("openQuickOpen", () => {
     expect(rows()[0].querySelectorAll("b").length).toBe(4);
   });
 
+  it("finds gitignored files too, greyed", () => {
+    const pick = vi.fn();
+    openQuickOpen(files, pick, [], ["target/notes/3.36.0.md"]);
+    type("3.36.0");
+    expect(rows().map((r) => r.dataset.path)).toEqual(["target/notes/3.36.0.md"]);
+    expect(rows()[0].classList.contains("ql-row-ignored")).toBe(true);
+    key("Enter");
+    expect(pick).toHaveBeenCalledWith("target/notes/3.36.0.md", false);
+  });
+
   it("Enter picks the highlighted row; arrows move it", () => {
     const pick = vi.fn();
     openQuickOpen(files, pick);
