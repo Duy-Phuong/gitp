@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-use gitp_code::files::{walk, FileEntry};
+use gitp_code::files::{self, walk, FileEntry, IgnoredEntry};
 use gitp_code::grep::{self, Query, SearchResult};
 use gitp_code::lang::{Family, Lang};
 use gitp_code::index::{reindex_many, RefKind, Reference, Range, Symbol, SymbolIndex, SymbolKind};
@@ -58,6 +58,8 @@ impl CodeState {
 #[derive(Serialize)]
 pub(crate) struct Workspace {
     files: Vec<FileEntry>,
+    /// What gitignore hid, for the explorer alone.
+    ignored: Vec<IgnoredEntry>,
     indexing: bool,
 }
 
@@ -145,15 +147,16 @@ fn ready_index(state: &RepoState) -> Result<(Arc<CodeState>, PathBuf), String> {
 pub(crate) fn code_open_workspace_impl(state: &RepoState, emit: Emit) -> Result<Workspace, String> {
     let (code, root) = code_state_or_init(state)?;
     let files = walk(&root)?;
+    let ignored = files::ignored(&root, &files);
     *code.files.write().unwrap() = files.clone();
     if code.ready.load(Ordering::SeqCst) {
         // Back from another repository tab, whose watcher was not live: the
         // files that changed meanwhile are parsed again.
         refresh_stale(&code, &root, &files);
-        return Ok(Workspace { files, indexing: false });
+        return Ok(Workspace { files, ignored, indexing: false });
     }
     if code.indexing.swap(true, Ordering::SeqCst) {
-        return Ok(Workspace { files, indexing: true }); // a build is on its way
+        return Ok(Workspace { files, ignored, indexing: true }); // a build is on its way
     }
     let (index, ready, indexing, files_for_thread) = (code.index.clone(), code.ready.clone(), code.indexing.clone(), files.clone());
     std::thread::spawn(move || {
@@ -171,7 +174,7 @@ pub(crate) fn code_open_workspace_impl(state: &RepoState, emit: Emit) -> Result<
         let payload = IndexReady { symbols, files: files_for_thread.len(), ms: t.elapsed().as_millis() };
         emit(INDEX_READY_EVENT, serde_json::to_value(payload).unwrap_or_default());
     });
-    Ok(Workspace { files, indexing: true })
+    Ok(Workspace { files, ignored, indexing: true })
 }
 
 /// Walk again and reindex what changed since: the repo tab was inactive, or
@@ -184,6 +187,26 @@ pub(crate) fn code_refresh_impl(state: &RepoState) -> Result<Vec<FileEntry>, Str
     }
     *code.files.write().unwrap() = files.clone();
     Ok(files)
+}
+
+/// The gitignored paths beside the files listed last, for the explorer.
+pub(crate) fn code_ignored_impl(state: &RepoState) -> Result<Vec<IgnoredEntry>, String> {
+    let (code, root) = code_state_or_init(state)?;
+    let files = code.files.read().unwrap();
+    Ok(files::ignored(&root, &files))
+}
+
+/// The contents of an ignored directory, listed as the explorer opens it.
+pub(crate) fn code_list_dir_impl(state: &RepoState, path: String) -> Result<Vec<IgnoredEntry>, String> {
+    let (_, root) = code_state_or_init(state)?;
+    let plain = !path.is_empty()
+        && Path::new(&path)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(n) if !n.eq_ignore_ascii_case(".git")));
+    if !plain {
+        return Err(format!("not a path inside the repository: {path}"));
+    }
+    files::list_dir(&root, &path)
 }
 
 /// Parse again whatever changed since it was indexed, outside the lock.
@@ -462,6 +485,16 @@ pub(crate) fn code_open_workspace(app: AppHandle, state: State<RepoState>) -> Re
 #[tauri::command(async)]
 pub(crate) fn code_refresh(state: State<RepoState>) -> Result<Vec<FileEntry>, String> {
     code_refresh_impl(&state)
+}
+
+#[tauri::command(async)]
+pub(crate) fn code_ignored(state: State<RepoState>) -> Result<Vec<IgnoredEntry>, String> {
+    code_ignored_impl(&state)
+}
+
+#[tauri::command(async)]
+pub(crate) fn code_list_dir(path: String, state: State<RepoState>) -> Result<Vec<IgnoredEntry>, String> {
+    code_list_dir_impl(&state, path)
 }
 
 #[tauri::command(async)]

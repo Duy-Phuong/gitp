@@ -278,6 +278,8 @@ pub fn run() {
             editor::list_work_files,
             code::code_open_workspace,
             code::code_refresh,
+            code::code_ignored,
+            code::code_list_dir,
             code::code_read_file,
             code::code_write_file,
             code::code_definition,

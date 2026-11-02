@@ -1,10 +1,11 @@
 // The Code tab's file tree: folders before files, case-insensitive, lazy —
-// only an expanded folder's children are in the DOM. Gitignored paths never
-// reach it (the backend's walk skipped them), so a build directory is simply
-// absent, as an IDE's "excluded" folder.
+// only an expanded folder's children are in the DOM. Gitignored paths are
+// shown greyed, as an IDE's "excluded" folders; the backend's walk skipped
+// them, so an ignored directory's contents arrive only once it is opened
+// (`listed`), and until then it is an empty folder.
 
 import { chevronIcon, clear, el } from "../../dom";
-import type { FileEntry, Lang } from "../../types";
+import type { FileEntry, IgnoredEntry, Lang } from "../../types";
 
 export interface TreeNode {
   name: string;
@@ -12,6 +13,7 @@ export interface TreeNode {
   lang: Lang | null;
   // Folders have children; files don't.
   children?: TreeNode[];
+  ignored?: boolean;
 }
 
 export interface ExplorerState {
@@ -24,10 +26,10 @@ export interface ExplorerCallbacks {
   toggle: (path: string) => void;
 }
 
-export function buildTree(files: FileEntry[]): TreeNode {
+export function buildTree(files: FileEntry[], ignored: IgnoredEntry[] = [], listed: Map<string, IgnoredEntry[]> = new Map()): TreeNode {
   const root: TreeNode = { name: "", path: "", lang: null, children: [] };
-  for (const f of files) {
-    const parts = f.path.split("/");
+  const insert = (leaf: TreeNode) => {
+    const parts = leaf.path.split("/");
     let node = root;
     for (let i = 0; i < parts.length - 1; i++) {
       const path = parts.slice(0, i + 1).join("/");
@@ -38,8 +40,15 @@ export function buildTree(files: FileEntry[]): TreeNode {
       }
       node = next;
     }
-    node.children!.push({ name: parts[parts.length - 1], path: f.path, lang: f.lang });
-  }
+    node.children!.push(leaf);
+  };
+  const ignoredNode = (e: IgnoredEntry): TreeNode => {
+    const name = e.path.slice(e.path.lastIndexOf("/") + 1);
+    if (!e.dir) return { name, path: e.path, lang: null, ignored: true };
+    return { name, path: e.path, lang: null, ignored: true, children: (listed.get(e.path) ?? []).map(ignoredNode) };
+  };
+  for (const f of files) insert({ name: f.path.slice(f.path.lastIndexOf("/") + 1), path: f.path, lang: f.lang });
+  for (const e of ignored) insert(ignoredNode(e));
   sortTree(root);
   return root;
 }
@@ -115,7 +124,7 @@ export function renderExplorer(host: HTMLElement, tree: TreeNode, state: Explore
       const row = el(
         "div",
         {
-          class: `code-row${folder ? " code-row-folder" : " code-row-file"}${state.selected === child.path ? " selected" : ""}${open ? " open" : ""}`,
+          class: `code-row${folder ? " code-row-folder" : " code-row-file"}${child.ignored ? " code-row-ignored" : ""}${state.selected === child.path ? " selected" : ""}${open ? " open" : ""}`,
           "data-path": child.path,
           title: child.path,
           style: `--depth:${depth}`,

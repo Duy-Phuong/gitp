@@ -17,6 +17,29 @@ describe("buildTree", () => {
     const tree = buildTree([entry("a/b/c/d.ts")]);
     expect(tree.children![0].children?.[0].children?.[0].children?.[0].path).toBe("a/b/c/d.ts");
   });
+
+  it("adds ignored paths greyed, a directory's contents once listed", () => {
+    const ignored = [
+      { path: "target", dir: true },
+      { path: "src/gen.log", dir: false },
+    ];
+    const empty = buildTree([entry("src/a.ts")], ignored);
+    expect(empty.children!.map((n) => [n.name, !!n.ignored, !!n.children])).toEqual([
+      ["src", false, true],
+      ["target", true, true],
+    ]);
+    expect(empty.children![0].children!.map((n) => n.path)).toEqual(["src/a.ts", "src/gen.log"]);
+    expect(empty.children![1].children).toEqual([]);
+    const listed = new Map([["target", [{ path: "target/debug", dir: true }, { path: "target/x.o", dir: false }]]]);
+    const full = buildTree([entry("src/a.ts")], ignored, listed);
+    expect(full.children![1].children!.map((n) => [n.path, !!n.ignored, !!n.children])).toEqual([
+      ["target/debug", true, true],
+      ["target/x.o", true, false],
+    ]);
+    const host = document.createElement("div");
+    renderExplorer(host, full, { expanded: new Set(["target"]), selected: null }, { open: () => {}, toggle: () => {} });
+    expect([...host.querySelectorAll<HTMLElement>(".code-row-ignored")].map((r) => r.dataset.path)).toEqual(["target", "target/debug", "target/x.o"]);
+  });
 });
 
 describe("revealPath", () => {

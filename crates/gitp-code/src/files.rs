@@ -1,6 +1,9 @@
 //! The files of a working tree, as the explorer, quick open, the index and
 //! the search see them: gitignore honoured, `.git` skipped, dotfiles shown.
+//! The explorer alone also shows what gitignore hid, greyed, as an IDE's
+//! excluded folders: `ignored` finds those paths, `list_dir` opens one.
 
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
 use serde::Serialize;
@@ -54,6 +57,64 @@ pub fn walk(root: &Path) -> Result<Vec<FileEntry>, String> {
     Ok(files)
 }
 
+/// A gitignored path: shown greyed in the explorer, kept out of the index,
+/// quick open and search. A directory's contents are listed when opened.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct IgnoredEntry {
+    /// Repository-relative, `/`-separated.
+    pub path: String,
+    pub dir: bool,
+}
+
+/// The ignored entries beside `files`: in every directory the walk went
+/// through (the root included), what `read_dir` shows that the walk did
+/// not. An ignored directory is one entry; nothing under it is read.
+pub fn ignored(root: &Path, files: &[FileEntry]) -> Vec<IgnoredEntry> {
+    let mut dirs: BTreeSet<&str> = BTreeSet::from([""]);
+    let mut known: HashSet<&str> = HashSet::new();
+    for f in files {
+        known.insert(&f.path);
+        let mut end = f.path.len();
+        while let Some(i) = f.path[..end].rfind('/') {
+            dirs.insert(&f.path[..i]);
+            end = i;
+        }
+    }
+    known.extend(dirs.iter().copied());
+    let mut out = Vec::new();
+    for dir in dirs {
+        let Ok(children) = std::fs::read_dir(root.join(dir)) else { continue };
+        for child in children.flatten() {
+            let name = child.file_name().to_string_lossy().into_owned();
+            if name == ".git" {
+                continue;
+            }
+            let path = if dir.is_empty() { name } else { format!("{dir}/{name}") };
+            if !known.contains(path.as_str()) {
+                out.push(IgnoredEntry { dir: child.file_type().is_ok_and(|t| t.is_dir()), path });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
+}
+
+/// The direct children of `dir` (repository-relative), sorted by path.
+pub fn list_dir(root: &Path, dir: &str) -> Result<Vec<IgnoredEntry>, String> {
+    let mut out = Vec::new();
+    for child in std::fs::read_dir(root.join(dir)).map_err(|e| format!("can't list {dir}: {e}"))? {
+        let child = child.map_err(|e| e.to_string())?;
+        let name = child.file_name().to_string_lossy().into_owned();
+        if name == ".git" {
+            continue;
+        }
+        let path = if dir.is_empty() { name } else { format!("{dir}/{name}") };
+        out.push(IgnoredEntry { dir: child.file_type().is_ok_and(|t| t.is_dir()), path });
+    }
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(out)
+}
+
 /// A file's modification time in milliseconds since the epoch; 0 when the
 /// platform doesn't say.
 pub fn mtime_ms(meta: &std::fs::Metadata) -> u64 {
@@ -88,6 +149,23 @@ mod tests {
         let dir = tree();
         let paths: Vec<String> = walk(dir.path()).unwrap().into_iter().map(|f| f.path).collect();
         assert_eq!(paths, vec![".github/ci.yml", ".gitignore", "src/a.java"]);
+    }
+
+    #[test]
+    fn ignored_lists_what_the_walk_skipped_without_descending() {
+        let dir = tree();
+        std::fs::write(dir.path().join("build/deep.log"), "x").unwrap();
+        let files = walk(dir.path()).unwrap();
+        let ignored = ignored(dir.path(), &files);
+        assert_eq!(
+            ignored,
+            vec![
+                IgnoredEntry { path: "build".into(), dir: true },
+                IgnoredEntry { path: "run.log".into(), dir: false }
+            ]
+        );
+        let inside = list_dir(dir.path(), "build").unwrap();
+        assert_eq!(inside.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), vec!["build/deep.log", "build/x.class"]);
     }
 
     #[test]

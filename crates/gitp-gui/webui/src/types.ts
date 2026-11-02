@@ -785,6 +785,13 @@ export interface FileEntry {
   mtime_ms: number;
 }
 
+// A gitignored path, shown greyed in the explorer; a directory's contents
+// are listed when it is opened.
+export interface IgnoredEntry {
+  path: string;
+  dir: boolean;
+}
+
 export interface Location {
   path: string;
   line: number;
@@ -860,6 +867,7 @@ export interface CodeFile {
 
 export interface CodeWorkspace {
   files: FileEntry[];
+  ignored: IgnoredEntry[];
   // The first index is being built; "code-index-ready" follows.
   indexing: boolean;
 }

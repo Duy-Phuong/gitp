@@ -60,6 +60,8 @@ import {
   codeReadFile,
   codeReferences,
   codeRefresh,
+  codeIgnored,
+  codeListDir,
   codeSearch,
   codeWriteFile,
   onCodeFilesChanged,
@@ -526,7 +528,7 @@ async function init(): Promise<void> {
     recent: loadRecentRepos,
   });
   ui.codeView = setupCodeView($("#code-view"), {
-    api: { codeOpenWorkspace, codeRefresh, codeReadFile, codeWriteFile, codeDefinition, codeReferences, codeCallers, codeCallees, codeSearch, onCodeIndexReady, onCodeFilesChanged },
+    api: { codeOpenWorkspace, codeRefresh, codeIgnored, codeListDir, codeReadFile, codeWriteFile, codeDefinition, codeReferences, codeCallers, codeCallees, codeSearch, onCodeIndexReady, onCodeFilesChanged },
     toast: (message, kind = "info") => toast(message, { kind }),
     reportError: opFailed,
     isShowing: () => state.view === "code",

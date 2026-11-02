@@ -4,7 +4,7 @@
 // events do to the tree and the tabs — and leaves rendering to its parts.
 
 import { clear, el } from "../../dom";
-import type { CodeFile, CodeFilesChanged, CodeWorkspace, FileEntry, HierarchyNode, IndexReady, Location, SearchQuery, SearchResult, Symbol, UsagesResult } from "../../types";
+import type { CodeFile, CodeFilesChanged, CodeWorkspace, FileEntry, HierarchyNode, IgnoredEntry, IndexReady, Location, SearchQuery, SearchResult, Symbol, UsagesResult } from "../../types";
 import { loadCodeLayout, saveCodeLayout } from "../../prefs";
 import { showDefinitionPicker } from "./definition-picker";
 import { AutoSave, CodeEditor, type CodeEditorDeps, type EditorLike } from "./editor";
@@ -22,6 +22,8 @@ import { Tabs } from "./tabs";
 export interface CodeApi {
   codeOpenWorkspace: () => Promise<CodeWorkspace>;
   codeRefresh: () => Promise<FileEntry[]>;
+  codeIgnored: () => Promise<IgnoredEntry[]>;
+  codeListDir: (path: string) => Promise<IgnoredEntry[]>;
   codeReadFile: (path: string) => Promise<CodeFile | null>;
   codeWriteFile: (path: string, text: string, crlf: boolean, expectedMtimeMs: number) => Promise<number>;
   codeDefinition: (path: string, line: number, col: number) => Promise<Symbol[]>;
@@ -115,6 +117,16 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   panelHost.append(paneBar, paneBodies.search, paneBodies.usages, paneBodies.hierarchy);
 
   let files: FileEntry[] = [];
+  // Gitignored paths, and the contents of those directories opened so far.
+  let ignored: IgnoredEntry[] = [];
+  const listed = new Map<string, IgnoredEntry[]>();
+  const ignoredDirs = new Set<string>();
+  const setIgnored = (entries: IgnoredEntry[]) => {
+    ignored = entries;
+    listed.clear();
+    ignoredDirs.clear();
+    for (const e of entries) if (e.dir) ignoredDirs.add(e.path);
+  };
   let opened = false;
   let indexing = false;
   const explorer: ExplorerState = { expanded: new Set(), selected: null };
@@ -196,7 +208,8 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   explorerHost.tabIndex = 0;
   explorerHost.addEventListener("keydown", (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-    const r = explorerKey(buildTree(files), explorer, e.key);
+    const r = explorerKey(buildTree(files, ignored, listed), explorer, e.key);
+    for (const p of explorer.expanded) if (ignoredDirs.has(p) && !listed.has(p)) void listIgnored(p);
     if (r === "ignored") return;
     e.preventDefault();
     if (typeof r === "object") void openFile({ path: r.open, line: 0, col: 0 });
@@ -205,14 +218,29 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   });
 
   const renderTree = () => {
-    renderExplorer(explorerHost, buildTree(files), explorer, {
+    renderExplorer(explorerHost, buildTree(files, ignored, listed), explorer, {
       open: (path) => void openFile({ path, line: 0, col: 0 }),
       toggle: (path) => {
-        if (!explorer.expanded.delete(path)) explorer.expanded.add(path);
+        if (!explorer.expanded.delete(path)) {
+          explorer.expanded.add(path);
+          if (ignoredDirs.has(path) && !listed.has(path)) void listIgnored(path);
+        }
         explorer.selected = path; // the keyboard carries on from here
         renderTree();
       },
     });
+  };
+
+  // An ignored directory's contents, fetched the first time it is opened.
+  const listIgnored = async (path: string) => {
+    try {
+      const entries = await deps.api.codeListDir(path);
+      listed.set(path, entries);
+      for (const e of entries) if (e.dir) ignoredDirs.add(e.path);
+      renderTree();
+    } catch (err) {
+      deps.reportError(`Couldn't list ${path}`, err);
+    }
   };
 
   const langOf = (path: string) => files.find((f) => f.path === path)?.lang ?? null;
@@ -587,8 +615,9 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
   const start = () => {
     subscribe();
     if (opened) {
-      void deps.api.codeRefresh().then((f) => {
+      void deps.api.codeRefresh().then(async (f) => {
         files = f;
+        setIgnored(await deps.api.codeIgnored());
         renderTree();
       });
       return;
@@ -598,6 +627,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
       .codeOpenWorkspace()
       .then((ws) => {
         files = ws.files;
+        setIgnored(ws.ignored);
         indexing = ws.indexing;
         recent = deps.recentFiles?.load() ?? [];
         renderTree();
@@ -617,6 +647,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     previewing.clear();
     syncPreview();
     files = [];
+    setIgnored([]);
     opened = false;
     usagesPanel.clear();
     hierarchyPanel.clear();
