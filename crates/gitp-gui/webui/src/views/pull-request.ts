@@ -31,7 +31,7 @@ import {
 } from "../pull-requests";
 import { fullTime, relativeTime } from "../timeago";
 import { checkAnchor, type DraftComment } from "../review-drafts";
-import type { FileDiff, LineComment, PrLabel, PrReviewComment, PullRequestDetail, ReviewVerdict } from "../types";
+import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PullRequestDetail, ReviewVerdict } from "../types";
 
 export interface PullRequestCallbacks {
   fetchDetail: (number: number) => Promise<PullRequestDetail>;
@@ -48,6 +48,8 @@ export interface PullRequestCallbacks {
   // the view then reloads the conversation.
   comment: (pr: PullRequestDetail, body: string) => Promise<boolean>;
   reply: (pr: PullRequestDetail, root: PrReviewComment, body: string) => Promise<boolean>;
+  // Marks a thread resolved (or open again); true once done.
+  resolve: (pr: PullRequestDetail, thread: PrReviewThread, resolve: boolean) => Promise<boolean>;
   lineComment: (pr: PullRequestDetail, comment: LineComment) => Promise<boolean>;
   // Picks and reads a review file; its findings, or null when nothing was
   // picked (the caller has reported why).
@@ -275,7 +277,14 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         );
       }
     }
-    for (const c of [root, ...thread.replies]) node.append(card(c.author, c.created_at, "", c.body, [], "pr-thread-comment"));
+    // Resolved threads fold to their first comment, as on GitHub.
+    const state = pr.review_threads.find((t) => t.comment_ids.includes(root.id));
+    const resolved = state?.resolved ?? false;
+    node.classList.toggle("resolved", resolved);
+    if (resolved) {
+      node.append(el("div", { class: "pr-thread-resolved" }, [el("span", { class: "pr-badge", text: "Resolved" }), el("span", { text: `${1 + thread.replies.length} comment${thread.replies.length ? "s" : ""}` })]));
+    }
+    for (const c of resolved ? [root] : [root, ...thread.replies]) node.append(card(c.author, c.created_at, "", c.body, [], "pr-thread-comment"));
     const open = smallButton("Reply…", () => {
       open.replaceWith(
         replyBox("Reply (Markdown)", "Reply", async (text) => {
@@ -285,7 +294,17 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         }),
       );
     });
-    node.append(el("div", { class: "pr-thread-actions" }, [open]));
+    const actions = el("div", { class: "pr-thread-actions" }, [open]);
+    if (state) {
+      actions.prepend(
+        smallButton(resolved ? "Unresolve" : "Resolve", () => {
+          void cb.resolve(pr, state, !resolved).then((ok) => {
+            if (ok) void load(true);
+          });
+        }),
+      );
+    }
+    node.append(actions);
     return node;
   }
 

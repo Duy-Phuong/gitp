@@ -683,6 +683,13 @@ export interface PrComment {
   url: string;
 }
 
+// A line-comment thread's state: resolved or not, and its comments' ids.
+export interface PrReviewThread {
+  id: string;
+  resolved: boolean;
+  comment_ids: number[];
+}
+
 // A comment on a diff line: a thread's first, or a reply in it.
 export interface PrReviewComment {
   id: number;
@@ -719,6 +726,8 @@ export interface PullRequestDetail {
   reviews: PrReview[];
   comments: PrComment[];
   review_comments: PrReviewComment[];
+  // Which line-comment threads are resolved (empty when the host didn't say).
+  review_threads: PrReviewThread[];
   additions: number;
   deletions: number;
   changed_files: number;

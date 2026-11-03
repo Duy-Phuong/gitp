@@ -167,6 +167,12 @@ fn gh_reply_impl(
     })
 }
 
+fn gh_resolve_thread_impl(state: &RepoState, thread_id: String, resolve: bool) -> Result<(), String> {
+    with_repo_unlocked(state, |repo| {
+        repo.resolve_review_thread(&Gh::system(), &thread_id, resolve)
+    })
+}
+
 fn gh_line_comment_impl(
     state: &RepoState,
     number: u64,
@@ -384,6 +390,15 @@ pub(crate) fn gh_reply(
     state: State<RepoState>,
 ) -> Result<PrReviewComment, String> {
     gh_reply_impl(&state, number, comment_id, body)
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_resolve_thread(
+    thread_id: String,
+    resolve: bool,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    gh_resolve_thread_impl(&state, thread_id, resolve)
 }
 
 #[tauri::command(async)]

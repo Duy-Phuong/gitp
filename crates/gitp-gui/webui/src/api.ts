@@ -2014,6 +2014,14 @@ export async function mergePullRequest(number: number, method: MergeMethod, dele
 }
 
 // Reply in a line comment's thread.
+export async function resolveReviewThread(threadId: string, resolve: boolean): Promise<void> {
+  if (!isTauri()) {
+    for (const d of MOCK_PR_DETAILS.values()) for (const t of d.review_threads) if (t.id === threadId) t.resolved = resolve;
+    return;
+  }
+  await invoke<void>("gh_resolve_thread", { threadId, resolve });
+}
+
 export async function replyToReviewComment(number: number, commentId: number, body: string): Promise<PrReviewComment> {
   if (!isTauri()) {
     const detail = mockPrDetailOf(number);
@@ -3051,6 +3059,7 @@ function mockPrDetail(pr: PullRequest): PullRequestDetail {
     reviews: [],
     comments: [],
     review_comments: [],
+    review_threads: [],
     additions: 2,
     deletions: 1,
     changed_files: 1,
@@ -3110,6 +3119,7 @@ const MOCK_PR_DETAILS = new Map<number, PullRequestDetail>([
           diff_hunk: "",
         },
       ],
+      review_threads: [{ id: "PRRT_mock", resolved: false, comment_ids: [501, 502] }],
       additions: 9,
       deletions: 2,
       changed_files: 2,

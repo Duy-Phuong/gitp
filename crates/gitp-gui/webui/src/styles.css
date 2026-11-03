@@ -5110,6 +5110,17 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   justify-content: flex-end;
   gap: 6px;
 }
+/* A resolved thread folds to its first comment, dimmed, as on GitHub. */
+.pr-thread.resolved {
+  opacity: 0.75;
+}
+.pr-thread-resolved {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
 .pr-files-hint,
 .pr-checks-summary {
   font-size: 12px;

@@ -32,6 +32,7 @@ import {
   pushBranch,
   readReviewFile,
   replyToReviewComment,
+  resolveReviewThread,
   reviewPullRequest,
   reviewWithComments,
 } from "./api";
@@ -371,6 +372,16 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   merge: mergeAction,
   openUrl: (url) => void openUrl(url),
   comment: (pr, body) => post("a comment", pr.number, body, () => commentOnPullRequest(pr.number, body)),
+  resolve: async (pr, thread, resolve) => {
+    try {
+      await resolveReviewThread(thread.id, resolve);
+      reportDone(resolve ? "Conversation resolved." : "Conversation reopened.");
+      return true;
+    } catch (err) {
+      opFailed(`Couldn't ${resolve ? "resolve" : "reopen"} the conversation on #${pr.number}`, err);
+      return false;
+    }
+  },
   reply: (pr, root, body) =>
     post(`a reply to ${root.author}`, pr.number, body, async () => (await replyToReviewComment(pr.number, root.id, body)).url),
   lineComment: (pr, comment) =>

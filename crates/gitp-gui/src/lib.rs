@@ -224,6 +224,7 @@ pub fn run() {
             gh::gh_create_pull_request,
             gh::gh_merge_pull_request,
             gh::gh_reply,
+            gh::gh_resolve_thread,
             gh::gh_line_comment,
             gh::gh_review_with_comments,
             gh::read_review_file,

@@ -54,6 +54,7 @@ function detail(over: Partial<PullRequestDetail> = {}): PullRequestDetail {
     reviews: [],
     comments: [],
     review_comments: [],
+    review_threads: [],
     additions: 0,
     deletions: 0,
     changed_files: 0,

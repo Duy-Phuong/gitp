@@ -166,6 +166,16 @@ pub struct PrReviewComment {
     pub diff_hunk: String,
 }
 
+/// A line-comment thread's state, which only GitHub's GraphQL API knows:
+/// resolved or not, and the comments in it (by the REST ids the view has).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PrReviewThread {
+    /// The thread's node id, for a resolve.
+    pub id: String,
+    pub resolved: bool,
+    pub comment_ids: Vec<u64>,
+}
+
 /// Everything the pull request view shows but the changed files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PullRequestDetail {
@@ -188,6 +198,9 @@ pub struct PullRequestDetail {
     pub reviews: Vec<PrReview>,
     pub comments: Vec<PrComment>,
     pub review_comments: Vec<PrReviewComment>,
+    /// Empty when the host doesn't answer the GraphQL query (threads are
+    /// then shown without a resolved state).
+    pub review_threads: Vec<PrReviewThread>,
     pub additions: u64,
     pub deletions: u64,
     pub changed_files: u64,
@@ -764,7 +777,65 @@ impl Repo {
         args.extend(["--paginate", &endpoint]);
         let out = self.gh_call(gh, &target, &args, None, TIMEOUT)?;
         let review_comments = parse_review_comments(&out.stdout)?;
-        Ok(raw.into_detail(review_comments))
+        let review_threads = self.review_threads(gh, &target, number).unwrap_or_default();
+        Ok(raw.into_detail(review_comments, review_threads))
+    }
+
+    /// The line-comment threads of pull request `number` with whether each
+    /// is resolved, from GraphQL (REST doesn't say). The first hundred.
+    fn review_threads(
+        &self,
+        gh: &Gh,
+        target: &GitHubRepo,
+        number: u64,
+    ) -> Result<Vec<PrReviewThread>> {
+        let (owner, name) = target
+            .path
+            .split_once('/')
+            .ok_or_else(|| Error::Message(format!("not owner/name: {}", target.path)))?;
+        let query = "query($owner: String!, $name: String!, $number: Int!) { \
+            repository(owner: $owner, name: $name) { pullRequest(number: $number) { \
+            reviewThreads(first: 100) { nodes { id isResolved \
+            comments(first: 100) { nodes { databaseId } } } } } } }";
+        let n = number.to_string();
+        let mut args = Vec::new();
+        target.api(&mut args);
+        let owner_arg = format!("owner={owner}");
+        let name_arg = format!("name={name}");
+        let number_arg = format!("number={n}");
+        let query_arg = format!("query={query}");
+        args.extend(["graphql", "-F", &owner_arg, "-F", &name_arg, "-F", &number_arg, "-f", &query_arg]);
+        let out = self.gh_call(gh, target, &args, None, TIMEOUT)?;
+        let raw: RawThreadsAnswer = parse_json(&out.stdout)?;
+        Ok(raw
+            .data
+            .repository
+            .pull_request
+            .review_threads
+            .nodes
+            .into_iter()
+            .map(|t| PrReviewThread {
+                id: t.id,
+                resolved: t.is_resolved,
+                comment_ids: t.comments.nodes.into_iter().filter_map(|c| c.database_id).collect(),
+            })
+            .collect())
+    }
+
+    /// Mark the line-comment thread `thread_id` (a `PrReviewThread::id`)
+    /// resolved, or open again with `resolve` false.
+    pub fn resolve_review_thread(&self, gh: &Gh, thread_id: &str, resolve: bool) -> Result<()> {
+        let target = self.github_target()?;
+        let mutation = if resolve { "resolveReviewThread" } else { "unresolveReviewThread" };
+        let query = format!(
+            "query=mutation($id: ID!) {{ {mutation}(input: {{threadId: $id}}) {{ thread {{ isResolved }} }} }}"
+        );
+        let id = format!("id={thread_id}");
+        let mut args = Vec::new();
+        target.api(&mut args);
+        args.extend(["graphql", "-F", &id, "-f", &query]);
+        self.gh_call(gh, &target, &args, None, TIMEOUT)?;
+        Ok(())
     }
 
     /// The changed files of pull request `number` with their diffs, from
@@ -1500,6 +1571,41 @@ fn parse_review_comments(bytes: &[u8]) -> Result<Vec<PrReviewComment>> {
     Ok(out)
 }
 
+#[derive(Deserialize)]
+struct RawThreadsAnswer {
+    data: RawThreadsData,
+}
+#[derive(Deserialize)]
+struct RawThreadsData {
+    repository: RawThreadsRepo,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawThreadsRepo {
+    pull_request: RawThreadsPr,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawThreadsPr {
+    review_threads: RawNodes<RawThread>,
+}
+#[derive(Deserialize)]
+struct RawNodes<T> {
+    nodes: Vec<T>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawThread {
+    id: String,
+    is_resolved: bool,
+    comments: RawNodes<RawThreadComment>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawThreadComment {
+    database_id: Option<u64>,
+}
+
 /// `gh pr diff`'s unified diff as the same per-file hunks a commit's diff
 /// has, read by libgit2's own patch parser.
 fn parse_pr_diff(bytes: &[u8], enc: TextEncoding) -> Result<Vec<FileDiff>> {
@@ -1716,7 +1822,11 @@ struct RawBranchName {
 }
 
 impl RawPrDetail {
-    fn into_detail(self, review_comments: Vec<PrReviewComment>) -> PullRequestDetail {
+    fn into_detail(
+        self,
+        review_comments: Vec<PrReviewComment>,
+        review_threads: Vec<PrReviewThread>,
+    ) -> PullRequestDetail {
         PullRequestDetail {
             number: self.number,
             title: self.title,
@@ -1758,6 +1868,7 @@ impl RawPrDetail {
                 })
                 .collect(),
             review_comments,
+            review_threads,
             additions: self.additions,
             deletions: self.deletions,
             changed_files: self.changed_files,
@@ -2256,6 +2367,51 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         );
         let sent: serde_json::Value = serde_json::from_str(&fake.read("stdin")).unwrap();
         assert_eq!(sent, serde_json::json!({"body": "Done"}));
+    }
+
+    #[test]
+    fn a_resolve_sends_the_graphql_mutation_with_the_thread_id() {
+        let fake = Fake::new();
+        fake.answer("api graphql", "{}", "", 0);
+        let (_dir, repo) = github_repo();
+        repo.resolve_review_thread(&fake.gh(), "PRRT_abc", true).unwrap();
+        let call = fake.calls()[0].clone();
+        assert_eq!(&call[..2], ["api", "graphql"]);
+        assert!(call.contains(&"id=PRRT_abc".to_string()));
+        assert!(call.iter().any(|a| a.contains("resolveReviewThread(input: {threadId: $id})")));
+        repo.resolve_review_thread(&fake.gh(), "PRRT_abc", false).unwrap();
+        assert!(fake.calls()[1].iter().any(|a| a.contains("unresolveReviewThread(")));
+    }
+
+    #[test]
+    fn the_threads_resolved_state_rides_along_with_the_detail() {
+        let fake = Fake::new();
+        fake.answer(
+            "pr view",
+            r#"{"number":7,"title":"T","state":"OPEN","author":{"login":"octocat"},
+                "baseRefName":"main","headRefName":"topic","url":"https://github.com/octo/hello/pull/7",
+                "reviewDecision":null}"#,
+            "",
+            0,
+        );
+        fake.answer("api --paginate", "[]", "", 0);
+        fake.answer(
+            "api graphql",
+            r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
+                {"id":"PRRT_1","isResolved":true,"comments":{"nodes":[{"databaseId":501},{"databaseId":502}]}},
+                {"id":"PRRT_2","isResolved":false,"comments":{"nodes":[{"databaseId":600}]}}]}}}}}"#,
+            "",
+            0,
+        );
+        let (_dir, repo) = github_repo();
+        let detail = repo.pull_request(&fake.gh(), 7).unwrap();
+        assert_eq!(
+            detail.review_threads,
+            vec![
+                PrReviewThread { id: "PRRT_1".into(), resolved: true, comment_ids: vec![501, 502] },
+                PrReviewThread { id: "PRRT_2".into(), resolved: false, comment_ids: vec![600] },
+            ]
+        );
     }
 
     #[test]
