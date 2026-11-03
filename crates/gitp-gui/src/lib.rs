@@ -229,6 +229,8 @@ pub fn run() {
             gh::gh_line_comment,
             gh::gh_review_with_comments,
             gh::read_review_file,
+            gh::review_files,
+            gh::open_review_page,
             gh::gh_generate_review,
             gh::gh_cancel_review,
             gh::gh_login_start,

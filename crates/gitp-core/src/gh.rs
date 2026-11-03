@@ -1293,39 +1293,24 @@ pub struct GeneratedReview {
     pub file: Option<String>,
 }
 
-/// The newest `pr-review-*.html` or `.md` under `dir/review/` (or one folder
-/// below it, the sprint folder) modified at or after `since`.
-fn review_file_written_since(dir: &Path, since: SystemTime) -> Option<PathBuf> {
+/// The `pr-review-*.html` and `.md` files under `dir/review/` and one folder
+/// below it (the sprint folder), each with when it was last written.
+fn review_files_in(dir: &Path) -> Vec<(PathBuf, SystemTime)> {
     let root = dir.join("review");
-    let mut found: Option<(SystemTime, PathBuf)> = None;
+    let mut found = Vec::new();
     let mut look = |folder: &Path| {
         let Ok(entries) = std::fs::read_dir(folder) else {
             return;
         };
         for entry in entries.flatten() {
-            let path = entry.path();
             let name = entry.file_name().to_string_lossy().into_owned();
             let is_review = name.starts_with("pr-review-")
                 && (name.ends_with(".html") || name.ends_with(".md"));
-            let Some(modified) = is_review
+            if let Some(modified) = is_review
                 .then(|| entry.metadata().and_then(|m| m.modified()).ok())
                 .flatten()
-            else {
-                continue;
-            };
-            // The HTML page wins a tie with its Markdown copy: it is the one
-            // the skill always writes.
-            let newer = match &found {
-                None => true,
-                Some((t, p)) => {
-                    modified > *t
-                        || (modified == *t
-                            && name.ends_with(".html")
-                            && p.extension().is_some_and(|e| e != "html"))
-                }
-            };
-            if modified >= since && newer {
-                found = Some((modified, path));
+            {
+                found.push((entry.path(), modified));
             }
         }
     };
@@ -1337,7 +1322,94 @@ fn review_file_written_since(dir: &Path, since: SystemTime) -> Option<PathBuf> {
             }
         }
     }
-    found.map(|(_, p)| p)
+    found
+}
+
+/// Whether `a` is a better pick than `b`: newer, or as new and the HTML page
+/// beside its Markdown copy — the page is the one the skill always writes.
+fn preferred(a: &(PathBuf, SystemTime), b: &(PathBuf, SystemTime)) -> bool {
+    let html = |p: &Path| p.extension().is_some_and(|e| e == "html");
+    a.1 > b.1 || (a.1 == b.1 && html(&a.0) && !html(&b.0))
+}
+
+/// The newest review file under `dir` written at or after `since`.
+fn review_file_written_since(dir: &Path, since: SystemTime) -> Option<PathBuf> {
+    let mut best: Option<(PathBuf, SystemTime)> = None;
+    for f in review_files_in(dir) {
+        if f.1 >= since && best.as_ref().is_none_or(|b| preferred(&f, b)) {
+            best = Some(f);
+        }
+    }
+    best.map(|(p, _)| p)
+}
+
+/// A review saved under the repository's `review/` folder, and the pull
+/// request it reviews.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReviewFile {
+    pub path: String,
+    pub number: u64,
+}
+
+/// How much of a review file is read to find its pull request: the link is in
+/// the header, at the top of the Markdown — a page that inlines its libraries
+/// is megabytes past it.
+const REVIEW_HEAD: u64 = 64 * 1024;
+
+/// The pull request a review file reviews: the number of the first
+/// `github.com/…/pull/<n>` link near its top.
+fn reviewed_pull_request(path: &Path) -> Option<u64> {
+    let mut head = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(REVIEW_HEAD)
+        .read_to_end(&mut head)
+        .ok()?;
+    let text = String::from_utf8_lossy(&head);
+    let mut rest = text.as_ref();
+    while let Some(at) = rest.find("/pull/") {
+        let before = &rest[..at];
+        rest = &rest[at + "/pull/".len()..];
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        if before
+            .rsplit(['(', '"', ' ', '<', '['])
+            .next()
+            .is_some_and(|u| u.contains("github"))
+        {
+            if let Ok(n) = digits.parse() {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+impl Repo {
+    /// The reviews saved under the working tree's `review/` folder (where the
+    /// review skills write them), the newest one for each pull request. A
+    /// file is matched by the pull request it links, not its name: two pull
+    /// requests of one ticket share a file name.
+    pub fn review_files(&self) -> Vec<ReviewFile> {
+        let mut best: std::collections::HashMap<u64, (PathBuf, SystemTime)> =
+            std::collections::HashMap::new();
+        for f in review_files_in(self.workdir()) {
+            let Some(n) = reviewed_pull_request(&f.0) else {
+                continue;
+            };
+            if best.get(&n).is_none_or(|b| preferred(&f, b)) {
+                best.insert(n, f);
+            }
+        }
+        let mut out: Vec<ReviewFile> = best
+            .into_iter()
+            .map(|(number, (p, _))| ReviewFile {
+                path: p.to_string_lossy().into_owned(),
+                number,
+            })
+            .collect();
+        out.sort_by_key(|f| f.number);
+        out
+    }
 }
 
 /// Run shell line `command` in `dir` with `input` on stdin and `env` set,
@@ -2344,13 +2416,53 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             .unwrap();
         assert_eq!(out.text, "<html>review</html>");
         let file = out.file.unwrap();
-        assert!(file.ends_with("review/ubiid-sprint-36/pr-review-UBIID-7.html"), "{file}");
+        assert!(
+            file.ends_with("review/ubiid-sprint-36/pr-review-UBIID-7.html"),
+            "{file}"
+        );
 
         // Nothing written this time: the printed text is the review again.
         let out = repo
             .generate_review_drafts(&fake.gh(), 7, "cat >/dev/null; echo '### a.rs:1'")
             .unwrap();
         assert_eq!((out.text.as_str(), out.file), ("### a.rs:1\n", None));
+    }
+
+    #[test]
+    fn review_files_are_matched_to_pull_requests_by_their_link() {
+        let (dir, repo) = github_repo();
+        let sprint = dir.path().join("review/ae-403");
+        std::fs::create_dir_all(&sprint).unwrap();
+        let page = |n: u64| {
+            format!(
+                "<!doctype html><script id=\"markdown-source\">PR: [#{n}](https://github.com/octo/hello/pull/{n})</script>"
+            )
+        };
+        // One ticket, two pull requests: the file name says nothing about which.
+        std::fs::write(sprint.join("pr-review-UBIID-1.html"), page(38)).unwrap();
+        std::fs::write(
+            dir.path().join("review/pr-review-pr-41.md"),
+            "Head: x\nhttps://github.com/octo/hello/pull/41\n",
+        )
+        .unwrap();
+        std::fs::write(sprint.join("notes.html"), page(50)).unwrap();
+        std::fs::write(sprint.join("pr-review-no-link.md"), "no pull request here").unwrap();
+        thread::sleep(Duration::from_millis(20));
+        let newer = dir.path().join("review/pr-review-UBIID-1-again.html");
+        std::fs::write(&newer, page(38)).unwrap();
+
+        let found = repo.review_files();
+        assert_eq!(
+            found.iter().map(|f| f.number).collect::<Vec<_>>(),
+            [38, 41],
+            "{found:?}"
+        );
+        assert!(
+            found[0]
+                .path
+                .ends_with("review/pr-review-UBIID-1-again.html"),
+            "the newest review of #38: {found:?}"
+        );
     }
 
     #[test]

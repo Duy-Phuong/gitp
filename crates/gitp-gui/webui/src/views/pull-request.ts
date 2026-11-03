@@ -31,8 +31,8 @@ import {
   type Thread,
 } from "../pull-requests";
 import { fullTime, relativeTime } from "../timeago";
-import { checkAnchor, type DraftComment } from "../review-drafts";
-import { addDrafts, clearDrafts, prReview, reviewsChanged, type Draft, type PrReview } from "../pr-reviews";
+import { checkAnchor } from "../review-drafts";
+import { clearDrafts, prReview, reviewsChanged, type Draft, type PrReview } from "../pr-reviews";
 import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PullRequestDetail, ReviewVerdict } from "../types";
 
 export interface PullRequestCallbacks {
@@ -53,9 +53,12 @@ export interface PullRequestCallbacks {
   // Marks a thread resolved (or open again); true once done.
   resolve: (pr: PullRequestDetail, thread: PrReviewThread, resolve: boolean) => Promise<boolean>;
   lineComment: (pr: PullRequestDetail, comment: LineComment) => Promise<boolean>;
-  // Picks and reads a review file; its findings, or null when nothing was
-  // picked (the caller has reported why).
-  loadDrafts: (pr: PullRequestDetail) => Promise<DraftComment[] | null>;
+  // Loads the pull request's saved review, or a picked file, into its drafts;
+  // false when nothing was loaded (the caller has reported why).
+  loadDrafts: (pr: PullRequestDetail) => Promise<boolean>;
+  // The pull request's saved review page, if any, and opening it.
+  savedReview: (number: number) => string | null;
+  openReviewPage: (path: string) => void;
   // The repo the pull requests belong to: their reviews are kept by it.
   repoPath: () => string;
   // Starts the review command over the diff in the background; its drafts
@@ -89,6 +92,9 @@ export interface PullRequestHandle {
 
 type Tab = "conversation" | "files" | "checks" | "drafts";
 
+// A page with lines: the saved review page.
+const REVIEW_PAGE_ICON = ["M6 3h9l4 4v14H6z", "M14 3v5h5", "M9 12h7", "M9 16h7"];
+
 export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks): PullRequestHandle {
   let number: number | null = null;
   let detail: PullRequestDetail | null = null;
@@ -111,6 +117,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // review they'll be posted in will carry. Kept by repo and number outside
   // the view, so they wait while another pull request is open.
   const review = (): PrReview => prReview(cb.repoPath(), number ?? 0);
+  // Opened with no drafts yet and no tab picked: drafts read back from a saved
+  // review a moment later open the Drafts tab.
+  let draftsWhenReady = false;
 
   const message = (text: string) => {
     clear(host);
@@ -126,6 +135,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       const d = await cb.fetchDetail(number);
       if (mine !== generation) return;
       detail = d;
+      toDraftsIfReady();
       if (tab === "drafts" && !files) void showDrafts(d);
       else render();
     } catch (err) {
@@ -151,6 +161,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       const b = el("button", { class: `pr-tab${tab === t ? " active" : ""}`, text: label });
       b.addEventListener("click", () => {
         tab = t;
+        draftsWhenReady = false;
         render();
       });
       return b;
@@ -216,6 +227,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       el("div", { class: "pr-title-row" }, [
         el("span", { class: "pr-title", text: pr.title }),
         el("span", { class: "pr-number", text: `#${pr.number}` }),
+        ...reviewPageLink(pr.number),
       ]),
       meta,
       actions,
@@ -528,16 +540,30 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     return node;
   }
 
+  // Drafts read back from a saved review just after the pull request opened
+  // with none: show them, when no tab was picked meanwhile.
+  function toDraftsIfReady(): void {
+    if (draftsWhenReady && review().drafts.some((d) => d.status !== "discarded")) {
+      tab = "drafts";
+      draftsWhenReady = false;
+    }
+  }
+
+  // The saved review page as an icon beside the title, when there is one.
+  function reviewPageLink(n: number): HTMLElement[] {
+    const page = cb.savedReview(n);
+    if (!page) return [];
+    const b = iconBtn(REVIEW_PAGE_ICON, `Open the saved review\n${page}`, false, () => cb.openReviewPage(page));
+    b.classList.add("pr-review-page");
+    return [b];
+  }
+
   // --- Draft comments -------------------------------------------------------
 
   // Read a review file's findings into the Drafts tab. The changed files are
   // loaded too, so each draft can say whether its line is in the diff.
   async function loadDrafts(pr: PullRequestDetail): Promise<void> {
-    const found = await cb.loadDrafts(pr);
-    if (!found) return;
-    addDrafts(prReview(cb.repoPath(), pr.number), found);
-    reviewsChanged();
-    if (number !== pr.number) return;
+    if (!(await cb.loadDrafts(pr)) || number !== pr.number) return;
     tab = "drafts";
     await showDrafts(pr);
   }
@@ -710,6 +736,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         cb.restoreDrafts(n);
         // A review that finished while the user was elsewhere opens on its drafts.
         tab = review().drafts.some((d) => d.status !== "discarded") ? "drafts" : "conversation";
+        draftsWhenReady = tab === "conversation";
       }
       void load(true);
     },
@@ -717,6 +744,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     redraw: () => {
       if (!detail) return;
       // A finished review adds the Drafts tab beside the one the user is on.
+      toDraftsIfReady();
       if (tab === "drafts" && !review().drafts.length) tab = "conversation";
       if (tab === "drafts" && !files) void showDrafts(detail);
       else render();

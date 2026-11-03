@@ -14,6 +14,7 @@ import type {
   GhAccount,
   PrFilter,
   PullRequest,
+  ReviewFile,
   Refs,
   RemoteInfo,
   StashRef,
@@ -79,6 +80,8 @@ export interface PrSectionState {
   open: number | null;
   // The section's own search: it narrows the pull requests, nothing else.
   query: string;
+  // The reviews saved under the repo's review/ folder, by pull request.
+  reviewFiles: ReviewFile[];
 }
 
 export interface SidebarCallbacks {
@@ -616,7 +619,10 @@ function buildPullRequests(
   if (!p.list) return void (p.loading && note("Loading…"));
   const q = p.query.trim().toLowerCase();
   const searched = (text: string) => text.toLowerCase().includes(q);
-  const shown = p.list.filter((pr) => prMatches(pr, match) && prMatches(pr, searched));
+  const reviewed = new Set(p.reviewFiles.map((f) => f.number));
+  const shown = p.list.filter(
+    (pr) => prMatches(pr, match) && prMatches(pr, searched) && (p.filter !== "reviewed" || reviewed.has(pr.number)),
+  );
   // A number the list doesn't hold (closed, merged, or past the open ones
   // loaded): GitHub has it, so offer to open it.
   const number = prNumberQuery(p.query);
@@ -625,7 +631,9 @@ function buildPullRequests(
     open.append(el("span", { class: "sb-leaf-label", text: `Open #${number}` }));
     open.addEventListener("click", () => cb.onPrOpenNumber(number));
     tree.append(open);
-  } else if (shown.length === 0) note(p.list.length ? "No matches" : "No open pull requests");
+  } else if (shown.length === 0) {
+    note(p.filter === "reviewed" ? "No saved review of an open pull request" : p.list.length ? "No matches" : "No open pull requests");
+  }
   for (const pr of shown) tree.append(prLeaf(pr, p.open === pr.number && s.activeView === "pr", cb));
 }
 

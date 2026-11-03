@@ -72,7 +72,7 @@ pub use filelog::FileCommit;
 pub use gh::{
     DiffSide, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings, LineComment, MergeMethod, NewPullRequest,
     PrCheck, PrComment, PrDraft, PrFilter, PrLabel, PrReview, PrReviewComment, PullRequest,
-    PullRequestDetail, ReviewVerdict, LOGIN_TIMEOUT,
+    PullRequestDetail, ReviewFile, ReviewVerdict, LOGIN_TIMEOUT,
 };
 pub use gitflow::{FlowKind, GitFlowConfig};
 pub use hooks::{Hook, HookState, Hooks, HOOK_NAMES};
