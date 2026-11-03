@@ -637,6 +637,29 @@ export const DEFAULT_REVIEW_COMMAND =
   "between <!-- copy:start --> and <!-- copy:end --> markers, short and concrete, with a ```suggestion block when the fix is a few lines. " +
   "If nothing is wrong print exactly: No findings.'";
 
+// "Use Review Skill" in Settings: the /review-pr-phuong Claude Code skill,
+// which saves its review page under review/ (gitp reads the drafts from
+// there). Nobody can answer a permission prompt in the background, so
+// dontAsk refuses every tool the list doesn't name: reads, git and gh
+// lookups, the skill's checks and page build, writes under review/, the Jira
+// and Confluence reads and the Review Board.
+const SKILL_TOOLS = [
+  "Read", "Grep", "Glob", "Skill", "Write(review/**)", "Edit(review/**)",
+  "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)", "Bash(git grep *)", "Bash(git fetch *)",
+  "Bash(git rev-parse *)", "Bash(git merge-base *)", "Bash(git ls-files *)", "Bash(git blame *)",
+  "Bash(gh pr view *)", "Bash(gh pr diff *)", "Bash(gh api --paginate repos/*)",
+  "Bash(mkdir -p review/*)", "Bash(rm review/*)", "Bash(curl -fsSL https://cdn.jsdelivr.net/*)", "Bash(python3 *)",
+  ...["claude_ai_Atlassian", "claude_ai_Atlassian_MCP"].flatMap((server) =>
+    ["getJiraIssue", "searchJiraIssuesUsingJql", "getConfluencePage"].map((tool) => `mcp__${server}__${tool}`),
+  ),
+  "ArtifactData",
+];
+
+export const SKILL_REVIEW_COMMAND =
+  `claude -p --model opus --effort medium --permission-mode dontAsk --allowedTools "${SKILL_TOOLS.join(" ")}" ` +
+  `"/review-pr-phuong $GITP_PR_URL board mode, with md, no questions: where you would ask, take the default ` +
+  `(the sprint folder no-sprint when Jira has no sprint). Write the review Markdown under review/, not in TMPDIR."`;
+
 export function loadReviewCommand(): string {
   return localStorage.getItem(REVIEW_COMMAND_KEY) ?? DEFAULT_REVIEW_COMMAND;
 }

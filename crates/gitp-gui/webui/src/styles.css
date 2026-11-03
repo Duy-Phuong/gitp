@@ -4887,6 +4887,18 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   border-color: var(--del-fg);
   color: var(--del-fg);
 }
+/* A review running in the background, failed, or with drafts waiting. */
+.sb-badge.pr-review-running {
+  border-style: dashed;
+}
+.sb-badge.pr-review-failed {
+  border-color: var(--del-fg);
+  color: var(--del-fg);
+}
+.sb-badge.pr-review-ready {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 
 /* The pull request view. */
 #pr-view:not(.hidden) {

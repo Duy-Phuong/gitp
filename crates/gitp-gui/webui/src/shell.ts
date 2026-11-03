@@ -6,6 +6,7 @@
 // double-click) does is plugged in by main.ts through setRefActions, so that
 // this module never imports the actions back.
 
+import { reviewBadge } from "./pr-reviews";
 import {
   activateRepo,
   closeRepo,
@@ -939,6 +940,7 @@ function prsSignature(): string {
     p.open,
     p.query,
     p.list?.map((pr) => `${pr.number}:${pr.updated_at}:${pr.title}:${pr.checks}:${pr.review_decision}:${pr.is_draft}`).join(","),
+    p.list?.map((pr) => reviewBadge(state.repoPath, pr.number)?.text ?? "").join(","),
   ].join(";");
 }
 
@@ -1023,6 +1025,7 @@ export function renderSidebarNow(): void {
       onAddSubmodule: () => refActions.onAddSubmodule(),
       onPrOpen: (pr) => showPullRequest(pr.number),
       onPrMenu: (pr, x, y) => refActions.onPrMenu(pr, x, y),
+      prReviewBadge: (pr) => reviewBadge(state.repoPath, pr.number),
       onPrFilter: (filter) => refActions.onPrFilter(filter),
       // Debounced like the sidebar's own filter: each search redraws the tree.
       onPrSearch: (text) => {

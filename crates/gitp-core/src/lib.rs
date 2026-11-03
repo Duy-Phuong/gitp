@@ -70,7 +70,7 @@ pub use file_content::{FileContent, FileSide, PREVIEW_MAX_BYTES};
 pub use file_edit::{TextFile, EDIT_MAX_BYTES};
 pub use filelog::FileCommit;
 pub use gh::{
-    DiffSide, Gh, GhAccount, GhLogin, GitHubRepoSettings, LineComment, MergeMethod, NewPullRequest,
+    DiffSide, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings, LineComment, MergeMethod, NewPullRequest,
     PrCheck, PrComment, PrDraft, PrFilter, PrLabel, PrReview, PrReviewComment, PullRequest,
     PullRequestDetail, ReviewVerdict, LOGIN_TIMEOUT,
 };

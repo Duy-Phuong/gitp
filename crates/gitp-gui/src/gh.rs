@@ -7,13 +7,14 @@
 //! workspace lock — each is a round trip to GitHub. Checking out moves HEAD,
 //! so it runs as a network operation, with Cancel.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use gitp_core::{
-    FileDiff, Gh, GhAccount, GhLogin, GitHubRepoSettings, LineComment, MergeMethod, NewPullRequest,
-    PrDraft, PrFilter, PrReviewComment, PullRequest, PullRequestDetail, ReviewVerdict, Undoable,
-    LOGIN_TIMEOUT,
+    FileDiff, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings, LineComment,
+    MergeMethod, NetworkHooks, NewPullRequest, PrDraft, PrFilter, PrReviewComment, PullRequest,
+    PullRequestDetail, Repo, ReviewVerdict, Undoable, LOGIN_TIMEOUT,
 };
 use serde::Serialize;
 use tauri::State;
@@ -195,20 +196,48 @@ fn gh_review_with_comments_impl(
     })
 }
 
-/// Run the user's review command over the pull request's diff: a network
-/// operation like a fetch, so it shows progress, offers Cancel and holds no
-/// lock while the model thinks.
+/// The review commands running in the background, by repository path and
+/// pull request, each with the flag that cancels it. A review can run for most
+/// of an hour, so it stays out of the status bar's network operations: their
+/// Cancel would stop it, and it would hold their spinner the whole time.
+#[derive(Default)]
+pub(crate) struct ReviewJobs(Mutex<HashMap<(String, u64), Arc<AtomicBool>>>);
+
+/// Run the user's review command over pull request `number` of the repository
+/// at `path` — named, not the active one, so switching tabs while it runs
+/// changes nothing. Holds no lock while the model thinks; one review per pull
+/// request at a time.
 fn gh_generate_review_impl(
-    state: &RepoState,
+    jobs: &ReviewJobs,
+    path: String,
     number: u64,
     command: String,
-) -> Result<String, String> {
-    with_repo_networked(
-        state,
-        "review",
-        |repo| repo.generate_review_drafts(&Gh::system(), number, &command),
-        |_| {},
-    )
+) -> Result<GeneratedReview, String> {
+    let mut repo = Repo::open(&path).map_err(to_message)?;
+    let key = (path, number);
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut running = jobs.0.lock().unwrap();
+        if running.contains_key(&key) {
+            return Err(format!("A review of #{number} is already running."));
+        }
+        running.insert(key.clone(), Arc::clone(&cancel));
+    }
+    repo.set_network_hooks(NetworkHooks {
+        cancel: Some(cancel),
+        ..NetworkHooks::default()
+    });
+    let out = repo.generate_review_drafts(&Gh::system(), number, &command);
+    jobs.0.lock().unwrap().remove(&key);
+    out.map_err(to_message)
+}
+
+/// Stop the review of pull request `number` in the repository at `path`, if
+/// one is running; it then fails as cancelled.
+fn gh_cancel_review_impl(jobs: &ReviewJobs, path: &str, number: u64) {
+    if let Some(cancel) = jobs.0.lock().unwrap().get(&(path.to_string(), number)) {
+        cancel.store(true, Ordering::SeqCst);
+    }
 }
 
 /// How big a review file may be: a review is text, and this is far past any.
@@ -414,11 +443,17 @@ pub(crate) fn gh_review_with_comments(
 
 #[tauri::command(async)]
 pub(crate) fn gh_generate_review(
+    path: String,
     number: u64,
     command: String,
-    state: State<RepoState>,
-) -> Result<String, String> {
-    gh_generate_review_impl(&state, number, command)
+    jobs: State<ReviewJobs>,
+) -> Result<GeneratedReview, String> {
+    gh_generate_review_impl(&jobs, path, number, command)
+}
+
+#[tauri::command]
+pub(crate) fn gh_cancel_review(path: String, number: u64, jobs: State<ReviewJobs>) {
+    gh_cancel_review_impl(&jobs, &path, number);
 }
 
 #[tauri::command(async)]

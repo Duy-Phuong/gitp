@@ -87,6 +87,7 @@ pub fn run() {
         .manage(TerminalState::default())
         .manage(local_workspaces::WorkspaceOps::default())
         .manage(gh::GhLoginState::default())
+        .manage(gh::ReviewJobs::default())
         .setup(|app| {
             // Repository watchers push changes on disk to the frontend (see
             // `watch`); they need the app handle to emit, which exists only now.
@@ -229,6 +230,7 @@ pub fn run() {
             gh::gh_review_with_comments,
             gh::read_review_file,
             gh::gh_generate_review,
+            gh::gh_cancel_review,
             gh::gh_login_start,
             gh::gh_login_wait,
             gh::gh_login_cancel,

@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
@@ -1097,13 +1097,22 @@ impl Repo {
     }
 
     /// Run the user's review `command` over pull request `number`'s diff and
-    /// return what it printed — a review in the shape the Drafts tab reads.
+    /// return the review it made — in the shape the Drafts tab reads.
     ///
     /// The command is a shell line, run by a login shell so it finds the same
     /// programs a terminal would (`claude`, say). The diff arrives on its
     /// stdin; `GITP_PR_NUMBER`, `GITP_PR_REPO` and `GITP_PR_URL` are set. It
     /// gets [`REVIEW_TIMEOUT`], and Cancel stops it like a fetch.
-    pub fn generate_review_drafts(&self, gh: &Gh, number: u64, command: &str) -> Result<String> {
+    ///
+    /// A command that writes its review to a file — a review skill saving
+    /// `review/<sprint>/pr-review-<slug>.html` — is read from that file, the
+    /// newest one written while it ran; otherwise the review is what it printed.
+    pub fn generate_review_drafts(
+        &self,
+        gh: &Gh,
+        number: u64,
+        command: &str,
+    ) -> Result<GeneratedReview> {
         let command = command.trim();
         if command.is_empty() {
             return Err(Error::Message(
@@ -1123,6 +1132,7 @@ impl Repo {
             ("GITP_PR_REPO", target.repo_arg()),
             ("GITP_PR_URL", url),
         ];
+        let started = SystemTime::now();
         let out = run_shell(
             self.workdir(),
             command,
@@ -1131,6 +1141,14 @@ impl Repo {
             REVIEW_TIMEOUT,
             self.net.cancel.as_deref(),
         )?;
+        if let Some(file) = review_file_written_since(self.workdir(), started) {
+            let text = std::fs::read_to_string(&file)
+                .map_err(|e| Error::Message(format!("couldn't read {}: {e}", file.display())))?;
+            return Ok(GeneratedReview {
+                text,
+                file: Some(file.to_string_lossy().into_owned()),
+            });
+        }
         if out.stdout.trim().is_empty() {
             return Err(Error::Message(format!(
                 "The review command printed nothing.{}",
@@ -1141,7 +1159,10 @@ impl Repo {
                 }
             )));
         }
-        Ok(out.stdout)
+        Ok(GeneratedReview {
+            text: out.stdout,
+            file: None,
+        })
     }
 
     /// Review pull request `number` in one go: the verdict, an optional
@@ -1260,8 +1281,64 @@ impl Repo {
 }
 
 /// How long a review command may run: a model reading a big diff takes
-/// minutes, not seconds.
-pub const REVIEW_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// minutes, and a review skill that also reads the story and the callers can
+/// take most of an hour.
+pub const REVIEW_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
+/// What a review command made: the review's text, and the file it came from
+/// when the command wrote one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GeneratedReview {
+    pub text: String,
+    pub file: Option<String>,
+}
+
+/// The newest `pr-review-*.html` or `.md` under `dir/review/` (or one folder
+/// below it, the sprint folder) modified at or after `since`.
+fn review_file_written_since(dir: &Path, since: SystemTime) -> Option<PathBuf> {
+    let root = dir.join("review");
+    let mut found: Option<(SystemTime, PathBuf)> = None;
+    let mut look = |folder: &Path| {
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let is_review = name.starts_with("pr-review-")
+                && (name.ends_with(".html") || name.ends_with(".md"));
+            let Some(modified) = is_review
+                .then(|| entry.metadata().and_then(|m| m.modified()).ok())
+                .flatten()
+            else {
+                continue;
+            };
+            // The HTML page wins a tie with its Markdown copy: it is the one
+            // the skill always writes.
+            let newer = match &found {
+                None => true,
+                Some((t, p)) => {
+                    modified > *t
+                        || (modified == *t
+                            && name.ends_with(".html")
+                            && p.extension().is_some_and(|e| e != "html"))
+                }
+            };
+            if modified >= since && newer {
+                found = Some((modified, path));
+            }
+        }
+    };
+    look(&root);
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for entry in entries.flatten() {
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                look(&entry.path());
+            }
+        }
+    }
+    found.map(|(_, p)| p)
+}
 
 /// Run shell line `command` in `dir` with `input` on stdin and `env` set,
 /// waiting at most `timeout` and only until `cancel` goes up. Fails with the
@@ -2224,9 +2301,10 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             )
             .unwrap();
         assert_eq!(
-            out,
+            out.text,
             "7|octo/hello|https://github.com/octo/hello/pull/7|diff --git a/x b/x\n+hello\n"
         );
+        assert_eq!(out.file, None);
         assert_eq!(fake.calls(), [["pr", "diff", "7", "--repo", "octo/hello"]]);
 
         let err = repo
@@ -2242,6 +2320,37 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             .unwrap_err();
         assert!(message(err).contains("printed nothing"));
         assert!(repo.generate_review_drafts(&fake.gh(), 7, "  ").is_err());
+    }
+
+    #[test]
+    fn a_review_command_that_writes_a_review_file_is_read_from_the_file() {
+        let fake = Fake::new();
+        fake.answer("pr diff", "diff --git a/x b/x\n+hello\n", "", 0);
+        let (dir, repo) = github_repo();
+        // An older review of another PR stays as it was: only a file written
+        // during the run counts.
+        let sprint = dir.path().join("review/ubiid-sprint-36");
+        std::fs::create_dir_all(&sprint).unwrap();
+        std::fs::write(sprint.join("pr-review-UBIID-1.html"), "old").unwrap();
+        thread::sleep(Duration::from_millis(20));
+        let out = repo
+            .generate_review_drafts(
+                &fake.gh(),
+                7,
+                "cat >/dev/null; printf '# md' > review/ubiid-sprint-36/pr-review-UBIID-7.md; \
+                 printf '<html>review</html>' > review/ubiid-sprint-36/pr-review-UBIID-7.html; \
+                 echo 'Saved the review'",
+            )
+            .unwrap();
+        assert_eq!(out.text, "<html>review</html>");
+        let file = out.file.unwrap();
+        assert!(file.ends_with("review/ubiid-sprint-36/pr-review-UBIID-7.html"), "{file}");
+
+        // Nothing written this time: the printed text is the review again.
+        let out = repo
+            .generate_review_drafts(&fake.gh(), 7, "cat >/dev/null; echo '### a.rs:1'")
+            .unwrap();
+        assert_eq!((out.text.as_str(), out.file), ("### a.rs:1\n", None));
     }
 
     #[test]
