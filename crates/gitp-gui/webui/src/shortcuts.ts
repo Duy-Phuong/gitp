@@ -91,6 +91,7 @@ export const BUILT_IN: BuiltIn[] = [
   { label: "Leave a comparison", group: "Commit log", mac: "Esc", other: "Esc" },
   { label: "Quick open file", group: "Code", mac: "⌘P", other: "Ctrl+P" },
   { label: "Find in the diff (instead of Search commits, in this tab)", group: "Branches and changes", mac: "⌘F in the Changes tab", other: "Ctrl+F in the Changes tab" },
+  { label: "Find in the pull request: diff, comments, threads", group: "Views", mac: "⌘F in the Pull Request tab", other: "Ctrl+F in the Pull Request tab" },
   { label: "Find / replace in the file (instead of Search commits, in this tab)", group: "Code", mac: "⌘F in the Code tab", other: "Ctrl+F in the Code tab" },
   { label: "Find in files (instead of Fetch, in this tab)", group: "Code", mac: "⌘⇧F in the Code tab", other: "Ctrl+Shift+F in the Code tab" },
   { label: "Save", group: "Code", mac: "⌘S", other: "Ctrl+S" },

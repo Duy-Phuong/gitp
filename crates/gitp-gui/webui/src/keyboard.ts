@@ -152,9 +152,17 @@ const ACTIONS: Record<ShortcutId, () => void> = {
   changes: () => showView("changes"),
   code: () => showView("code"),
   searchCommits: () => {
-    // In the Changes tab, Cmd/Ctrl+F finds in the diff on screen instead.
+    // In the Changes and Pull Request tabs, Cmd/Ctrl+F finds on the page
+    // instead: the diff, and a pull request's title, comments and threads.
     if (state.view === "changes") {
       openDiffFind(() => (state.view === "changes" ? document.querySelector<HTMLElement>(".staging-diff-body") : null));
+      return;
+    }
+    if (state.view === "pr") {
+      openDiffFind(
+        () => (state.view === "pr" ? document.querySelector<HTMLElement>("#pr-view .pr-body") : null),
+        ".diff-line, .pr-title, .github-markdown > *, .pr-thread-hunk > div",
+      );
       return;
     }
     showView("history");

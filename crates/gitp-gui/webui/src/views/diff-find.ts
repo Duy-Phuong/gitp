@@ -1,9 +1,10 @@
-// Find in the diff on screen (Cmd/Ctrl+F in the Changes tab): a bar over the
-// diff's top right, every match marked, Enter / Shift+Enter stepping through
-// them, Escape closing. A match is looked for in a line's whole text, so it
-// is found across the syntax spans the line is made of. Staging re-renders
-// the diff, which drops the marks: they are put back whenever the document
-// changes under the bar.
+// Find on the page (Cmd/Ctrl+F in the Changes and Pull Request tabs): a bar
+// over the top right, every match marked, Enter / Shift+Enter stepping
+// through them, Escape closing. The `selector` names the blocks searched —
+// diff lines, comments — and a match is looked for in a block's whole text,
+// so it is found across the syntax spans a line is made of. Staging or a
+// reply re-renders the page, which drops the marks: they are put back
+// whenever the document changes under the bar.
 
 import { el } from "../dom";
 
@@ -12,15 +13,17 @@ let input: HTMLInputElement | null = null;
 let count: HTMLElement | null = null;
 let observer: MutationObserver | null = null;
 let scopeOf: () => HTMLElement | null = () => null;
+let blocks = ".diff-line";
 // One entry per match: its marks, several when the match crosses spans.
 let hits: HTMLElement[][] = [];
 let current = 0;
 let applying = false;
 
-export function openDiffFind(scope: () => HTMLElement | null): void {
+export function openDiffFind(scope: () => HTMLElement | null, selector = ".diff-line"): void {
   scopeOf = scope;
+  blocks = selector;
   if (!bar) {
-    input = el("input", { class: "diff-find-input", type: "text", placeholder: "Find in diff…", autocomplete: "off", spellcheck: "false" });
+    input = el("input", { class: "diff-find-input", type: "text", placeholder: "Find…", autocomplete: "off", spellcheck: "false" });
     count = el("span", { class: "diff-find-count" });
     const btn = (label: string, title: string, run: () => void) => {
       const b = el("button", { class: "diff-find-btn", type: "button", title, text: label });
@@ -79,7 +82,7 @@ function apply(reset: boolean): void {
     const query = input?.value ?? "";
     const root = scopeOf();
     if (query && root) {
-      for (const line of root.querySelectorAll<HTMLElement>(".diff-line")) markLine(line, query.toLowerCase());
+      for (const line of root.querySelectorAll<HTMLElement>(blocks)) markLine(line, query.toLowerCase());
     }
     current = reset || !hits.length ? 0 : Math.min(current, hits.length - 1);
     showCurrent(reset);

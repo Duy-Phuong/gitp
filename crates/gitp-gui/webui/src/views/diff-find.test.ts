@@ -61,6 +61,15 @@ describe("openDiffFind", () => {
     expect(body.innerHTML).toBe(before);
   });
 
+  it("searches the blocks the selector names, such as comments", () => {
+    const body = document.createElement("div");
+    body.innerHTML = '<div class="github-markdown"><p>Please <b>cap</b> this</p></div><div class="diff-line">cap = 30</div>';
+    document.body.append(body);
+    openDiffFind(() => body, ".diff-line, .github-markdown > *");
+    type("cap");
+    expect(marks().map((m) => m.textContent)).toEqual(["cap", "cap"]);
+  });
+
   it("puts the marks back after the diff is rendered again", async () => {
     const body = diff();
     openDiffFind(() => body);
