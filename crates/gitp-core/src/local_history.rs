@@ -22,6 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+use crate::diff::{collect_files, FileDiff, MAX_DIFF_LINES};
 use crate::error::{Error, Result};
 use crate::repo::Repo;
 
@@ -265,6 +266,37 @@ impl Repo {
             .as_blob()
             .ok_or_else(|| Error::Message(format!("{path} is not a file in that snapshot")))?;
         Ok(blob.content().to_vec())
+    }
+
+    /// `path` as snapshot `snapshot` had it (the `-` side) against the
+    /// working tree now (the `+` side): what a restore would change back.
+    /// `None` when the two are the same.
+    pub fn snapshot_file_diff(
+        &self,
+        snapshot: &str,
+        path: &str,
+        context_lines: u32,
+    ) -> Result<Option<FileDiff>> {
+        let tree = self
+            .inner
+            .revparse_single(snapshot_rev(snapshot)?)?
+            .peel_to_tree()?;
+        let mut opts = git2::DiffOptions::new();
+        opts.patience(true)
+            .context_lines(context_lines)
+            .disable_pathspec_match(true)
+            .pathspec(path)
+            .include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .show_untracked_content(true);
+        let diff = self
+            .inner
+            .diff_tree_to_workdir(Some(&tree), Some(&mut opts))?;
+        let mut files = collect_files(&diff, Some(MAX_DIFF_LINES), self.text_encoding())?;
+        Ok(files
+            .iter()
+            .position(|f| f.path == path)
+            .map(|i| files.remove(i)))
     }
 
     /// Write the version of `path` from snapshot `snapshot` to the working

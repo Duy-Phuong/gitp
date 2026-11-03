@@ -29,6 +29,7 @@ import {
   fetchLocalHistory,
   fetchReflog,
   fetchSigningConfig,
+  fetchSnapshotDiff,
   fetchSnapshotFile,
   fetchStatusSummary,
   finishConflict,
@@ -539,6 +540,7 @@ async function init(): Promise<void> {
     fetch: fetchLocalHistory,
     versions: fetchFileVersions,
     content: fetchSnapshotFile,
+    diff: fetchSnapshotDiff,
     restore: async (snapshot, path) => {
       if (!(await confirmDialog(`Put the snapshot's version of ${path} back on disk? The file as it is now can be brought back with Undo.`))) return false;
       try {

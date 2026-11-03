@@ -1,19 +1,23 @@
 // The Local History view: the snapshots gitp took of the working tree as it
 // changed, newest first, each with the files that were uncommitted in it.
-// Open a snapshot to see those files; a file's version can be viewed or put
-// back on disk, which Undo reverses. This is the safety net for an edit that
+// Open a snapshot to see those files; a file shows what changed since the
+// snapshot (its version against the disk), can be viewed whole, or put back
+// on disk, which Undo reverses. This is the safety net for an edit that
 // was never committed and then lost — overwritten, discarded, deleted, or
 // gone with a crash.
 
 import { clear, el, statusBadge } from "../dom";
 import { fullTime, relativeTime } from "../timeago";
-import type { FileVersion, Snapshot, SnapshotFile } from "../types";
+import type { FileDiff, FileVersion, Snapshot, SnapshotFile } from "../types";
+import { renderFile as renderDiff } from "./detail";
 
 export interface LocalHistoryCallbacks {
   fetch: () => Promise<Snapshot[]>;
   versions: (path: string) => Promise<FileVersion[]>;
   // The text of a file in a snapshot, for the viewer.
   content: (snapshot: string, path: string) => Promise<string>;
+  // The snapshot's version against the file on disk; null when they match.
+  diff: (snapshot: string, path: string) => Promise<FileDiff | null>;
   // Writes the version to disk after the user confirms; true once done.
   restore: (snapshot: string, path: string) => Promise<boolean>;
   snapshotNow: () => Promise<string | null>;
@@ -88,7 +92,7 @@ export function setupLocalHistory(host: HTMLElement, cb: LocalHistoryCallbacks):
       }
     });
   });
-  const title = el("span", { class: "reflog-title", text: "Local History" });
+  const title = el("span", { class: "reflog-title lh-title", text: "Local History" });
   const back = el("button", { class: "btn small ghost hidden", text: "← All snapshots" });
   back.addEventListener("click", () => {
     fileView = null;
@@ -150,13 +154,14 @@ export function setupLocalHistory(host: HTMLElement, cb: LocalHistoryCallbacks):
   }
 
   function fileRow(s: Snapshot, f: SnapshotFile): HTMLElement {
-    const row = el("div", { class: "lh-file" }, [
+    const row = el("div", { class: "lh-file", title: "Show what changed since this snapshot" }, [
       statusBadge(statusOf(f)),
       el("span", { class: "lh-path", text: f.from ? `${f.from} → ${f.path}` : f.path }),
-      el("span", { class: "spacer" }),
     ]);
     if (f.status !== "D") {
+      row.addEventListener("click", () => void showDiff(s.id, f.path));
       row.append(
+        smallButton("Diff", () => void showDiff(s.id, f.path)),
         smallButton("View", () => void showContent(s.id, f.path)),
         smallButton("Restore", () => void cb.restore(s.id, f.path)),
       );
@@ -179,7 +184,7 @@ export function setupLocalHistory(host: HTMLElement, cb: LocalHistoryCallbacks):
         el("div", { class: "lh-version" }, [
           el("span", { class: "lh-time", text: relativeTime(v.time / 1000), title: fullTime(v.time / 1000) }),
           el("span", { class: "lh-size", text: `${v.size} bytes` }),
-          el("span", { class: "spacer" }),
+          smallButton("Diff", () => void showDiff(v.snapshot, view.path)),
           smallButton("View", () => void showContent(v.snapshot, view.path)),
           smallButton("Restore", () => void cb.restore(v.snapshot, view.path)),
         ]),
@@ -187,16 +192,39 @@ export function setupLocalHistory(host: HTMLElement, cb: LocalHistoryCallbacks):
     }
   }
 
+  // The snapshot's version against the disk: `-` lines are the snapshot's,
+  // `+` lines what is on disk now, so Restore reads as "undo the + lines".
+  async function showDiff(snapshot: string, path: string): Promise<void> {
+    try {
+      const diff = await cb.diff(snapshot, path);
+      const body = diff
+        ? el("div", { class: "lh-diff" }, [renderDiff(diff)])
+        : el("div", { class: "detail-empty", text: "The file on disk is the same as in this snapshot." });
+      viewer(snapshot, path, "− the snapshot's lines · + the lines on disk now", body, !!diff);
+    } catch (err) {
+      cb.reportError(`Couldn't compare ${path} with the snapshot`, err);
+    }
+  }
+
   async function showContent(snapshot: string, path: string): Promise<void> {
     try {
       const text = await cb.content(snapshot, path);
+      viewer(snapshot, path, "as it was in the snapshot", el("pre", { class: "lh-content", text }), true);
+    } catch (err) {
+      cb.reportError(`Couldn't read ${path} from the snapshot`, err);
+    }
+  }
+
+  function viewer(snapshot: string, path: string, hint: string, body: HTMLElement, canRestore: boolean): void {
+    {
       const overlay = el("div", { class: "modal-overlay" });
       const close = el("button", { class: "btn", text: "Close" });
       const restore = el("button", { class: "btn commit-btn", text: "Restore this version" });
       const modal = el("div", { class: "modal lh-viewer", role: "dialog", "aria-label": `${path} in a snapshot` }, [
         el("div", { class: "modal-title", text: path }),
-        el("pre", { class: "lh-content", text }),
-        el("div", { class: "modal-actions" }, [close, restore]),
+        el("div", { class: "lh-hint", text: hint }),
+        body,
+        el("div", { class: "modal-actions" }, [close, ...(canRestore ? [restore] : [])]),
       ]);
       overlay.append(modal);
       const dismiss = () => overlay.remove();
@@ -210,8 +238,6 @@ export function setupLocalHistory(host: HTMLElement, cb: LocalHistoryCallbacks):
       });
       document.body.append(overlay);
       close.focus();
-    } catch (err) {
-      cb.reportError(`Couldn't read ${path} from the snapshot`, err);
     }
   }
 

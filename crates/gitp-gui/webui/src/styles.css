@@ -5814,8 +5814,17 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 }
 
 /* --- Local History ----------------------------------------------------------- */
+#localhistory-view:not(.hidden) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 #localhistory-view .hidden {
   display: none;
+}
+/* The buttons sit by what they act on, not at the far edge of a wide window. */
+.lh-title {
+  margin-right: 8px;
 }
 .lh-list {
   flex: 1 1 auto;
@@ -5873,9 +5882,16 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   padding: 4px 6px;
   font-size: 12px;
 }
+.lh-file {
+  cursor: pointer;
+  border-radius: 6px;
+}
+.lh-file:hover {
+  background: var(--bg-elev-2);
+}
 .lh-path {
   font-family: var(--mono);
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5893,6 +5909,18 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 }
 .lh-viewer {
   width: min(900px, 92vw);
+}
+.lh-hint {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.lh-diff {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 10px 0;
+  contain: inline-size;
 }
 .lh-content {
   flex: 1 1 auto;

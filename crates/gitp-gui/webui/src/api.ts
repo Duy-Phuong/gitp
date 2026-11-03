@@ -2066,6 +2066,27 @@ export async function fetchSnapshotFile(snapshot: string, path: string): Promise
   return invoke<string>("local_history_file", { snapshot, path });
 }
 
+export async function fetchSnapshotDiff(snapshot: string, path: string): Promise<FileDiff | null> {
+  if (!isTauri()) {
+    return {
+      path,
+      old_path: null,
+      status: "Modified",
+      hunks: [
+        {
+          header: "@@ -1,2 +1,2 @@",
+          lines: [
+            { origin: "-", old_lineno: 1, new_lineno: null, content: `// ${path} as it was in snapshot ${snapshot.slice(0, 7)}\n` },
+            { origin: "+", old_lineno: null, new_lineno: 1, content: `// ${path} as it is on disk now\n` },
+            { origin: " ", old_lineno: 2, new_lineno: 2, content: "export const draft = true;\n" },
+          ],
+        },
+      ],
+    };
+  }
+  return invoke<FileDiff | null>("local_history_diff", { snapshot, path });
+}
+
 export async function restoreFromSnapshot(snapshot: string, path: string): Promise<void> {
   if (!isTauri()) return;
   await invoke<void>("local_history_restore", { snapshot, path });

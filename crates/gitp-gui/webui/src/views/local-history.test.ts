@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 
 import { snapshotSummary, statusOf } from "./local-history";
@@ -24,5 +25,44 @@ describe("statusOf", () => {
     expect(statusOf({ status: "D", path: "x", from: null })).toBe("Deleted");
     expect(statusOf({ status: "R", path: "x", from: "y" })).toBe("Renamed");
     expect(statusOf({ status: "M", path: "x", from: null })).toBe("Modified");
+  });
+});
+
+describe("the snapshot list", () => {
+  // @vitest-environment happy-dom
+  it("opens a file's diff against the disk on click, with Restore", async () => {
+    const { vi } = await import("vitest");
+    const { setupLocalHistory } = await import("./local-history");
+    const s = snap([["M", "src/a.ts"]]);
+    const restore = vi.fn(async () => true);
+    const diff = vi.fn(async () => ({
+      path: "src/a.ts",
+      old_path: null,
+      status: "Modified" as const,
+      hunks: [{ header: "@@ -1 +1 @@", lines: [{ origin: "-", old_lineno: 1, new_lineno: null, content: "draft\n" }, { origin: "+", old_lineno: null, new_lineno: 1, content: "now\n" }] }],
+    }));
+    const host = document.createElement("div");
+    document.body.append(host);
+    const view = setupLocalHistory(host, {
+      fetch: async () => [s],
+      versions: async () => [],
+      content: async () => "",
+      diff,
+      restore,
+      snapshotNow: async () => null,
+      clear: async () => true,
+      reportError: () => {},
+    });
+    view.start();
+    await new Promise((r) => setTimeout(r, 0));
+    host.querySelector<HTMLElement>(".lh-head")!.click();
+    host.querySelector<HTMLElement>(".lh-file")!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(diff).toHaveBeenCalledWith(s.id, "src/a.ts");
+    const lines = [...document.querySelectorAll<HTMLElement>(".lh-viewer .diff-line")].map((l) => l.className);
+    expect(lines.some((c) => c.includes("del")) && lines.some((c) => c.includes("add"))).toBe(true);
+    [...document.querySelectorAll<HTMLElement>(".lh-viewer button")].find((b) => b.textContent === "Restore this version")!.click();
+    expect(restore).toHaveBeenCalledWith(s.id, "src/a.ts");
+    document.body.innerHTML = "";
   });
 });

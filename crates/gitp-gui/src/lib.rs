@@ -318,6 +318,7 @@ pub fn run() {
             local_history::local_history,
             local_history::local_history_versions,
             local_history::local_history_file,
+            local_history::local_history_diff,
             local_history::local_history_restore,
             local_history::local_history_snapshot,
             local_history::local_history_clear,

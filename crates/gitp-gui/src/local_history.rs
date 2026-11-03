@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use gitp_core::{FileVersion, Repo, Snapshot};
+use gitp_core::{FileDiff, FileVersion, Repo, Snapshot, DEFAULT_CONTEXT_LINES};
 use tauri::State;
 
 use crate::state::{with_repo, with_repo_unlocked, RepoState};
@@ -109,6 +109,17 @@ fn snapshot_file_impl(state: &RepoState, snapshot: String, path: String) -> Resu
     })
 }
 
+/// The snapshot's version of `path` against the file on disk, for the viewer.
+fn snapshot_diff_impl(
+    state: &RepoState,
+    snapshot: String,
+    path: String,
+) -> Result<Option<FileDiff>, String> {
+    with_repo(state, |repo| {
+        repo.snapshot_file_diff(&snapshot, &path, DEFAULT_CONTEXT_LINES)
+    })
+}
+
 /// Put a snapshot's version of `path` back. Recorded like a discard, so Undo
 /// restores what was on disk before.
 fn restore_from_snapshot_impl(
@@ -154,6 +165,15 @@ pub(crate) fn local_history_file(
     state: State<RepoState>,
 ) -> Result<String, String> {
     snapshot_file_impl(&state, snapshot, path)
+}
+
+#[tauri::command(async)]
+pub(crate) fn local_history_diff(
+    snapshot: String,
+    path: String,
+    state: State<RepoState>,
+) -> Result<Option<FileDiff>, String> {
+    snapshot_diff_impl(&state, snapshot, path)
 }
 
 #[tauri::command(async)]
@@ -207,7 +227,20 @@ mod tests {
             "draft\n"
         );
 
-        restore_from_snapshot_impl(&state, snapshot, "f.txt".into()).unwrap();
+        let diff = snapshot_diff_impl(&state, snapshot.clone(), "f.txt".into())
+            .unwrap()
+            .expect("the file differs from the snapshot");
+        let lines: Vec<String> = diff.hunks[0]
+            .lines
+            .iter()
+            .map(|l| format!("{}{}", l.origin, l.content))
+            .collect();
+        assert_eq!(lines, vec!["-draft", "+typed over"]);
+
+        restore_from_snapshot_impl(&state, snapshot.clone(), "f.txt".into()).unwrap();
+        assert!(snapshot_diff_impl(&state, snapshot, "f.txt".into())
+            .unwrap()
+            .is_none());
         assert_eq!(
             std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
             "draft\n"
