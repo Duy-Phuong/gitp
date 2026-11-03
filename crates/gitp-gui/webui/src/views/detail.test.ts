@@ -59,16 +59,23 @@ describe("compareImageSides", () => {
   });
 });
 
-describe("blockCopy", () => {
+describe("blockActions", () => {
   // @vitest-environment happy-dom
   it("copies the added lines of a change, or the removed ones of a pure deletion", async () => {
     const { vi } = await import("vitest");
-    const { blockCopy, renderFile } = await import("./detail");
+    const { blockActions, renderFile } = await import("./detail");
     const written: string[] = [];
     Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn(async (t: string) => void written.push(t)) }, configurable: true });
     const line = (origin: string, content: string) => ({ origin, old_lineno: 1, new_lineno: 1, content });
-    blockCopy([line("-", "old")], [line("+", "new 1"), line("+", "new 2")]).click();
-    blockCopy([line("-", "gone")], []).click();
+    const old = line("-", "old");
+    const n1 = line("+", "new 1");
+    const n2 = line("+", "new 2");
+    const at = new Map([[old, 3], [n1, 4], [n2, 5]]);
+    const actions = blockActions([old], [n1, n2], at);
+    expect(actions.dataset.lines).toBe("3,4,5");
+    actions.querySelector<HTMLElement>(".block-copy")!.click();
+    const gone = line("-", "gone");
+    blockActions([gone], [], new Map([[gone, 0]])).querySelector<HTMLElement>(".block-copy")!.click();
     await Promise.resolve();
     expect(written).toEqual(["new 1\nnew 2", "gone"]);
     // One button per changed block, none for context.
@@ -78,6 +85,6 @@ describe("blockCopy", () => {
       status: "Modified",
       hunks: [{ header: "@@", lines: [line(" ", "ctx"), line("-", "a"), line("+", "b"), line(" ", "ctx"), line("+", "c")] }],
     });
-    expect(file.querySelectorAll(".block-copy").length).toBe(2);
+    expect([...file.querySelectorAll<HTMLElement>(".block-actions")].map((b) => b.dataset.lines)).toEqual(["1,2", "4"]);
   });
 });

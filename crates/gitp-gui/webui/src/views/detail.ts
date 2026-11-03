@@ -1001,21 +1001,24 @@ function hunkHeader(hunk: FileDiff["hunks"][number]): HTMLElement {
   return el("div", { class: "hunk-header" }, [el("span", { class: "hunk-header-text", text: hunk.header })]);
 }
 
-// A Copy button at the top right of one changed block (a run of removed and
-// added lines) that puts the block's new text on the clipboard — its added
-// lines, or the removed ones when nothing was added — without markers or
-// line numbers: a clean copy that manual selection can't give in a split
-// view. Exported for its test.
-export function blockCopy(dels: Line[], adds: Line[]): HTMLElement {
+// The buttons at the top right of one changed block (a run of removed and
+// added lines): Copy, which puts the block's new text on the clipboard — its
+// added lines, or the removed ones when nothing was added — without markers
+// or line numbers, a clean copy that manual selection can't give in a split
+// view. Local Changes adds Stage / Discard (or Unstage) beside it, acting on
+// the lines `data-lines` names (their indexes in the hunk). Exported for its
+// test.
+export function blockActions(dels: Line[], adds: Line[], at: Map<Line, number>): HTMLElement {
   const lines = adds.length ? adds : dels;
-  const copy = el("button", { class: "hunk-copy block-copy", text: "Copy", title: adds.length ? "Copy the new lines of this change" : "Copy the removed lines" });
+  const copy = el("button", { class: "hunk-btn block-copy", text: "Copy", title: adds.length ? "Copy the new lines of this change" : "Copy the removed lines" });
   copy.addEventListener("click", (e) => {
     e.stopPropagation();
     void copyToClipboard(lines.map((l) => l.content).join("\n"));
     copy.textContent = "Copied";
     setTimeout(() => (copy.textContent = "Copy"), 1200);
   });
-  return copy;
+  const indexes = [...dels, ...adds].map((l) => at.get(l)!).sort((a, b) => a - b);
+  return el("div", { class: "block-actions", "data-lines": indexes.join(",") }, [copy]);
 }
 
 // The bar above a diff the backend cut short at its line cap, with the way to
@@ -1048,7 +1051,7 @@ export function renderFile(file: FileDiff): HTMLElement {
     let dels: Line[] = [];
     let adds: Line[] = [];
     const flush = () => {
-      if (dels.length || adds.length) h.append(blockCopy(dels, adds));
+      if (dels.length || adds.length) h.append(blockActions(dels, adds, at));
       dels.forEach((d) => h.append(line(d, "del")));
       adds.forEach((a) => h.append(line(a, "add")));
       dels = [];
@@ -1121,7 +1124,7 @@ export function renderSplitDiff(file: FileDiff): HTMLElement {
     let adds: FileDiff["hunks"][number]["lines"] = [];
     const flush = () => {
       const n = Math.max(dels.length, adds.length);
-      if (n) table.append(blockCopy(dels, adds));
+      if (n) table.append(blockActions(dels, adds, at));
       for (let k = 0; k < n; k++) table.append(splitRow(dels[k] ?? null, adds[k] ?? null, at, words, syntax));
       dels = [];
       adds = [];

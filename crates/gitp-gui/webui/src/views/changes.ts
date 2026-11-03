@@ -647,20 +647,20 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     ]);
   }
 
-  // Per-block action buttons on each hunk header, revealed on hover: Stage /
-  // Discard for unstaged blocks, Unstage for staged ones. The same operations
-  // are also on the block's right-click menu (attachHunkMenus). With `blocked`
+  // Per-change action buttons beside each changed block's Copy, revealed on
+  // hover: Stage / Discard for unstaged changes, Unstage for staged ones,
+  // acting on that block's lines alone (a hunk holds several blocks). The
+  // whole hunk is on its right-click menu (attachHunkMenus). With `blocked`
   // the buttons are drawn disabled, with that as their tooltip.
   function attachHunkControls(body: HTMLElement, blocked: string | null = null): void {
     const sel = selected;
     if (!sel) return;
     const ctx = selectedDiffContext;
     for (const hunkEl of body.querySelectorAll<HTMLElement>(".hunk[data-hunk]")) {
-      const header = hunkEl.querySelector(".hunk-header");
-      if (!header) continue;
       const index = Number(hunkEl.dataset.hunk);
-      const actions = el("div", { class: "hunk-actions" });
-      const btn = (label: string, danger: boolean, onClick: () => void) => {
+      for (const actions of hunkEl.querySelectorAll<HTMLElement>(".block-actions[data-lines]")) {
+        const pairs: [number, number][] = actions.dataset.lines!.split(",").map((k) => [index, Number(k)]);
+        const btn = (label: string, danger: boolean, onClick: () => void) => {
         const b = el("button", { class: `hunk-btn${danger ? " danger" : ""}`, text: label });
         if (blocked) {
           (b).disabled = true;
@@ -673,15 +673,15 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
         });
         return b;
       };
-      if (sel.panel === "unstaged") {
-        actions.append(
-          btn("Stage", false, () => void run(() => cb.stageHunk(sel.path, index, ctx))),
-          btn("Discard…", true, () => void discardHunkAction(sel.path, index, ctx)),
-        );
-      } else {
-        actions.append(btn("Unstage", false, () => void run(() => cb.unstageHunk(sel.path, index, ctx))));
+        if (sel.panel === "unstaged") {
+          actions.append(
+            btn("Stage", false, () => void run(() => cb.stageLines(sel.path, pairs, ctx))),
+            btn("Discard…", true, () => void discardLinesAction(sel.path, pairs, ctx, "this change")),
+          );
+        } else {
+          actions.append(btn("Unstage", false, () => void run(() => cb.unstageLines(sel.path, pairs, ctx))));
+        }
       }
-      header.append(actions);
     }
   }
 
@@ -832,10 +832,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     );
   }
 
-  async function discardLinesAction(path: string, lines: [number, number][], ctx: number): Promise<void> {
+  async function discardLinesAction(path: string, lines: [number, number][], ctx: number, what?: string): Promise<void> {
     const n = lines.length;
     const ok = await cb.confirm(
-      `Discard ${n} selected line${n === 1 ? "" : "s"} of ${path}? This change will be lost.`,
+      `Discard ${what ?? `${n} selected line${n === 1 ? "" : "s"}`} of ${path}? This change will be lost.`,
     );
     if (!ok) {
       cb.setStatus("Discard cancelled.");

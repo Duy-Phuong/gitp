@@ -3144,11 +3144,20 @@ body.ref-dragging * {
 .split-table {
   position: relative;
 }
-.block-copy {
+.block-actions {
   position: absolute;
   right: 12px;
   margin-top: 2px;
   z-index: 1;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.1s;
+  user-select: none;
+}
+.hunk:hover .block-actions,
+.block-actions:focus-within {
+  opacity: 1;
 }
 .hunk-copy {
   flex: 0 0 auto;
