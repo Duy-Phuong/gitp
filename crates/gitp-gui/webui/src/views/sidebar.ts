@@ -129,6 +129,8 @@ export interface SidebarCallbacks {
   onPrOpen: (pr: PullRequest) => void;
   // Right-click a pull request: check out, open on GitHub, copy.
   onPrMenu: (pr: PullRequest, x: number, y: number) => void;
+  // Its review in the background, as a badge: running, failed, or drafts ready.
+  prReviewBadge: (pr: PullRequest) => { text: string; kind: "running" | "failed" | "ready" } | null;
   onPrFilter: (filter: PrFilter) => void;
   // Typing in the Pull Requests search box.
   onPrSearch: (text: string) => void;
@@ -647,6 +649,8 @@ function prLeaf(pr: PullRequest, open: boolean, cb: SidebarCallbacks): HTMLEleme
     el("span", { class: "sb-leaf-label", text: `#${pr.number} ${pr.title}` }),
   );
   if (pr.is_draft) row.append(el("span", { class: "sb-badge", text: "draft" }));
+  const reviewed = cb.prReviewBadge(pr);
+  if (reviewed) row.append(el("span", { class: `sb-badge pr-review-${reviewed.kind}`, text: reviewed.text }));
   if (review && pr.review_decision !== "REVIEW_REQUIRED") {
     row.append(el("span", { class: `sb-badge review-${pr.review_decision!.toLowerCase()}`, text: review }));
   }

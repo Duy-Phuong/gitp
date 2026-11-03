@@ -2174,14 +2174,27 @@ const MOCK_HOOKS: Hooks = {
   ],
 };
 
-// Run the review command over the pull request's diff; resolves with what it
-// printed. A network operation: progress in the status bar, Cancel stops it.
-export async function generateReviewDrafts(number: number, command: string): Promise<string> {
+// What a review command made: the review, and the file it came from when the
+// command wrote one (a review skill's HTML page).
+export interface GeneratedReview {
+  text: string;
+  file: string | null;
+}
+
+// Run the review command over pull request `number` of the repo at `path`, in
+// the background: it stays out of the status bar, and only
+// `cancelReviewDrafts` stops it.
+export async function generateReviewDrafts(path: string, number: number, command: string): Promise<GeneratedReview> {
   if (!isTauri()) {
-    await new Promise((r) => setTimeout(r, 800));
-    return MOCK_REVIEW_FILE;
+    await new Promise((r) => setTimeout(r, 4000));
+    return { text: MOCK_REVIEW_FILE, file: "/Users/you/review/no-sprint/pr-review-42.html" };
   }
-  return invoke<string>("gh_generate_review", { number, command });
+  return invoke<GeneratedReview>("gh_generate_review", { path, number, command });
+}
+
+export async function cancelReviewDrafts(path: string, number: number): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("gh_cancel_review", { path, number });
 }
 
 // Pick a review file (Markdown, JSON, or the HTML review page that embeds

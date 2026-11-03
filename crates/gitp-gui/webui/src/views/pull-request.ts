@@ -32,6 +32,7 @@ import {
 } from "../pull-requests";
 import { fullTime, relativeTime } from "../timeago";
 import { checkAnchor, type DraftComment } from "../review-drafts";
+import { addDrafts, clearDrafts, prReview, reviewsChanged, type Draft, type PrReview } from "../pr-reviews";
 import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PullRequestDetail, ReviewVerdict } from "../types";
 
 export interface PullRequestCallbacks {
@@ -55,19 +56,20 @@ export interface PullRequestCallbacks {
   // Picks and reads a review file; its findings, or null when nothing was
   // picked (the caller has reported why).
   loadDrafts: (pr: PullRequestDetail) => Promise<DraftComment[] | null>;
-  // Runs the review command over the diff; its findings, or null when it
-  // failed or found nothing (the caller has reported why).
-  generateDrafts: (pr: PullRequestDetail) => Promise<DraftComment[] | null>;
+  // The repo the pull requests belong to: their reviews are kept by it.
+  repoPath: () => string;
+  // Starts the review command over the diff in the background; its drafts
+  // land in the pull request's review (pr-reviews.ts), and the view is told.
+  generateDrafts: (pr: PullRequestDetail) => void;
+  cancelReview: (pr: PullRequestDetail) => void;
+  // Reads again the drafts of a review saved before the app last quit.
+  restoreDrafts: (number: number) => void;
+  // Shows the review page the drafts came from in the file manager.
+  showReviewFile: (path: string) => void;
   // Posts one review with `comments` after the user confirms; true once it is
   // on GitHub.
   postReview: (pr: PullRequestDetail, verdict: ReviewVerdict, body: string, comments: LineComment[]) => Promise<boolean>;
   reportError: (title: string, err: unknown) => void;
-}
-
-// A loaded finding and what the user decided about it.
-interface Draft extends DraftComment {
-  id: number;
-  status: "pending" | "approved" | "discarded";
 }
 
 export interface PullRequestHandle {
@@ -79,6 +81,8 @@ export interface PullRequestHandle {
   loadReviewFile: () => void;
   // Read it again from GitHub — after a review posted from the menu, say.
   reload: () => void;
+  // Draw it again from what it holds: a review in the background moved on.
+  redraw: () => void;
   // Forget it: the repo it belongs to is no longer the active one.
   reset: () => void;
 }
@@ -103,11 +107,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   let treeShown = loadPrFilesTree();
   const treeCollapsed = new Set<string>();
   let treeSelected: string | null = null;
-  // Draft comments loaded from a review file, with the verdict and message
-  // the review they'll be posted in will carry.
-  let drafts: Draft[] = [];
-  let draftsVerdict: ReviewVerdict = "comment";
-  let draftsBody = "";
+  // The pull request's draft comments, with the verdict and message the
+  // review they'll be posted in will carry. Kept by repo and number outside
+  // the view, so they wait while another pull request is open.
+  const review = (): PrReview => prReview(cb.repoPath(), number ?? 0);
 
   const message = (text: string) => {
     clear(host);
@@ -123,7 +126,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       const d = await cb.fetchDetail(number);
       if (mine !== generation) return;
       detail = d;
-      render();
+      if (tab === "drafts" && !files) void showDrafts(d);
+      else render();
     } catch (err) {
       if (mine !== generation) return;
       message(`Couldn't load pull request #${number}.`);
@@ -155,7 +159,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       tabButton("conversation", `Conversation (${prTimeline(pr).length})`),
       tabButton("files", `Files changed (${pr.changed_files})`),
       tabButton("checks", `Checks (${pr.checks.length})`),
-      ...(drafts.length ? [tabButton("drafts", `Drafts (${drafts.filter((d) => d.status !== "discarded").length})`)] : []),
+      ...(review().drafts.length
+        ? [tabButton("drafts", `Drafts (${review().drafts.filter((d) => d.status !== "discarded").length})`)]
+        : []),
       el("span", { class: "pr-diffstat" }, [
         el("span", { class: "pr-add", text: `+${pr.additions}` }),
         el("span", { class: "pr-del", text: `−${pr.deletions}` }),
@@ -194,8 +200,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       button("Check Out", () => cb.checkout(pr), `gh pr checkout ${pr.number}: a local branch tracking ${pr.head}`),
       button("Check Out in New Worktree…", (e) => cb.checkoutInWorktree(pr, e.clientX, e.clientY)),
       button("Review ▾", (e) => cb.reviewMenu(pr, e.clientX, e.clientY), "Approve, request changes or comment"),
-      button("Generate Drafts", () => void loadDrafts(pr, cb.generateDrafts), "Run the review command (Settings → Git) over the diff; its findings become draft comments to approve or discard"),
-      button("Load Review File…", () => void loadDrafts(pr, cb.loadDrafts), "Read a review's findings as draft comments, to approve or discard before posting"),
+      review().running
+        ? button("Reviewing… Cancel", () => cb.cancelReview(pr), "The review command is running in the background; click to stop it")
+        : button("Generate Drafts", () => cb.generateDrafts(pr), "Run the review command (Settings → Git) in the background; its findings become draft comments to approve or discard"),
+      button("Load Review File…", () => void loadDrafts(pr), "Read a review's findings as draft comments, to approve or discard before posting"),
       open,
     ]);
     if (pr.state === "OPEN") {
@@ -524,9 +532,19 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
 
   // Read a review file's findings into the Drafts tab. The changed files are
   // loaded too, so each draft can say whether its line is in the diff.
-  async function loadDrafts(pr: PullRequestDetail, source: (pr: PullRequestDetail) => Promise<DraftComment[] | null>): Promise<void> {
-    const found = await source(pr);
-    if (!found || number !== pr.number) return;
+  async function loadDrafts(pr: PullRequestDetail): Promise<void> {
+    const found = await cb.loadDrafts(pr);
+    if (!found) return;
+    addDrafts(prReview(cb.repoPath(), pr.number), found);
+    reviewsChanged();
+    if (number !== pr.number) return;
+    tab = "drafts";
+    await showDrafts(pr);
+  }
+
+  // Load the changed files too, so each draft can say whether its line is in
+  // the diff, then draw.
+  async function showDrafts(pr: PullRequestDetail): Promise<void> {
     if (!files) {
       try {
         files = await cb.fetchFiles(pr.number);
@@ -535,15 +553,14 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         // bad one when posting.
       }
     }
-    const next = drafts.length ? Math.max(...drafts.map((d) => d.id)) + 1 : 1;
-    drafts = [...drafts, ...found.map((d, i) => ({ ...d, id: next + i, status: "pending" as const }))];
-    tab = "drafts";
-    render();
+    if (number === pr.number) render();
   }
 
   // Each draft: where it goes, its severity, the text (editable), and Approve
   // or Discard. Above them the review the approved ones will be posted as.
   function renderDrafts(body: HTMLElement, pr: PullRequestDetail): void {
+    const r = review();
+    const drafts = r.drafts;
     const live = drafts.filter((d) => d.status !== "discarded");
     if (live.length === 0 && drafts.length === 0) {
       body.append(el("div", { class: "pr-empty", text: "No draft comments. Load a review file to get some." }));
@@ -560,16 +577,16 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       ["request_changes", "Request changes"],
     ] as const) {
       const o = el("option", { value, text: label });
-      o.selected = draftsVerdict === value;
+      o.selected = r.verdict === value;
       verdict.append(o);
     }
-    verdict.addEventListener("change", () => (draftsVerdict = verdict.value as ReviewVerdict));
+    verdict.addEventListener("change", () => (r.verdict = verdict.value as ReviewVerdict));
     const message = composerArea({
       class: "pr-drafts-message",
       placeholder: "Review message (Markdown) — optional for Comment and Approve",
     });
-    message.value = draftsBody;
-    message.addEventListener("input", () => (draftsBody = message.value));
+    message.value = r.body;
+    message.addEventListener("input", () => (r.body = message.value));
 
     const n = postable.length;
     const postBtn = el("button", { class: "btn small", text: `Post ${n} approved` });
@@ -579,8 +596,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       void cb
         .postReview(
           pr,
-          draftsVerdict,
-          draftsBody,
+          r.verdict,
+          r.body,
           postable.map((d) => ({ path: d.path, line: d.line, side: d.side, commit_id: pr.head_oid, body: d.body })),
         )
         .then(async (ok) => {
@@ -589,18 +606,19 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
             return;
           }
           const posted = new Set(postable.map((d) => d.id));
-          drafts = drafts.filter((d) => !posted.has(d.id));
-          draftsBody = "";
-          if (!drafts.some((d) => d.status !== "discarded")) {
-            drafts = [];
+          r.drafts = r.drafts.filter((d) => !posted.has(d.id));
+          r.body = "";
+          if (!r.drafts.some((d) => d.status !== "discarded")) {
+            clearDrafts(cb.repoPath(), pr.number);
             tab = "conversation";
           }
+          reviewsChanged();
           await load(true);
         });
     });
     const setAll = (status: Draft["status"]) => {
       for (const d of drafts) if (d.status !== "discarded" || status === "pending") d.status = status;
-      render();
+      reviewsChanged();
     };
     const summary = `${live.length} draft${live.length === 1 ? "" : "s"} · ${drafts.filter((d) => d.status === "approved").length} approved${blocked ? ` · ${blocked} can't be posted (line not in this diff)` : ""}`;
     body.append(
@@ -608,10 +626,11 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         el("span", { class: "pr-drafts-summary", text: summary }),
         smallButton("Approve All", () => setAll("approved")),
         smallButton("Clear", () => {
-          drafts = [];
+          clearDrafts(cb.repoPath(), pr.number);
           tab = "conversation";
-          render();
+          reviewsChanged();
         }),
+        ...(r.file ? [smallButton("Show Review File", () => cb.showReviewFile(r.file!))] : []),
         el("span", { class: "spacer" }),
         previewToggle(message).button,
         verdict,
@@ -639,7 +658,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     head.append(el("span", { class: "spacer" }));
     const toggle = (status: Draft["status"]) => () => {
       d.status = d.status === status ? "pending" : status;
-      render();
+      reviewsChanged();
     };
     if (d.status !== "discarded") {
       head.append(smallButton(d.status === "approved" ? "Approved ✓" : "Approve", toggle("approved")));
@@ -681,27 +700,32 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   return {
     show: (n) => {
       if (n !== number) {
-        drafts = [];
-        draftsBody = "";
         treeSelected = null;
         treeCollapsed.clear();
-      }
-      if (n !== number) {
         number = n;
         detail = null;
         files = null;
         draft = "";
         filesQuery = "";
-        tab = "conversation";
+        cb.restoreDrafts(n);
+        // A review that finished while the user was elsewhere opens on its drafts.
+        tab = review().drafts.some((d) => d.status !== "discarded") ? "drafts" : "conversation";
       }
       void load(true);
     },
     reload: () => void load(true),
+    redraw: () => {
+      if (!detail) return;
+      // A finished review adds the Drafts tab beside the one the user is on.
+      if (tab === "drafts" && !review().drafts.length) tab = "conversation";
+      if (tab === "drafts" && !files) void showDrafts(detail);
+      else render();
+    },
     generateDrafts: () => {
-      if (detail) void loadDrafts(detail, cb.generateDrafts);
+      if (detail) cb.generateDrafts(detail);
     },
     loadReviewFile: () => {
-      if (detail) void loadDrafts(detail, cb.loadDrafts);
+      if (detail) void loadDrafts(detail);
     },
     reset: () => {
       generation++;
@@ -709,8 +733,6 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       detail = null;
       files = null;
       draft = "";
-      drafts = [];
-      draftsBody = "";
       clear(host);
     },
   };

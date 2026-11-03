@@ -11,6 +11,7 @@ import {
   checkoutPullRequestInWorktree,
   commentOnLine,
   commentOnPullRequest,
+  cancelReviewDrafts,
   confirmDialog,
   createPullRequestOnGitHub,
   fetchPullRequest,
@@ -33,6 +34,8 @@ import {
   readReviewFile,
   replyToReviewComment,
   resolveReviewThread,
+  revealFolder,
+  revealPath,
   reviewPullRequest,
   reviewWithComments,
 } from "./api";
@@ -46,6 +49,8 @@ import { loadReviewCommand } from "./prefs";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
 import { showErrorDialog } from "./views/message-dialog";
+import { toast } from "./views/toast";
+import { addDrafts, prReview, rememberedFile, reviewsChanged, setReviewFile } from "./pr-reviews";
 import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
 import { baseBranches, githubRemoteName, mergeAdvice, mergeChoices } from "./pull-requests";
@@ -405,26 +410,14 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
       return null;
     }
   },
-  generateDrafts: async (pr) => {
-    setStatus(`Generating review drafts for #${pr.number}… (Cancel in the status bar stops it)`);
-    try {
-      const out = await generateReviewDrafts(pr.number, loadReviewCommand());
-      const drafts = parseReviewFile(out);
-      if (drafts.length === 0) {
-        const head = out.trim().length > 600 ? `${out.trim().slice(0, 600)}…` : out.trim();
-        showErrorDialog(
-          "No draft comments in the review command's output",
-          `It printed no "### path/to/file:line" block and no JSON list of {path, line, body}:\n\n${head}`,
-        );
-        setStatus("The review command found nothing to comment on.");
-        return null;
-      }
-      reportDone(`Generated ${drafts.length} draft comment${drafts.length === 1 ? "" : "s"} for #${pr.number}.`);
-      return drafts;
-    } catch (err) {
-      opFailed(`Couldn't generate review drafts for #${pr.number}`, err);
-      return null;
-    }
+  repoPath: () => state.repoPath,
+  generateDrafts: (pr) => void runReview(state.repoPath, pr.number),
+  cancelReview: (pr) => void cancelReviewDrafts(state.repoPath, pr.number),
+  restoreDrafts: (number) => void restoreDrafts(state.repoPath, number),
+  showReviewFile: (path) => {
+    // reveal_path takes a repo-relative path; a file outside the repo shows its folder.
+    const root = `${state.repoPath.replace(/\/$/, "")}/`;
+    void (path.startsWith(root) ? revealPath(path.slice(root.length)) : revealFolder(path.replace(/\/[^/]*$/, "")));
   },
   postReview: (pr, verdict, body, comments) => {
     const what = `a review with ${comments.length} comment${comments.length === 1 ? "" : "s"}`;
@@ -433,6 +426,69 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   },
   reportError: readFailed,
 };
+
+// --- Reviews in the background ---------------------------------------------
+
+// Run the review command over pull request `number` of the repo at `repo`,
+// in the background: the sidebar marks the pull request while it runs and
+// when its drafts are ready, and the user can do anything else meanwhile —
+// another pull request, another repo tab.
+async function runReview(repo: string, number: number): Promise<void> {
+  const r = prReview(repo, number);
+  if (r.running) return;
+  r.running = true;
+  r.error = null;
+  reviewsChanged();
+  setStatus(`Reviewing #${number} in the background — keep working; the pull request shows when it's done.`);
+  try {
+    const out = await generateReviewDrafts(repo, number, loadReviewCommand());
+    const found = parseReviewFile(out.text);
+    if (found.length === 0) {
+      setStatus(`The review of #${number} found nothing to comment on.`);
+      toast(`The review of #${number} found nothing to comment on`, {
+        kind: "info",
+        onDetails: () => showErrorDialog(`Review of #${number}`, clip(out.text)),
+      });
+    } else {
+      // A new review replaces the last one: it carries over the findings still open.
+      r.drafts = [];
+      addDrafts(r, found);
+      setReviewFile(repo, number, out.file);
+      reportDone(`Review of #${number} ready: ${found.length} draft comment${found.length === 1 ? "" : "s"} to approve or discard.`);
+    }
+  } catch (err) {
+    if (isCancelled(err)) {
+      setStatus(`Review of #${number} cancelled.`);
+    } else {
+      const title = `Couldn't review #${number}`;
+      r.error = String(err);
+      setStatus(`${title}: ${r.error}`);
+      // No dialog: it may finish long after the user moved on to something else.
+      toast(title, { kind: "error", onDetails: () => showErrorDialog(title, String(err)) });
+    }
+  } finally {
+    r.running = false;
+    reviewsChanged();
+  }
+}
+
+const clip = (text: string) => (text.trim().length > 600 ? `${text.trim().slice(0, 600)}…` : text.trim());
+
+// Read again the drafts of a review made before the app last quit, from the
+// file it was saved to.
+async function restoreDrafts(repo: string, number: number): Promise<void> {
+  const file = rememberedFile(repo, number);
+  if (!file) return;
+  const r = prReview(repo, number);
+  try {
+    addDrafts(r, parseReviewFile(await readReviewFile(file)));
+    r.file = file;
+  } catch {
+    // Moved or deleted since: forget it.
+    setReviewFile(repo, number, null);
+  }
+  reviewsChanged();
+}
 
 // --- Signing in and out -----------------------------------------------------
 

@@ -1,4 +1,5 @@
 import "./styles.css";
+import { onReviewsChange } from "./pr-reviews";
 import {
   abortConflict,
   addToGitignore,
@@ -519,6 +520,12 @@ async function init(): Promise<void> {
     reportError: readFailed,
   });
   ui.prView = setupPullRequestView($("#pr-view"), pullRequestCallbacks);
+  // A review running in the background moved on: its badge and, when its pull
+  // request is the one open, the view.
+  onReviewsChange(() => {
+    renderSidebarNow();
+    ui.prView?.redraw();
+  });
   ui.welcomeView = setupWelcome($("#welcome-view"), {
     open: (path) => void openRecentRepo(path),
     browse: () => void browseAndOpen(),

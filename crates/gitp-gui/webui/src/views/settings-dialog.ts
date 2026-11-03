@@ -42,6 +42,7 @@ import {
   savePullDefault,
   saveSyntaxHighlight,
   saveTerminalFont,
+  SKILL_REVIEW_COMMAND,
   TAB_SIZES,
   type CodePrefs,
   type DateFormat,
@@ -616,7 +617,12 @@ function reviewCommandField(): HTMLElement {
     saveReviewCommand("");
     area.value = loadReviewCommand();
   });
-  return el("div", { class: "settings-command-row" }, [area, reset]);
+  const skill = linkButton("Use Review Skill", () => {
+    saveReviewCommand(SKILL_REVIEW_COMMAND);
+    area.value = loadReviewCommand();
+  });
+  skill.title = "Run the /review-pr-phuong Claude Code skill; its review page becomes the drafts";
+  return el("div", { class: "settings-command-row" }, [area, reset, skill]);
 }
 
 // Who gh is signed in as, with Sign In or Sign Out — or how to install gh.
