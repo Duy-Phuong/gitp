@@ -8,6 +8,7 @@ const ev = (key: string, mods: Partial<{ meta: boolean; ctrl: boolean; alt: bool
 describe("codeActionFor", () => {
   it("maps each binding on a Mac", () => {
     expect(codeActionFor(ev("p", { meta: true }), true)).toBe("quickOpen");
+    expect(codeActionFor(ev("f", { meta: true }), true)).toBe("find");
     expect(codeActionFor(ev("f", { meta: true, shift: true }), true)).toBe("findInFiles");
     expect(codeActionFor(ev("F12"), true)).toBe("goToDefinition");
     expect(codeActionFor(ev("ArrowLeft", { meta: true, alt: true }), true)).toBe("back");

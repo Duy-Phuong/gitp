@@ -4,7 +4,7 @@
 
 import { IS_MAC } from "../../shortcuts";
 
-export type CodeAction = "quickOpen" | "findInFiles" | "goToDefinition" | "back" | "forward" | "findUsages" | "callHierarchy" | "closeTab" | "togglePreview";
+export type CodeAction = "quickOpen" | "find" | "findInFiles" | "goToDefinition" | "back" | "forward" | "findUsages" | "callHierarchy" | "closeTab" | "togglePreview";
 
 export function codeActionFor(e: KeyboardEvent, isMac = IS_MAC): CodeAction | null {
   const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
@@ -12,6 +12,7 @@ export function codeActionFor(e: KeyboardEvent, isMac = IS_MAC): CodeAction | nu
   if (mod && e.altKey && !e.shiftKey && key === "ArrowLeft") return "back";
   if (mod && e.altKey && !e.shiftKey && key === "ArrowRight") return "forward";
   if (mod && !e.altKey && !e.shiftKey && key === "p") return "quickOpen";
+  if (mod && !e.altKey && !e.shiftKey && key === "f") return "find";
   if (mod && !e.altKey && e.shiftKey && key === "f") return "findInFiles";
   if (mod && !e.altKey && e.shiftKey && key === "w") return "closeTab";
   if (mod && !e.altKey && e.shiftKey && key === "v") return "togglePreview";

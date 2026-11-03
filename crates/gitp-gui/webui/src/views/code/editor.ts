@@ -9,6 +9,7 @@ import { java } from "@codemirror/lang-java";
 import { javascript } from "@codemirror/lang-javascript";
 import { markdown } from "@codemirror/lang-markdown";
 import { python } from "@codemirror/lang-python";
+import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from "@codemirror/search";
 import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
 import { bracketMatching, indentOnInput, StreamLanguage } from "@codemirror/language";
@@ -177,6 +178,8 @@ export interface EditorLike {
   reveal(loc: Location, endCol?: number): void;
   caret(): Location | null;
   focus(): void;
+  // Open the find/replace panel over the active file.
+  find(): void;
   close(path: string): void;
 }
 
@@ -201,6 +204,8 @@ export class CodeEditor implements EditorLike {
       indentOnInput(),
       codeTheme,
       languageFor(lang, path),
+      search({ top: true }),
+      highlightSelectionMatches(),
       keymap.of([
         {
           key: "Mod-s",
@@ -218,6 +223,7 @@ export class CodeEditor implements EditorLike {
           },
         },
         indentWithTab,
+        ...searchKeymap,
         ...defaultKeymap,
         ...historyKeymap,
       ]),
@@ -298,6 +304,11 @@ export class CodeEditor implements EditorLike {
   caret(): Location | null {
     if (!this.activePath) return null;
     return this.locationOf(this.view.state.selection.main.head);
+  }
+
+  find(): void {
+    this.view.focus();
+    openSearchPanel(this.view);
   }
 
   focus(): void {

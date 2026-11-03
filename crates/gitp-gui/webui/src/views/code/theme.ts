@@ -28,6 +28,15 @@ const chrome = EditorView.theme({
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--selection)" },
   "&.cm-focused .cm-cursor": { borderLeftColor: "var(--text)" },
   ".cm-matchingBracket": { outline: "1px solid var(--accent)", backgroundColor: "transparent" },
+  // The find/replace panel and its matches.
+  ".cm-panels": { backgroundColor: "var(--bg-elev)", color: "var(--text)" },
+  ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--border)" },
+  ".cm-panel.cm-search": { fontFamily: "inherit", fontSize: "12px", padding: "4px 8px" },
+  ".cm-textfield": { backgroundColor: "var(--bg)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px", font: "inherit" },
+  ".cm-button": { backgroundColor: "var(--bg)", backgroundImage: "none", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px", font: "inherit" },
+  ".cm-searchMatch": { backgroundColor: "color-mix(in srgb, var(--accent) 30%, transparent)" },
+  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "var(--accent)", color: "var(--bg)" },
+  ".cm-selectionMatch": { backgroundColor: "color-mix(in srgb, var(--accent) 18%, transparent)" },
   ".cm-def-link": { textDecoration: "underline", color: "var(--accent)", cursor: "pointer" },
   "&.cm-focused": { outline: "none" },
 });

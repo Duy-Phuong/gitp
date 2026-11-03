@@ -90,6 +90,8 @@ export const BUILT_IN: BuiltIn[] = [
   { label: "Focus the diff", group: "Commit log", mac: "↩", other: "Enter" },
   { label: "Leave a comparison", group: "Commit log", mac: "Esc", other: "Esc" },
   { label: "Quick open file", group: "Code", mac: "⌘P", other: "Ctrl+P" },
+  { label: "Find in the diff (instead of Search commits, in this tab)", group: "Branches and changes", mac: "⌘F in the Changes tab", other: "Ctrl+F in the Changes tab" },
+  { label: "Find / replace in the file (instead of Search commits, in this tab)", group: "Code", mac: "⌘F in the Code tab", other: "Ctrl+F in the Code tab" },
   { label: "Find in files (instead of Fetch, in this tab)", group: "Code", mac: "⌘⇧F in the Code tab", other: "Ctrl+Shift+F in the Code tab" },
   { label: "Save", group: "Code", mac: "⌘S", other: "Ctrl+S" },
   { label: "Go to definition", group: "Code", mac: "F12 or ⌘-click", other: "F12 or Ctrl-click" },

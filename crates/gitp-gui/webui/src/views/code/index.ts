@@ -366,6 +366,9 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
         if (c) void callHierarchy(c);
         break;
       }
+      case "find":
+        if (tabs.active()) editor.find();
+        break;
       case "findInFiles":
         showPane("search");
         searchPanel.focus();

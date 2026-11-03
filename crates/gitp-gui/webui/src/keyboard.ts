@@ -20,6 +20,7 @@ import { toggleTerminal } from "./terminal-panel";
 import { applyZoom, loadFavoriteRepos, loadZoom, steppedZoom } from "./prefs";
 import { setStatus } from "./report";
 import { IS_MAC, SHORTCUTS, shortcutFor, shortcutHint, type ShortcutId } from "./shortcuts";
+import { openDiffFind } from "./views/diff-find";
 import { openShortcutsDialog } from "./views/shortcuts-dialog";
 
 // --- Keyboard navigation in the commit log --------------------------------
@@ -151,6 +152,11 @@ const ACTIONS: Record<ShortcutId, () => void> = {
   changes: () => showView("changes"),
   code: () => showView("code"),
   searchCommits: () => {
+    // In the Changes tab, Cmd/Ctrl+F finds in the diff on screen instead.
+    if (state.view === "changes") {
+      openDiffFind(() => (state.view === "changes" ? document.querySelector<HTMLElement>(".staging-diff-body") : null));
+      return;
+    }
     showView("history");
     const input = document.querySelector<HTMLInputElement>("#log-search");
     input?.focus();

@@ -36,6 +36,7 @@ function fakeEditor(): EditorLike & { opened: string[]; revealed: Location[]; re
     },
     caret: () => (active ? { path: active, line: 0, col: 0 } : null),
     focus: () => {},
+    find: () => {},
     close(p) {
       texts.delete(p);
       if (active === p) active = null;
