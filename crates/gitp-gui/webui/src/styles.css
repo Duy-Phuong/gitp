@@ -3137,7 +3137,19 @@ body.ref-dragging * {
   margin-right: auto;
   user-select: none;
 }
-/* Copy-this-block button, revealed on hover like the staging controls. */
+/* Copy-this-change button, revealed on hover like the staging controls. It
+   sits at the top right of the changed block it precedes: absolute with no
+   `top`, so it stays where the flow put it, and takes no height. */
+.hunk,
+.split-table {
+  position: relative;
+}
+.block-copy {
+  position: absolute;
+  right: 12px;
+  margin-top: 2px;
+  z-index: 1;
+}
 .hunk-copy {
   flex: 0 0 auto;
   font-family: var(--font, sans-serif);

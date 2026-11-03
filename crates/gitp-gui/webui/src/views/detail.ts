@@ -996,23 +996,26 @@ function fileHead(file: FileDiff): HTMLElement {
 
 // Unified diff: inline +/- lines, with intra-line (word) highlights on paired
 // deletion/addition lines. Shared with the Local Changes view.
-// A hunk's `@@` header plus a Copy button that puts the block's new-side text
-// (context + additions, no markers or line numbers) on the clipboard — a clean
-// copy that manual selection can't give in a split view.
+// A hunk's `@@` header.
 function hunkHeader(hunk: FileDiff["hunks"][number]): HTMLElement {
-  const header = el("div", { class: "hunk-header" }, [
-    el("span", { class: "hunk-header-text", text: hunk.header }),
-  ]);
-  const copy = el("button", { class: "hunk-copy", text: "Copy", title: "Copy this block" });
+  return el("div", { class: "hunk-header" }, [el("span", { class: "hunk-header-text", text: hunk.header })]);
+}
+
+// A Copy button at the top right of one changed block (a run of removed and
+// added lines) that puts the block's new text on the clipboard — its added
+// lines, or the removed ones when nothing was added — without markers or
+// line numbers: a clean copy that manual selection can't give in a split
+// view. Exported for its test.
+export function blockCopy(dels: Line[], adds: Line[]): HTMLElement {
+  const lines = adds.length ? adds : dels;
+  const copy = el("button", { class: "hunk-copy block-copy", text: "Copy", title: adds.length ? "Copy the new lines of this change" : "Copy the removed lines" });
   copy.addEventListener("click", (e) => {
     e.stopPropagation();
-    const text = hunk.lines.filter((l) => l.origin !== "-").map((l) => l.content).join("\n");
-    void copyToClipboard(text);
+    void copyToClipboard(lines.map((l) => l.content).join("\n"));
     copy.textContent = "Copied";
     setTimeout(() => (copy.textContent = "Copy"), 1200);
   });
-  header.append(copy);
-  return header;
+  return copy;
 }
 
 // The bar above a diff the backend cut short at its line cap, with the way to
@@ -1045,6 +1048,7 @@ export function renderFile(file: FileDiff): HTMLElement {
     let dels: Line[] = [];
     let adds: Line[] = [];
     const flush = () => {
+      if (dels.length || adds.length) h.append(blockCopy(dels, adds));
       dels.forEach((d) => h.append(line(d, "del")));
       adds.forEach((a) => h.append(line(a, "add")));
       dels = [];
@@ -1117,6 +1121,7 @@ export function renderSplitDiff(file: FileDiff): HTMLElement {
     let adds: FileDiff["hunks"][number]["lines"] = [];
     const flush = () => {
       const n = Math.max(dels.length, adds.length);
+      if (n) table.append(blockCopy(dels, adds));
       for (let k = 0; k < n; k++) table.append(splitRow(dels[k] ?? null, adds[k] ?? null, at, words, syntax));
       dels = [];
       adds = [];

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 
 import { compareImageSides, signatureText } from "./detail";
@@ -55,5 +56,28 @@ describe("compareImageSides", () => {
 
   it("has nothing to read on an empty tree's side", () => {
     expect(compareImageSides(cmp(empty, commit("bbb")))).toEqual([null, { Rev: "bbb" }]);
+  });
+});
+
+describe("blockCopy", () => {
+  // @vitest-environment happy-dom
+  it("copies the added lines of a change, or the removed ones of a pure deletion", async () => {
+    const { vi } = await import("vitest");
+    const { blockCopy, renderFile } = await import("./detail");
+    const written: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn(async (t: string) => void written.push(t)) }, configurable: true });
+    const line = (origin: string, content: string) => ({ origin, old_lineno: 1, new_lineno: 1, content });
+    blockCopy([line("-", "old")], [line("+", "new 1"), line("+", "new 2")]).click();
+    blockCopy([line("-", "gone")], []).click();
+    await Promise.resolve();
+    expect(written).toEqual(["new 1\nnew 2", "gone"]);
+    // One button per changed block, none for context.
+    const file = renderFile({
+      path: "a.ts",
+      old_path: null,
+      status: "Modified",
+      hunks: [{ header: "@@", lines: [line(" ", "ctx"), line("-", "a"), line("+", "b"), line(" ", "ctx"), line("+", "c")] }],
+    });
+    expect(file.querySelectorAll(".block-copy").length).toBe(2);
   });
 });
