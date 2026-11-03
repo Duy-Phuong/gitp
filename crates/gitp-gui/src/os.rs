@@ -265,7 +265,7 @@ fn reveal_in_file_manager(full: &Path) -> Result<(), String> {
 }
 
 /// Open `full` with the OS default application for its file type.
-fn open_in_default_app(full: &Path) -> Result<(), String> {
+pub(crate) fn open_in_default_app(full: &Path) -> Result<(), String> {
     use std::process::Command;
     let spawn = |mut cmd: Command| launch(&mut cmd).map_err(to_message);
     if cfg!(target_os = "macos") {

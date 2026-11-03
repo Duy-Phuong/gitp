@@ -634,7 +634,15 @@ export interface GhAccount {
   message: string | null;
 }
 
-export type PrFilter = "all" | "mine" | "review_requested";
+// "reviewed" is gitp's own: all of them, narrowed to the ones with a review
+// saved under the repo's review/ folder. GitHub only sees the other three.
+export type PrFilter = "all" | "mine" | "review_requested" | "reviewed";
+
+// A review saved under the repo's review/ folder, and the pull request it reviews.
+export interface ReviewFile {
+  path: string;
+  number: number;
+}
 
 export interface PrLabel {
   name: string;

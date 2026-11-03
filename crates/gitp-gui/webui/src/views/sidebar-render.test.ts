@@ -42,6 +42,7 @@ const state = (open: number | null, query = ""): SidebarState => ({
     repo: "o/app",
     account: { installed: true, signed_in: true, login: "me", scopes: [], message: null },
     filter: "all",
+    reviewFiles: [],
     list: [pr(42, "Retry the identity check"), pr(39, "Fix the date format", "hubot", "fix/dates")],
     loading: false,
     error: null,
@@ -93,6 +94,20 @@ describe("renderSidebar", () => {
     renderSidebar(host, state(null, "42"), callbacks());
     expect(host.textContent).toContain("date-fix");
     expect(host.querySelector<HTMLInputElement>(".sb-pr-search")!.value).toBe("42");
+  });
+
+  it("narrows to the pull requests with a saved review under the Reviewed filter", () => {
+    const host = document.createElement("div");
+    const s = state(null, "");
+    s.prs.filter = "reviewed";
+    s.prs.reviewFiles = [{ path: "/app/review/s/pr-review-UBIID-1.html", number: 39 }];
+    renderSidebar(host, s, callbacks());
+    expect(prRows(host)).toEqual(["#39 Fix the date format"]);
+
+    s.prs.reviewFiles = [];
+    renderSidebar(host, s, callbacks());
+    expect(prRows(host)).toEqual([]);
+    expect(host.textContent).toContain("No saved review of an open pull request");
   });
 
   it("offers to open a number the list doesn't have, closed or merged ones included", () => {

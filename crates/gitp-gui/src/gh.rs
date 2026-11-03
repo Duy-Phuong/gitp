@@ -14,12 +14,12 @@ use std::sync::{Arc, Mutex};
 use gitp_core::{
     FileDiff, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings, LineComment,
     MergeMethod, NetworkHooks, NewPullRequest, PrDraft, PrFilter, PrReviewComment, PullRequest,
-    PullRequestDetail, Repo, ReviewVerdict, Undoable, LOGIN_TIMEOUT,
+    PullRequestDetail, Repo, ReviewFile, ReviewVerdict, Undoable, LOGIN_TIMEOUT,
 };
 use serde::Serialize;
 use tauri::State;
 
-use crate::os::open_in_browser;
+use crate::os::{open_in_browser, open_in_default_app};
 use crate::state::{
     invalidate_status, to_message, with_repo, with_repo_networked, with_repo_networked_prepared,
     with_repo_unlocked, RepoState,
@@ -258,6 +258,21 @@ fn read_review_file_impl(path: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// The reviews saved under the open repo's `review/` folder, by pull request.
+fn review_files_impl(state: &RepoState) -> Result<Vec<ReviewFile>, String> {
+    with_repo_unlocked(state, |repo| Ok(repo.review_files()))
+}
+
+/// Open the saved review page at `path` in the default app — the browser, for
+/// the HTML page. Only a file `review_files` lists: the frontend can't make
+/// this open anything else.
+fn open_review_page_impl(state: &RepoState, path: String) -> Result<(), String> {
+    if !review_files_impl(state)?.iter().any(|f| f.path == path) {
+        return Err(format!("{path} is not a saved review of this repository"));
+    }
+    open_in_default_app(std::path::Path::new(&path))
+}
+
 /// Start a sign-in, stopping one already waiting (a second click on Sign In).
 fn gh_login_start_impl(logins: &GhLoginState) -> Result<DeviceCode, String> {
     gh_login_cancel_impl(logins);
@@ -459,6 +474,16 @@ pub(crate) fn gh_cancel_review(path: String, number: u64, jobs: State<ReviewJobs
 #[tauri::command(async)]
 pub(crate) fn read_review_file(path: String) -> Result<String, String> {
     read_review_file_impl(path)
+}
+
+#[tauri::command(async)]
+pub(crate) fn review_files(state: State<RepoState>) -> Result<Vec<ReviewFile>, String> {
+    review_files_impl(&state)
+}
+
+#[tauri::command(async)]
+pub(crate) fn open_review_page(path: String, state: State<RepoState>) -> Result<(), String> {
+    open_review_page_impl(&state, path)
 }
 
 #[tauri::command(async)]

@@ -21,6 +21,7 @@ export const PR_FILTERS: { value: PrFilter; label: string }[] = [
   { value: "all", label: "All" },
   { value: "mine", label: "Created by me" },
   { value: "review_requested", label: "Review requested" },
+  { value: "reviewed", label: "Reviewed" },
 ];
 
 // A line comment and its replies, oldest first.

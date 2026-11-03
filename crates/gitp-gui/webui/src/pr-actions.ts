@@ -23,6 +23,8 @@ import {
   ghLoginWait,
   ghLogout,
   ghRepo,
+  openReviewPage,
+  reviewFiles,
   githubRepoSettings,
   isCancelled,
   listPullRequests,
@@ -82,9 +84,15 @@ export async function loadPullRequests(recheckAccount = false): Promise<void> {
   const account = state.prs.account;
   if (account.installed && account.signed_in) {
     try {
-      const list = await listPullRequests(filter);
+      const [list, saved] = await Promise.all([
+        listPullRequests(filter === "reviewed" ? "all" : filter),
+        reviewFiles().catch(() => []),
+      ]);
       if (stale()) return;
       state.prs.list = list;
+      state.prs.reviewFiles = saved;
+      // The open pull request's review page icon follows the list.
+      ui.prView?.redraw();
     } catch (err) {
       if (stale()) return;
       state.prs.error = String(err);
@@ -92,6 +100,21 @@ export async function loadPullRequests(recheckAccount = false): Promise<void> {
   }
   state.prs.loading = false;
   renderSidebarNow();
+}
+
+// Read again which pull requests have a saved review: one just finished.
+async function refreshReviewFiles(): Promise<void> {
+  const path = state.repoPath;
+  const saved = await reviewFiles().catch(() => null);
+  if (!saved || state.repoPath !== path) return;
+  state.prs.reviewFiles = saved;
+  renderSidebarNow();
+  ui.prView?.redraw();
+}
+
+// The saved review of pull request `number` in the open repo, if any.
+function savedReview(number: number): string | null {
+  return state.prs.reviewFiles.find((f) => f.number === number)?.path ?? null;
 }
 
 // gh's account, or — when even asking failed — a signed-out one saying why.
@@ -391,9 +414,15 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
     post(`a reply to ${root.author}`, pr.number, body, async () => (await replyToReviewComment(pr.number, root.id, body)).url),
   lineComment: (pr, comment) =>
     post(`a comment on ${comment.path}:${comment.line}`, pr.number, comment.body, async () => (await commentOnLine(pr.number, comment)).url),
-  loadDrafts: async () => {
-    const path = await pickReviewFile();
-    if (!path) return null;
+  // The pull request's saved review when there is one — it replaces the
+  // drafts, being the review of this pull request — else a file to pick,
+  // starting in the review/ folder, added to them.
+  loadDrafts: async (pr) => {
+    const repo = state.repoPath;
+    await refreshReviewFiles();
+    const saved = savedReview(pr.number);
+    const path = saved ?? (await pickReviewFile(`${repo.replace(/\/$/, "")}/review`));
+    if (!path) return false;
     try {
       const drafts = parseReviewFile(await readReviewFile(path));
       if (drafts.length === 0) {
@@ -401,15 +430,22 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
           "No review comments found",
           `${path} has no finding with a "### path/to/file:line" heading and a comment, and is not a JSON list of {path, line, body}.`,
         );
-        return null;
+        return false;
       }
+      const r = prReview(repo, pr.number);
+      if (saved) r.drafts = [];
+      addDrafts(r, drafts);
+      setReviewFile(repo, pr.number, path);
+      reviewsChanged();
       setStatus(`Loaded ${drafts.length} draft comment${drafts.length === 1 ? "" : "s"} from ${path}.`);
-      return drafts;
+      return true;
     } catch (err) {
       readFailed("Couldn't read the review file", err);
-      return null;
+      return false;
     }
   },
+  savedReview: (number) => savedReview(number),
+  openReviewPage: (path) => void openReviewPage(path).catch((err) => readFailed("Couldn't open the review page", err)),
   repoPath: () => state.repoPath,
   generateDrafts: (pr) => void runReview(state.repoPath, pr.number),
   cancelReview: (pr) => void cancelReviewDrafts(state.repoPath, pr.number),
@@ -454,6 +490,7 @@ async function runReview(repo: string, number: number): Promise<void> {
       r.drafts = [];
       addDrafts(r, found);
       setReviewFile(repo, number, out.file);
+      void refreshReviewFiles();
       reportDone(`Review of #${number} ready: ${found.length} draft comment${found.length === 1 ? "" : "s"} to approve or discard.`);
     }
   } catch (err) {
@@ -475,9 +512,13 @@ async function runReview(repo: string, number: number): Promise<void> {
 const clip = (text: string) => (text.trim().length > 600 ? `${text.trim().slice(0, 600)}…` : text.trim());
 
 // Read again the drafts of a review made before the app last quit, from the
-// file it was saved to.
+// file it was saved to — or, opened from the Reviewed filter, its saved review.
 async function restoreDrafts(repo: string, number: number): Promise<void> {
-  const file = rememberedFile(repo, number);
+  // Before prReview: the first ask makes the review, and then nothing is remembered.
+  const remembered = rememberedFile(repo, number);
+  const file =
+    remembered ??
+    (state.prs.filter === "reviewed" && prReview(repo, number).drafts.length === 0 ? savedReview(number) : null);
   if (!file) return;
   const r = prReview(repo, number);
   try {

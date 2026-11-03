@@ -87,6 +87,7 @@ import type {
   PrReviewComment,
   PullRequest,
   PullRequestDetail,
+  ReviewFile,
   ReviewVerdict,
 } from "./types";
 
@@ -1892,7 +1893,7 @@ export async function ghRepo(): Promise<string | null> {
   return invoke<string | null>("gh_repo", {});
 }
 
-export async function listPullRequests(filter: PrFilter): Promise<PullRequest[]> {
+export async function listPullRequests(filter: Exclude<PrFilter, "reviewed">): Promise<PullRequest[]> {
   if (!isTauri()) {
     await mockNetworkDelay();
     const me = MOCK_GH_ACCOUNT.login;
@@ -2197,16 +2198,30 @@ export async function cancelReviewDrafts(path: string, number: number): Promise<
   return invoke<void>("gh_cancel_review", { path, number });
 }
 
+// The reviews saved under the open repo's review/ folder, one per pull
+// request: the newest, matched by the pull request it links.
+export async function reviewFiles(): Promise<ReviewFile[]> {
+  if (!isTauri()) return [{ path: "/Users/you/Documents/mideal/review/ae-403/pr-review-UBIID-42.html", number: 42 }];
+  return invoke<ReviewFile[]>("review_files");
+}
+
+// Open a saved review page (one `reviewFiles` listed) in the default app.
+export async function openReviewPage(path: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("open_review_page", { path });
+}
+
 // Pick a review file (Markdown, JSON, or the HTML review page that embeds
 // its Markdown source) in the file dialog; null when the
 // dialog was cancelled. The preview has a sample file of its own.
-export async function pickReviewFile(): Promise<string | null> {
+export async function pickReviewFile(defaultPath?: string): Promise<string | null> {
   if (!isTauri()) return "/Users/you/review/pr-review-42.md";
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({
     multiple: false,
     directory: false,
     title: "Load review comments",
+    defaultPath,
     filters: [{ name: "Review", extensions: ["md", "markdown", "json", "txt", "html", "htm"] }],
   });
   return typeof selected === "string" ? selected : null;
