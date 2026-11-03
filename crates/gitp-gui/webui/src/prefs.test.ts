@@ -6,6 +6,7 @@ import {
   parseTabAliases,
   parseCodeRecent,
   withCodeRecent,
+  SKILL_REVIEW_COMMAND,
   steppedZoom,
   withFavoriteToggled,
   withTabAlias,
@@ -116,5 +117,14 @@ describe("Code tab recent files", () => {
     const all = { "/a": ["x.ts"], "/b": ["y.ts"] };
     expect(withCodeRecent(all, "/a", ["z.ts", "x.ts"])).toEqual({ "/a": ["z.ts", "x.ts"], "/b": ["y.ts"] });
     expect(withCodeRecent(all, "/b", [])).toEqual({ "/a": ["x.ts"] });
+  });
+});
+
+describe("the review skill command", () => {
+  it("gives the prompt before --allowedTools, which would swallow it", () => {
+    const prompt = SKILL_REVIEW_COMMAND.indexOf('"/review-pr-phuong');
+    expect(prompt).toBeGreaterThan(0);
+    expect(prompt).toBeLessThan(SKILL_REVIEW_COMMAND.indexOf("--allowedTools"));
+    expect(SKILL_REVIEW_COMMAND.trimEnd().endsWith('"'), "nothing after the tool list").toBe(true);
   });
 });

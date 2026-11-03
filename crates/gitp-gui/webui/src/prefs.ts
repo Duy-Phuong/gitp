@@ -644,7 +644,8 @@ export const DEFAULT_REVIEW_COMMAND =
 // lookups, the skill's checks and page build, writes under review/, the Jira
 // and Confluence reads and the Review Board.
 const SKILL_TOOLS = [
-  "Read", "Grep", "Glob", "Skill", "Write(review/**)", "Edit(review/**)",
+  // Edit(path) covers every file-writing tool, Write included.
+  "Read", "Grep", "Glob", "Skill", "Edit(review/**)",
   "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)", "Bash(git grep *)", "Bash(git fetch *)",
   "Bash(git rev-parse *)", "Bash(git merge-base *)", "Bash(git ls-files *)", "Bash(git blame *)",
   "Bash(gh pr view *)", "Bash(gh pr diff *)", "Bash(gh api --paginate repos/*)",
@@ -655,10 +656,12 @@ const SKILL_TOOLS = [
   "ArtifactData",
 ];
 
+// The prompt comes first: --allowedTools takes every word after it as a tool,
+// so a prompt behind it would be swallowed and claude would get none.
 export const SKILL_REVIEW_COMMAND =
-  `claude -p --model opus --effort medium --permission-mode dontAsk --allowedTools "${SKILL_TOOLS.join(" ")}" ` +
-  `"/review-pr-phuong $GITP_PR_URL board mode, with md, no questions: where you would ask, take the default ` +
-  `(the sprint folder no-sprint when Jira has no sprint). Write the review Markdown under review/, not in TMPDIR."`;
+  `claude -p "/review-pr-phuong $GITP_PR_URL board mode, with md, no questions: where you would ask, take the default ` +
+  `(the sprint folder no-sprint when Jira has no sprint). Write the review Markdown under review/, not in TMPDIR." ` +
+  `--model opus --effort medium --permission-mode dontAsk --allowedTools "${SKILL_TOOLS.join(" ")}"`;
 
 export function loadReviewCommand(): string {
   return localStorage.getItem(REVIEW_COMMAND_KEY) ?? DEFAULT_REVIEW_COMMAND;
