@@ -11,6 +11,7 @@
 
 import { clear, el, githubIcon } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
+import { composerArea, previewToggle } from "./composer";
 import { iconBtn, renderFile, renderSplitDiff, WRAP_ICON } from "./detail";
 import { loadDiffWrap, loadPrDiffSplit, loadPrFilesTree, saveDiffWrap, savePrDiffSplit, savePrFilesTree } from "../prefs";
 import { renderFileTree } from "./tree";
@@ -216,7 +217,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // --- Conversation ---------------------------------------------------------
 
   function renderConversation(body: HTMLElement, pr: PullRequestDetail): void {
-    const area = el("textarea", { class: "pr-composer-input", placeholder: "Leave a comment (Markdown)", spellcheck: "true" });
+    const area = composerArea({ placeholder: "Leave a comment (Markdown)" });
     area.value = draft;
     area.addEventListener("input", () => (draft = area.value));
     const quote = (author: string, text: string) => {
@@ -253,7 +254,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     };
     post.addEventListener("click", () => void submit());
     submitOnCmdEnter(area, submit);
-    body.append(el("div", { class: "pr-composer" }, [area, el("div", { class: "pr-composer-actions" }, [post])]));
+    body.append(el("div", { class: "pr-composer" }, [area, el("div", { class: "pr-composer-actions" }, [previewToggle(area).button, post])]));
   }
 
   // A line-comment thread: where it is, the code it is on, its comments, and
@@ -563,10 +564,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       verdict.append(o);
     }
     verdict.addEventListener("change", () => (draftsVerdict = verdict.value as ReviewVerdict));
-    const message = el("textarea", {
-      class: "pr-composer-input pr-drafts-message",
+    const message = composerArea({
+      class: "pr-drafts-message",
       placeholder: "Review message (Markdown) — optional for Comment and Approve",
-      spellcheck: "true",
     });
     message.value = draftsBody;
     message.addEventListener("input", () => (draftsBody = message.value));
@@ -613,6 +613,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
           render();
         }),
         el("span", { class: "spacer" }),
+        previewToggle(message).button,
         verdict,
         postBtn,
       ]),
@@ -648,9 +649,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     }
     const card = el("div", { class: `pr-draft ${d.status}` }, [head]);
     if (d.status !== "discarded") {
-      const area = el("textarea", { class: "pr-composer-input pr-draft-text", spellcheck: "true" });
+      const area = composerArea({ class: "pr-draft-text" });
       area.value = d.body;
       area.addEventListener("input", () => (d.body = area.value));
+      head.append(previewToggle(area).button);
       card.append(area);
     }
     return card;
@@ -747,18 +749,22 @@ function smallButton(text: string, onClick: () => void): HTMLElement {
 // A comment box with its button (and Cancel when `onCancel`). `post`
 // resolves true once posted, which clears the box.
 function replyBox(placeholder: string, label: string, post: (text: string) => Promise<boolean>, onCancel?: () => void): HTMLElement {
-  const area = el("textarea", { class: "pr-composer-input", placeholder, spellcheck: "true" });
+  const area = composerArea({ placeholder });
+  const preview = previewToggle(area);
   const send = el("button", { class: "btn small", text: label });
   const submit = async () => {
     if (!area.value.trim()) return area.focus();
     send.disabled = true;
     const ok = await post(area.value);
     send.disabled = false;
-    if (ok) area.value = "";
+    if (ok) {
+      area.value = "";
+      preview.edit();
+    }
   };
   send.addEventListener("click", () => void submit());
   submitOnCmdEnter(area, submit);
-  const actions = el("div", { class: "pr-composer-actions" });
+  const actions = el("div", { class: "pr-composer-actions" }, [preview.button]);
   if (onCancel) {
     const cancel = el("button", { class: "btn small ghost", text: "Cancel" });
     cancel.addEventListener("click", onCancel);

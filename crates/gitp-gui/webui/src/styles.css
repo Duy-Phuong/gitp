@@ -5117,13 +5117,30 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 }
 .pr-composer-input {
   min-height: 70px;
-  resize: vertical;
+  resize: none;
+  overflow: hidden;
+  box-sizing: border-box;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-elev-2);
   color: var(--text);
   font: 13px var(--sans);
+}
+/* The box's text rendered as GitHub will, behind the Preview button. */
+.pr-composer-preview {
+  min-height: 70px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev-2);
+  font: 13px var(--sans);
+}
+.pr-draft .pr-composer-preview {
+  margin: 8px 10px;
+}
+.pr-drafts-bar + .pr-composer-preview {
+  margin: 10px 12px 0;
 }
 .pr-composer-actions,
 .pr-thread-actions {
