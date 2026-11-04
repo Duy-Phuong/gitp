@@ -144,6 +144,20 @@ function severityOf(block: string): string | null {
 
 export type AnchorCheck = "ok" | "no-file" | "no-line";
 
+/// The review message with `drafts` — ones GitHub won't take as line comments,
+/// their line being outside the diff — added after it, each under a link to
+/// its line at `headOid` in the repository at `prUrl` (the pull request's page).
+export function withOffDiffDrafts(message: string, drafts: DraftComment[], prUrl: string, headOid: string): string {
+  const repo = prUrl.replace(/\/pull\/\d+\/?$/, "");
+  const blocks = drafts.map((d) => {
+    // A removed line isn't in the head commit: link the file.
+    const anchor = d.side === "RIGHT" ? `#L${d.line}` : "";
+    const where = `${d.path}:${d.line}${d.side === "LEFT" ? " (removed line)" : ""}`;
+    return `**[\`${where}\`](${repo}/blob/${headOid}/${d.path}${anchor})**\n\n${d.body.trim()}`;
+  });
+  return [message.trim(), ...blocks].filter(Boolean).join("\n\n---\n\n");
+}
+
 /// Whether GitHub would take a comment at the draft's location: the file must
 /// be in the pull request and the line part of its diff (a line outside every
 /// hunk is refused by the API). `files` is the pull request's diff.

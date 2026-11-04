@@ -31,7 +31,7 @@ import {
   type Thread,
 } from "../pull-requests";
 import { fullTime, relativeTime } from "../timeago";
-import { checkAnchor } from "../review-drafts";
+import { checkAnchor, withOffDiffDrafts } from "../review-drafts";
 import { clearDrafts, prReview, reviewsChanged, type Draft, type PrReview } from "../pr-reviews";
 import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PullRequestDetail, ReviewVerdict } from "../types";
 
@@ -601,7 +601,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     }
     const anchorOf = (d: Draft) => (files ? checkAnchor(d, files) : "ok");
     const postable = drafts.filter((d) => d.status === "approved" && anchorOf(d) === "ok");
-    const blocked = drafts.filter((d) => d.status === "approved" && anchorOf(d) !== "ok").length;
+    // GitHub refuses a line comment outside the diff: these go in the review
+    // message instead, each linked to its line.
+    const offDiff = drafts.filter((d) => d.status === "approved" && anchorOf(d) !== "ok");
 
     const verdict = el("select", { class: "pr-drafts-verdict", "aria-label": "Review verdict" });
     for (const [value, label] of [
@@ -621,7 +623,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     message.value = r.body;
     message.addEventListener("input", () => (r.body = message.value));
 
-    const n = postable.length;
+    const n = postable.length + offDiff.length;
     const postBtn = el("button", { class: "btn small", text: `Post ${n} approved` });
     postBtn.disabled = n === 0;
     postBtn.addEventListener("click", () => {
@@ -630,7 +632,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         .postReview(
           pr,
           r.verdict,
-          r.body,
+          withOffDiffDrafts(r.body, offDiff, pr.url, pr.head_oid),
           postable.map((d) => ({ path: d.path, line: d.line, side: d.side, commit_id: pr.head_oid, body: d.body })),
         )
         .then(async (ok) => {
@@ -638,7 +640,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
             postBtn.disabled = false;
             return;
           }
-          const posted = new Set(postable.map((d) => d.id));
+          const posted = new Set([...postable, ...offDiff].map((d) => d.id));
           r.drafts = r.drafts.filter((d) => !posted.has(d.id));
           r.body = "";
           if (!r.drafts.some((d) => d.status !== "discarded")) {
@@ -653,7 +655,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       for (const d of drafts) if (d.status !== "discarded" || status === "pending") d.status = status;
       reviewsChanged();
     };
-    const summary = `${live.length} draft${live.length === 1 ? "" : "s"} · ${drafts.filter((d) => d.status === "approved").length} approved${blocked ? ` · ${blocked} can't be posted (line not in this diff)` : ""}`;
+    const summary = `${live.length} draft${live.length === 1 ? "" : "s"} · ${drafts.filter((d) => d.status === "approved").length} approved${offDiff.length ? ` · ${offDiff.length} in the review message (line not in this diff)` : ""}`;
     body.append(
       el("div", { class: "pr-drafts-bar" }, [
         el("span", { class: "pr-drafts-summary", text: summary }),
@@ -683,8 +685,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       head.append(
         el("span", {
           class: "pr-draft-warn",
-          text: anchor === "no-file" ? "file not in this pull request" : "line not in this diff",
-          title: "GitHub only takes comments on lines that are part of the diff; this one can't be posted as it stands.",
+          text: `${anchor === "no-file" ? "file not in this pull request" : "line not in this diff"} — posts in the review message`,
+          title: "GitHub only takes line comments on lines of the diff, so this one goes in the review's message, linked to its line.",
         }),
       );
     }

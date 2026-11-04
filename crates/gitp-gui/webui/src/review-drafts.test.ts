@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checkAnchor, parseReviewFile } from "./review-drafts";
+import { checkAnchor, parseReviewFile, withOffDiffDrafts } from "./review-drafts";
 import type { FileDiff } from "./types";
 
 const REVIEW = `# Review of #42
@@ -123,5 +123,24 @@ describe("checkAnchor", () => {
 
   it("trusts a diff the backend cut short", () => {
     expect(checkAnchor(at("big.ts", 900), files)).toBe("ok");
+  });
+});
+
+describe("withOffDiffDrafts", () => {
+  const draft = (path: string, line: number, body: string, side: "LEFT" | "RIGHT" = "RIGHT") => ({ path, line, side, body, severity: null });
+  const url = "https://github.com/octo/hello/pull/7";
+
+  it("adds each off-diff draft after the message, linked to its line at the head commit", () => {
+    expect(withOffDiffDrafts("Looks good.", [draft("ci/Jenkinsfile", 370, "Runs 10m. ")], url, "abc123")).toBe(
+      "Looks good.\n\n---\n\n**[`ci/Jenkinsfile:370`](https://github.com/octo/hello/blob/abc123/ci/Jenkinsfile#L370)**\n\nRuns 10m.",
+    );
+  });
+
+  it("leaves the message alone without them, and needs no message with them", () => {
+    expect(withOffDiffDrafts("  Looks good. ", [], url, "abc")).toBe("Looks good.");
+    expect(withOffDiffDrafts("", [draft("a.ts", 1, "x"), draft("b.ts", 2, "y", "LEFT")], url, "abc")).toBe(
+      "**[`a.ts:1`](https://github.com/octo/hello/blob/abc/a.ts#L1)**\n\nx\n\n---\n\n" +
+        "**[`b.ts:2 (removed line)`](https://github.com/octo/hello/blob/abc/b.ts)**\n\ny",
+    );
   });
 });
