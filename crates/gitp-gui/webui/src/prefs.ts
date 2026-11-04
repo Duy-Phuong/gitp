@@ -114,6 +114,17 @@ export function saveSyntaxHighlight(on: boolean): void {
   localStorage.setItem(SYNTAX_KEY, on ? "1" : "0");
 }
 
+// The Code tab's inline blame after the caret's line; on unless turned off.
+const INLINE_BLAME_KEY = "gitp-inline-blame";
+
+export function loadInlineBlame(): boolean {
+  return localStorage.getItem(INLINE_BLAME_KEY) !== "0";
+}
+
+export function saveInlineBlame(on: boolean): void {
+  localStorage.setItem(INLINE_BLAME_KEY, on ? "1" : "0");
+}
+
 export interface CodePrefs {
   font: string;
   size: number;

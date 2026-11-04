@@ -52,7 +52,7 @@ mod worktree_ops;
 
 pub use activity::ActivityEntry;
 pub use bisect::{BisectMark, BisectStatus};
-pub use blame::BlameLine;
+pub use blame::{BlameCommit, BlameLine, FileBlame};
 pub use branch_ops::MergeMode;
 pub use checkout::StashSwitch;
 pub use commit_ops::ResetMode;
@@ -70,7 +70,7 @@ pub use file_content::{FileContent, FileSide, PREVIEW_MAX_BYTES};
 pub use file_edit::{TextFile, EDIT_MAX_BYTES};
 pub use filelog::FileCommit;
 pub use gh::{
-    DiffSide, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings, LineComment, MergeMethod, NewPullRequest,
+    CommitPullRequest, DiffSide, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings, LineComment, MergeMethod, NewPullRequest,
     PrCheck, PrComment, PrDraft, PrFilter, PrLabel, PrReview, PrReviewComment, PullRequest,
     PullRequestDetail, ReviewFile, ReviewVerdict, LOGIN_TIMEOUT,
 };

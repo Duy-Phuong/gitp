@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use gitp_core::{
-    FileDiff, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings, LineComment,
-    MergeMethod, NetworkHooks, NewPullRequest, PrDraft, PrFilter, PrReviewComment, PullRequest,
-    PullRequestDetail, Repo, ReviewFile, ReviewVerdict, Undoable, LOGIN_TIMEOUT,
+    CommitPullRequest, FileDiff, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings,
+    LineComment, MergeMethod, NetworkHooks, NewPullRequest, PrDraft, PrFilter, PrReviewComment,
+    PullRequest, PullRequestDetail, Repo, ReviewFile, ReviewVerdict, Undoable, LOGIN_TIMEOUT,
 };
 use serde::Serialize;
 use tauri::State;
@@ -258,6 +258,18 @@ fn read_review_file_impl(path: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// The pull request commit `commit` came in with — `number` when its message
+/// names one — for the inline blame's card.
+fn gh_commit_pull_request_impl(
+    state: &RepoState,
+    commit: String,
+    number: Option<u64>,
+) -> Result<Option<CommitPullRequest>, String> {
+    with_repo_unlocked(state, |repo| {
+        repo.commit_pull_request(&Gh::system(), &commit, number)
+    })
+}
+
 /// The reviews saved under the open repo's `review/` folder, by pull request.
 fn review_files_impl(state: &RepoState) -> Result<Vec<ReviewFile>, String> {
     with_repo_unlocked(state, |repo| Ok(repo.review_files()))
@@ -474,6 +486,15 @@ pub(crate) fn gh_cancel_review(path: String, number: u64, jobs: State<ReviewJobs
 #[tauri::command(async)]
 pub(crate) fn read_review_file(path: String) -> Result<String, String> {
     read_review_file_impl(path)
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_commit_pull_request(
+    commit: String,
+    number: Option<u64>,
+    state: State<RepoState>,
+) -> Result<Option<CommitPullRequest>, String> {
+    gh_commit_pull_request_impl(&state, commit, number)
 }
 
 #[tauri::command(async)]

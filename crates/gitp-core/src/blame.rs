@@ -20,7 +20,58 @@ pub struct BlameLine {
     pub content: String,
 }
 
+/// Who last changed each line of a file being edited, for the Code tab's
+/// inline blame: per line the commit (none for a line not committed yet),
+/// and each of those commits' details once.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct FileBlame {
+    /// The commit of line `i + 1`, `None` when that line isn't committed.
+    pub lines: Vec<Option<String>>,
+    pub commits: HashMap<String, BlameCommit>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct BlameCommit {
+    pub author: String,
+    pub email: String,
+    /// The author time, Unix seconds.
+    pub time: i64,
+    pub summary: String,
+    /// The message after its first line, trimmed; empty when there is none.
+    pub body: String,
+}
+
 impl Repo {
+    /// Blame `contents` — the text of `path` as it stands in the editor,
+    /// saved or not — against `HEAD`: lines changed since are not committed.
+    /// Errors when `path` isn't tracked at `HEAD`.
+    pub fn blame_contents(&self, path: &str, contents: &str) -> Result<FileBlame> {
+        let raw = self.run_git_stdin(
+            &[
+                "blame",
+                "--porcelain",
+                "--contents",
+                "-",
+                "HEAD",
+                "--",
+                path,
+            ],
+            contents,
+        )?;
+        let mut blame = parse_porcelain(&raw);
+        for (id, c) in blame.commits.iter_mut() {
+            if let Ok(commit) = git2::Oid::from_str(id).and_then(|oid| self.inner.find_commit(oid))
+            {
+                let message = String::from_utf8_lossy(commit.message_bytes()).into_owned();
+                c.body = message
+                    .split_once('\n')
+                    .map(|(_, rest)| rest.trim().to_string())
+                    .unwrap_or_default();
+            }
+        }
+        Ok(blame)
+    }
+
     /// Blame `path` as it stands at `rev`: for each line, the commit and author
     /// that last changed it. Errors if the file does not exist at `rev`.
     ///
@@ -94,6 +145,57 @@ impl Repo {
         }
         Ok(out)
     }
+}
+
+/// The not-committed-yet id git blame gives a line changed in the working text.
+const NOT_COMMITTED: &str = "0000000000000000000000000000000000000000";
+
+/// The lines and commits of `git blame --porcelain` output: each group starts
+/// with `<sha> <orig-line> <final-line> [<count>]`, its commit's `author`,
+/// `author-mail`, `author-time` and `summary` follow on the commit's first
+/// group, and each line's text comes tab-prefixed.
+fn parse_porcelain(porcelain: &str) -> FileBlame {
+    let mut out = FileBlame::default();
+    let mut current: Option<String> = None;
+    for line in porcelain.lines() {
+        if line.starts_with('\t') {
+            continue;
+        }
+        let mut fields = line.split(' ');
+        let first = fields.next().unwrap_or("");
+        if first.len() == 40 && first.bytes().all(|b| b.is_ascii_hexdigit()) {
+            let (Some(_orig), Some(Ok(start))) =
+                (fields.next(), fields.next().map(str::parse::<usize>))
+            else {
+                continue;
+            };
+            let count = fields.next().and_then(|c| c.parse().ok()).unwrap_or(1);
+            let id = (first != NOT_COMMITTED).then(|| first.to_string());
+            if out.lines.len() < start + count - 1 {
+                out.lines.resize(start + count - 1, None);
+            }
+            for i in start..start + count {
+                out.lines[i - 1] = id.clone();
+            }
+            if let Some(id) = &id {
+                out.commits.entry(id.clone()).or_default();
+            }
+            current = id;
+            continue;
+        }
+        let Some(c) = current.as_ref().and_then(|id| out.commits.get_mut(id)) else {
+            continue;
+        };
+        let rest = line.split_once(' ').map(|(_, r)| r).unwrap_or("");
+        match first {
+            "author" => c.author = rest.to_string(),
+            "author-mail" => c.email = rest.trim_matches(['<', '>']).to_string(),
+            "author-time" => c.time = rest.parse().unwrap_or(0),
+            "summary" => c.summary = rest.to_string(),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The commit of each final line number in `git blame --porcelain` output.

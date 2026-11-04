@@ -38,6 +38,8 @@ const chrome = EditorView.theme({
   ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "var(--accent)", color: "var(--bg)" },
   ".cm-selectionMatch": { backgroundColor: "color-mix(in srgb, var(--accent) 18%, transparent)" },
   ".cm-def-link": { textDecoration: "underline", color: "var(--accent)", cursor: "pointer" },
+  // Inline blame after the caret's line: dim, and kept off the code.
+  ".cm-inline-blame": { color: "var(--text-dim)", opacity: "0.7", marginLeft: "3em", fontStyle: "italic", whiteSpace: "pre", cursor: "default" },
   "&.cm-focused": { outline: "none" },
 });
 

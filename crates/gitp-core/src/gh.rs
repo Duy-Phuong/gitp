@@ -1084,6 +1084,39 @@ impl Repo {
         Ok(self.gh_call(gh, &target, &args, input, TIMEOUT)?.combined())
     }
 
+    /// The pull request a commit came in with, and its page: `number` when the
+    /// commit message names it (a squash merge's "(#3019)"), with no call to
+    /// GitHub; otherwise the first one GitHub links to the commit. `None` when
+    /// it has none, or the repository isn't on GitHub.
+    pub fn commit_pull_request(
+        &self,
+        gh: &Gh,
+        commit: &str,
+        number: Option<u64>,
+    ) -> Result<Option<CommitPullRequest>> {
+        let Some(target) = self.find_github_repo() else {
+            return Ok(None);
+        };
+        let url = |n: u64| format!("https://{}/{}/pull/{n}", target.host, target.path);
+        if let Some(n) = number {
+            return Ok(Some(CommitPullRequest {
+                number: n,
+                url: url(n),
+            }));
+        }
+        if commit.len() != 40 || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(Error::Message(format!("not a commit id: {commit}")));
+        }
+        let endpoint = format!("repos/{}/commits/{commit}/pulls", target.path);
+        let args = ["api", "--method", "GET", &endpoint];
+        let out = self.gh_call(gh, &target, &args, None, TIMEOUT)?;
+        let found: Vec<RawCommitPull> = parse_json(&out.stdout)?;
+        Ok(found.first().map(|p| CommitPullRequest {
+            number: p.number,
+            url: url(p.number),
+        }))
+    }
+
     /// The diff of pull request `number` as `gh pr diff` prints it.
     pub fn pull_request_diff(&self, gh: &Gh, number: u64) -> Result<String> {
         let target = self.github_target()?;
@@ -1278,6 +1311,18 @@ impl Repo {
         let raw: RawReviewComment = parse_json(&out.stdout)?;
         Ok(raw.into())
     }
+}
+
+/// A commit's pull request: its number and page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CommitPullRequest {
+    pub number: u64,
+    pub url: String,
+}
+
+#[derive(Deserialize)]
+struct RawCommitPull {
+    number: u64,
 }
 
 /// How long a review command may run: a model reading a big diff takes
@@ -2463,6 +2508,54 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
                 .ends_with("review/pr-review-UBIID-1-again.html"),
             "the newest review of #38: {found:?}"
         );
+    }
+
+    #[test]
+    fn a_commits_pull_request_comes_from_its_message_or_from_github() {
+        let fake = Fake::new();
+        let (_dir, repo) = github_repo();
+        let sha = "a".repeat(40);
+        let named = repo
+            .commit_pull_request(&fake.gh(), &sha, Some(3019))
+            .unwrap();
+        assert_eq!(
+            named,
+            Some(CommitPullRequest {
+                number: 3019,
+                url: "https://github.com/octo/hello/pull/3019".into()
+            })
+        );
+        assert!(
+            fake.calls().is_empty(),
+            "a number in the message needs no call"
+        );
+
+        fake.answer(
+            "api --method",
+            r#"[{"number": 41, "state": "closed"}, {"number": 50}]"#,
+            "",
+            0,
+        );
+        let asked = repo.commit_pull_request(&fake.gh(), &sha, None).unwrap();
+        assert_eq!(asked.map(|p| p.number), Some(41));
+        assert_eq!(
+            fake.calls(),
+            [vec![
+                "api".to_string(),
+                "--method".into(),
+                "GET".into(),
+                format!("repos/octo/hello/commits/{sha}/pulls")
+            ]]
+        );
+
+        fake.answer("api --method", "[]", "", 0);
+        assert_eq!(
+            repo.commit_pull_request(&fake.gh(), &sha, None).unwrap(),
+            None
+        );
+        assert!(repo
+            .commit_pull_request(&fake.gh(), "--help", None)
+            .is_err());
     }
 
     #[test]

@@ -89,6 +89,7 @@ import type {
   PullRequestDetail,
   ReviewFile,
   ReviewVerdict,
+  FileBlame,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -3263,6 +3264,36 @@ export async function codeIgnored(): Promise<Ignored> {
 export async function codeListDir(path: string): Promise<IgnoredEntry[]> {
   if (!isTauri()) return [];
   return invoke<IgnoredEntry[]>("code_list_dir", { path });
+}
+
+// Who last changed each line of `text`, the editor's copy of `path`. The
+// preview makes one up: two commits, and the last line not committed.
+export async function codeBlame(path: string, text: string): Promise<FileBlame> {
+  if (!isTauri()) {
+    const n = text.split("\n").length;
+    const day = 86400;
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      lines: Array.from({ length: n }, (_, i) => (i === n - 1 ? null : i % 3 ? "b".repeat(40) : "a".repeat(40))),
+      commits: {
+        ["a".repeat(40)]: {
+          author: "Huy Vu",
+          email: "huy@example.com",
+          time: now - 75 * day,
+          summary: "UBIID-9160 | sign8: Exchange code of redirect parameter to Token (#3019)",
+          body: "* [UBIID-9120] Add externalUserId to public API\n* [UBIID-9119] Change sign8 transaction id with random UUID",
+        },
+        ["b".repeat(40)]: { author: "you", email: "you@example.com", time: now - 3 * day, summary: "Tidy the session service", body: "" },
+      },
+    };
+  }
+  return invoke<FileBlame>("code_blame", { path, text });
+}
+
+// The pull request a commit came in with: `number` when its message names one.
+export async function commitPullRequest(commit: string, number: number | null): Promise<{ number: number; url: string } | null> {
+  if (!isTauri()) return number ? { number, url: `https://github.com/octo/hello/pull/${number}` } : null;
+  return invoke<{ number: number; url: string } | null>("gh_commit_pull_request", { commit, number });
 }
 
 export async function codeReadFile(path: string): Promise<CodeFile | null> {
