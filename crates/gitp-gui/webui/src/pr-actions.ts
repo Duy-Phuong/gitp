@@ -46,13 +46,22 @@ import { copyText } from "./clipboard";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { loadRepo, loadSidebar, refreshHistory, renderSidebarNow, showPullRequest, showView } from "./shell";
 import { defaultWorktreePath } from "./worktree-actions";
-import { parseReviewFile } from "./review-drafts";
+import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
 import { loadReviewCommand } from "./prefs";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
 import { showErrorDialog } from "./views/message-dialog";
 import { toast } from "./views/toast";
-import { addDrafts, prReview, rememberedFile, reviewsChanged, setReviewFile } from "./pr-reviews";
+import {
+  addDrafts,
+  prReview,
+  rememberedFile,
+  reviewedHead,
+  reviewsChanged,
+  setReviewedHead,
+  setReviewFile,
+  unposted,
+} from "./pr-reviews";
 import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
 import { baseBranches, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices } from "./pull-requests";
@@ -424,12 +433,20 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
     const path = saved ?? (await pickReviewFile(`${repo.replace(/\/$/, "")}/review`));
     if (!path) return false;
     try {
-      const drafts = parseReviewFile(await readReviewFile(path));
-      if (drafts.length === 0) {
+      const text = await readReviewFile(path);
+      const all = parseReviewFile(text);
+      if (all.length === 0) {
         showErrorDialog(
           "No review comments found",
           `${path} has no finding with a "### path/to/file:line" heading and a comment, and is not a JSON list of {path, line, body}.`,
         );
+        return false;
+      }
+      const head = reviewedHeadIn(text);
+      if (head && !reviewedHead(repo, pr.number)) setReviewedHead(repo, pr.number, head);
+      const drafts = unposted(repo, pr.number, all);
+      if (drafts.length === 0) {
+        setStatus(`Nothing new in ${path}: its ${all.length} finding${all.length === 1 ? " is" : "s are"} posted on #${pr.number}.`);
         return false;
       }
       const r = prReview(repo, pr.number);
@@ -447,7 +464,8 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   savedReview: (number) => savedReview(number),
   openReviewPage: (path) => void openReviewPage(path).catch((err) => readFailed("Couldn't open the review page", err)),
   repoPath: () => state.repoPath,
-  generateDrafts: (pr) => void runReview(state.repoPath, pr.number),
+  generateDrafts: (pr) => void runReview(state.repoPath, pr.number, pr.head_oid),
+  reviewedHead: (number) => reviewedHead(state.repoPath, number),
   cancelReview: (pr) => void cancelReviewDrafts(state.repoPath, pr.number),
   restoreDrafts: (number) => void restoreDrafts(state.repoPath, number),
   showReviewFile: (path) => {
@@ -469,7 +487,7 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
 // in the background: the sidebar marks the pull request while it runs and
 // when its drafts are ready, and the user can do anything else meanwhile —
 // another pull request, another repo tab.
-async function runReview(repo: string, number: number): Promise<void> {
+async function runReview(repo: string, number: number, head: string): Promise<void> {
   const r = prReview(repo, number);
   if (r.running) return;
   r.running = true;
@@ -478,10 +496,15 @@ async function runReview(repo: string, number: number): Promise<void> {
   setStatus(`Reviewing #${number} in the background — keep working; the pull request shows when it's done.`);
   try {
     const out = await generateReviewDrafts(repo, number, loadReviewCommand());
-    const found = parseReviewFile(out.text);
+    setReviewedHead(repo, number, reviewedHeadIn(out.text) ?? head);
+    const all = parseReviewFile(out.text);
+    const found = unposted(repo, number, all);
     if (found.length === 0) {
-      setStatus(`The review of #${number} found nothing to comment on.`);
-      toast(`The review of #${number} found nothing to comment on`, {
+      const said = all.length
+        ? `The review of #${number} has nothing new: its ${all.length} finding${all.length === 1 ? " is" : "s are"} posted`
+        : `The review of #${number} found nothing to comment on`;
+      setStatus(`${said}.`);
+      toast(said, {
         kind: "info",
         onDetails: () => showErrorDialog(`Review of #${number}`, clip(out.text)),
       });
@@ -522,7 +545,10 @@ async function restoreDrafts(repo: string, number: number): Promise<void> {
   if (!file) return;
   const r = prReview(repo, number);
   try {
-    addDrafts(r, parseReviewFile(await readReviewFile(file)));
+    const text = await readReviewFile(file);
+    const head = reviewedHeadIn(text);
+    if (head && !reviewedHead(repo, number)) setReviewedHead(repo, number, head);
+    addDrafts(r, unposted(repo, number, parseReviewFile(text)));
     r.file = file;
   } catch {
     // Moved or deleted since: forget it.

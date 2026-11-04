@@ -6,7 +6,9 @@
 // state as a badge on the pull request.
 //
 // The file a review was read from is remembered across restarts; its drafts
-// are read again from it the next time they are asked for.
+// are read again from it the next time they are asked for. So are the drafts
+// already posted — a review read again leaves them out — and the head commit
+// last reviewed, so new commits since can be pointed out.
 
 import type { DraftComment } from "./review-drafts";
 import type { ReviewVerdict } from "./types";
@@ -15,6 +17,8 @@ import type { ReviewVerdict } from "./types";
 export interface Draft extends DraftComment {
   id: number;
   status: "pending" | "approved" | "discarded";
+  // The text as the review wrote it, before any edit: what marks it posted.
+  original: string;
 }
 
 export interface PrReview {
@@ -77,7 +81,75 @@ export function prReview(repo: string, number: number): PrReview {
 // Add `found` as pending drafts after the ones already there.
 export function addDrafts(r: PrReview, found: DraftComment[]): void {
   const next = r.drafts.length ? Math.max(...r.drafts.map((d) => d.id)) + 1 : 1;
-  r.drafts = [...r.drafts, ...found.map((d, i) => ({ ...d, id: next + i, status: "pending" as const }))];
+  r.drafts = [...r.drafts, ...found.map((d, i) => ({ ...d, id: next + i, status: "pending" as const, original: d.body }))];
+}
+
+// --- Posted drafts and the reviewed head --------------------------------------
+
+const STATE_KEY = "gitp-pr-review-state";
+// Enough for any one pull request's reviews; the oldest go first.
+const POSTED_LIMIT = 500;
+
+interface Remembered {
+  posted?: string[];
+  head?: string;
+}
+
+function loadState(): Record<string, Remembered> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(STATE_KEY) ?? "{}");
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, Remembered>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function changeState(repo: string, number: number, change: (s: Remembered) => void): void {
+  const all = loadState();
+  const key = keyOf(repo, number);
+  const s = all[key] ?? {};
+  change(s);
+  all[key] = s;
+  try {
+    localStorage.setItem(STATE_KEY, JSON.stringify(all));
+  } catch {
+    // Full or blocked storage: posted drafts may come back after a restart.
+  }
+}
+
+// What a draft is known by: where it goes and the text the review wrote.
+const fingerprint = (d: DraftComment & { original?: string }) =>
+  `${d.path}:${d.line}:${d.side}:${(d.original ?? d.body).trim()}`;
+
+// Remember `drafts` as posted on the pull request.
+export function markPosted(repo: string, number: number, drafts: Draft[]): void {
+  changeState(repo, number, (s) => {
+    const posted = new Set(s.posted ?? []);
+    for (const d of drafts) posted.add(fingerprint(d));
+    s.posted = [...posted].slice(-POSTED_LIMIT);
+  });
+}
+
+// The findings of `found` not posted on the pull request before.
+export function unposted(repo: string, number: number, found: DraftComment[]): DraftComment[] {
+  const posted = new Set(loadState()[keyOf(repo, number)]?.posted ?? []);
+  return found.filter((d) => !posted.has(fingerprint(d)));
+}
+
+// The head commit the pull request was last reviewed at, full or abbreviated.
+export function reviewedHead(repo: string, number: number): string | null {
+  return loadState()[keyOf(repo, number)]?.head ?? null;
+}
+
+export function setReviewedHead(repo: string, number: number, head: string): void {
+  changeState(repo, number, (s) => (s.head = head));
+}
+
+// Whether `head` is a later commit than the `reviewed` one — either may be
+// abbreviated.
+export function hasNewCommits(reviewed: string | null, head: string): boolean {
+  if (!reviewed || !head) return false;
+  return !(head.startsWith(reviewed) || reviewed.startsWith(head));
 }
 
 // Remember (or forget) the file the pull request's drafts came from.

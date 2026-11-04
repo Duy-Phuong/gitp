@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checkAnchor, parseReviewFile, withOffDiffDrafts } from "./review-drafts";
+import { checkAnchor, parseReviewFile, reviewedHeadIn, withOffDiffDrafts } from "./review-drafts";
 import type { FileDiff } from "./types";
 
 const REVIEW = `# Review of #42
@@ -142,5 +142,13 @@ describe("withOffDiffDrafts", () => {
       "**[`a.ts:1`](https://github.com/octo/hello/blob/abc/a.ts#L1)**\n\nx\n\n---\n\n" +
         "**[`b.ts:2 (removed line)`](https://github.com/octo/hello/blob/abc/b.ts)**\n\ny",
     );
+  });
+});
+
+describe("reviewedHeadIn", () => {
+  it("reads the head commit from the review's header line", () => {
+    expect(reviewedHeadIn("**PR:** [x](y) · **Head:** `feature/UBIID-9772-delay` (`e0a21160a5`)")).toBe("e0a21160a5");
+    expect(reviewedHeadIn("Head: `main` (`0123456789abcdef0123456789abcdef01234567`)")).toHaveLength(40);
+    expect(reviewedHeadIn("### a.ts:1\nno header")).toBeNull();
   });
 });

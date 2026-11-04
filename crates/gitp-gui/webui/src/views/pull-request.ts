@@ -32,7 +32,16 @@ import {
 } from "../pull-requests";
 import { fullTime, relativeTime } from "../timeago";
 import { checkAnchor, withOffDiffDrafts } from "../review-drafts";
-import { clearDrafts, prReview, reviewsChanged, type Draft, type PrReview } from "../pr-reviews";
+import {
+  clearDrafts,
+  hasNewCommits,
+  markPosted,
+  prReview,
+  reviewsChanged,
+  setReviewedHead,
+  type Draft,
+  type PrReview,
+} from "../pr-reviews";
 import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PullRequestDetail, ReviewVerdict } from "../types";
 
 export interface PullRequestCallbacks {
@@ -61,6 +70,8 @@ export interface PullRequestCallbacks {
   openReviewPage: (path: string) => void;
   // The repo the pull requests belong to: their reviews are kept by it.
   repoPath: () => string;
+  // The head commit the pull request was last reviewed at, if known.
+  reviewedHead: (number: number) => string | null;
   // Starts the review command over the diff in the background; its drafts
   // land in the pull request's review (pr-reviews.ts), and the view is told.
   generateDrafts: (pr: PullRequestDetail) => void;
@@ -215,7 +226,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       button("Review ▾", (e) => cb.reviewMenu(pr, e.clientX, e.clientY), "Approve, request changes or comment"),
       review().running
         ? button("Reviewing… Cancel", () => cb.cancelReview(pr), "The review command is running in the background; click to stop it")
-        : button("Generate Drafts", () => cb.generateDrafts(pr), "Run the review command (Settings → Git) in the background; its findings become draft comments to approve or discard"),
+        : generateButton(pr),
       button("Load Review File…", () => void loadDrafts(pr), "Read a review's findings as draft comments, to approve or discard before posting"),
       open,
     ]);
@@ -543,6 +554,22 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     return node;
   }
 
+  // Generate Drafts, with a green dot when commits arrived since the last
+  // review: time to review again.
+  function generateButton(pr: PullRequestDetail): HTMLElement {
+    const reviewed = cb.reviewedHead(pr.number);
+    const fresh = hasNewCommits(reviewed, pr.head_oid);
+    const b = el("button", {
+      class: `btn small ghost${fresh ? " pr-has-news" : ""}`,
+      text: "Generate Drafts",
+      title: fresh
+        ? `New commits since the last review (${reviewed!.slice(0, 8)} → ${pr.head_oid.slice(0, 8)}): run the review command again`
+        : "Run the review command (Settings → Git) in the background; its findings become draft comments to approve or discard",
+    });
+    b.addEventListener("click", () => cb.generateDrafts(pr));
+    return b;
+  }
+
   // Drafts read back from a saved review just after the pull request opened
   // with none: show them, when no tab was picked meanwhile.
   function toDraftsIfReady(): void {
@@ -640,6 +667,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
             postBtn.disabled = false;
             return;
           }
+          markPosted(cb.repoPath(), pr.number, [...postable, ...offDiff]);
+          setReviewedHead(cb.repoPath(), pr.number, pr.head_oid);
           const posted = new Set([...postable, ...offDiff].map((d) => d.id));
           r.drafts = r.drafts.filter((d) => !posted.has(d.id));
           r.body = "";
