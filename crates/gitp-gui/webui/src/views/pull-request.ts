@@ -94,6 +94,8 @@ type Tab = "conversation" | "files" | "checks" | "drafts";
 
 // A page with lines: the saved review page.
 const REVIEW_PAGE_ICON = ["M6 3h9l4 4v14H6z", "M14 3v5h5", "M9 12h7", "M9 16h7"];
+// A box with an arrow out of it: the pull request on GitHub.
+const PR_LINK_ICON = ["M14 4h6v6", "M20 4l-9 9", "M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"];
 
 export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks): PullRequestHandle {
   let number: number | null = null;
@@ -228,6 +230,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         el("span", { class: "pr-title", text: pr.title }),
         el("span", { class: "pr-number", text: `#${pr.number}` }),
         ...reviewPageLink(pr.number),
+        titleLink(PR_LINK_ICON, `Open #${pr.number} on GitHub\n${pr.url}`, () => cb.openUrl(pr.url)),
       ]),
       meta,
       actions,
@@ -552,10 +555,14 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // The saved review page as an icon beside the title, when there is one.
   function reviewPageLink(n: number): HTMLElement[] {
     const page = cb.savedReview(n);
-    if (!page) return [];
-    const b = iconBtn(REVIEW_PAGE_ICON, `Open the saved review\n${page}`, false, () => cb.openReviewPage(page));
-    b.classList.add("pr-review-page");
-    return [b];
+    return page ? [titleLink(REVIEW_PAGE_ICON, `Open the saved review\n${page}`, () => cb.openReviewPage(page))] : [];
+  }
+
+  // A small icon button beside the title.
+  function titleLink(icon: string[], title: string, onClick: () => void): HTMLElement {
+    const b = iconBtn(icon, title, false, onClick);
+    b.classList.add("pr-title-link");
+    return b;
   }
 
   // --- Draft comments -------------------------------------------------------
