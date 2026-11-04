@@ -144,6 +144,13 @@ function severityOf(block: string): string | null {
 
 export type AnchorCheck = "ok" | "no-file" | "no-line";
 
+/// The head commit a review says it reviewed: the skill's header line,
+/// "**Head:** `feature/x` (`e0a21160a5`)". Null when it names none.
+export function reviewedHeadIn(text: string): string | null {
+  const m = /Head:\*{0,2}\s*`[^`]*`\s*\(`([0-9a-f]{7,40})`\)/.exec(text);
+  return m ? m[1] : null;
+}
+
 /// The review message with `drafts` — ones GitHub won't take as line comments,
 /// their line being outside the diff — added after it, each under a link to
 /// its line at `headOid` in the repository at `prUrl` (the pull request's page).

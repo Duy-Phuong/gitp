@@ -63,3 +63,28 @@ describe("pull request reviews", () => {
     expect(m.reviewBadge("/a", 7)).toBeNull();
   });
 });
+
+describe("posted drafts and the reviewed head", () => {
+  it("leaves out what was posted, by its place and the text the review wrote, across a restart", async () => {
+    let m = await fresh();
+    const r = m.prReview("/a", 7);
+    m.addDrafts(r, [finding(1), finding(2)]);
+    r.drafts[0].body = "edited before posting";
+    m.markPosted("/a", 7, [r.drafts[0]]);
+
+    m = await fresh();
+    expect(m.unposted("/a", 7, [finding(1), finding(2), finding(3)]).map((d) => d.line)).toEqual([2, 3]);
+    expect(m.unposted("/a", 8, [finding(1)]), "another pull request").toHaveLength(1);
+    expect(m.unposted("/a", 7, [{ ...finding(1), body: "new text" }]), "a new finding on the same line").toHaveLength(1);
+  });
+
+  it("knows the head last reviewed, and when commits came after it", async () => {
+    const m = await fresh();
+    expect(m.reviewedHead("/a", 7)).toBeNull();
+    m.setReviewedHead("/a", 7, "e0a21160a5");
+    expect(m.reviewedHead("/a", 7)).toBe("e0a21160a5");
+    expect(m.hasNewCommits("e0a21160a5", "e0a21160a5ffff")).toBe(false);
+    expect(m.hasNewCommits("e0a21160a5", "1234567890abcd")).toBe(true);
+    expect(m.hasNewCommits(null, "1234567890abcd"), "never reviewed").toBe(false);
+  });
+});
