@@ -142,6 +142,15 @@ export function setPrFilter(filter: PrFilter): void {
   void loadPullRequests();
 }
 
+// Quick Launch's "Pull Requests: Reviewed" and the like: the section open,
+// under `filter`, scrolled into view.
+export function showPrFilter(filter: PrFilter): void {
+  state.sbCollapsed.delete("sec:prs");
+  setPrFilter(filter);
+  renderSidebarNow();
+  document.querySelector(".sb-pr-filters")?.scrollIntoView({ block: "nearest" });
+}
+
 export function refreshPullRequests(): void {
   void loadPullRequests(true);
 }

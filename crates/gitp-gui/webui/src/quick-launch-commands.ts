@@ -113,7 +113,7 @@ import { addSubmoduleAction, syncSubmodulesAction, updateSubmodulesAction } from
 import { finishFlowAction, initGitflowAction, startFlowAction } from "./gitflow-actions";
 import { FLOW_KINDS, flowBranch } from "./gitflow";
 import { lfsFetchAction, lfsInstallAction, lfsPullAction, lfsTrackAction, lfsUntrackAction } from "./lfs-actions";
-import { checkoutPullRequestAction } from "./pr-actions";
+import { checkoutPullRequestAction, showPrFilter } from "./pr-actions";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { openWorkspacesAction } from "./local-workspace-actions";
 import { addRemoteAction } from "./remote-actions";
@@ -457,6 +457,12 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Keyboard Shortcuts", detail: shortcutHint("cheatSheet"), run: openShortcutsDialog },
     { kind: "command", label: "Settings…", detail: shortcutHint("settings"), run: () => openSettings() },
     { kind: "command", label: "Git Hooks…", detail: "turn the repository's hooks off and on", run: () => openSettings("Git") },
+    ...(state.prs.repo
+      ? [
+          { kind: "command" as const, label: "Pull Requests: Reviewed", detail: "the open ones with a saved review", run: () => showPrFilter("reviewed") },
+          { kind: "command" as const, label: "Pull Requests: Created by Me", run: () => showPrFilter("mine") },
+        ]
+      : []),
     ...(state.prs.open !== null
       ? [
           { kind: "command" as const, label: "Pull Request: Generate Drafts", detail: "run the review command over the open pull request's diff", run: () => ui.prView?.generateDrafts() },
