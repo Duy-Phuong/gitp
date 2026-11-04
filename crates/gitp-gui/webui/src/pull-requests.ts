@@ -222,6 +222,15 @@ export function mergeChoices(settings: GitHubRepoSettings): { value: MergeMethod
   return (allowed.length ? allowed : MERGE_CHOICES).map(({ value, label }) => ({ value, label }));
 }
 
+// The method to pre-select for merging `head`: a merge commit for a release
+// branch or a sync of develop, master or main — squashing one loses where the
+// branches met, and the next sync brings the same changes back — else a squash,
+// one commit per feature or fix. The first allowed one when that isn't.
+export function defaultMergeMethod(head: string, choices: { value: MergeMethod }[]): MergeMethod {
+  const wanted: MergeMethod = /^(release\/|develop(\/|$)|master$|main$)/.test(head) ? "merge" : "squash";
+  return choices.some((c) => c.value === wanted) ? wanted : choices[0].value;
+}
+
 // The remote that holds `repo` ("owner/name", or "host/owner/name" off
 // github.com), the one the pull requests are in: its branches are the bases.
 export function githubRemoteName(remotes: { name: string; url: string | null }[], repo: string): string | null {

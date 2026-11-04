@@ -6,6 +6,7 @@ import {
   baseBranches,
   githubRemoteName,
   mergeAdvice,
+  defaultMergeMethod,
   mergeChoices,
   lineTarget,
   prMatches,
@@ -252,6 +253,25 @@ describe("mergeAdvice", () => {
       expect(advice.blocked, state).toBeNull();
       expect(advice.warning, state).toMatch(words);
     }
+  });
+});
+
+describe("defaultMergeMethod", () => {
+  const all = [{ value: "squash" as const }, { value: "merge" as const }, { value: "rebase" as const }];
+
+  it("squashes a feature or fix, and keeps a merge commit for a release or a branch sync", () => {
+    for (const head of ["feature/UBIID-9772-e2e", "bugfix/UBIID-1-x", "hotfix/UBIID-2-y", "chore/bump"]) {
+      expect(defaultMergeMethod(head, all), head).toBe("squash");
+    }
+    for (const head of ["release/3.33.0", "develop", "develop/3.33", "master", "main"]) {
+      expect(defaultMergeMethod(head, all), head).toBe("merge");
+    }
+    expect(defaultMergeMethod("developer-notes", all), "only develop itself").toBe("squash");
+  });
+
+  it("falls back to the first allowed method", () => {
+    expect(defaultMergeMethod("release/3.33.0", [{ value: "squash" }])).toBe("squash");
+    expect(defaultMergeMethod("feature/x", [{ value: "merge" }, { value: "rebase" }])).toBe("merge");
   });
 });
 

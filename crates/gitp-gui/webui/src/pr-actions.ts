@@ -55,7 +55,7 @@ import { toast } from "./views/toast";
 import { addDrafts, prReview, rememberedFile, reviewsChanged, setReviewFile } from "./pr-reviews";
 import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
-import { baseBranches, githubRemoteName, mergeAdvice, mergeChoices } from "./pull-requests";
+import { baseBranches, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices } from "./pull-requests";
 import type { BranchRef, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict } from "./types";
 
 // --- The sidebar section ----------------------------------------------------
@@ -355,7 +355,7 @@ async function mergeAction(pr: PullRequestDetail): Promise<void> {
       title: `Merge #${pr.number} into ${pr.base}`,
       sub: [pr.title, advice.warning].filter(Boolean).join(" — "),
       fields: [
-        { label: "How", choices, value: choices[0].value },
+        { label: "How", choices, value: defaultMergeMethod(pr.head, choices) },
         {
           label: "Then",
           choices: [
