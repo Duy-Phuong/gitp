@@ -89,3 +89,34 @@ fn file_history_lists_only_commits_that_touched_the_path() {
     // Sanity: the CLI sees the same repo the fixture built.
     git(fx.path(), &["rev-parse", "HEAD"]);
 }
+
+#[test]
+fn blame_contents_attributes_the_editor_text_and_marks_new_lines_uncommitted() {
+    let fx = FixtureRepo::init();
+    fx.commit_file(
+        "a.txt",
+        "one\ntwo\n",
+        "Add a\n\n- first line\n- second line\n",
+    );
+    fx.commit_file("a.txt", "one\nTWO (#12)\n", "Shout two (#12)");
+    let repo = Repo::open(fx.path()).unwrap();
+    let c1 = repo.resolve_commit("HEAD~1").unwrap();
+    let c2 = repo.resolve_commit("HEAD").unwrap();
+
+    // The editor holds a line not saved yet, between the two.
+    let blame = repo
+        .blame_contents("a.txt", "one\nnew\nTWO (#12)\n")
+        .unwrap();
+    assert_eq!(blame.lines, [Some(c1.clone()), None, Some(c2.clone())]);
+    let first = &blame.commits[&c1];
+    assert_eq!(
+        (first.author.as_str(), first.summary.as_str()),
+        ("Fixture Author", "Add a")
+    );
+    assert_eq!(first.body, "- first line\n- second line");
+    assert!(first.time > 0 && first.email.contains('@'), "{first:?}");
+    assert_eq!(blame.commits[&c2].summary, "Shout two (#12)");
+    assert_eq!(blame.commits[&c2].body, "");
+
+    assert!(repo.blame_contents("untracked.txt", "x\n").is_err());
+}

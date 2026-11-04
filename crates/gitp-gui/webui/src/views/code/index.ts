@@ -3,6 +3,7 @@
 // module owns the glue — which file is open, saving, what the backend's
 // events do to the tree and the tabs — and leaves rendering to its parts.
 
+import type { InlineBlameDeps } from "./inline-blame";
 import { clear, el } from "../../dom";
 import type { CodeFile, CodeFilesChanged, CodeWorkspace, FileEntry, HierarchyNode, Ignored, IgnoredEntry, IndexReady, Location, SearchQuery, SearchResult, Symbol, UsagesResult } from "../../types";
 import { loadCodeLayout, saveCodeLayout } from "../../prefs";
@@ -47,6 +48,8 @@ export interface CodeViewDeps {
   makeEditor?: (host: HTMLElement, deps: CodeEditorDeps) => EditorLike;
   // A link in a Markdown preview: opened in the browser.
   openUrl?: (url: string) => void;
+  // Inline blame after the caret's line.
+  blame?: InlineBlameDeps;
 }
 
 export interface CodeViewHandle {
@@ -151,6 +154,7 @@ export function setupCodeView(host: HTMLElement, deps: CodeViewDeps): CodeViewHa
     onSaveShortcut: (path) => void autosave.saveNow(path),
     gotoDefinition: (loc) => void gotoDefinition(loc),
     onCaretMoved: (loc) => nav.caretMoved(loc),
+    blame: deps.blame,
   };
   const editor: EditorLike = (deps.makeEditor ?? ((h, d) => new CodeEditor(h, d)))(editorHost, editorDeps);
 

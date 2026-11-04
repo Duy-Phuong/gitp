@@ -934,3 +934,19 @@ export interface SearchResult {
   truncated: boolean;
   files_searched: number;
 }
+
+// Who last changed each line of a file in the Code tab (see gitp-core's
+// blame_contents): per line its commit, null for a line not committed yet.
+export interface FileBlame {
+  lines: (string | null)[];
+  commits: Record<string, BlameCommit>;
+}
+
+export interface BlameCommit {
+  author: string;
+  email: string;
+  // Unix seconds.
+  time: number;
+  summary: string;
+  body: string;
+}

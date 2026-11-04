@@ -238,6 +238,13 @@ pub(crate) fn code_read_file_impl(state: &RepoState, path: String) -> Result<Opt
     Ok(Some(CodeFile { text: text.text, crlf: text.crlf, mixed: text.mixed, mtime_ms }))
 }
 
+/// Who last changed each line of `text`, the editor's copy of `path`, for the
+/// inline blame. Off the workspace lock: blame can take a moment on a long
+/// history.
+pub(crate) fn code_blame_impl(state: &RepoState, path: String, text: String) -> Result<gitp_core::FileBlame, String> {
+    crate::state::with_repo_unlocked(state, |repo| repo.blame_contents(&path, &text))
+}
+
 /// Save `text` to `path` unless the file changed since it was read; the new
 /// mtime is remembered as the Code tab's own write. No Undo entry: Local
 /// History is the safety net for these.
@@ -508,6 +515,11 @@ pub(crate) fn code_ignored(state: State<RepoState>) -> Result<Ignored, String> {
 #[tauri::command(async)]
 pub(crate) fn code_list_dir(path: String, state: State<RepoState>) -> Result<Vec<IgnoredEntry>, String> {
     code_list_dir_impl(&state, path)
+}
+
+#[tauri::command(async)]
+pub(crate) fn code_blame(path: String, text: String, state: State<RepoState>) -> Result<gitp_core::FileBlame, String> {
+    code_blame_impl(&state, path, text)
 }
 
 #[tauri::command(async)]

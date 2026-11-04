@@ -23,6 +23,7 @@ import { Annotation, Compartment, EditorState, type Extension } from "@codemirro
 import { Decoration, type DecorationSet, drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers, ViewPlugin } from "@codemirror/view";
 
 import type { Lang, Location } from "../../types";
+import { inlineBlame, type InlineBlameDeps } from "./inline-blame";
 import { codeTheme } from "./theme";
 
 export const AUTOSAVE_MS = 1500;
@@ -166,6 +167,8 @@ export interface CodeEditorDeps {
   onSaveShortcut: (path: string) => void;
   gotoDefinition: (loc: Location) => void;
   onCaretMoved: (loc: Location) => void;
+  // Inline blame after the caret's line, when the host can blame.
+  blame?: InlineBlameDeps;
 }
 
 /// What the Code tab needs from an editor; CodeEditor is the CodeMirror one.
@@ -244,6 +247,7 @@ export class CodeEditor implements EditorLike {
       }),
       this.readOnly.of(EditorState.readOnly.of(false)),
       modifierLink,
+      ...(this.deps.blame ? [inlineBlame(path, this.deps.blame)] : []),
     ];
   }
 

@@ -6564,3 +6564,58 @@ mark.find-hit.current {
   color: var(--text-dim);
   font-size: 11.5px;
 }
+
+/* The Code tab's inline blame card: who, when, the commit message, its pull
+   request and commit. */
+.blame-card {
+  position: fixed;
+  z-index: 1000;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  font-size: 12px;
+}
+.blame-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.blame-card-head .spacer {
+  flex: 1;
+}
+.blame-card-author {
+  font-weight: 600;
+  color: var(--accent);
+}
+.blame-card-when {
+  color: var(--text-dim);
+}
+.blame-card-subject {
+  font-size: 13px;
+  font-weight: 600;
+}
+.blame-card-pr .blame-card-link {
+  margin-left: 6px;
+}
+.blame-card-message {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  color: var(--text);
+}
+.blame-card-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.blame-card-link:hover {
+  text-decoration: underline;
+}

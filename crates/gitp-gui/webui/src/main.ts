@@ -59,7 +59,9 @@ import {
   codeCallers,
   codeDefinition,
   codeOpenWorkspace,
+  codeBlame,
   codeReadFile,
+  commitPullRequest,
   codeReferences,
   codeRefresh,
   codeIgnored,
@@ -93,6 +95,7 @@ import {
   loadAllBranches,
   loadAutoFetchMinutes,
   loadCodeRecent,
+  loadInlineBlame,
   loadDetailTab,
   loadFavoriteRepos,
   loadLocalHistoryEnabled,
@@ -542,6 +545,13 @@ async function init(): Promise<void> {
     isShowing: () => state.view === "code",
     recentFiles: { load: () => loadCodeRecent(state.repoPath), save: (paths) => saveCodeRecent(state.repoPath, paths) },
     openUrl: (url) => openGithubUrl(url).catch((err) => opFailed("Couldn't open the page", err)),
+    blame: {
+      enabled: loadInlineBlame,
+      fetch: codeBlame,
+      pullRequest: commitPullRequest,
+      openUrl: (url) => void openGithubUrl(url).catch((err) => opFailed("Couldn't open the pull request", err)),
+      showCommit: (commit) => void jumpToCommit(commit, commit.slice(0, 8)),
+    },
   });
   ui.localHistoryView = setupLocalHistory($("#localhistory-view"), {
     fetch: fetchLocalHistory,
