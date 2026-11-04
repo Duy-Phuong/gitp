@@ -5867,6 +5867,11 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   align-items: flex-start;
   gap: 6px;
 }
+.settings-command-presets {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .settings-command {
   width: 100%;
   font-family: var(--mono);

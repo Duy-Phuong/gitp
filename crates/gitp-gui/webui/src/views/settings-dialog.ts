@@ -22,6 +22,7 @@ import {
   loadDateFormat,
   loadDefaultBranch,
   loadLocalHistoryEnabled,
+  DEFAULT_REVIEW_COMMAND,
   loadReviewCommand,
   loadDetailTab,
   loadPullDefault,
@@ -608,21 +609,42 @@ function reviewCommandField(): HTMLElement {
     spellcheck: "false",
     rows: 4,
   });
-  area.value = loadReviewCommand();
+  // Which preset is in use, shown as the active half of a switch; a command
+  // edited by hand is neither.
+  const presets = [
+    { label: "Default", command: DEFAULT_REVIEW_COMMAND, title: "Ask Claude for findings over the diff on stdin" },
+    {
+      label: "Review Skill",
+      command: SKILL_REVIEW_COMMAND,
+      title: "Run the /review-pr-phuong Claude Code skill; its review page becomes the drafts",
+    },
+  ];
+  const toggle = el("div", { class: "seg-toggle", role: "group", "aria-label": "Review command preset" });
+  const custom = el("span", { class: "settings-row-hint", text: "Custom command" });
+  const buttons = presets.map((p) => {
+    const b = el("button", { class: "seg", text: p.label, title: p.title });
+    b.addEventListener("click", () => {
+      saveReviewCommand(p.command);
+      show();
+    });
+    toggle.append(b);
+    return b;
+  });
+  const show = () => {
+    area.value = loadReviewCommand();
+    const active = presets.findIndex((p) => p.command === area.value);
+    buttons.forEach((b, i) => {
+      b.classList.toggle("active", i === active);
+      b.setAttribute("aria-pressed", String(i === active));
+    });
+    custom.hidden = active !== -1;
+  };
   area.addEventListener("change", () => {
     saveReviewCommand(area.value);
-    area.value = loadReviewCommand();
+    show();
   });
-  const reset = linkButton("Reset to Default", () => {
-    saveReviewCommand("");
-    area.value = loadReviewCommand();
-  });
-  const skill = linkButton("Use Review Skill", () => {
-    saveReviewCommand(SKILL_REVIEW_COMMAND);
-    area.value = loadReviewCommand();
-  });
-  skill.title = "Run the /review-pr-phuong Claude Code skill; its review page becomes the drafts";
-  return el("div", { class: "settings-command-row" }, [area, reset, skill]);
+  show();
+  return el("div", { class: "settings-command-row" }, [area, el("div", { class: "settings-command-presets" }, [toggle, custom])]);
 }
 
 // Who gh is signed in as, with Sign In or Sign Out — or how to install gh.
