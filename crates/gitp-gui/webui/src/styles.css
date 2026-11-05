@@ -2,6 +2,8 @@
   --bg: #0f1117;
   /* Lightness of a comment author's own color (`--author-hue`). */
   --author-l: 72%;
+  /* The theme, for pages shown in a frame (the saved review). */
+  --scheme: dark;
   --bg-elev: #161923;
   --bg-elev-2: #1d212e;
   --border: #262b3a;
@@ -63,6 +65,7 @@
 :root[data-theme="light"] {
   --bg: #f7f8fa;
   --author-l: 38%;
+  --scheme: light;
   --bg-elev: #ffffff;
   --bg-elev-2: #f0f2f6;
   --border: #dde1e9;
@@ -122,6 +125,7 @@
   :root:not([data-theme]) {
     --bg: #f7f8fa;
     --author-l: 38%;
+    --scheme: light;
     --bg-elev: #ffffff;
     --bg-elev-2: #f0f2f6;
     --border: #dde1e9;
@@ -5048,6 +5052,40 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
    clips with overflow: hidden) would otherwise be squeezed to a sliver. */
 .pr-body > * {
   flex-shrink: 0;
+}
+.review-viewer {
+  width: 94vw;
+  max-width: none;
+  height: 92vh;
+  max-height: none;
+  padding: 10px 12px 12px;
+  gap: 8px;
+}
+.review-viewer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.review-viewer-head .modal-title {
+  margin: 0;
+}
+.review-viewer-head .spacer {
+  flex: 1;
+}
+.review-viewer-sub {
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-viewer-frame {
+  flex: 1;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color-scheme: var(--scheme);
 }
 .pr-card {
   border: 1px solid var(--border);

@@ -68,6 +68,8 @@ export interface PullRequestCallbacks {
   // The pull request's saved review page, if any, and opening it.
   savedReview: (number: number) => string | null;
   openReviewPage: (path: string) => void;
+  // Reads it inside gitp, with "Explain more" on each finding.
+  readReview: (pr: PullRequestDetail, path: string) => void;
   // The repo the pull requests belong to: their reviews are kept by it.
   repoPath: () => string;
   // The head commit the pull request was last reviewed at, if known.
@@ -105,6 +107,8 @@ type Tab = "conversation" | "files" | "checks" | "drafts";
 
 // A page with lines: the saved review page.
 const REVIEW_PAGE_ICON = ["M6 3h9l4 4v14H6z", "M14 3v5h5", "M9 12h7", "M9 16h7"];
+// An open book: the saved review, read inside gitp.
+const READ_REVIEW_ICON = ["M3 5c3-1 6-1 9 1v14c-3-2-6-2-9-1z", "M21 5c-3-1-6-1-9 1v14c3-2 6-2 9-1z"];
 // A box with an arrow out of it: the pull request on GitHub.
 const PR_LINK_ICON = ["M14 4h6v6", "M20 4l-9 9", "M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"];
 
@@ -240,7 +244,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       el("div", { class: "pr-title-row" }, [
         el("span", { class: "pr-title", text: pr.title }),
         el("span", { class: "pr-number", text: `#${pr.number}` }),
-        ...reviewPageLink(pr.number),
+        ...reviewPageLink(pr),
         titleLink(PR_LINK_ICON, `Open #${pr.number} on GitHub\n${pr.url}`, () => cb.openUrl(pr.url)),
       ]),
       meta,
@@ -580,9 +584,13 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   }
 
   // The saved review page as an icon beside the title, when there is one.
-  function reviewPageLink(n: number): HTMLElement[] {
-    const page = cb.savedReview(n);
-    return page ? [titleLink(REVIEW_PAGE_ICON, `Open the saved review\n${page}`, () => cb.openReviewPage(page))] : [];
+  function reviewPageLink(pr: PullRequestDetail): HTMLElement[] {
+    const page = cb.savedReview(pr.number);
+    if (!page) return [];
+    return [
+      titleLink(REVIEW_PAGE_ICON, `Open the saved review\n${page}`, () => cb.openReviewPage(page)),
+      titleLink(READ_REVIEW_ICON, "Read the saved review here, with Explain more", () => cb.readReview(pr, page)),
+    ];
   }
 
   // A small icon button beside the title.

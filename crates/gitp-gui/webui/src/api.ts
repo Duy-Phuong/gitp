@@ -2,6 +2,7 @@
 // In a plain browser (e.g. `vite dev` for UI work) they return mock data so the
 // UI is fully explorable without the desktop shell.
 
+import REVIEW_BRIDGE from "./review-bridge.js?raw";
 import type {
   ActivityEntry,
   GitHubRepoSettings,
@@ -2212,6 +2213,26 @@ export async function openReviewPage(path: string): Promise<void> {
   await invoke<void>("open_review_page", { path });
 }
 
+// Where the review viewer's frame reads pull request `number`'s saved review
+// page from: the app's own scheme, which adds the bridge to the page. The
+// preview has a sample page of its own.
+export async function reviewPageUrl(number: number): Promise<string> {
+  if (!isTauri()) {
+    const page = MOCK_REVIEW_PAGE.replace("</body>", `<script>${REVIEW_BRIDGE}</script></body>`);
+    return URL.createObjectURL(new Blob([page], { type: "text/html" }));
+  }
+  const { convertFileSrc } = await import("@tauri-apps/api/core");
+  return convertFileSrc(String(number), "gitp-review");
+}
+
+// Explain finding `finding` (f3) of pull request `number`'s saved review again
+// with `command`, in the repository at `path`; resolves once the command has
+// added the explanation to the review file.
+export async function explainReviewFinding(path: string, number: number, finding: string, command: string): Promise<void> {
+  if (!isTauri()) return new Promise((resolve) => setTimeout(resolve, 5000));
+  return invoke<void>("explain_review_finding", { path, number, finding, command });
+}
+
 // Pick a review file (Markdown, JSON, or the HTML review page that embeds
 // its Markdown source) in the file dialog; null when the
 // dialog was cancelled. The preview has a sample file of its own.
@@ -2263,6 +2284,25 @@ export async function reviewWithComments(number: number, verdict: ReviewVerdict,
 
 // The review the preview loads: two findings on lines of the mock diff, one
 // on a line outside it, to show the warning.
+// The preview's saved review page: two findings, the first fixed since the
+// last review, each with the page's "Explain more" bar.
+const MOCK_REVIEW_PAGE = `<!doctype html><html><head><meta charset="utf-8"><style>
+  :root { color-scheme: light dark; } body { max-width: 940px; margin: 2rem auto; padding: 0 1rem; font: 16px/1.6 sans-serif; }
+  table { border-collapse: collapse; } td, th { border: 1px solid #8884; padding: .2rem .5rem; }
+</style></head><body>
+<h1>PR Review — UBIID-42</h1>
+<h2>Since the last review</h2>
+<table><thead><tr><th>Finding</th><th>Round</th><th>Result</th><th>Where</th></tr></thead><tbody>
+<tr><td>f1 retry with no limit</td><td>1</td><td>✅ fixed</td><td>e0a21160a5, <code>retry.ts:12</code></td></tr>
+<tr><td>f2 log without the requestId</td><td>1</td><td>⏳ open</td><td><code>check.ts:40</code></td></tr>
+</tbody></table>
+<h2>Suggested Changes</h2>
+<h3><code>src/retry.ts:12</code></h3><p>Severity: 🟡 minor</p><div class="fx-bar"><button>Explain more</button></div>
+<p>The retry loop has no limit.</p>
+<h3><code>src/check.ts:40</code></h3><p>Severity: 🟢 nit</p><div class="fx-bar"><button>Explain more</button></div>
+<p>Log the <code>requestId</code> on each retry. <a href="https://github.com/example/mideal/pull/42">#42</a></p>
+</body></html>`;
+
 const MOCK_REVIEW_FILE = `# Review of #42
 
 ### \`src/identity/retry.ts:6\`

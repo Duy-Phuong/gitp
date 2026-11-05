@@ -674,6 +674,14 @@ export const SKILL_REVIEW_COMMAND =
   `(the sprint folder no-sprint when Jira has no sprint). Write the review Markdown under review/, not in TMPDIR." ` +
   `--model opus --effort medium --permission-mode dontAsk --allowedTools "${SKILL_TOOLS.join(" ")}"`;
 
+// "Explain more" on a finding of a saved review: the review board's own
+// request, served by its skill, which adds the explanation to the board and to
+// the review file. The slug and the finding come in the environment.
+export const EXPLAIN_FINDING_COMMAND =
+  `claude -p "/serve-board Review board request: explain finding $GITP_REVIEW_FINDING of $GITP_REVIEW_SLUG. ` +
+  `Serve only this line, as the README part 'Lines from the review HTML file' says. Do not arm a watch, ask no questions." ` +
+  `--model opus --effort medium --permission-mode dontAsk --allowedTools "${[...SKILL_TOOLS, "ToolSearch"].join(" ")}"`;
+
 export function loadReviewCommand(): string {
   return localStorage.getItem(REVIEW_COMMAND_KEY) ?? DEFAULT_REVIEW_COMMAND;
 }
