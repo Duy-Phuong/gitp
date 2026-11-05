@@ -1,5 +1,7 @@
 :root {
   --bg: #0f1117;
+  /* Lightness of a comment author's own color (`--author-hue`). */
+  --author-l: 72%;
   --bg-elev: #161923;
   --bg-elev-2: #1d212e;
   --border: #262b3a;
@@ -60,6 +62,7 @@
    :root base above is the dark palette, so forcing dark needs no extra rule. */
 :root[data-theme="light"] {
   --bg: #f7f8fa;
+  --author-l: 38%;
   --bg-elev: #ffffff;
   --bg-elev-2: #f0f2f6;
   --border: #dde1e9;
@@ -118,6 +121,7 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
     --bg: #f7f8fa;
+    --author-l: 38%;
     --bg-elev: #ffffff;
     --bg-elev-2: #f0f2f6;
     --border: #dde1e9;
@@ -5058,8 +5062,12 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   margin-bottom: 4px;
   font-size: 12px;
 }
+.pr-card {
+  --author: hsl(var(--author-hue, 220) 65% var(--author-l));
+}
 .pr-card-author {
   font-weight: 600;
+  color: var(--author);
 }
 .pr-card-verb,
 .pr-card-time,
@@ -5068,6 +5076,10 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 }
 .pr-card-head .btn {
   margin-left: auto;
+}
+.pr-card.pr-comment,
+.pr-card.pr-review {
+  border-left: 3px solid var(--author);
 }
 .pr-card.pr-review.approved {
   border-left: 3px solid var(--add-fg);
@@ -5116,7 +5128,9 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .pr-thread-comment {
   background: none;
   border: none;
-  padding: 2px 0;
+  border-left: 3px solid var(--author);
+  border-radius: 0;
+  padding: 2px 0 2px 8px;
 }
 .pr-composer {
   display: flex;
