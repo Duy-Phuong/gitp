@@ -24,6 +24,8 @@ import {
   ghLogout,
   ghRepo,
   openReviewPage,
+  explainReviewFinding,
+  reviewPageUrl,
   reviewFiles,
   githubRepoSettings,
   isCancelled,
@@ -47,7 +49,7 @@ import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import { loadRepo, loadSidebar, refreshHistory, renderSidebarNow, showPullRequest, showView } from "./shell";
 import { defaultWorktreePath } from "./worktree-actions";
 import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
-import { loadReviewCommand } from "./prefs";
+import { EXPLAIN_FINDING_COMMAND, loadReviewCommand } from "./prefs";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
 import { showErrorDialog } from "./views/message-dialog";
@@ -64,6 +66,7 @@ import {
 } from "./pr-reviews";
 import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
+import { openReviewViewer } from "./views/review-viewer";
 import { baseBranches, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices } from "./pull-requests";
 import type { BranchRef, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict } from "./types";
 
@@ -472,6 +475,13 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   },
   savedReview: (number) => savedReview(number),
   openReviewPage: (path) => void openReviewPage(path).catch((err) => readFailed("Couldn't open the review page", err)),
+  readReview: (pr, path) =>
+    openReviewViewer(state.repoPath, pr.number, pr.title, {
+      pageUrl: reviewPageUrl,
+      explain: (repo, number, finding) => explainReviewFinding(repo, number, finding, EXPLAIN_FINDING_COMMAND),
+      openUrl: (url) => void openGithubUrl(url).catch((err) => readFailed("Couldn't open the page", err)),
+      openInBrowser: () => void openReviewPage(path).catch((err) => readFailed("Couldn't open the review page", err)),
+    }),
   repoPath: () => state.repoPath,
   generateDrafts: (pr) => void runReview(state.repoPath, pr.number, pr.head_oid),
   reviewedHead: (number) => reviewedHead(state.repoPath, number),

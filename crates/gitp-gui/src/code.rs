@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use gitp_code::files::{self, walk, FileEntry, IgnoredEntry, IGNORED_FILES_MAX};
 use gitp_code::grep::{self, Query, SearchResult};
+use gitp_code::index::{reindex_many, Range, RefKind, Reference, Symbol, SymbolIndex, SymbolKind};
 use gitp_code::lang::{Family, Lang};
-use gitp_code::index::{reindex_many, RefKind, Reference, Range, Symbol, SymbolIndex, SymbolKind};
 use gitp_code::resolve::{self, Access, HierarchyNode, UsageHit};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -135,7 +135,10 @@ pub(crate) fn code_state_or_init(state: &RepoState) -> Result<(Arc<CodeState>, P
     let idx = guard.active.ok_or("no repository is open")?;
     let session = &mut guard.sessions[idx];
     let root = session.repo.workdir_path().map_err(to_message)?;
-    let code = session.code.get_or_insert_with(|| Arc::new(CodeState::new())).clone();
+    let code = session
+        .code
+        .get_or_insert_with(|| Arc::new(CodeState::new()))
+        .clone();
     Ok((code, root))
 }
 
@@ -166,12 +169,25 @@ pub(crate) fn code_open_workspace_impl(state: &RepoState, emit: Emit) -> Result<
         // Back from another repository tab, whose watcher was not live: the
         // files that changed meanwhile are parsed again.
         refresh_stale(&code, &root, &files);
-        return Ok(Workspace { files, ignored, indexing: false });
+        return Ok(Workspace {
+            files,
+            ignored,
+            indexing: false,
+        });
     }
     if code.indexing.swap(true, Ordering::SeqCst) {
-        return Ok(Workspace { files, ignored, indexing: true }); // a build is on its way
+        return Ok(Workspace {
+            files,
+            ignored,
+            indexing: true,
+        }); // a build is on its way
     }
-    let (index, ready, indexing, files_for_thread) = (code.index.clone(), code.ready.clone(), code.indexing.clone(), files.clone());
+    let (index, ready, indexing, files_for_thread) = (
+        code.index.clone(),
+        code.ready.clone(),
+        code.indexing.clone(),
+        files.clone(),
+    );
     std::thread::spawn(move || {
         let t = std::time::Instant::now();
         let built = SymbolIndex::build(&root, &files_for_thread);
@@ -184,10 +200,21 @@ pub(crate) fn code_open_workspace_impl(state: &RepoState, emit: Emit) -> Result<
             let stale = index.read().unwrap().stale_files(&files);
             reindex_many(&index, &root, &stale);
         }
-        let payload = IndexReady { symbols, files: files_for_thread.len(), ms: t.elapsed().as_millis() };
-        emit(INDEX_READY_EVENT, serde_json::to_value(payload).unwrap_or_default());
+        let payload = IndexReady {
+            symbols,
+            files: files_for_thread.len(),
+            ms: t.elapsed().as_millis(),
+        };
+        emit(
+            INDEX_READY_EVENT,
+            serde_json::to_value(payload).unwrap_or_default(),
+        );
     });
-    Ok(Workspace { files, ignored, indexing: true })
+    Ok(Workspace {
+        files,
+        ignored,
+        indexing: true,
+    })
 }
 
 /// Walk again and reindex what changed since: the repo tab was inactive, or
@@ -210,12 +237,15 @@ pub(crate) fn code_ignored_impl(state: &RepoState) -> Result<Ignored, String> {
 }
 
 /// The contents of an ignored directory, listed as the explorer opens it.
-pub(crate) fn code_list_dir_impl(state: &RepoState, path: String) -> Result<Vec<IgnoredEntry>, String> {
+pub(crate) fn code_list_dir_impl(
+    state: &RepoState,
+    path: String,
+) -> Result<Vec<IgnoredEntry>, String> {
     let (_, root) = code_state_or_init(state)?;
     let plain = !path.is_empty()
-        && Path::new(&path)
-            .components()
-            .all(|c| matches!(c, std::path::Component::Normal(n) if !n.eq_ignore_ascii_case(".git")));
+        && Path::new(&path).components().all(
+            |c| matches!(c, std::path::Component::Normal(n) if !n.eq_ignore_ascii_case(".git")),
+        );
     if !plain {
         return Err(format!("not a path inside the repository: {path}"));
     }
@@ -230,18 +260,32 @@ fn refresh_stale(code: &CodeState, root: &Path, files: &[FileEntry]) {
     }
 }
 
-pub(crate) fn code_read_file_impl(state: &RepoState, path: String) -> Result<Option<CodeFile>, String> {
+pub(crate) fn code_read_file_impl(
+    state: &RepoState,
+    path: String,
+) -> Result<Option<CodeFile>, String> {
     let (_, root) = code_state_or_init(state)?;
     let text = crate::state::with_repo(state, |repo| repo.read_text_file(&path))?;
     let Some(text) = text else { return Ok(None) };
-    let mtime_ms = std::fs::metadata(root.join(&path)).map(|m| gitp_code::files::mtime_ms(&m)).unwrap_or(0);
-    Ok(Some(CodeFile { text: text.text, crlf: text.crlf, mixed: text.mixed, mtime_ms }))
+    let mtime_ms = std::fs::metadata(root.join(&path))
+        .map(|m| gitp_code::files::mtime_ms(&m))
+        .unwrap_or(0);
+    Ok(Some(CodeFile {
+        text: text.text,
+        crlf: text.crlf,
+        mixed: text.mixed,
+        mtime_ms,
+    }))
 }
 
 /// Who last changed each line of `text`, the editor's copy of `path`, for the
 /// inline blame. Off the workspace lock: blame can take a moment on a long
 /// history.
-pub(crate) fn code_blame_impl(state: &RepoState, path: String, text: String) -> Result<gitp_core::FileBlame, String> {
+pub(crate) fn code_blame_impl(
+    state: &RepoState,
+    path: String,
+    text: String,
+) -> Result<gitp_core::FileBlame, String> {
     crate::state::with_repo_unlocked(state, |repo| repo.blame_contents(&path, &text))
 }
 
@@ -257,12 +301,16 @@ pub(crate) fn code_write_file_impl(
 ) -> Result<u64, String> {
     let (code, root) = code_state_or_init(state)?;
     let full = root.join(&path);
-    let on_disk = std::fs::metadata(&full).map(|m| gitp_code::files::mtime_ms(&m)).unwrap_or(0);
+    let on_disk = std::fs::metadata(&full)
+        .map(|m| gitp_code::files::mtime_ms(&m))
+        .unwrap_or(0);
     if on_disk != expected_mtime_ms {
         return Err("changed_on_disk".into());
     }
     crate::state::with_repo(state, |repo| repo.write_text_file(&path, &text, crlf))?;
-    let mtime = std::fs::metadata(&full).map(|m| gitp_code::files::mtime_ms(&m)).unwrap_or(0);
+    let mtime = std::fs::metadata(&full)
+        .map(|m| gitp_code::files::mtime_ms(&m))
+        .unwrap_or(0);
     code.own_writes.lock().unwrap().insert(path.clone(), mtime);
     if code.ready.load(Ordering::SeqCst) {
         reindex_many(&code.index, &root, std::slice::from_ref(&path));
@@ -270,20 +318,34 @@ pub(crate) fn code_write_file_impl(
     Ok(mtime)
 }
 
-pub(crate) fn code_definition_impl(state: &RepoState, path: String, line: u32, col: u32) -> Result<Vec<Symbol>, String> {
+pub(crate) fn code_definition_impl(
+    state: &RepoState,
+    path: String,
+    line: u32,
+    col: u32,
+) -> Result<Vec<Symbol>, String> {
     let (code, _) = ready_index(state)?;
     let index = code.index.read().unwrap();
     Ok(resolve::definition(&index, &path, line, col))
 }
 
-pub(crate) fn code_references_impl(state: &RepoState, path: String, line: u32, col: u32) -> Result<UsagesResult, String> {
+pub(crate) fn code_references_impl(
+    state: &RepoState,
+    path: String,
+    line: u32,
+    col: u32,
+) -> Result<UsagesResult, String> {
     let (code, root) = ready_index(state)?;
     let symbol = {
         let index = code.index.read().unwrap();
         let symbol = resolve::symbol_at(&index, &path, line, col).ok_or("no_symbol")?;
         if !matches!(symbol.kind, SymbolKind::Variable | SymbolKind::Field) {
             let (hits, truncated) = resolve::references(&index, &symbol, USAGES_LIMIT);
-            return Ok(UsagesResult { symbol, hits, truncated });
+            return Ok(UsagesResult {
+                symbol,
+                hits,
+                truncated,
+            });
         }
         symbol
     };
@@ -298,20 +360,36 @@ pub(crate) fn code_references_impl(state: &RepoState, path: String, line: u32, c
         whole_word: true,
         include_glob: Some(family_glob(symbol.lang.family()).to_string()),
     };
-    let found = grep::search(&root, &query, USAGES_LIMIT + 1, Arc::new(AtomicBool::new(false)))?;
+    let found = grep::search(
+        &root,
+        &query,
+        USAGES_LIMIT + 1,
+        Arc::new(AtomicBool::new(false)),
+    )?;
     let truncated = found.hits.len() > USAGES_LIMIT;
     let hits = found
         .hits
         .into_iter()
         .take(USAGES_LIMIT)
-        .filter(|h| !(h.path == symbol.path.as_ref() && h.line == symbol.name_range.start_line && h.col == symbol.name_range.start_col))
+        .filter(|h| {
+            !(h.path == symbol.path.as_ref()
+                && h.line == symbol.name_range.start_line
+                && h.col == symbol.name_range.start_col)
+        })
         .map(|h| UsageHit {
             access: Some(classify_access(&h.text, h.col, h.end_col)),
             reference: Reference {
                 name: symbol.name.clone(),
                 kind: RefKind::Ident,
                 path: Arc::from(h.path),
-                range: Range { start_line: h.line, start_col: h.col, end_line: h.line, end_col: h.end_col, start_byte: 0, end_byte: 0 },
+                range: Range {
+                    start_line: h.line,
+                    start_col: h.col,
+                    end_line: h.line,
+                    end_col: h.end_col,
+                    start_byte: 0,
+                    end_byte: 0,
+                },
                 enclosing: None,
                 receiver: None,
             },
@@ -319,7 +397,11 @@ pub(crate) fn code_references_impl(state: &RepoState, path: String, line: u32, c
             text: Some(h.text),
         })
         .collect();
-    Ok(UsagesResult { symbol, hits, truncated })
+    Ok(UsagesResult {
+        symbol,
+        hits,
+        truncated,
+    })
 }
 
 /// The grep for a field or variable named `name`: the name itself, plus
@@ -355,11 +437,16 @@ fn classify_access(line: &str, col: u32, end_col: u32) -> Access {
     if token.starts_with("get") || token.starts_with("is") {
         return Access::Read;
     }
-    let assignment = ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>=", "++", "--"];
+    let assignment = [
+        "+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>=", "++", "--",
+    ];
     if after.starts_with('=') && !after.starts_with("==") {
         return Access::Write;
     }
-    if assignment.iter().any(|op| after.starts_with(op)) || before.ends_with("++") || before.ends_with("--") {
+    if assignment.iter().any(|op| after.starts_with(op))
+        || before.ends_with("++")
+        || before.ends_with("--")
+    {
         return Access::Write;
     }
     if before.ends_with('.') && after.starts_with('(') {
@@ -376,27 +463,44 @@ fn family_glob(family: Family) -> &'static str {
     }
 }
 
-pub(crate) fn code_callers_impl(state: &RepoState, path: String, line: u32, col: u32) -> Result<Vec<HierarchyNode>, String> {
+pub(crate) fn code_callers_impl(
+    state: &RepoState,
+    path: String,
+    line: u32,
+    col: u32,
+) -> Result<Vec<HierarchyNode>, String> {
     let (code, _) = ready_index(state)?;
     let index = code.index.read().unwrap();
     let symbol = resolve::symbol_at(&index, &path, line, col).ok_or("no_symbol")?;
     Ok(resolve::callers(&index, &symbol, USAGES_LIMIT).0)
 }
 
-pub(crate) fn code_callees_impl(state: &RepoState, path: String, line: u32, col: u32) -> Result<Vec<HierarchyNode>, String> {
+pub(crate) fn code_callees_impl(
+    state: &RepoState,
+    path: String,
+    line: u32,
+    col: u32,
+) -> Result<Vec<HierarchyNode>, String> {
     let (code, _) = ready_index(state)?;
     let index = code.index.read().unwrap();
     let symbol = resolve::symbol_at(&index, &path, line, col).ok_or("no_symbol")?;
     Ok(resolve::callees(&index, &symbol))
 }
 
-pub(crate) fn code_file_symbols_impl(state: &RepoState, path: String) -> Result<Vec<Symbol>, String> {
+pub(crate) fn code_file_symbols_impl(
+    state: &RepoState,
+    path: String,
+) -> Result<Vec<Symbol>, String> {
     let (code, _) = ready_index(state)?;
     let index = code.index.read().unwrap();
     Ok(index.file_symbols(&path))
 }
 
-pub(crate) fn code_search_impl(state: &RepoState, query: Query, limit: usize) -> Result<SearchResult, String> {
+pub(crate) fn code_search_impl(
+    state: &RepoState,
+    query: Query,
+    limit: usize,
+) -> Result<SearchResult, String> {
     let (code, root) = code_state_or_init(state)?;
     let cancel = Arc::new(AtomicBool::new(false));
     {
@@ -410,7 +514,13 @@ pub(crate) fn code_search_impl(state: &RepoState, query: Query, limit: usize) ->
 /// Apply a watcher batch: reindex or drop each path (or rebuild everything
 /// past `overflow`), patch the file list, and tell the frontend which paths
 /// moved and which of those were not its own saves.
-pub(crate) fn on_worktree_changed(emit: &Emit, code: &CodeState, root: &Path, paths: &[String], overflow: bool) {
+pub(crate) fn on_worktree_changed(
+    emit: &Emit,
+    code: &CodeState,
+    root: &Path,
+    paths: &[String],
+    overflow: bool,
+) {
     if !code.ready.load(Ordering::SeqCst) {
         return; // the first build reads the tree as it is now
     }
@@ -419,7 +529,9 @@ pub(crate) fn on_worktree_changed(emit: &Emit, code: &CodeState, root: &Path, pa
         paths
             .iter()
             .filter(|p| {
-                let now = std::fs::metadata(root.join(p)).map(|m| gitp_code::files::mtime_ms(&m)).unwrap_or(0);
+                let now = std::fs::metadata(root.join(p))
+                    .map(|m| gitp_code::files::mtime_ms(&m))
+                    .unwrap_or(0);
                 own.get(*p) != Some(&now)
             })
             .cloned()
@@ -439,10 +551,18 @@ pub(crate) fn on_worktree_changed(emit: &Emit, code: &CodeState, root: &Path, pa
         // renamed or moved directory by its path alone), or gone.
         for p in paths {
             match std::fs::metadata(root.join(p)) {
-                Ok(meta) if meta.is_file() => entries.push(FileEntry { path: p.clone(), size: meta.len(), lang: Lang::from_path(p), mtime_ms: gitp_code::files::mtime_ms(&meta) }),
+                Ok(meta) if meta.is_file() => entries.push(FileEntry {
+                    path: p.clone(),
+                    size: meta.len(),
+                    lang: Lang::from_path(p),
+                    mtime_ms: gitp_code::files::mtime_ms(&meta),
+                }),
                 Ok(meta) if meta.is_dir() => {
                     if let Ok(inside) = walk(&root.join(p)) {
-                        entries.extend(inside.into_iter().map(|f| FileEntry { path: format!("{p}/{}", f.path), ..f }));
+                        entries.extend(inside.into_iter().map(|f| FileEntry {
+                            path: format!("{p}/{}", f.path),
+                            ..f
+                        }));
                     }
                 }
                 _ => removed.push(p.clone()),
@@ -454,7 +574,11 @@ pub(crate) fn on_worktree_changed(emit: &Emit, code: &CodeState, root: &Path, pa
             // were never reported one by one.
             for p in &removed {
                 let prefix = format!("{p}/");
-                let under: Vec<String> = files.iter().filter(|f| f.path.starts_with(&prefix)).map(|f| f.path.clone()).collect();
+                let under: Vec<String> = files
+                    .iter()
+                    .filter(|f| f.path.starts_with(&prefix))
+                    .map(|f| f.path.clone())
+                    .collect();
                 files.retain(|f| f.path != *p && !f.path.starts_with(&prefix));
                 removed_under.extend(under);
             }
@@ -466,11 +590,24 @@ pub(crate) fn on_worktree_changed(emit: &Emit, code: &CodeState, root: &Path, pa
             }
         }
         removed.append(&mut removed_under);
-        let to_index: Vec<String> = entries.iter().map(|e| e.path.clone()).chain(removed.iter().cloned()).collect();
+        let to_index: Vec<String> = entries
+            .iter()
+            .map(|e| e.path.clone())
+            .chain(removed.iter().cloned())
+            .collect();
         reindex_many(&code.index, root, &to_index);
     }
-    let payload = FilesChanged { paths: paths.to_vec(), external, entries, removed, rebuilt: overflow };
-    emit(FILES_CHANGED_EVENT, serde_json::to_value(payload).unwrap_or_default());
+    let payload = FilesChanged {
+        paths: paths.to_vec(),
+        external,
+        entries,
+        removed,
+        rebuilt: overflow,
+    };
+    emit(
+        FILES_CHANGED_EVENT,
+        serde_json::to_value(payload).unwrap_or_default(),
+    );
 }
 
 /// The watcher's sink for a working-tree batch: hand its paths to the
@@ -498,7 +635,10 @@ pub(crate) fn feed_index(app: &AppHandle, change: &crate::watch::RepoChanged) {
 // --- Tauri commands --------------------------------------------------------
 
 #[tauri::command(async)]
-pub(crate) fn code_open_workspace(app: AppHandle, state: State<RepoState>) -> Result<Workspace, String> {
+pub(crate) fn code_open_workspace(
+    app: AppHandle,
+    state: State<RepoState>,
+) -> Result<Workspace, String> {
     code_open_workspace_impl(&state, app_emit(&app))
 }
 
@@ -513,52 +653,95 @@ pub(crate) fn code_ignored(state: State<RepoState>) -> Result<Ignored, String> {
 }
 
 #[tauri::command(async)]
-pub(crate) fn code_list_dir(path: String, state: State<RepoState>) -> Result<Vec<IgnoredEntry>, String> {
+pub(crate) fn code_list_dir(
+    path: String,
+    state: State<RepoState>,
+) -> Result<Vec<IgnoredEntry>, String> {
     code_list_dir_impl(&state, path)
 }
 
 #[tauri::command(async)]
-pub(crate) fn code_blame(path: String, text: String, state: State<RepoState>) -> Result<gitp_core::FileBlame, String> {
+pub(crate) fn code_blame(
+    path: String,
+    text: String,
+    state: State<RepoState>,
+) -> Result<gitp_core::FileBlame, String> {
     code_blame_impl(&state, path, text)
 }
 
 #[tauri::command(async)]
-pub(crate) fn code_read_file(path: String, state: State<RepoState>) -> Result<Option<CodeFile>, String> {
+pub(crate) fn code_read_file(
+    path: String,
+    state: State<RepoState>,
+) -> Result<Option<CodeFile>, String> {
     code_read_file_impl(&state, path)
 }
 
 #[tauri::command(async)]
-pub(crate) fn code_write_file(path: String, text: String, crlf: bool, expected_mtime_ms: u64, state: State<RepoState>) -> Result<u64, String> {
+pub(crate) fn code_write_file(
+    path: String,
+    text: String,
+    crlf: bool,
+    expected_mtime_ms: u64,
+    state: State<RepoState>,
+) -> Result<u64, String> {
     code_write_file_impl(&state, path, text, crlf, expected_mtime_ms)
 }
 
 #[tauri::command(async)]
-pub(crate) fn code_definition(path: String, line: u32, col: u32, state: State<RepoState>) -> Result<Vec<Symbol>, String> {
+pub(crate) fn code_definition(
+    path: String,
+    line: u32,
+    col: u32,
+    state: State<RepoState>,
+) -> Result<Vec<Symbol>, String> {
     code_definition_impl(&state, path, line, col)
 }
 
 #[tauri::command(async)]
-pub(crate) fn code_references(path: String, line: u32, col: u32, state: State<RepoState>) -> Result<UsagesResult, String> {
+pub(crate) fn code_references(
+    path: String,
+    line: u32,
+    col: u32,
+    state: State<RepoState>,
+) -> Result<UsagesResult, String> {
     code_references_impl(&state, path, line, col)
 }
 
 #[tauri::command(async)]
-pub(crate) fn code_callers(path: String, line: u32, col: u32, state: State<RepoState>) -> Result<Vec<HierarchyNode>, String> {
+pub(crate) fn code_callers(
+    path: String,
+    line: u32,
+    col: u32,
+    state: State<RepoState>,
+) -> Result<Vec<HierarchyNode>, String> {
     code_callers_impl(&state, path, line, col)
 }
 
 #[tauri::command(async)]
-pub(crate) fn code_callees(path: String, line: u32, col: u32, state: State<RepoState>) -> Result<Vec<HierarchyNode>, String> {
+pub(crate) fn code_callees(
+    path: String,
+    line: u32,
+    col: u32,
+    state: State<RepoState>,
+) -> Result<Vec<HierarchyNode>, String> {
     code_callees_impl(&state, path, line, col)
 }
 
 #[tauri::command(async)]
-pub(crate) fn code_file_symbols(path: String, state: State<RepoState>) -> Result<Vec<Symbol>, String> {
+pub(crate) fn code_file_symbols(
+    path: String,
+    state: State<RepoState>,
+) -> Result<Vec<Symbol>, String> {
     code_file_symbols_impl(&state, path)
 }
 
 #[tauri::command(async)]
-pub(crate) fn code_search(query: Query, limit: usize, state: State<RepoState>) -> Result<SearchResult, String> {
+pub(crate) fn code_search(
+    query: Query,
+    limit: usize,
+    state: State<RepoState>,
+) -> Result<SearchResult, String> {
     code_search_impl(&state, query, limit)
 }
 
@@ -579,7 +762,10 @@ mod tests {
         let (code, _) = code_state(state).unwrap();
         let t = std::time::Instant::now();
         while !code.ready.load(Ordering::SeqCst) {
-            assert!(t.elapsed() < Duration::from_secs(10), "index never became ready");
+            assert!(
+                t.elapsed() < Duration::from_secs(10),
+                "index never became ready"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
     }
@@ -588,7 +774,11 @@ mod tests {
     fn open_workspace_lists_files_and_indexes() {
         let dir = tempfile::tempdir().unwrap();
         make_repo(dir.path(), &["c1"]);
-        std::fs::write(dir.path().join("a.ts"), "export function alpha() {}\nalpha();\n").unwrap();
+        std::fs::write(
+            dir.path().join("a.ts"),
+            "export function alpha() {}\nalpha();\n",
+        )
+        .unwrap();
         let state = open(dir.path());
         let ws = code_open_workspace_impl(&state, no_emit()).unwrap();
         assert!(ws.indexing);
@@ -599,7 +789,11 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name.as_ref(), "alpha");
         // Opening again neither rebuilds nor reports indexing.
-        assert!(!code_open_workspace_impl(&state, no_emit()).unwrap().indexing);
+        assert!(
+            !code_open_workspace_impl(&state, no_emit())
+                .unwrap()
+                .indexing
+        );
     }
 
     #[test]
@@ -608,8 +802,14 @@ mod tests {
         make_repo(dir.path(), &["c1"]);
         let state = open(dir.path());
         code_state_or_init(&state).unwrap(); // a CodeState with no build started
-        assert_eq!(code_definition_impl(&state, "f.txt".into(), 0, 0).unwrap_err(), "indexing");
-        assert_eq!(code_references_impl(&state, "f.txt".into(), 0, 0).unwrap_err(), "indexing");
+        assert_eq!(
+            code_definition_impl(&state, "f.txt".into(), 0, 0).unwrap_err(),
+            "indexing"
+        );
+        assert_eq!(
+            code_references_impl(&state, "f.txt".into(), 0, 0).unwrap_err(),
+            "indexing"
+        );
     }
 
     #[test]
@@ -617,10 +817,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         make_repo(dir.path(), &["c1"]);
         let state = open(dir.path());
-        let file = code_read_file_impl(&state, "f.txt".into()).unwrap().unwrap();
-        let err = code_write_file_impl(&state, "f.txt".into(), "x\n".into(), false, file.mtime_ms + 1).unwrap_err();
+        let file = code_read_file_impl(&state, "f.txt".into())
+            .unwrap()
+            .unwrap();
+        let err = code_write_file_impl(
+            &state,
+            "f.txt".into(),
+            "x\n".into(),
+            false,
+            file.mtime_ms + 1,
+        )
+        .unwrap_err();
         assert_eq!(err, "changed_on_disk");
-        assert_eq!(std::fs::read_to_string(dir.path().join("f.txt")).unwrap(), "line 0\n");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+            "line 0\n"
+        );
     }
 
     #[test]
@@ -629,11 +841,23 @@ mod tests {
         make_repo(dir.path(), &["c1"]);
         std::fs::write(dir.path().join("w.txt"), "one\r\ntwo\r\nthree\r\n").unwrap();
         let state = open(dir.path());
-        let file = code_read_file_impl(&state, "w.txt".into()).unwrap().unwrap();
+        let file = code_read_file_impl(&state, "w.txt".into())
+            .unwrap()
+            .unwrap();
         assert!(file.crlf);
         assert_eq!(file.text, "one\ntwo\nthree\n");
-        code_write_file_impl(&state, "w.txt".into(), "one\nTWO\nthree\n".into(), file.crlf, file.mtime_ms).unwrap();
-        assert_eq!(std::fs::read(dir.path().join("w.txt")).unwrap(), b"one\r\nTWO\r\nthree\r\n");
+        code_write_file_impl(
+            &state,
+            "w.txt".into(),
+            "one\nTWO\nthree\n".into(),
+            file.crlf,
+            file.mtime_ms,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("w.txt")).unwrap(),
+            b"one\r\nTWO\r\nthree\r\n"
+        );
     }
 
     #[test]
@@ -645,7 +869,14 @@ mod tests {
         code_open_workspace_impl(&state, no_emit()).unwrap();
         wait_ready(&state);
         let file = code_read_file_impl(&state, "a.ts".into()).unwrap().unwrap();
-        code_write_file_impl(&state, "a.ts".into(), "export function beta() {}\n".into(), false, file.mtime_ms).unwrap();
+        code_write_file_impl(
+            &state,
+            "a.ts".into(),
+            "export function beta() {}\n".into(),
+            false,
+            file.mtime_ms,
+        )
+        .unwrap();
         let (code, _) = code_state(&state).unwrap();
         let index = code.index.read().unwrap();
         assert_eq!(index.definitions_named("alpha").count(), 0);
@@ -663,7 +894,8 @@ mod tests {
     fn capture() -> (Emit, Arc<Mutex<Vec<(String, serde_json::Value)>>>) {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let record = seen.clone();
-        let emit: Emit = Arc::new(move |name, payload| record.lock().unwrap().push((name.to_string(), payload)));
+        let emit: Emit =
+            Arc::new(move |name, payload| record.lock().unwrap().push((name.to_string(), payload)));
         (emit, seen)
     }
 
@@ -676,8 +908,21 @@ mod tests {
 
         std::fs::write(dir.path().join("n.ts"), "export function newer() {}\n").unwrap();
         on_worktree_changed(&emit, &code, dir.path(), &["n.ts".into()], false);
-        assert_eq!(code.index.read().unwrap().definitions_named("newer").count(), 1);
-        let paths: Vec<String> = code.files.read().unwrap().iter().map(|f| f.path.clone()).collect();
+        assert_eq!(
+            code.index
+                .read()
+                .unwrap()
+                .definitions_named("newer")
+                .count(),
+            1
+        );
+        let paths: Vec<String> = code
+            .files
+            .read()
+            .unwrap()
+            .iter()
+            .map(|f| f.path.clone())
+            .collect();
         assert_eq!(paths, ["f.txt", "n.ts"], "inserted in order");
         let (name, payload) = seen.lock().unwrap().pop().unwrap();
         assert_eq!(name, FILES_CHANGED_EVENT);
@@ -687,7 +932,14 @@ mod tests {
 
         std::fs::remove_file(dir.path().join("n.ts")).unwrap();
         on_worktree_changed(&emit, &code, dir.path(), &["n.ts".into()], false);
-        assert_eq!(code.index.read().unwrap().definitions_named("newer").count(), 0);
+        assert_eq!(
+            code.index
+                .read()
+                .unwrap()
+                .definitions_named("newer")
+                .count(),
+            0
+        );
         assert!(!code.files.read().unwrap().iter().any(|f| f.path == "n.ts"));
         let (_, payload) = seen.lock().unwrap().pop().unwrap();
         assert_eq!(payload["removed"], serde_json::json!(["n.ts"]));
@@ -698,8 +950,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         make_repo(dir.path(), &["c1"]);
         let (state, code) = ready_state(dir.path());
-        let file = code_read_file_impl(&state, "f.txt".into()).unwrap().unwrap();
-        code_write_file_impl(&state, "f.txt".into(), "mine\n".into(), false, file.mtime_ms).unwrap();
+        let file = code_read_file_impl(&state, "f.txt".into())
+            .unwrap()
+            .unwrap();
+        code_write_file_impl(
+            &state,
+            "f.txt".into(),
+            "mine\n".into(),
+            false,
+            file.mtime_ms,
+        )
+        .unwrap();
         let (emit, seen) = capture();
         on_worktree_changed(&emit, &code, dir.path(), &["f.txt".into()], false);
         let (_, payload) = seen.lock().unwrap().pop().unwrap();
@@ -715,8 +976,16 @@ mod tests {
         std::fs::write(dir.path().join("big.py"), "def huge():\n    pass\n").unwrap();
         let (emit, _) = capture();
         on_worktree_changed(&emit, &code, dir.path(), &[], true);
-        assert_eq!(code.index.read().unwrap().definitions_named("huge").count(), 1);
-        assert!(code.files.read().unwrap().iter().any(|f| f.path == "big.py"));
+        assert_eq!(
+            code.index.read().unwrap().definitions_named("huge").count(),
+            1
+        );
+        assert!(code
+            .files
+            .read()
+            .unwrap()
+            .iter()
+            .any(|f| f.path == "big.py"));
     }
 
     #[test]
@@ -729,12 +998,27 @@ mod tests {
         std::fs::rename(dir.path().join("src"), dir.path().join("lib")).unwrap();
         let (emit, _) = capture();
         // notify reports the directory paths only.
-        on_worktree_changed(&emit, &code, dir.path(), &["lib".into(), "src".into()], false);
+        on_worktree_changed(
+            &emit,
+            &code,
+            dir.path(),
+            &["lib".into(), "src".into()],
+            false,
+        );
         let index = code.index.read().unwrap();
-        let moved: Vec<&str> = index.definitions_named("moved").map(|s| s.path.as_ref()).collect();
+        let moved: Vec<&str> = index
+            .definitions_named("moved")
+            .map(|s| s.path.as_ref())
+            .collect();
         assert_eq!(moved, ["lib/m.ts"]);
         assert!(index.file("src/m.ts").is_none());
-        let paths: Vec<String> = code.files.read().unwrap().iter().map(|f| f.path.clone()).collect();
+        let paths: Vec<String> = code
+            .files
+            .read()
+            .unwrap()
+            .iter()
+            .map(|f| f.path.clone())
+            .collect();
         assert_eq!(paths, ["f.txt", "lib/m.ts"]);
     }
 
@@ -759,13 +1043,31 @@ mod tests {
     fn usages_of_a_variable_come_from_a_whole_word_grep() {
         let dir = tempfile::tempdir().unwrap();
         make_repo(dir.path(), &["c1"]);
-        std::fs::write(dir.path().join("a.ts"), "export const rate = 1;\nconst x = rate + rates;\n").unwrap();
+        std::fs::write(
+            dir.path().join("a.ts"),
+            "export const rate = 1;\nconst x = rate + rates;\n",
+        )
+        .unwrap();
         std::fs::write(dir.path().join("b.py"), "rate = 2\n").unwrap();
         let (state, _code) = ready_state(dir.path());
         let r = code_references_impl(&state, "a.ts".into(), 0, 13).unwrap();
         assert_eq!(r.symbol.name.as_ref(), "rate");
-        let hits: Vec<(&str, u32, bool)> = r.hits.iter().map(|h| (h.reference.path.as_ref(), h.reference.range.start_line, h.certain)).collect();
-        assert_eq!(hits, [("a.ts", 1, false)], "the use on line 2, not `rates`, not the Python file, not the definition");
+        let hits: Vec<(&str, u32, bool)> = r
+            .hits
+            .iter()
+            .map(|h| {
+                (
+                    h.reference.path.as_ref(),
+                    h.reference.range.start_line,
+                    h.certain,
+                )
+            })
+            .collect();
+        assert_eq!(
+            hits,
+            [("a.ts", 1, false)],
+            "the use on line 2, not `rates`, not the Python file, not the definition"
+        );
         assert_eq!(r.hits[0].reference.range.start_col, 10);
     }
 
@@ -790,7 +1092,14 @@ mod tests {
         let mut hits: Vec<(&str, u32, bool, &str)> = r
             .hits
             .iter()
-            .map(|h| (h.reference.path.as_ref(), h.reference.range.start_line, h.access == Some(Access::Write), h.text.as_deref().unwrap().trim()))
+            .map(|h| {
+                (
+                    h.reference.path.as_ref(),
+                    h.reference.range.start_line,
+                    h.access == Some(Access::Write),
+                    h.text.as_deref().unwrap().trim(),
+                )
+            })
             .collect();
         hits.sort();
         assert_eq!(
@@ -812,11 +1121,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         make_repo(dir.path(), &["c1"]);
         let state = open(dir.path());
-        let file = code_read_file_impl(&state, "f.txt".into()).unwrap().unwrap();
-        let mtime = code_write_file_impl(&state, "f.txt".into(), "x\n".into(), false, file.mtime_ms).unwrap();
+        let file = code_read_file_impl(&state, "f.txt".into())
+            .unwrap()
+            .unwrap();
+        let mtime =
+            code_write_file_impl(&state, "f.txt".into(), "x\n".into(), false, file.mtime_ms)
+                .unwrap();
         let (code, _) = code_state(&state).unwrap();
         assert_eq!(code.own_writes.lock().unwrap().get("f.txt"), Some(&mtime));
-        let on_disk = gitp_code::files::mtime_ms(&std::fs::metadata(dir.path().join("f.txt")).unwrap());
+        let on_disk =
+            gitp_code::files::mtime_ms(&std::fs::metadata(dir.path().join("f.txt")).unwrap());
         assert_eq!(mtime, on_disk);
     }
 }

@@ -1330,6 +1330,9 @@ struct RawCommitPull {
 /// take most of an hour.
 pub const REVIEW_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
+/// How long one "Explain more" may take.
+pub const EXPLAIN_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+
 /// What a review command made: the review's text, and the file it came from
 /// when the command wrote one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1454,6 +1457,57 @@ impl Repo {
             .collect();
         out.sort_by_key(|f| f.number);
         out
+    }
+
+    /// Run `command` to explain finding `finding` (`f3`) of the saved review
+    /// of pull request `number` again, in simpler words: the review board's
+    /// "Explain more". The command gets the review's slug (`UBIID-9868`, from
+    /// `pr-review-UBIID-9868.html`), the finding and the file in its
+    /// environment, and is expected to add the explanation to the file.
+    pub fn explain_review_finding(&self, number: u64, finding: &str, command: &str) -> Result<()> {
+        let command = command.trim();
+        if command.is_empty() {
+            return Err(Error::Message("No explain command is set.".into()));
+        }
+        let valid = finding.len() > 1
+            && finding.len() <= 4
+            && finding.starts_with('f')
+            && finding[1..].bytes().all(|b| b.is_ascii_digit());
+        if !valid {
+            return Err(Error::Message(format!(
+                "{finding} is not a finding of a review"
+            )));
+        }
+        let file = self
+            .review_files()
+            .into_iter()
+            .find(|f| f.number == number)
+            .ok_or_else(|| Error::Message(format!("#{number} has no saved review")))?;
+        let slug = Path::new(&file.path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.strip_prefix("pr-review-"))
+            .filter(|s| {
+                !s.is_empty()
+                    && s.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            })
+            .ok_or_else(|| Error::Message(format!("{} has no review slug in its name", file.path)))?
+            .to_string();
+        let env = [
+            ("GITP_REVIEW_SLUG", slug),
+            ("GITP_REVIEW_FINDING", finding.to_string()),
+            ("GITP_REVIEW_FILE", file.path.clone()),
+        ];
+        run_shell(
+            self.workdir(),
+            command,
+            b"",
+            &env,
+            EXPLAIN_TIMEOUT,
+            self.net.cancel.as_deref(),
+        )?;
+        Ok(())
     }
 }
 
@@ -2471,6 +2525,38 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             .generate_review_drafts(&fake.gh(), 7, "cat >/dev/null; echo '### a.rs:1'")
             .unwrap();
         assert_eq!((out.text.as_str(), out.file), ("### a.rs:1\n", None));
+    }
+
+    #[test]
+    fn explain_more_gets_the_slug_and_the_finding_of_the_saved_review() {
+        let (dir, repo) = github_repo();
+        let sprint = dir.path().join("review/ae-404");
+        std::fs::create_dir_all(&sprint).unwrap();
+        std::fs::write(
+            sprint.join("pr-review-UBIID-9868.html"),
+            "<script id=\"markdown-source\">[#7](https://github.com/octo/hello/pull/7)</script>",
+        )
+        .unwrap();
+        repo.explain_review_finding(
+            7,
+            "f3",
+            "printf '%s %s' \"$GITP_REVIEW_SLUG\" \"$GITP_REVIEW_FINDING\" > said",
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("said")).unwrap(),
+            "UBIID-9868 f3"
+        );
+
+        assert!(message(
+            repo.explain_review_finding(7, "f3; rm -rf x", "true")
+                .unwrap_err()
+        )
+        .contains("not a finding"));
+        assert!(
+            message(repo.explain_review_finding(8, "f1", "true").unwrap_err())
+                .contains("no saved review")
+        );
     }
 
     #[test]

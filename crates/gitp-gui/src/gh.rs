@@ -168,7 +168,11 @@ fn gh_reply_impl(
     })
 }
 
-fn gh_resolve_thread_impl(state: &RepoState, thread_id: String, resolve: bool) -> Result<(), String> {
+fn gh_resolve_thread_impl(
+    state: &RepoState,
+    thread_id: String,
+    resolve: bool,
+) -> Result<(), String> {
     with_repo_unlocked(state, |repo| {
         repo.resolve_review_thread(&Gh::system(), &thread_id, resolve)
     })
@@ -271,8 +275,22 @@ fn gh_commit_pull_request_impl(
 }
 
 /// The reviews saved under the open repo's `review/` folder, by pull request.
-fn review_files_impl(state: &RepoState) -> Result<Vec<ReviewFile>, String> {
+pub(crate) fn review_files_impl(state: &RepoState) -> Result<Vec<ReviewFile>, String> {
     with_repo_unlocked(state, |repo| Ok(repo.review_files()))
+}
+
+/// Explain finding `finding` of pull request `number`'s saved review again
+/// ("Explain more"), with `command`, in the repository at `path`. Holds no
+/// lock while the model thinks.
+fn explain_review_finding_impl(
+    path: String,
+    number: u64,
+    finding: String,
+    command: String,
+) -> Result<(), String> {
+    let repo = Repo::open(&path).map_err(to_message)?;
+    repo.explain_review_finding(number, &finding, &command)
+        .map_err(to_message)
 }
 
 /// Open the saved review page at `path` in the default app — the browser, for
@@ -500,6 +518,16 @@ pub(crate) fn gh_commit_pull_request(
 #[tauri::command(async)]
 pub(crate) fn review_files(state: State<RepoState>) -> Result<Vec<ReviewFile>, String> {
     review_files_impl(&state)
+}
+
+#[tauri::command(async)]
+pub(crate) fn explain_review_finding(
+    path: String,
+    number: u64,
+    finding: String,
+    command: String,
+) -> Result<(), String> {
+    explain_review_finding_impl(path, number, finding, command)
 }
 
 #[tauri::command(async)]

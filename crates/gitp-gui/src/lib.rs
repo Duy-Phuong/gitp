@@ -28,6 +28,7 @@ mod os;
 mod rebase;
 mod reflog;
 mod remote;
+mod review_page;
 mod staging;
 mod stash;
 mod state;
@@ -88,6 +89,7 @@ pub fn run() {
         .manage(local_workspaces::WorkspaceOps::default())
         .manage(gh::GhLoginState::default())
         .manage(gh::ReviewJobs::default())
+        .register_asynchronous_uri_scheme_protocol(review_page::SCHEME, review_page::serve)
         .setup(|app| {
             // Repository watchers push changes on disk to the frontend (see
             // `watch`); they need the app handle to emit, which exists only now.
@@ -232,6 +234,7 @@ pub fn run() {
             gh::review_files,
             gh::gh_commit_pull_request,
             gh::open_review_page,
+            gh::explain_review_finding,
             gh::gh_generate_review,
             gh::gh_cancel_review,
             gh::gh_login_start,
