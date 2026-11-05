@@ -176,10 +176,7 @@ impl Debouncer {
     /// The batch's paths, sorted, and whether there were too many to keep.
     pub(crate) fn take_paths(&mut self) -> (Vec<String>, bool) {
         let overflow = std::mem::take(&mut self.overflow);
-        (
-            std::mem::take(&mut self.paths).into_iter().collect(),
-            overflow,
-        )
+        (std::mem::take(&mut self.paths).into_iter().collect(), overflow)
     }
 
     /// When the pending batch becomes due, or `None` when nothing is pending.
@@ -465,11 +462,7 @@ mod tests {
         }
         let (paths, overflow) = d.take_paths();
         assert_eq!((paths.len(), overflow), (0, true));
-        assert_eq!(
-            d.take_due(t0 + Duration::from_secs(5)).map(|k| k.names()),
-            Some(vec!["worktree"]),
-            "a path is a worktree change"
-        );
+        assert_eq!(d.take_due(t0 + Duration::from_secs(5)).map(|k| k.names()), Some(vec!["worktree"]), "a path is a worktree change");
     }
 
     #[test]
@@ -482,12 +475,7 @@ mod tests {
         let seen = Arc::new(Mutex::new(Vec::<RepoChanged>::new()));
         let record = Arc::clone(&seen);
         let sink: ChangeSink = Arc::new(move |ev| record.lock().unwrap().push(ev));
-        let (_, watcher) = watch_worktree(
-            dir.path(),
-            "repo".into(),
-            Some(sink),
-            Arc::new(AtomicBool::new(true)),
-        );
+        let (_, watcher) = watch_worktree(dir.path(), "repo".into(), Some(sink), Arc::new(AtomicBool::new(true)));
         assert!(watcher.is_some());
         std::thread::sleep(Duration::from_millis(600));
         seen.lock().unwrap().clear();
@@ -497,10 +485,7 @@ mod tests {
         std::fs::write(dir.path().join("f2.txt"), "x").unwrap();
         std::thread::sleep(Duration::from_millis(1500));
         let seen = seen.lock().unwrap();
-        let paths: Vec<&str> = seen
-            .iter()
-            .flat_map(|e| e.worktree_paths.iter().map(String::as_str))
-            .collect();
+        let paths: Vec<&str> = seen.iter().flat_map(|e| e.worktree_paths.iter().map(String::as_str)).collect();
         assert_eq!(paths, ["f2.txt"], "{seen:?}");
         assert!(seen.iter().all(|e| !e.worktree_overflow));
     }
