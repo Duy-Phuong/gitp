@@ -265,7 +265,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     for (const item of prTimeline(pr)) {
       if (item.kind === "comment") {
         const c = item.comment;
-        body.append(card(c.author, c.created_at, "commented", c.body, [smallButton("Quote Reply", () => quote(c.author, c.body))]));
+        body.append(card(c.author, c.created_at, "commented", c.body, [smallButton("Quote Reply", () => quote(c.author, c.body))], "pr-comment"));
       } else if (item.kind === "review") {
         const r = item.review;
         const actions = r.body.trim() ? [smallButton("Quote Reply", () => quote(r.author, r.body))] : [];
@@ -813,8 +813,17 @@ function card(author: string, at: string, verb: string, body: string | null, act
   if (secs) head.append(el("span", { class: "pr-card-time", text: relativeTime(secs), title: fullTime(secs) }));
   head.append(...actions);
   const node = el("div", { class: `pr-card ${cls}`.trim() }, [head]);
+  node.style.setProperty("--author-hue", String(authorHue(author)));
   if (body !== null) node.append(body.trim() ? renderGitHubMarkdown(body) : el("div", { class: "pr-card-none", text: "No description provided." }));
   return node;
+}
+
+// The author's own hue, the same every time, so each one's comments stand out
+// from the others' in a thread.
+export function authorHue(author: string): number {
+  let h = 0;
+  for (const ch of author) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return (h * 137) % 360;
 }
 
 // A label in its GitHub color — only when the color is plain hex, since it
