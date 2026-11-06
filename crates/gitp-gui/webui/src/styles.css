@@ -5591,13 +5591,31 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   flex-direction: column;
   gap: 8px;
 }
+/* Each turn is a card: the user's in a neutral tint, Claude's in the accent
+   tint with an accent bar, so who said what shows at a glance. */
 .pr-thread-claude-turn {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding: 8px 10px;
+  border-left: 3px solid transparent;
+  border-radius: 6px;
+  color: var(--text);
+}
+.pr-thread-claude-turn.user {
+  background: var(--bg-elev-2);
+  border-left-color: var(--text-dim);
+}
+.pr-thread-claude-turn.claude {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
 }
 .pr-thread-claude-turn.user .pr-card-author {
   color: var(--text-dim);
+}
+.pr-thread-claude-turn.claude .pr-card-author {
+  color: var(--accent);
+  font-weight: 600;
 }
 .pr-thread-claude-text {
   white-space: pre-wrap;
