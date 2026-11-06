@@ -47,7 +47,10 @@ import {
   reviewPullRequest,
   reviewWithComments,
   threadConversation,
+  threadFix,
   threadTurn,
+  markReplyPosted,
+  dropReply,
 } from "./api";
 import { state, ui } from "./app-state";
 import { copyText } from "./clipboard";
@@ -64,7 +67,7 @@ import {
 import { defaultWorktreePath } from "./worktree-actions";
 import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
 import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, SKILL_REVIEW_COMMAND } from "./prefs";
-import { finishTurn, lastUserText, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
+import { finishTurn, lastUserText, preparedReply, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
 import { showErrorDialog } from "./views/message-dialog";
@@ -457,8 +460,16 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
       return false;
     }
   },
-  reply: (pr, root, body) =>
-    post(`a reply to ${root.author}`, pr.number, body, async () => (await replyToReviewComment(pr.number, root.id, body)).url),
+  reply: async (pr, root, body) => {
+    let url = "";
+    const ok = await post(`a reply to ${root.author}`, pr.number, body, async () => (url = (await replyToReviewComment(pr.number, root.id, body)).url));
+    // A reply Claude had ready is now posted: Push and reply all skips it.
+    if (ok && preparedReply(threadState(state.repoPath, pr.number, root.id).conversation)) {
+      await markReplyPosted(state.repoPath, pr.number, root.id, url).catch(() => {});
+      await loadThreadConversation(state.repoPath, pr.number, root.id, true);
+    }
+    return ok;
+  },
   lineComment: (pr, comment) =>
     post(`a comment on ${comment.path}:${comment.line}`, pr.number, comment.body, async () => (await commentOnLine(pr.number, comment)).url),
   // The pull request's saved review when there is one — it replaces the
@@ -525,6 +536,17 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
     return post(what, pr.number, body.trim() ? `${body}\n\n${preview}` : preview, () => reviewWithComments(pr.number, verdict, body, comments));
   },
   threadTurn: (pr, thread, kind, userText) => void runThreadTurn(state.repoPath, pr, thread, kind, userText),
+  fixThread: (pr, thread) => void runFix(state.repoPath, pr, thread),
+  dropReply: async (pr, thread) => {
+    const repo = state.repoPath;
+    if (!(await confirmDialog(`Drop the reply Claude prepared for ${thread.root.path} of #${pr.number}?`))) return;
+    try {
+      await dropReply(repo, pr.number, thread.root.id);
+      await loadThreadConversation(repo, pr.number, thread.root.id, true);
+    } catch (err) {
+      opFailed("Couldn't drop the reply", err);
+    }
+  },
   cancelThreadTurn: (pr, thread) =>
     void cancelThreadTurn(state.repoPath, pr.number, thread.root.id).catch((err) => opFailed("Couldn't cancel Claude's turn", err)),
   confirm: (message) => confirmDialog(message),
@@ -583,6 +605,37 @@ async function runThreadTurn(repo: string, pr: PullRequestDetail, thread: Thread
       toast(title, { kind: "error", onDetails: () => showErrorDialog(title, String(err)) });
     }
     // A failed follow-up kept its question: show it.
+    void loadThreadConversation(repo, number, id, true);
+  }
+}
+
+// Fix the thread as the user's last follow-up chose, in the worktree of the
+// pull request's branch, in the background: change, test, one commit, then
+// the reply draft. One fix per pull request at a time (the worktree is
+// shared); core refuses a dirty or outdated worktree and undoes a failed run.
+async function runFix(repo: string, pr: PullRequestDetail, thread: Thread): Promise<void> {
+  const { number } = pr;
+  const id = thread.root.id;
+  const where = `${thread.root.path}:${thread.root.line ?? thread.root.original_line ?? "?"}`;
+  if (!startTurn(repo, number, id, "fix")) return;
+  setStatus(`Fixing ${where} of #${number} in ${pr.head}'s worktree in the background — keep working; the thread shows when it's done.`);
+  try {
+    const input = { number, head: pr.head_oid, author: pr.author, comments: [thread.root, ...thread.replies] };
+    const conversation = await threadFix(repo, input, pr.head, loadThreadCommand("fix"), loadThreadCommand("reply-draft"));
+    finishTurn(repo, number, id, conversation);
+    const commit = [...conversation.turns].reverse().find((t) => t.kind === "fix" && t.commit)?.commit?.slice(0, 7);
+    reportDone(`Fixed ${where} of #${number}${commit ? ` in ${commit}` : ""}; the reply is ready.`);
+  } catch (err) {
+    if (isCancelled(err)) {
+      finishTurn(repo, number, id, { error: "Cancelled; the worktree is back where it was." });
+      setStatus(`Fix of ${where} of #${number} cancelled.`);
+    } else {
+      const title = `Couldn't fix ${where} of #${number}`;
+      finishTurn(repo, number, id, { error: String(err) });
+      setStatus(`${title}: ${String(err)}`);
+      toast(title, { kind: "error", onDetails: () => showErrorDialog(title, String(err)) });
+    }
+    // A fix that committed but whose reply draft failed is still there.
     void loadThreadConversation(repo, number, id, true);
   }
 }

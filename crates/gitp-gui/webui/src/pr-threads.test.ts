@@ -63,6 +63,9 @@ it("a chosen option is a user turn after the last Check", () => {
   expect(hasChosenOption({ ...conv(0), turns: [t("check", "claude")] })).toBe(false);
   expect(hasChosenOption({ ...conv(0), turns: [t("check", "claude"), t("followup", "user"), t("followup", "claude")] })).toBe(true);
   expect(hasChosenOption({ ...conv(0), turns: [t("followup", "user"), t("check", "claude")] })).toBe(false);
+  // A fix uses the option up; the next Fix needs a new one.
+  expect(hasChosenOption({ ...conv(0), turns: [t("check", "claude"), t("followup", "user"), t("fix", "claude", { commit: "abc" })] })).toBe(false);
+  expect(hasChosenOption({ ...conv(0), turns: [t("check", "claude"), t("followup", "user"), t("fix", "claude", { commit: "abc" }), t("followup", "user")] })).toBe(true);
 });
 
 it("the prepared reply is the latest draft unless posted or dropped, and the last fix has a commit", () => {

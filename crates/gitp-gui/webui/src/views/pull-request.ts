@@ -11,8 +11,8 @@
 
 import { clear, el, svg } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
-import { conversationNode, threadClaudeButtons } from "./thread-claude";
-import { threadState } from "../pr-threads";
+import { conversationNode, threadBadges, threadClaudeButtons } from "./thread-claude";
+import { fixDisabledReason, fixRunningOn, threadState } from "../pr-threads";
 import { composerArea, previewToggle } from "./composer";
 import { iconBtn, renderFile, renderSplitDiff, WRAP_ICON } from "./detail";
 import { loadDiffWrap, loadPrDiffSplit, loadPrFilesTree, saveDiffWrap, savePrDiffSplit, savePrFilesTree } from "../prefs";
@@ -99,6 +99,10 @@ export interface PullRequestCallbacks {
   // the view redraws from the thread's state; loads the saved conversation
   // once; forgets it after the user confirms; prunes the old ones.
   threadTurn: (pr: PullRequestDetail, thread: Thread, kind: TurnKind, userText: string) => void;
+  // Fix the thread as the chosen option says, in the branch's worktree,
+  // commit, and prepare the reply; drop a prepared reply after a confirm.
+  fixThread: (pr: PullRequestDetail, thread: Thread) => void;
+  dropReply: (pr: PullRequestDetail, thread: Thread) => Promise<void>;
   cancelThreadTurn: (pr: PullRequestDetail, thread: Thread) => void;
   loadThreadConversation: (pr: PullRequestDetail, thread: Thread) => void;
   // True once forgotten; false when the user said no or it failed.
@@ -368,6 +372,15 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     body.append(el("div", { class: "pr-composer" }, [area, el("div", { class: "pr-composer-actions" }, [previewToggle(area).button, post])]));
   }
 
+  // Where a fix runs on the pull request, if one does on another thread:
+  // "path:line", for the other threads' disabled Fix.
+  function fixElsewhere(pr: PullRequestDetail, thisThread: number): string | null {
+    const id = fixRunningOn(cb.repoPath(), pr.number);
+    if (id === null || id === thisThread) return null;
+    const root = pr.review_comments.find((c) => c.id === id);
+    return root ? `${root.path}:${root.line ?? root.original_line ?? "?"}` : "another thread";
+  }
+
   // A line-comment thread: where it is, the code it is on, its comments, and
   // a Reply box behind a button. `withCode`: the conversation shows the lines
   // it was made on; the Files tab shows it under them already.
@@ -448,6 +461,15 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
             draft: followupText.get(root.id),
             onDraft: (text) => followupText.set(root.id, text),
             onFollowup: (text) => turn("followup", text),
+            fix: { disabled: fixDisabledReason(ts.conversation, fixElsewhere(pr, root.id)) },
+            onFix: () => {
+              // The fix ends in a reply draft, which lands in the Reply box.
+              pendingReplyDraft.set(root.id, ts.conversation?.turns.length ?? 0);
+              lastKind.set(root.id, "fix");
+              openBlocks.add(root.id);
+              cb.fixThread(pr, thread);
+            },
+            onDrop: () => void cb.dropReply(pr, thread),
             onClear: () =>
               void cb.clearThreadConversation(pr, thread).then((cleared) => {
                 if (cleared) openBlocks.delete(root.id);
@@ -480,6 +502,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
             });
           }
         }
+      }
+      for (const text of threadBadges(ts.conversation)) {
+        actions.append(el("span", { class: "pr-badge pr-thread-ready", text }));
+        if (text === "reply ready") actions.append(smallButton("Drop", () => void cb.dropReply(pr, thread)));
       }
       for (const b of threadClaudeButtons(false, ts.running)) {
         const button = smallButton(b.label, () => {

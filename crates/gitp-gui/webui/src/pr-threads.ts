@@ -78,11 +78,12 @@ export function lastUserText(c: ThreadConversation | null): string {
   return "";
 }
 
-// Whether the user chose an option: a user turn after the last Check.
+// Whether the user chose an option: a user turn after the last Check, and
+// after the last Fix, which used the option before it up.
 export function hasChosenOption(c: ThreadConversation | null): boolean {
   if (!c) return false;
-  const lastCheck = c.turns.map((t) => t.kind).lastIndexOf("check");
-  return c.turns.some((t, i) => i > lastCheck && t.role === "user");
+  const after = Math.max(...c.turns.map((t, i) => (t.kind === "check" || (t.kind === "fix" && t.commit) ? i : -1)));
+  return c.turns.some((t, i) => i > after && t.role === "user");
 }
 
 // The reply the thread has ready: its latest draft, unless posted or dropped.

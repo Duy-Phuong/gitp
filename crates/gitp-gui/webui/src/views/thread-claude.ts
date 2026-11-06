@@ -114,7 +114,7 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
   if (open && c) {
     for (const t of c.turns) body.append(turnNode(t, head));
     // The pull request moved on since the last Check: offer another.
-    const stale = c.turns.some((t) => t.role === "claude" && t.head && !sameCommit(t.head, head));
+    const stale = c.turns.some((t) => t.role === "claude" && t.kind === "check" && t.head && !sameCommit(t.head, head));
     if (stale && !state.running) {
       const again = el("button", { class: "btn small ghost", text: "Check again" });
       again.addEventListener("click", (e) => {
@@ -211,7 +211,9 @@ function turnNode(t: ThreadTurn, head: string): HTMLElement {
     el("span", { class: "pr-card-verb", text: TURN_LABELS[t.kind] }),
     el("span", { class: "pr-card-time", text: relativeTime(secs), title: fullTime(secs) }),
   ]);
-  if (t.role === "claude" && t.head && !sameCommit(t.head, head)) {
+  // A fix moves the code on purpose, and a reply draft is not an analysis.
+  const analysis = t.kind === "check" || t.kind === "explain" || t.kind === "followup";
+  if (t.role === "claude" && analysis && t.head && !sameCommit(t.head, head)) {
     headLine.append(
       el("span", {
         class: "pr-badge",
