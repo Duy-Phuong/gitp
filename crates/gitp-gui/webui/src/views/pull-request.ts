@@ -11,6 +11,8 @@
 
 import { clear, el, githubIcon, svg } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
+import { conversationNode, threadClaudeButtons } from "./thread-claude";
+import { threadState } from "../pr-threads";
 import { composerArea, previewToggle } from "./composer";
 import { iconBtn, renderFile, renderSplitDiff, WRAP_ICON } from "./detail";
 import { loadDiffWrap, loadPrDiffSplit, loadPrFilesTree, saveDiffWrap, savePrDiffSplit, savePrFilesTree } from "../prefs";
@@ -158,6 +160,15 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // Opened with no drafts yet and no tab picked: drafts read back from a saved
   // review a moment later open the Drafts tab.
   let draftsWhenReady = false;
+  // Claude on the threads (pr-threads.ts): which conversation blocks are
+  // open, by root comment id; what each thread last ran, so a turn that just
+  // finished opens its block and a failed one can be tried again; the threads
+  // whose Reply with Claude is to land in the Reply box; and whether the old
+  // conversations were pruned yet for this repo.
+  const openBlocks = new Set<number>();
+  const lastKind = new Map<number, TurnKind>();
+  const pendingReplyDraft = new Set<number>();
+  let prunedFor: string | null = null;
 
   const message = (text: string) => {
     clear(host);
@@ -355,16 +366,65 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       node.append(el("div", { class: "pr-thread-resolved" }, [el("span", { class: "pr-badge", text: "Resolved" }), el("span", { text: `${1 + thread.replies.length} comment${thread.replies.length ? "s" : ""}` })]));
     }
     for (const c of resolved ? [root] : [root, ...thread.replies]) node.append(card(c.author, c.created_at, "", c.body, [], "pr-thread-comment"));
-    const open = smallButton("Reply…", () => {
-      open.replaceWith(
-        replyBox("Reply (Markdown)", "Reply", async (text) => {
-          if (!(await cb.reply(pr, root, text))) return false;
-          await load(true);
-          return true;
-        }),
-      );
-    });
+    const openReply = (text = "") => {
+      const box = replyBox("Reply (Markdown)", "Reply", async (body) => {
+        if (!(await cb.reply(pr, root, body))) return false;
+        await load(true);
+        return true;
+      });
+      if (text) box.querySelector("textarea")!.value = text;
+      // Above the actions row, which the Claude buttons share: a box in the
+      // row would be squeezed beside them.
+      actions.before(box);
+      open.remove();
+    };
+    const open = smallButton("Reply…", () => openReply());
     const actions = el("div", { class: "pr-thread-actions" }, [open]);
+    // Claude on the thread: its conversation block, and the buttons that
+    // start a turn — not on a resolved thread, as on GitHub nothing happens
+    // there any more.
+    if (!resolved) {
+      cb.loadThreadConversation(pr, thread);
+      const ts = threadState(cb.repoPath(), pr.number, root.id);
+      const turn = (kind: TurnKind, text = "") => {
+        lastKind.set(root.id, kind);
+        openBlocks.add(root.id);
+        cb.threadTurn(pr, thread, kind, text);
+      };
+      if (ts.conversation || ts.running || ts.error) {
+        node.append(
+          conversationNode({
+            state: ts,
+            head: pr.head_oid,
+            open: openBlocks.has(root.id),
+            lastKind: lastKind.get(root.id) ?? null,
+            onFollowup: (text) => turn("followup", text),
+            onClear: () => void cb.clearThreadConversation(pr, thread).then(() => openBlocks.delete(root.id)),
+            onRetry: (kind) => turn(kind),
+            onCancel: () => cb.cancelThreadTurn(pr, thread),
+            onToggle: () => {
+              if (!openBlocks.delete(root.id)) openBlocks.add(root.id);
+              render();
+            },
+          }),
+        );
+      }
+      // A reply draft that just arrived lands in the Reply box.
+      const last = ts.conversation?.turns[ts.conversation.turns.length - 1];
+      if (pendingReplyDraft.has(root.id) && !ts.running && last?.kind === "reply-draft" && last.role === "claude") {
+        pendingReplyDraft.delete(root.id);
+        requestAnimationFrame(() => openReply(last.text));
+      }
+      for (const b of threadClaudeButtons(false, ts.running)) {
+        const button = smallButton(b.label, () => {
+          if (b.action === "reply-draft") pendingReplyDraft.add(root.id);
+          turn(b.action);
+        });
+        (button as HTMLButtonElement).disabled = b.disabled;
+        button.classList.add("pr-thread-claude-button");
+        actions.append(button);
+      }
+    }
     if (state) {
       actions.prepend(
         smallButton(resolved ? "Unresolve" : "Resolve", () => {
@@ -924,6 +984,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
 
   return {
     show: (n) => {
+      if (prunedFor !== cb.repoPath()) {
+        prunedFor = cb.repoPath();
+        cb.pruneThreadConversations();
+      }
       if (n !== number) {
         treeSelected = null;
         treeCollapsed.clear();
@@ -958,6 +1022,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     },
     reset: () => {
       generation++;
+      openBlocks.clear();
+      lastKind.clear();
+      pendingReplyDraft.clear();
+      prunedFor = null;
       number = null;
       detail = null;
       files = null;
