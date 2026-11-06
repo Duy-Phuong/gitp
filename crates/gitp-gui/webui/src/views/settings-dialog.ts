@@ -52,6 +52,10 @@ import {
   DEFAULT_THREAD_COMMANDS,
   loadThreadCommand,
   saveThreadCommand,
+  CLAUDE_EFFORTS,
+  CLAUDE_MODELS,
+  loadClaudeChoice,
+  saveClaudeChoice,
   TAB_SIZES,
   type CodePrefs,
   type DateFormat,
@@ -356,6 +360,13 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
           "A pull request whose title or branch names a ticket (UBIID-1234) gets an icon beside its title that opens the ticket here. Paste the site or any ticket link from it. Blank hides it.",
         ),
         row(
+          "Claude model",
+          claudeChoiceSelect("model"),
+          "inline",
+          "Every Claude run gitp starts uses this model and effort: reviews, Explain more, and Check, Explain simply, Reply with Claude, a follow-up and Fix on a thread. gitp sets them in each command below as it runs it, in its --model and --effort.",
+        ),
+        row("Claude effort", claudeChoiceSelect("effort"), "inline"),
+        row(
           "Review command",
           reviewCommandField(),
           "block",
@@ -452,6 +463,25 @@ function themeCards(actions: SettingsActions): HTMLElement {
   }
   mark();
   return grid;
+}
+
+const CLAUDE_LABELS: Record<string, string> = {
+  opus: "Opus",
+  sonnet: "Sonnet",
+  haiku: "Haiku",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+};
+
+function claudeChoiceSelect(part: "model" | "effort"): HTMLElement {
+  const select = el("select", { class: "settings-select" });
+  for (const v of part === "model" ? CLAUDE_MODELS : CLAUDE_EFFORTS) select.append(el("option", { value: v, text: CLAUDE_LABELS[v] }));
+  select.value = loadClaudeChoice()[part];
+  select.addEventListener("change", () => saveClaudeChoice({ ...loadClaudeChoice(), [part]: select.value }));
+  return select;
 }
 
 function pullSelect(): HTMLElement {
