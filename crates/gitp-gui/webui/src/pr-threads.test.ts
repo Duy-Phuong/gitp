@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { finishTurn, lastUserText, onThreadsChange, runningTurns, setConversation, startTurn, threadState } from "./pr-threads";
+import { finishTurn, fixDisabledReason, fixRunningOn, hasChosenOption, lastFix, lastUserText, onThreadsChange, preparedReply, runningTurns, setConversation, startTurn, threadState } from "./pr-threads";
 import type { ThreadConversation } from "./types";
 
 const conv = (turns = 1): ThreadConversation => ({
@@ -54,4 +54,35 @@ it("a reload after a failed turn keeps the error, so Try again stays", () => {
   expect(threadState("/r", 10, 1)).toEqual({ running: null, error: "boom", conversation: conv(1), loaded: true });
   setConversation("/r", 10, 1, null, { keepError: true });
   expect(threadState("/r", 10, 1).error).toBe("boom");
+});
+
+const t = (kind: "check" | "followup" | "reply-draft" | "fix", role: "user" | "claude", extra: Partial<ThreadConversation["turns"][number]> = {}) => ({ kind, role, at: 1, text: kind, ...extra });
+
+it("a chosen option is a user turn after the last Check", () => {
+  expect(hasChosenOption(null)).toBe(false);
+  expect(hasChosenOption({ ...conv(0), turns: [t("check", "claude")] })).toBe(false);
+  expect(hasChosenOption({ ...conv(0), turns: [t("check", "claude"), t("followup", "user"), t("followup", "claude")] })).toBe(true);
+  expect(hasChosenOption({ ...conv(0), turns: [t("followup", "user"), t("check", "claude")] })).toBe(false);
+});
+
+it("the prepared reply is the latest draft unless posted or dropped, and the last fix has a commit", () => {
+  const c = { ...conv(0), turns: [t("reply-draft", "claude", { text: "A" }), t("fix", "claude", { commit: "abc" }), t("reply-draft", "claude", { text: "B" })] };
+  expect(preparedReply(c)?.text).toBe("B");
+  expect(lastFix(c)?.commit).toBe("abc");
+  expect(preparedReply({ ...c, turns: [...c.turns.slice(0, 2), t("reply-draft", "claude", { text: "B", posted: "u" })] })).toBeNull();
+  expect(preparedReply({ ...c, turns: [...c.turns.slice(0, 2), t("reply-draft", "claude", { text: "B", dropped: true })] })).toBeNull();
+  expect(lastFix({ ...c, turns: [t("fix", "claude")] })).toBeNull();
+  expect(preparedReply(null)).toBeNull();
+});
+
+it("one fix per pull request: the running one disables the others with its place", () => {
+  startTurn("/f", 3, 10, "fix");
+  expect(fixRunningOn("/f", 3)).toBe(10);
+  expect(fixRunningOn("/f", 4)).toBeNull();
+  const chosen = { ...conv(0), turns: [t("check", "claude"), t("followup", "user")] };
+  expect(fixDisabledReason(chosen, null)).toBeNull();
+  expect(fixDisabledReason(null, null)).toBe("Send the option you want as a follow-up first");
+  expect(fixDisabledReason(chosen, "src/a.ts:1")).toBe("A fix is running on src/a.ts:1");
+  finishTurn("/f", 3, 10, { error: "x" });
+  expect(fixRunningOn("/f", 3)).toBeNull();
 });

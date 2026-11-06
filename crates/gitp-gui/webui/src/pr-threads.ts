@@ -6,7 +6,7 @@
 // can be started, the tab switched, and come back to; the sidebar counts the
 // running turns with the running reviews.
 
-import type { ThreadConversation, TurnKind } from "./types";
+import type { ThreadConversation, ThreadTurn, TurnKind } from "./types";
 
 export interface ThreadState {
   // The kind of turn running on the thread, if one is.
@@ -76,6 +76,41 @@ export function lastUserText(c: ThreadConversation | null): string {
   if (!c) return "";
   for (let i = c.turns.length - 1; i >= 0; i--) if (c.turns[i].role === "user") return c.turns[i].text;
   return "";
+}
+
+// Whether the user chose an option: a user turn after the last Check.
+export function hasChosenOption(c: ThreadConversation | null): boolean {
+  if (!c) return false;
+  const lastCheck = c.turns.map((t) => t.kind).lastIndexOf("check");
+  return c.turns.some((t, i) => i > lastCheck && t.role === "user");
+}
+
+// The reply the thread has ready: its latest draft, unless posted or dropped.
+export function preparedReply(c: ThreadConversation | null): ThreadTurn | null {
+  const last = c ? [...c.turns].reverse().find((t) => t.kind === "reply-draft" && t.role === "claude") : undefined;
+  return last && !last.posted && !last.dropped ? last : null;
+}
+
+// The latest fix that made a commit.
+export function lastFix(c: ThreadConversation | null): ThreadTurn | null {
+  return (c ? [...c.turns].reverse().find((t) => t.kind === "fix" && t.commit) : undefined) ?? null;
+}
+
+// The thread a fix runs on in the pull request, if one does: one fix per
+// pull request at a time, since they share the branch's worktree.
+export function fixRunningOn(repo: string, number: number): number | null {
+  const prefix = `${repo}\n${number}\n`;
+  for (const [key, s] of threads) if (key.startsWith(prefix) && s.running === "fix") return Number(key.slice(prefix.length));
+  return null;
+}
+
+// Why Fix is off on a thread, or null when it is on: no option chosen, or a
+// fix running at `elsewhere` (path:line) on the pull request. The checks on
+// the worktree itself (checked out, clean, up to date) are core's, on click.
+export function fixDisabledReason(c: ThreadConversation | null, elsewhere: string | null): string | null {
+  if (!hasChosenOption(c)) return "Send the option you want as a follow-up first";
+  if (elsewhere) return `A fix is running on ${elsewhere}`;
+  return null;
 }
 
 export function onThreadsChange(listener: () => void): void {
