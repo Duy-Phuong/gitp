@@ -953,7 +953,8 @@ impl Repo {
             .find_github_remote()
             .map(|(name, _)| name)
             .unwrap_or_else(|| "origin".to_string());
-        let refspec = format!("pull/{number}/head:refs/gitp/pr/{number}/head");
+        // Forced: a rebased pull request moves its head off the old one.
+        let refspec = format!("+pull/{number}/head:refs/gitp/pr/{number}/head");
         self.run_git_network(&["fetch", &remote, &refspec])?;
         self.resolve_commit(head).map(|_| ()).map_err(|_| {
             Error::Message(format!(
@@ -1652,7 +1653,6 @@ impl Repo {
         };
         let target = self.github_target()?;
         let number = input.number;
-        self.ensure_pull_request_head(number, &input.head)?;
         let mut conversation = self
             .thread_conversation(number, root.id)?
             .unwrap_or_else(|| ThreadConversation {
@@ -1673,6 +1673,8 @@ impl Repo {
             });
             self.save_thread_conversation(&conversation)?;
         }
+        // After the question is kept: a fetch that fails must not lose it.
+        self.ensure_pull_request_head(number, &input.head)?;
         let thread_json = serde_json::json!({
             "path": root.path,
             "line": root.line,
@@ -1766,12 +1768,17 @@ fn claude_answer(stdout: &str) -> Result<(String, Option<String>)> {
     let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout.trim()) else {
         return Ok((stdout.to_string(), None));
     };
+    if json.get("is_error").and_then(|e| e.as_bool()) == Some(true) {
+        let said = ["result", "subtype"]
+            .iter()
+            .find_map(|k| json.get(k).and_then(|v| v.as_str()))
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or("Claude reported an error.");
+        return Err(Error::Message(said.to_string()));
+    }
     let Some(result) = json.get("result").and_then(|r| r.as_str()) else {
         return Ok((stdout.to_string(), None));
     };
-    if json.get("is_error").and_then(|e| e.as_bool()) == Some(true) {
-        return Err(Error::Message(result.to_string()));
-    }
     let session = json
         .get("session_id")
         .and_then(|s| s.as_str())
@@ -2879,6 +2886,28 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert!(repo.ensure_pull_request_head(8, "nope").is_err());
     }
 
+    #[test]
+    fn a_rebased_pull_request_head_replaces_the_private_ref() {
+        let (upstream_dir, _upstream) = github_repo();
+        let upstream = git2::Repository::open(upstream_dir.path()).unwrap();
+        let root = upstream.head().unwrap().peel_to_commit().unwrap();
+        let sig = git2::Signature::now("T", "t@example.com").unwrap();
+        let first = upstream
+            .commit(Some("refs/pull/7/head"), &sig, &sig, "before rebase", &root.tree().unwrap(), &[&root])
+            .unwrap();
+        let (_dir, repo) = repo_with(&[("origin", upstream_dir.path().to_str().unwrap())]);
+        repo.ensure_pull_request_head(7, &first.to_string()).unwrap();
+        // The author rebases: the new head is not a descendant of the old one.
+        let rebased = upstream
+            .commit(None, &sig, &sig, "after rebase", &root.tree().unwrap(), &[&root])
+            .unwrap();
+        upstream
+            .reference("refs/pull/7/head", rebased, true, "force")
+            .unwrap();
+        repo.ensure_pull_request_head(7, &rebased.to_string()).unwrap();
+        assert_eq!(repo.resolve_commit("refs/gitp/pr/7/head").unwrap(), rebased.to_string());
+    }
+
     fn thread_input(repo: &Repo) -> ThreadInput {
         let comment = |id: u64, in_reply_to: Option<u64>, body: &str| PrReviewComment {
             id,
@@ -2966,6 +2995,24 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
     }
 
     #[test]
+    fn a_followup_is_kept_when_the_head_cannot_be_fetched() {
+        let fake = Fake::new();
+        // A GitHub host that no DNS resolves: the fetch fails at once.
+        let (_dir, repo) = repo_with(&[("origin", "https://github.invalid/octo/hello.git")]);
+        let input = ThreadInput {
+            head: "1234567890123456789012345678901234567890".into(),
+            ..thread_input(&repo)
+        };
+        let err = repo
+            .thread_claude_turn(&fake.gh(), &input, TurnKind::Followup, "why?", "echo hi")
+            .unwrap_err();
+        let text = message(err);
+        assert!(!text.contains("printed nothing"), "the command never ran: {text}");
+        let c = repo.thread_conversation(7, 500).unwrap().unwrap();
+        assert_eq!((c.turns.len(), c.turns[0].role, c.turns[0].text.as_str()), (1, TurnRole::User, "why?"));
+    }
+
+    #[test]
     fn a_json_answer_that_is_an_error_fails_the_turn_and_stores_nothing() {
         let fake = Fake::new();
         let (_dir, repo) = github_repo();
@@ -2980,6 +3027,17 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             )
             .unwrap_err();
         assert!(message(err).contains("Not logged in"));
+        assert_eq!(repo.thread_conversation(7, 500).unwrap(), None);
+        let err = repo
+            .thread_claude_turn(
+                &fake.gh(),
+                &input,
+                TurnKind::Explain,
+                "",
+                r#"printf '{"type":"result","subtype":"error_max_turns","is_error":true}'"#,
+            )
+            .unwrap_err();
+        assert!(message(err).contains("error_max_turns"));
         assert_eq!(repo.thread_conversation(7, 500).unwrap(), None);
         let err = repo
             .thread_claude_turn(&fake.gh(), &input, TurnKind::Explain, "", "true")
