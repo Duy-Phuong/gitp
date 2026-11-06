@@ -936,6 +936,31 @@ impl Repo {
             .combined())
     }
 
+    /// Make pull request `number`'s head commit `head` (its full id)
+    /// available locally: nothing when it already is, else fetch
+    /// `pull/<number>/head` into the private ref `refs/gitp/pr/<number>/head`
+    /// — from the first GitHub remote, or `origin` when none is one — so a
+    /// thread command can read the files at that commit, checked out or not.
+    pub fn ensure_pull_request_head(&self, number: u64, head: &str) -> Result<()> {
+        if head.len() != 40 || !head.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(Error::Message(format!("not a commit id: {head}")));
+        }
+        if self.resolve_commit(head).is_ok() {
+            return Ok(());
+        }
+        let remote = self
+            .find_github_remote()
+            .map(|(name, _)| name)
+            .unwrap_or_else(|| "origin".to_string());
+        let refspec = format!("pull/{number}/head:refs/gitp/pr/{number}/head");
+        self.run_git_network(&["fetch", &remote, &refspec])?;
+        self.resolve_commit(head).map(|_| ()).map_err(|_| {
+            Error::Message(format!(
+                "#{number}'s head {head} is not what the fetch of pull/{number}/head brought"
+            ))
+        })
+    }
+
     /// Check pull request `number` out in a new worktree at `path`: the
     /// worktree is made detached at HEAD, and `gh pr checkout` run in it puts
     /// it on the pull request's branch. If that fails the worktree goes again.
@@ -2648,6 +2673,37 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             .unwrap_err();
         assert!(message(err).contains("printed nothing"));
         assert!(repo.generate_review_drafts(&fake.gh(), 7, "  ").is_err());
+    }
+
+    #[test]
+    fn a_pull_request_head_is_fetched_into_a_private_ref_only_when_missing() {
+        // A second local repository stands in for GitHub: `origin` points at it.
+        let (upstream_dir, _upstream) = github_repo();
+        let upstream = git2::Repository::open(upstream_dir.path()).unwrap();
+        // A commit of its own: the two "init" commits are the same object.
+        let parent = upstream.head().unwrap().peel_to_commit().unwrap();
+        let sig = git2::Signature::now("T", "t@example.com").unwrap();
+        let id = upstream
+            .commit(Some("refs/pull/7/head"), &sig, &sig, "the pr", &parent.tree().unwrap(), &[&parent])
+            .unwrap();
+        let head = upstream.find_commit(id).unwrap();
+        let (dir, repo) = repo_with(&[("origin", upstream_dir.path().to_str().unwrap())]);
+        let sha = head.id().to_string();
+        assert!(repo.resolve_commit(&sha).is_err(), "not local yet");
+        repo.ensure_pull_request_head(7, &sha).unwrap();
+        assert_eq!(repo.resolve_commit("refs/gitp/pr/7/head").unwrap(), sha);
+        assert_eq!(repo.resolve_commit(&sha).unwrap(), sha);
+        // Already local: no fetch, so a remote that no longer exists is fine.
+        git2::Repository::open(dir.path())
+            .unwrap()
+            .remote_set_url("origin", "/nonexistent")
+            .unwrap();
+        let repo = Repo::open(dir.path()).unwrap();
+        repo.ensure_pull_request_head(7, &sha).unwrap();
+        assert!(repo
+            .ensure_pull_request_head(8, "0000000000000000000000000000000000000000")
+            .is_err());
+        assert!(repo.ensure_pull_request_head(8, "nope").is_err());
     }
 
     #[test]
