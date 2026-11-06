@@ -181,12 +181,21 @@ body {
   display: grid;
   /* topbar · action bar · repo tabs · main · terminal divider · terminal · status */
   grid-template-rows: auto auto auto 1fr auto auto auto;
+  /* One column, as wide as the window: an auto column grew to the top bar's
+     width in a narrow window, and jumping to a pull request's file then
+     scrolled the whole page sideways. Clip, not hidden: a clip box can't be
+     scrolled by scrollIntoView. */
+  grid-template-columns: minmax(0, 1fr);
+  overflow: clip;
   height: 100vh;
 }
 
 /* Top bar ---------------------------------------------------------------- */
 .topbar {
   display: flex;
+  /* In a narrow window the tabs and settings go on a second line, instead of
+     past the window's edge, where the app clips them. */
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
