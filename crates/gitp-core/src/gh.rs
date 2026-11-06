@@ -28,6 +28,7 @@ use crate::diff::{collect_files, FileDiff, MAX_DIFF_LINES};
 use crate::encoding::TextEncoding;
 use crate::error::{Error, Result};
 use crate::git_bin::spawn_path;
+use crate::pr_threads::{now_millis, ThreadConversation, ThreadTurn, TurnKind, TurnRole};
 use crate::progress::kill;
 use crate::repo::Repo;
 use crate::worktree_ops::WorktreeTarget;
@@ -150,7 +151,7 @@ pub struct PrComment {
 }
 
 /// A comment on a line of the diff — the start of a thread, or a reply in one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrReviewComment {
     pub id: u64,
     pub author: String,
@@ -1606,6 +1607,178 @@ impl Repo {
     }
 }
 
+/// One line-comment thread as the pull request view has it, for a Claude
+/// turn on it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ThreadInput {
+    pub number: u64,
+    /// The pull request's head commit, full id.
+    pub head: String,
+    /// The pull request's author login.
+    pub author: String,
+    /// The thread's comments, root first.
+    pub comments: Vec<PrReviewComment>,
+}
+
+impl Repo {
+    /// Run `command` for one turn of `kind` on the thread of `input` — Check,
+    /// Explain simply, a follow-up, or a reply draft — with `user_text` on
+    /// its stdin, and keep the turn in the thread's conversation.
+    ///
+    /// The command gets the pull request, the thread and the head commit in
+    /// its environment (`GITP_PR_*`, `GITP_THREAD_*`, `GITP_GH_LOGIN`,
+    /// `GITP_CLAUDE_SESSION`, `GITP_TURN_KIND`), and the thread with its
+    /// conversation so far as JSON in the file `GITP_THREAD_FILE` names. Its
+    /// stdout is the answer: the `result` of a `claude -p --output-format
+    /// json` answer, whose `session_id` is kept for the next turn, or else
+    /// the whole text. A follow-up's question is kept even when the run
+    /// fails. The head is fetched first when it isn't local.
+    pub fn thread_claude_turn(
+        &self,
+        gh: &Gh,
+        input: &ThreadInput,
+        kind: TurnKind,
+        user_text: &str,
+        command: &str,
+    ) -> Result<ThreadConversation> {
+        let command = command.trim();
+        if command.is_empty() {
+            return Err(Error::Message(
+                "Set a thread command in Settings → Git first.".into(),
+            ));
+        }
+        let Some(root) = input.comments.first() else {
+            return Err(Error::Message("The thread has no comments.".into()));
+        };
+        let target = self.github_target()?;
+        let number = input.number;
+        self.ensure_pull_request_head(number, &input.head)?;
+        let mut conversation = self
+            .thread_conversation(number, root.id)?
+            .unwrap_or_else(|| ThreadConversation {
+                version: 1,
+                pr: number,
+                thread: root.id,
+                path: root.path.clone(),
+                session: None,
+                turns: Vec::new(),
+            });
+        if kind == TurnKind::Followup {
+            conversation.turns.push(ThreadTurn {
+                kind,
+                role: TurnRole::User,
+                at: now_millis(),
+                head: None,
+                text: user_text.to_string(),
+            });
+            self.save_thread_conversation(&conversation)?;
+        }
+        let thread_json = serde_json::json!({
+            "path": root.path,
+            "line": root.line,
+            "original_line": root.original_line,
+            "diff_hunk": root.diff_hunk,
+            "comments": input.comments.iter().map(|c| serde_json::json!({
+                "author": c.author, "created_at": c.created_at, "body": c.body,
+            })).collect::<Vec<_>>(),
+            "turns": conversation.turns,
+        });
+        let file = std::env::temp_dir().join(format!(
+            "gitp-thread-{}-{}-{}.json",
+            std::process::id(),
+            root.id,
+            now_millis()
+        ));
+        std::fs::write(&file, thread_json.to_string())
+            .map_err(|e| Error::Message(format!("can't write {}: {e}", file.display())))?;
+        let login = gh.account().ok().and_then(|a| a.login).unwrap_or_default();
+        let line = root
+            .line
+            .or(root.original_line)
+            .map(|l| l.to_string())
+            .unwrap_or_default();
+        let kind_name = match kind {
+            TurnKind::Check => "check",
+            TurnKind::Explain => "explain",
+            TurnKind::Followup => "followup",
+            TurnKind::ReplyDraft => "reply-draft",
+        };
+        let env = [
+            ("GITP_PR_NUMBER", number.to_string()),
+            ("GITP_PR_REPO", target.repo_arg()),
+            (
+                "GITP_PR_URL",
+                format!("https://{}/{}/pull/{number}", target.host, target.path),
+            ),
+            ("GITP_PR_HEAD", input.head.clone()),
+            ("GITP_PR_AUTHOR", input.author.clone()),
+            ("GITP_GH_LOGIN", login),
+            ("GITP_THREAD_ID", root.id.to_string()),
+            ("GITP_THREAD_PATH", root.path.clone()),
+            ("GITP_THREAD_LINE", line),
+            ("GITP_THREAD_FILE", file.to_string_lossy().into_owned()),
+            (
+                "GITP_CLAUDE_SESSION",
+                conversation.session.clone().unwrap_or_default(),
+            ),
+            ("GITP_TURN_KIND", kind_name.to_string()),
+        ];
+        let out = run_shell(
+            self.workdir(),
+            command,
+            user_text.as_bytes(),
+            &env,
+            EXPLAIN_TIMEOUT,
+            self.net.cancel.as_deref(),
+        );
+        let _ = std::fs::remove_file(&file);
+        let out = out?;
+        let (text, session) = claude_answer(&out.stdout)?;
+        if text.trim().is_empty() {
+            return Err(Error::Message(format!(
+                "The thread command printed nothing.{}",
+                if out.stderr.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("\n\n{}", out.stderr.trim())
+                }
+            )));
+        }
+        if session.is_some() {
+            conversation.session = session;
+        }
+        conversation.turns.push(ThreadTurn {
+            kind,
+            role: TurnRole::Claude,
+            at: now_millis(),
+            head: Some(input.head.clone()),
+            text,
+        });
+        self.save_thread_conversation(&conversation)?;
+        Ok(conversation)
+    }
+}
+
+/// What a thread command printed: the answer, and the session to resume
+/// when it was a `claude -p --output-format json` answer. Such an answer
+/// that reports an error is the error.
+fn claude_answer(stdout: &str) -> Result<(String, Option<String>)> {
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout.trim()) else {
+        return Ok((stdout.to_string(), None));
+    };
+    let Some(result) = json.get("result").and_then(|r| r.as_str()) else {
+        return Ok((stdout.to_string(), None));
+    };
+    if json.get("is_error").and_then(|e| e.as_bool()) == Some(true) {
+        return Err(Error::Message(result.to_string()));
+    }
+    let session = json
+        .get("session_id")
+        .and_then(|s| s.as_str())
+        .map(str::to_string);
+    Ok((result.to_string(), session))
+}
+
 /// Run shell line `command` in `dir` with `input` on stdin and `env` set,
 /// waiting at most `timeout` and only until `cancel` goes up. Fails with the
 /// command's stderr when it exits non-zero.
@@ -2704,6 +2877,124 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             .ensure_pull_request_head(8, "0000000000000000000000000000000000000000")
             .is_err());
         assert!(repo.ensure_pull_request_head(8, "nope").is_err());
+    }
+
+    fn thread_input(repo: &Repo) -> ThreadInput {
+        let comment = |id: u64, in_reply_to: Option<u64>, body: &str| PrReviewComment {
+            id,
+            author: "anna".into(),
+            body: body.into(),
+            path: "src/retry.ts".into(),
+            line: Some(12),
+            original_line: Some(12),
+            side: "RIGHT".into(),
+            created_at: "2026-11-04T09:00:00Z".into(),
+            in_reply_to,
+            url: String::new(),
+            diff_hunk: "@@ -1 +1 @@\n-a\n+b".into(),
+        };
+        ThreadInput {
+            number: 7,
+            head: repo.resolve_commit("HEAD").unwrap(),
+            author: "octocat".into(),
+            comments: vec![comment(500, None, "stops early?"), comment(501, Some(500), "yes?")],
+        }
+    }
+
+    #[test]
+    fn a_thread_turn_gets_the_thread_in_its_environment_and_file_and_is_saved() {
+        let fake = Fake::new();
+        fake.answer("auth status", "Logged in to github.com account me (keyring)\n", "", 0);
+        let (_dir, repo) = github_repo();
+        let input = thread_input(&repo);
+        let cmd = "printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|' \"$GITP_PR_NUMBER\" \"$GITP_PR_URL\" \"$GITP_PR_HEAD\" \
+            \"$GITP_PR_AUTHOR\" \"$GITP_GH_LOGIN\" \"$GITP_THREAD_ID\" \"$GITP_THREAD_PATH\" \"$GITP_THREAD_LINE\" \
+            \"$GITP_TURN_KIND\"; cat \"$GITP_THREAD_FILE\"";
+        let c = repo
+            .thread_claude_turn(&fake.gh(), &input, TurnKind::Check, "", cmd)
+            .unwrap();
+        assert_eq!(c.turns.len(), 1);
+        let t = &c.turns[0];
+        assert_eq!(
+            (t.kind, t.role, t.head.as_deref()),
+            (TurnKind::Check, TurnRole::Claude, Some(input.head.as_str()))
+        );
+        let prefix = format!(
+            "7|https://github.com/octo/hello/pull/7|{}|octocat|me|500|src/retry.ts|12|check|",
+            input.head
+        );
+        assert!(t.text.starts_with(&prefix), "{}", t.text);
+        let json: serde_json::Value = serde_json::from_str(&t.text[prefix.len()..]).unwrap();
+        assert_eq!(json["comments"][1]["body"], "yes?");
+        assert_eq!(json["path"], "src/retry.ts");
+        assert_eq!(json["turns"].as_array().unwrap().len(), 0, "the first turn sees no history");
+        assert_eq!(c.session, None, "plain text gives no session");
+        assert_eq!(repo.thread_conversation(7, 500).unwrap(), Some(c));
+    }
+
+    #[test]
+    fn a_followup_stores_the_question_sends_it_on_stdin_and_resumes_the_session() {
+        let fake = Fake::new();
+        let (_dir, repo) = github_repo();
+        let input = thread_input(&repo);
+        let json_cmd = r#"printf '{"result":"first answer","session_id":"s-1","is_error":false}'"#;
+        let c = repo
+            .thread_claude_turn(&fake.gh(), &input, TurnKind::Check, "", json_cmd)
+            .unwrap();
+        assert_eq!(
+            (c.session.as_deref(), c.turns[0].text.as_str()),
+            (Some("s-1"), "first answer")
+        );
+        let cmd = r#"q=$(cat); printf '{"result":"%s / %s / %s","session_id":"s-2"}' "$GITP_CLAUDE_SESSION" "$q" "$GITP_TURN_KIND""#;
+        let c = repo
+            .thread_claude_turn(&fake.gh(), &input, TurnKind::Followup, "why?", cmd)
+            .unwrap();
+        assert_eq!(c.turns.len(), 3);
+        assert_eq!(
+            (c.turns[1].role, c.turns[1].kind, c.turns[1].text.as_str(), c.turns[1].head.as_deref()),
+            (TurnRole::User, TurnKind::Followup, "why?", None)
+        );
+        assert_eq!(c.turns[2].text, "s-1 / why? / followup");
+        assert_eq!(c.session.as_deref(), Some("s-2"));
+        // A failed follow-up keeps the question.
+        let err = repo
+            .thread_claude_turn(&fake.gh(), &input, TurnKind::Followup, "again?", "exit 2")
+            .unwrap_err();
+        assert!(message(err).contains("exit code 2"));
+        let c = repo.thread_conversation(7, 500).unwrap().unwrap();
+        assert_eq!((c.turns.len(), c.turns[3].text.as_str()), (4, "again?"));
+    }
+
+    #[test]
+    fn a_json_answer_that_is_an_error_fails_the_turn_and_stores_nothing() {
+        let fake = Fake::new();
+        let (_dir, repo) = github_repo();
+        let input = thread_input(&repo);
+        let err = repo
+            .thread_claude_turn(
+                &fake.gh(),
+                &input,
+                TurnKind::Explain,
+                "",
+                r#"printf '{"result":"Not logged in","is_error":true}'"#,
+            )
+            .unwrap_err();
+        assert!(message(err).contains("Not logged in"));
+        assert_eq!(repo.thread_conversation(7, 500).unwrap(), None);
+        let err = repo
+            .thread_claude_turn(&fake.gh(), &input, TurnKind::Explain, "", "true")
+            .unwrap_err();
+        assert!(message(err).contains("printed nothing"));
+        assert!(repo
+            .thread_claude_turn(&fake.gh(), &input, TurnKind::Explain, "", "  ")
+            .is_err());
+        let empty = ThreadInput {
+            comments: vec![],
+            ..input.clone()
+        };
+        assert!(repo
+            .thread_claude_turn(&fake.gh(), &empty, TurnKind::Check, "", "true")
+            .is_err());
     }
 
     #[test]
