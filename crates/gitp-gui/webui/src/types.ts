@@ -665,6 +665,10 @@ export interface PullRequest {
   updated_at: string;
   url: string;
   labels: PrLabel[];
+  // The reviewers whose latest review approves it.
+  approvals: number;
+  // Its line-comment threads not resolved yet; null when GitHub didn't say.
+  unresolved_threads: number | null;
 }
 
 export interface PrCheck {
@@ -715,6 +719,16 @@ export interface PrReviewComment {
   diff_hunk: string;
 }
 
+// A commit of a pull request, oldest first as GitHub lists them.
+export interface PrCommit {
+  oid: string;
+  headline: string;
+  body: string;
+  // Logins, or names for authors without an account; co-authors too.
+  authors: string[];
+  committed_at: string;
+}
+
 export interface PullRequestDetail {
   number: number;
   title: string;
@@ -736,6 +750,7 @@ export interface PullRequestDetail {
   review_comments: PrReviewComment[];
   // Which line-comment threads are resolved (empty when the host didn't say).
   review_threads: PrReviewThread[];
+  commits: PrCommit[];
   additions: number;
   deletions: number;
   changed_files: number;

@@ -999,7 +999,12 @@ function prsSignature(): string {
     p.error,
     p.open,
     p.query,
-    p.list?.map((pr) => `${pr.number}:${pr.updated_at}:${pr.title}:${pr.checks}:${pr.review_decision}:${pr.is_draft}`).join(","),
+    p.list
+      ?.map(
+        (pr) =>
+          `${pr.number}:${pr.updated_at}:${pr.title}:${pr.checks}:${pr.review_decision}:${pr.is_draft}:${pr.approvals}:${pr.unresolved_threads}`,
+      )
+      .join(","),
     p.list?.map((pr) => reviewBadge(state.repoPath, pr.number)?.text ?? "").join(","),
   ].join(";");
 }

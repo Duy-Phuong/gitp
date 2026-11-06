@@ -5,7 +5,7 @@
 // (filter text, which sections/folders are collapsed) and re-renders on change.
 
 import { chevronIcon, clear, el, githubIcon, svg } from "../dom";
-import { PR_FILTERS, prMatches, prNumberQuery, reviewDecisionLabel } from "../pull-requests";
+import { PR_FILTERS, prAttentionTags, prMatches, prNumberQuery, reviewDecisionLabel } from "../pull-requests";
 import { branchRefName, refShown, remoteRefName, tagRefName, type RefFilter } from "../ref-visibility";
 import { refDragHandle, refDropZone } from "./ref-drag";
 import type { DragRef } from "../ref-drop";
@@ -657,6 +657,7 @@ function prLeaf(pr: PullRequest, open: boolean, cb: SidebarCallbacks): HTMLEleme
     el("span", { class: "sb-leaf-label", text: `#${pr.number} ${pr.title}` }),
   );
   if (pr.is_draft) row.append(el("span", { class: "sb-badge", text: "draft" }));
+  for (const tag of prAttentionTags(pr)) row.append(el("span", { class: `pr-flag ${tag.kind}`, text: tag.short, title: tag.title }));
   const reviewed = cb.prReviewBadge(pr);
   if (reviewed) row.append(el("span", { class: `sb-badge pr-review-${reviewed.kind}`, text: reviewed.text }));
   if (review && pr.review_decision !== "REVIEW_REQUIRED") {

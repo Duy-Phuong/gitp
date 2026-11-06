@@ -389,6 +389,11 @@ pub(crate) fn gh_pull_request_files(
 }
 
 #[tauri::command(async)]
+pub(crate) fn gh_commit_files(oid: String, state: State<RepoState>) -> Result<Vec<FileDiff>, String> {
+    with_repo_unlocked(&state, |repo| repo.github_commit_files(&Gh::system(), &oid))
+}
+
+#[tauri::command(async)]
 pub(crate) fn gh_checkout_pull_request(
     number: u64,
     state: State<RepoState>,

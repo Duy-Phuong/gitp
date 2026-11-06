@@ -24,6 +24,24 @@ export const PR_FILTERS: { value: PrFilter; label: string }[] = [
   { value: "reviewed", label: "Reviewed" },
 ];
 
+// The tags that make a pull request stand out in the sidebar and the Pull
+// Requests view: line comments still to answer, and two approvals or more
+// (ready to merge, as most repositories ask for two). `short` is for the
+// narrow sidebar.
+export function prAttentionTags(
+  pr: Pick<PullRequest, "approvals" | "unresolved_threads">,
+): { kind: "unresolved" | "approvals"; text: string; short: string; title: string }[] {
+  const tags: { kind: "unresolved" | "approvals"; text: string; short: string; title: string }[] = [];
+  const open = pr.unresolved_threads ?? 0;
+  if (open > 0) {
+    tags.push({ kind: "unresolved", text: `${open} unresolved`, short: `💬 ${open}`, title: `${open} comment thread${open === 1 ? "" : "s"} not resolved` });
+  }
+  if (pr.approvals >= 2) {
+    tags.push({ kind: "approvals", text: `✓ ${pr.approvals} approvals`, short: `✓ ${pr.approvals}`, title: `Approved by ${pr.approvals} reviewers` });
+  }
+  return tags;
+}
+
 // The Pull Requests view's own filters, beside the sidebar's; "" lets any
 // through.
 export interface PrListFilters {

@@ -16,6 +16,7 @@ import {
   createPullRequestOnGitHub,
   fetchPullRequest,
   fetchPullRequestFiles,
+  fetchGitHubCommitFiles,
   generateReviewDrafts,
   ghAccount,
   ghLoginCancel,
@@ -426,6 +427,7 @@ async function mergeNow(pr: PullRequestDetail, method: MergeMethod, deleteBranch
 export const pullRequestCallbacks: PullRequestCallbacks = {
   fetchDetail: fetchPullRequest,
   fetchFiles: fetchPullRequestFiles,
+  fetchCommitFiles: fetchGitHubCommitFiles,
   checkout: (pr) => void checkoutPullRequestAction(pr.number),
   checkoutInWorktree: (pr, x, y) =>
     showPrompt(x, y, {

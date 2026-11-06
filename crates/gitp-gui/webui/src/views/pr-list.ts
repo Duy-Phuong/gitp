@@ -9,6 +9,7 @@ import {
   filterPrList,
   isoSeconds,
   NO_PR_LIST_FILTERS,
+  prAttentionTags,
   PR_FILTERS,
   prListChoices,
   prMatches,
@@ -213,6 +214,7 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
   function row(pr: PullRequest, open: number | null): HTMLElement {
     const titleLine = el("div", { class: "prl-title-line" }, [el("span", { class: "prl-title-text", text: pr.title })]);
     if (pr.is_draft) titleLine.append(el("span", { class: "sb-badge", text: "draft" }));
+    for (const tag of prAttentionTags(pr)) titleLine.append(el("span", { class: `pr-flag ${tag.kind}`, text: tag.text, title: tag.title }));
     const saved = cb.reviewBadge(pr);
     if (saved) titleLine.append(el("span", { class: `sb-badge pr-review-${saved.kind}`, text: saved.text }));
     for (const label of pr.labels) titleLine.append(labelChip(label));
