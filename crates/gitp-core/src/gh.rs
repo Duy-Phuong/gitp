@@ -1658,6 +1658,123 @@ impl Repo {
         user_text: &str,
         command: &str,
     ) -> Result<ThreadConversation> {
+        self.run_turn(gh, input, kind, user_text, command, TurnPlace::main(self))
+    }
+
+    /// Fix the thread of `input` as the user's last follow-up chose, in the
+    /// worktree that has the pull request's `branch` checked out: run
+    /// `fix_command` there (with `GITP_FIX_*` in its environment and the
+    /// chosen option on stdin), which makes the change and commits it once;
+    /// then `reply_command` in this repository for the reply draft. The
+    /// worktree must be clean and must hold the pull request's head. Any
+    /// failure of the fix — the command, or a tree that isn't exactly one
+    /// commit ahead and clean afterwards — is undone, back to the commit the
+    /// run started from.
+    pub fn fix_thread(
+        &self,
+        gh: &Gh,
+        input: &ThreadInput,
+        branch: &str,
+        fix_command: &str,
+        reply_command: &str,
+    ) -> Result<ThreadConversation> {
+        let Some(root) = input.comments.first() else {
+            return Err(Error::Message("The thread has no comments.".into()));
+        };
+        let conversation = self.thread_conversation(input.number, root.id)?;
+        let option = conversation
+            .as_ref()
+            .and_then(|c| c.turns.iter().rev().find(|t| t.role == TurnRole::User))
+            .map(|t| t.text.clone())
+            .filter(|t| !t.trim().is_empty())
+            .ok_or_else(|| Error::Message("Send the option you want as a follow-up first.".into()))?;
+        let worktree = self
+            .worktrees()?
+            .into_iter()
+            .find(|w| w.branch.as_deref() == Some(branch))
+            .ok_or_else(|| {
+                Error::Message(format!(
+                    "Check the pull request out first: its branch {branch} is in no worktree."
+                ))
+            })?;
+        let dir = PathBuf::from(&worktree.path);
+        if !git_in(&dir, &["status", "--porcelain"])?.is_empty() {
+            return Err(Error::Message(format!(
+                "Commit or stash the changes in {} first.",
+                dir.display()
+            )));
+        }
+        self.ensure_pull_request_head(input.number, &input.head)?;
+        if git_in(&dir, &["merge-base", "--is-ancestor", &input.head, "HEAD"]).is_err() {
+            return Err(Error::Message(
+                "The local branch is behind GitHub: pull it first.".into(),
+            ));
+        }
+        let before = git_in(&dir, &["rev-parse", "HEAD"])?;
+        let place = TurnPlace {
+            dir: dir.clone(),
+            extra_env: vec![
+                ("GITP_FIX_WORKTREE", dir.to_string_lossy().into_owned()),
+                ("GITP_FIX_BRANCH", branch.to_string()),
+                ("GITP_FIX_HEAD_BEFORE", before.clone()),
+            ],
+            timeout: FIX_TIMEOUT,
+            fix_session: true,
+        };
+        let fixed = self
+            .run_turn(gh, input, TurnKind::Fix, &option, fix_command, place)
+            .and_then(|c| {
+                let after = git_in(&dir, &["rev-parse", "HEAD"])?;
+                let made = git_in(&dir, &["rev-list", "--count", &format!("{before}..{after}")])?;
+                if made != "1" {
+                    return Err(Error::Message(format!(
+                        "The fix must make exactly one commit; it made {made}."
+                    )));
+                }
+                if !git_in(&dir, &["status", "--porcelain"])?.is_empty() {
+                    return Err(Error::Message(
+                        "The fix left uncommitted changes behind.".into(),
+                    ));
+                }
+                if git_in(&dir, &["rev-parse", "--abbrev-ref", "HEAD"])? != branch {
+                    return Err(Error::Message(format!(
+                        "The fix left the worktree off {branch}."
+                    )));
+                }
+                Ok((c, after))
+            });
+        let (mut c, after) = match fixed {
+            Ok(ok) => ok,
+            Err(e) => {
+                // Back to where the run started: the tree was clean then.
+                let _ = git_in(&dir, &["reset", "-q", "--hard", &before]);
+                let _ = git_in(&dir, &["clean", "-fdq"]);
+                // The failed turn, if it was saved, goes with it.
+                if let Some(mut saved) = self.thread_conversation(input.number, root.id)? {
+                    saved.turns.retain(|t| t.kind != TurnKind::Fix || t.commit.is_some());
+                    self.save_thread_conversation(&saved)?;
+                }
+                return Err(e);
+            }
+        };
+        if let Some(fix) = c.turns.iter_mut().rev().find(|t| t.kind == TurnKind::Fix) {
+            fix.commit = Some(after.clone());
+            fix.head = Some(after);
+            fix.worktree = Some(dir.to_string_lossy().into_owned());
+        }
+        self.save_thread_conversation(&c)?;
+        self.run_turn(gh, input, TurnKind::ReplyDraft, &option, reply_command, TurnPlace::main(self))
+    }
+
+    fn run_turn(
+        &self,
+        gh: &Gh,
+        input: &ThreadInput,
+        kind: TurnKind,
+        user_text: &str,
+        command: &str,
+        place: TurnPlace,
+    ) -> Result<ThreadConversation> {
         let command = command.trim();
         if command.is_empty() {
             return Err(Error::Message(
@@ -1735,17 +1852,23 @@ impl Repo {
             ("GITP_THREAD_FILE", file.to_string_lossy().into_owned()),
             (
                 "GITP_CLAUDE_SESSION",
-                conversation.session.clone().unwrap_or_default(),
+                if place.fix_session {
+                    conversation.fix_session.clone()
+                } else {
+                    conversation.session.clone()
+                }
+                .unwrap_or_default(),
             ),
             ("GITP_TURN_KIND", kind_name.to_string()),
         ];
+        env.extend(place.extra_env.iter().map(|(k, v)| (*k, v.clone())));
         let run = |env: &[(&str, String)]| {
             run_shell(
-                self.workdir(),
+                &place.dir,
                 command,
                 user_text.as_bytes(),
                 env,
-                EXPLAIN_TIMEOUT,
+                place.timeout,
                 self.net.cancel.as_deref(),
             )
         };
@@ -1754,7 +1877,12 @@ impl Repo {
         // retention period, or made from another working directory) fails
         // the resume: run once more as a fresh conversation. The thread file
         // carries the turns so far either way.
-        let lost_session = match (&out, &conversation.session) {
+        let kept = if place.fix_session {
+            &mut conversation.fix_session
+        } else {
+            &mut conversation.session
+        };
+        let lost_session = match (&out, &*kept) {
             (Err(Error::Message(text)), Some(session)) => {
                 text.contains(session.as_str()) || text.contains("No conversation found")
             }
@@ -1766,7 +1894,7 @@ impl Repo {
             }
             out = run(&env);
             if out.is_ok() {
-                conversation.session = None;
+                *kept = None;
             }
         }
         let _ = std::fs::remove_file(&file);
@@ -1783,13 +1911,60 @@ impl Repo {
             )));
         }
         if session.is_some() {
-            conversation.session = session;
+            if place.fix_session {
+                conversation.fix_session = session;
+            } else {
+                conversation.session = session;
+            }
         }
         conversation
             .turns
             .push(ThreadTurn::claude(kind, input.head.clone(), text));
         self.save_thread_conversation(&conversation)?;
         Ok(conversation)
+    }
+}
+
+/// How long a fix may take: a change, a test and a commit.
+pub const FIX_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+/// Where a thread turn runs and what it gets beyond the thread: the main
+/// working directory for most, the pull request branch's worktree for a fix.
+struct TurnPlace {
+    dir: PathBuf,
+    extra_env: Vec<(&'static str, String)>,
+    timeout: Duration,
+    /// Resume (and keep) the conversation's fix session, not its main one.
+    fix_session: bool,
+}
+
+impl TurnPlace {
+    fn main(repo: &Repo) -> Self {
+        Self {
+            dir: repo.workdir().to_path_buf(),
+            extra_env: Vec::new(),
+            timeout: EXPLAIN_TIMEOUT,
+            fix_session: false,
+        }
+    }
+}
+
+/// `git <args>` in `dir`, with prompts off; the trimmed combined output, or
+/// it as the error.
+pub(crate) fn git_in(dir: &Path, args: &[&str]) -> Result<String> {
+    let out = crate::git_bin::git_command()
+        .current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(args)
+        .output()
+        .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    let text = text.trim().to_string();
+    if out.status.success() {
+        Ok(text)
+    } else {
+        Err(Error::Message(text))
     }
 }
 
@@ -3140,6 +3315,170 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert!(repo
             .thread_claude_turn(&fake.gh(), &empty, TurnKind::Check, "", "true")
             .is_err());
+    }
+
+    /// A repository with a GitHub remote whose branch `feature` is checked
+    /// out in a linked worktree (`dir/wt`), and a saved Check plus the chosen
+    /// option "restore >" on thread 500 of pull request 7.
+    fn fix_repo() -> (tempfile::TempDir, Repo, PathBuf) {
+        let (dir, repo) = github_repo();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir.path())
+                .env("GIT_AUTHOR_NAME", "T")
+                .env("GIT_AUTHOR_EMAIL", "t@example.com")
+                .env("GIT_COMMITTER_NAME", "T")
+                .env("GIT_COMMITTER_EMAIL", "t@example.com")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        };
+        git(&["branch", "feature"]);
+        git(&["worktree", "add", "-q", "wt", "feature"]);
+        // The linked worktree lives inside the main checkout here: not a
+        // change of it.
+        std::fs::write(dir.path().join(".git/info/exclude"), "wt\n").unwrap();
+        let wt = dir.path().join("wt");
+        let head = repo.resolve_commit("HEAD").unwrap();
+        repo.save_thread_conversation(&ThreadConversation {
+            version: 1,
+            pr: 7,
+            thread: 500,
+            path: "src/retry.ts".into(),
+            session: Some("main-s".into()),
+            fix_session: None,
+            turns: vec![
+                ThreadTurn::claude(TurnKind::Check, head, "**Bottom line:** …".into()),
+                ThreadTurn::user(TurnKind::Followup, "restore >".into()),
+            ],
+        })
+        .unwrap();
+        (dir, repo, wt)
+    }
+
+    const COMMIT_ONCE: &str = r#"printf '{"result":"fixed in %s before=%s","session_id":"fs"}' "$PWD" "$GITP_FIX_HEAD_BEFORE"; echo x > fixed.txt; git add fixed.txt; git -c user.name=T -c user.email=t@example.com commit -qm "fix(review): src/retry.ts:12 — x""#;
+    const REPLY: &str = r#"printf '{"result":"reply from %s session=%s","session_id":"rs"}' "$PWD" "$GITP_CLAUDE_SESSION""#;
+
+    #[test]
+    fn a_fix_runs_in_the_branch_worktree_commits_once_and_drafts_the_reply() {
+        let fake = Fake::new();
+        let (dir, repo, wt) = fix_repo();
+        let input = thread_input(&repo);
+        let before = repo.resolve_commit("feature").unwrap();
+        let c = repo
+            .fix_thread(&fake.gh(), &input, "feature", COMMIT_ONCE, REPLY)
+            .unwrap();
+        let after = repo.resolve_commit("feature").unwrap();
+        assert_ne!(before, after);
+        let n = c.turns.len();
+        let fix = &c.turns[n - 2];
+        let reply = &c.turns[n - 1];
+        assert_eq!((fix.kind, fix.role), (TurnKind::Fix, TurnRole::Claude));
+        assert_eq!(fix.commit.as_deref(), Some(after.as_str()));
+        assert_eq!(fix.head.as_deref(), Some(after.as_str()));
+        assert_eq!(fix.worktree.as_deref().map(canonical_str), Some(canonical_str(wt.to_str().unwrap())));
+        assert!(fix.text.contains(&format!("before={before}")), "{}", fix.text);
+        assert!(fix.text.contains(&canonical_str(wt.to_str().unwrap())), "{}", fix.text);
+        assert_eq!((reply.kind, reply.role), (TurnKind::ReplyDraft, TurnRole::Claude));
+        assert!(reply.text.contains(&canonical_str(dir.path().to_str().unwrap())), "{}", reply.text);
+        assert!(reply.text.contains("session=main-s"), "{}", reply.text);
+        assert_eq!((c.fix_session.as_deref(), c.session.as_deref()), (Some("fs"), Some("rs")));
+        assert!(wt.join("fixed.txt").exists());
+    }
+
+    fn canonical_str(p: &str) -> String {
+        std::fs::canonicalize(p).unwrap().to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn a_fix_that_commits_twice_or_leaves_the_tree_dirty_is_undone() {
+        let fake = Fake::new();
+        let (_dir, repo, wt) = fix_repo();
+        let input = thread_input(&repo);
+        let before = repo.resolve_commit("feature").unwrap();
+        let twice = format!("{COMMIT_ONCE}; echo y > again.txt; git add again.txt; git -c user.name=T -c user.email=t@example.com commit -qm twice");
+        let err = repo.fix_thread(&fake.gh(), &input, "feature", &twice, REPLY).unwrap_err();
+        assert!(message(err).contains("one commit"));
+        assert_eq!(repo.resolve_commit("feature").unwrap(), before);
+        assert!(!wt.join("fixed.txt").exists() && !wt.join("again.txt").exists());
+
+        let err = repo
+            .fix_thread(&fake.gh(), &input, "feature", "echo z > dirty.txt; echo done", REPLY)
+            .unwrap_err();
+        assert!(message(err).contains("one commit"), "no commit at all");
+        assert!(!wt.join("dirty.txt").exists());
+
+        let err = repo
+            .fix_thread(&fake.gh(), &input, "feature", "echo w > half.txt; exit 3", REPLY)
+            .unwrap_err();
+        assert!(message(err).contains("exit code 3"));
+        assert!(!wt.join("half.txt").exists());
+        assert_eq!(repo.resolve_commit("feature").unwrap(), before);
+        let c = repo.thread_conversation(7, 500).unwrap().unwrap();
+        assert!(c.turns.iter().all(|t| t.kind != TurnKind::Fix), "no fix turn kept");
+    }
+
+    #[test]
+    fn a_fix_refuses_a_dirty_worktree_a_missing_one_and_a_branch_behind() {
+        let fake = Fake::new();
+        let (dir, repo, wt) = fix_repo();
+        let input = thread_input(&repo);
+        let marker = "touch ran.txt";
+        std::fs::write(wt.join("mine.txt"), "wip").unwrap();
+        let err = repo.fix_thread(&fake.gh(), &input, "feature", marker, REPLY).unwrap_err();
+        assert!(message(err).contains("Commit or stash"));
+        assert!(!wt.join("ran.txt").exists());
+        std::fs::remove_file(wt.join("mine.txt")).unwrap();
+
+        let err = repo.fix_thread(&fake.gh(), &input, "nowhere", marker, REPLY).unwrap_err();
+        assert!(message(err).contains("in no worktree"));
+
+        // The pull request's head is a commit the local branch doesn't have.
+        let git = git2::Repository::open(dir.path()).unwrap();
+        let sig = git2::Signature::now("T", "t@example.com").unwrap();
+        let parent = git.head().unwrap().peel_to_commit().unwrap();
+        let newer = git
+            .commit(None, &sig, &sig, "pushed elsewhere", &parent.tree().unwrap(), &[&parent])
+            .unwrap();
+        let input = ThreadInput {
+            head: newer.to_string(),
+            ..input
+        };
+        let err = repo.fix_thread(&fake.gh(), &input, "feature", marker, REPLY).unwrap_err();
+        assert!(message(err).contains("behind"));
+        assert!(!wt.join("ran.txt").exists());
+    }
+
+    #[test]
+    fn a_fix_finds_the_branch_in_the_main_checkout() {
+        let fake = Fake::new();
+        let (dir, repo, _wt) = fix_repo();
+        // `main-branch` is what the main checkout is on.
+        let name = git2::Repository::open(dir.path())
+            .unwrap()
+            .head()
+            .unwrap()
+            .shorthand()
+            .unwrap()
+            .to_string();
+        let input = thread_input(&repo);
+        let c = repo.fix_thread(&fake.gh(), &input, &name, COMMIT_ONCE, REPLY).unwrap();
+        assert!(dir.path().join("fixed.txt").exists());
+        let fix = &c.turns[c.turns.len() - 2];
+        assert_eq!(fix.worktree.as_deref().map(canonical_str), Some(canonical_str(dir.path().to_str().unwrap())));
+    }
+
+    #[test]
+    fn a_fix_needs_a_chosen_option() {
+        let fake = Fake::new();
+        let (_dir, repo, _wt) = fix_repo();
+        let input = thread_input(&repo);
+        let mut c = repo.thread_conversation(7, 500).unwrap().unwrap();
+        c.turns.retain(|t| t.role != TurnRole::User);
+        repo.save_thread_conversation(&c).unwrap();
+        let err = repo.fix_thread(&fake.gh(), &input, "feature", "touch ran.txt", REPLY).unwrap_err();
+        assert!(message(err).contains("follow-up first"));
     }
 
     #[test]
