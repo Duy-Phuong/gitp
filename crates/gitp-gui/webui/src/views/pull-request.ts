@@ -43,7 +43,7 @@ import {
   type Draft,
   type PrReview,
 } from "../pr-reviews";
-import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PullRequestDetail, ReviewVerdict } from "../types";
+import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PullRequestDetail, ReviewVerdict, TurnKind } from "../types";
 
 export interface PullRequestCallbacks {
   fetchDetail: (number: number) => Promise<PullRequestDetail>;
@@ -90,6 +90,14 @@ export interface PullRequestCallbacks {
   // Posts one review with `comments` after the user confirms; true once it is
   // on GitHub.
   postReview: (pr: PullRequestDetail, verdict: ReviewVerdict, body: string, comments: LineComment[]) => Promise<boolean>;
+  // Claude on a thread (pr-threads.ts): runs a turn in the background and
+  // the view redraws from the thread's state; loads the saved conversation
+  // once; forgets it after the user confirms; prunes the old ones.
+  threadTurn: (pr: PullRequestDetail, thread: Thread, kind: TurnKind, userText: string) => void;
+  cancelThreadTurn: (pr: PullRequestDetail, thread: Thread) => void;
+  loadThreadConversation: (pr: PullRequestDetail, thread: Thread) => void;
+  clearThreadConversation: (pr: PullRequestDetail, thread: Thread) => Promise<void>;
+  pruneThreadConversations: () => void;
   reportError: (title: string, err: unknown) => void;
 }
 

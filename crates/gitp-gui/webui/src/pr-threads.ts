@@ -69,6 +69,14 @@ export function runningTurns(repo: string, number: number): number {
   return n;
 }
 
+// The last thing the user said in the conversation — the option a reply
+// draft builds on — or nothing.
+export function lastUserText(c: ThreadConversation | null): string {
+  if (!c) return "";
+  for (let i = c.turns.length - 1; i >= 0; i--) if (c.turns[i].role === "user") return c.turns[i].text;
+  return "";
+}
+
 export function onThreadsChange(listener: () => void): void {
   listeners.add(listener);
 }

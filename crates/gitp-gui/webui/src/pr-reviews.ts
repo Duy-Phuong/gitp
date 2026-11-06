@@ -12,6 +12,7 @@
 
 import type { DraftComment } from "./review-drafts";
 import type { ReviewVerdict } from "./types";
+import { runningTurns } from "./pr-threads";
 
 // A loaded finding and what the user decided about it.
 export interface Draft extends DraftComment {
@@ -172,6 +173,8 @@ export function clearDrafts(repo: string, number: number): void {
 export function reviewBadge(repo: string, number: number): { text: string; kind: "running" | "failed" | "ready" } | null {
   const r = reviews.get(keyOf(repo, number));
   if (r?.running) return { text: "reviewing…", kind: "running" };
+  // A Claude turn on one of its threads (pr-threads.ts) counts the same.
+  if (runningTurns(repo, number) > 0) return { text: "thinking…", kind: "running" };
   if (r?.error) return { text: "review failed", kind: "failed" };
   const pending = r ? r.drafts.filter((d) => d.status !== "discarded").length : 0;
   if (pending) return { text: `${pending} draft${pending === 1 ? "" : "s"}`, kind: "ready" };

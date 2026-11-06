@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { finishTurn, onThreadsChange, runningTurns, setConversation, startTurn, threadState } from "./pr-threads";
+import { finishTurn, lastUserText, onThreadsChange, runningTurns, setConversation, startTurn, threadState } from "./pr-threads";
 import type { ThreadConversation } from "./types";
 
 const conv = (turns = 1): ThreadConversation => ({
@@ -38,4 +38,12 @@ it("a loaded conversation replaces an error and nothing", () => {
   setConversation("/r", 9, 1, null);
   expect(threadState("/r", 9, 1).conversation).toBeNull();
   expect(threadState("/r", 9, 1).loaded).toBe(true);
+});
+
+it("the last user turn is what a reply draft builds on", () => {
+  expect(lastUserText(null)).toBe("");
+  const c = conv(1);
+  c.turns.push({ kind: "followup", role: "user", at: 2, text: "restore >" }, { kind: "followup", role: "claude", at: 3, text: "ok" });
+  expect(lastUserText(c)).toBe("restore >");
+  expect(lastUserText(conv(1))).toBe("");
 });
