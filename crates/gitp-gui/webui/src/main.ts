@@ -111,7 +111,7 @@ import {
 import { refsAt } from "./commit-refs";
 import { setupConfigTabs } from "./config-panel";
 import { setupPaneResizer, setupSidebarResizer, setupTerminalResizer } from "./resizers";
-import { applyWorkspace, jumpToCommit, leaveComparison, loadChanges, loadRepo, loadSidebar, refreshHistory, refreshUndoLabels, refreshWipRow, renderSidebarNow, restoreWorkspace, setRefActions, showReflogDetail, showStashDetail, showView, startAutoFetch, updateLogView } from "./shell";
+import { applyWorkspace, jumpToCommit, leaveComparison, loadChanges, loadRepo, loadSidebar, openPullRequestTab, refreshHistory, refreshUndoLabels, refreshWipRow, renderSidebarNow, restoreWorkspace, searchPullRequests, setRefActions, showPullRequest, showReflogDetail, showStashDetail, showView, startAutoFetch, updateLogView } from "./shell";
 import {
   popAction,
   pushAction,
@@ -151,8 +151,11 @@ import {
   pullRequestCallbacks,
   refreshPullRequests,
   setPrFilter,
+  showPullRequestList,
   signInToGitHub,
 } from "./pr-actions";
+import { setupPullRequestListView } from "./views/pr-list";
+import { reviewBadge } from "./pr-reviews";
 import { createFileAction, editFileAction } from "./editor-actions";
 import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
@@ -206,6 +209,7 @@ function wireUi(): void {
   setupPullMenu();
   updatePullButtonTitle();
   $("#push-btn").addEventListener("click", () => void pushAction());
+  $("#prs-btn").addEventListener("click", showPullRequestList);
   $("#stash-btn").addEventListener("click", openStashDialogAction);
   $("#pop-btn").addEventListener("click", () => void popAction());
   $("#refresh-btn").addEventListener("click", () => void refreshAllAction());
@@ -523,6 +527,16 @@ async function init(): Promise<void> {
     reportError: readFailed,
   });
   ui.prView = setupPullRequestView($("#pr-view"), pullRequestCallbacks);
+  ui.prListView = setupPullRequestListView($("#prlist-view"), {
+    open: showPullRequest,
+    openInTab: (pr) => openPullRequestTab(pr.number, pr.title),
+    menu: onPrMenu,
+    setFilter: setPrFilter,
+    search: searchPullRequests,
+    refresh: refreshPullRequests,
+    signIn: () => void signInToGitHub(),
+    reviewBadge: (pr) => reviewBadge(state.repoPath, pr.number),
+  });
   // A review running in the background moved on: its badge and, when its pull
   // request is the one open, the view.
   onReviewsChange(() => {

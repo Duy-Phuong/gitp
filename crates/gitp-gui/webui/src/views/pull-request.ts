@@ -856,7 +856,7 @@ export function authorHue(author: string): number {
 
 // A label in its GitHub color — only when the color is plain hex, since it
 // lands in a style.
-function labelChip(label: PrLabel): HTMLElement {
+export function labelChip(label: PrLabel): HTMLElement {
   const chip = el("span", { class: "pr-label", text: label.name });
   if (/^[0-9a-f]{6}$/i.test(label.color)) chip.style.setProperty("--label", `#${label.color}`);
   return chip;
