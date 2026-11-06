@@ -202,6 +202,7 @@ export async function openRecentRepo(path: string): Promise<void> {
 function openOnlyCommands(): QuickItem[] {
   return [
     { kind: "command", label: "Open Repository…", detail: shortcutHint("openRepo"), run: () => void browseAndOpen() },
+    { kind: "command", label: "Open Recent…", detail: "the repositories opened lately", next: () => repoStage("Open Recent") },
     { kind: "command", label: "Clone Repository…", detail: shortcutHint("cloneRepo"), run: cloneRepoAction },
     { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Workspaces…", detail: "groups of repositories to fetch, pull or open together", run: openWorkspacesAction },
@@ -235,6 +236,12 @@ function detectEditors(): void {
 detectEditors();
 
 // The Checkout Branch picker on its own — the branch chip's "All Branches…".
+// The repositories opened lately, to switch to or reopen: Open Recent…, and
+// Open when the path field holds nothing new to open.
+export function openRecentPicker(): void {
+  showQuickLaunch(repoStage("Open Recent"));
+}
+
 export function openCheckoutBranchPicker(): void {
   showQuickLaunch(branchStage("Checkout Branch", (b) => void checkoutBranchAction(b), true));
 }
@@ -443,6 +450,7 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Snapshot Working Tree Now", run: () => void snapshotNow().then((id) => setStatus(id ? "Snapshot taken." : "Nothing new to snapshot.")) },
     { kind: "command", label: "Switch Repository", next: () => repoStage() },
     { kind: "command", label: "Open Repository…", detail: shortcutHint("openRepo"), run: () => void browseAndOpen() },
+    { kind: "command", label: "Open Recent…", detail: "the repositories opened lately", next: () => repoStage("Open Recent") },
     { kind: "command", label: "Clone Repository…", detail: shortcutHint("cloneRepo"), run: cloneRepoAction },
     { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Workspaces…", detail: "groups of repositories to fetch, pull or open together", run: openWorkspacesAction },
@@ -727,9 +735,9 @@ function refStage(chip: string, pick: (rev: string) => Pick<QuickItem, "run" | "
   };
 }
 
-function repoStage(): QuickStage {
+function repoStage(chip = "Switch Repository"): QuickStage {
   return {
-    chip: "Switch Repository",
+    chip,
     placeholder: "repository",
     emptyNote: "No other repositories opened yet.",
     // Offering the repo you're already in would be a row that does nothing.

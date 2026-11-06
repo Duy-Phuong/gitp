@@ -161,7 +161,7 @@ import { reviewBadge } from "./pr-reviews";
 import { createFileAction, editFileAction } from "./editor-actions";
 import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
-import { browseAndOpen, createBranchPrompt, openCheckoutBranchPicker, openQuickLaunch, openRecentRepo } from "./quick-launch-commands";
+import { browseAndOpen, createBranchPrompt, openCheckoutBranchPicker, openQuickLaunch, openRecentPicker, openRecentRepo } from "./quick-launch-commands";
 import { setupWelcome } from "./views/welcome";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { openWorkspacesAction } from "./local-workspace-actions";
@@ -177,16 +177,11 @@ import { setupProfileMenu } from "./profile-menu";
 import { showComparison } from "./compare";
 
 function wireUi(): void {
-  $("#open-btn").addEventListener("click", () => {
-    const path = $<HTMLInputElement>("#repo-input").value.trim();
-    if (path) void loadRepo(path).then(warmTerminal);
-  });
   $("#browse-btn").addEventListener("click", async () => {
     const path = await browseForRepo();
     if (path) void loadRepo(path).then(warmTerminal);
     else if (!isTauri()) setStatus("The folder picker is only available in the desktop app.");
   });
-  $("#clone-btn").addEventListener("click", cloneRepoAction);
   // The branch chip: copy the name, or switch — the branches switched to
   // lately right there, the rest through the picker.
   const chip = $("#branch-indicator");
@@ -197,10 +192,14 @@ function wireUi(): void {
     const r = chip.getBoundingClientRect();
     openBranchChipMenu(r.left, r.bottom);
   });
-  $("#init-btn").addEventListener("click", initRepoAction);
-  $("#workspaces-btn").addEventListener("click", openWorkspacesAction);
+  // Enter opens the path typed in the field; the field empty or holding the
+  // open repository shows the recent ones instead, since opening it again
+  // changes nothing.
   $<HTMLInputElement>("#repo-input").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") $("#open-btn").click();
+    if (e.key !== "Enter") return;
+    const path = $<HTMLInputElement>("#repo-input").value.trim();
+    if (path && path !== state.repoPath) void loadRepo(path).then(warmTerminal);
+    else openRecentPicker();
   });
   for (const tab of document.querySelectorAll<HTMLElement>(".tab")) {
     tab.addEventListener("click", () => showView((tab.dataset.tab as View) ?? "history"));
