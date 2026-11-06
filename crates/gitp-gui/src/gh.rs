@@ -14,7 +14,8 @@ use std::sync::{Arc, Mutex};
 use gitp_core::{
     CommitPullRequest, FileDiff, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings,
     LineComment, MergeMethod, NetworkHooks, NewPullRequest, PrDraft, PrFilter, PrReviewComment,
-    PullRequest, PullRequestDetail, Repo, ReviewFile, ReviewVerdict, Undoable, LOGIN_TIMEOUT,
+    PullRequest, PullRequestDetail, Repo, ReviewFile, ReviewVerdict, ThreadConversation,
+    ThreadInput, TurnKind, Undoable, LOGIN_TIMEOUT,
 };
 use serde::Serialize;
 use tauri::State;
@@ -242,6 +243,81 @@ fn gh_cancel_review_impl(jobs: &ReviewJobs, path: &str, number: u64) {
     if let Some(cancel) = jobs.0.lock().unwrap().get(&(path.to_string(), number)) {
         cancel.store(true, Ordering::SeqCst);
     }
+}
+
+/// The Claude turns running on pull request threads, by repository path,
+/// pull request and thread, each with the flag that cancels it. One turn per
+/// thread at a time; like reviews, they stay out of the status bar.
+#[derive(Default)]
+pub(crate) struct ThreadJobs(Mutex<HashMap<(String, u64, u64), Arc<AtomicBool>>>);
+
+/// Run one Claude turn on the thread of `input` in the repository at `path`
+/// — named, not the active one — and return the conversation it is kept in.
+fn gh_thread_turn_impl(
+    jobs: &ThreadJobs,
+    path: String,
+    input: ThreadInput,
+    kind: TurnKind,
+    user_text: String,
+    command: String,
+) -> Result<ThreadConversation, String> {
+    let Some(root) = input.comments.first() else {
+        return Err("The thread has no comments.".into());
+    };
+    let mut repo = Repo::open(&path).map_err(to_message)?;
+    let key = (path, input.number, root.id);
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut running = jobs.0.lock().unwrap();
+        if running.contains_key(&key) {
+            return Err("A turn on this thread is already running.".into());
+        }
+        running.insert(key.clone(), Arc::clone(&cancel));
+    }
+    repo.set_network_hooks(NetworkHooks {
+        cancel: Some(cancel),
+        ..NetworkHooks::default()
+    });
+    let out = repo.thread_claude_turn(&Gh::system(), &input, kind, &user_text, &command);
+    jobs.0.lock().unwrap().remove(&key);
+    out.map_err(to_message)
+}
+
+/// Stop the turn running on `thread` of pull request `number`, if any.
+fn gh_thread_cancel_impl(jobs: &ThreadJobs, path: &str, number: u64, thread: u64) {
+    if let Some(cancel) = jobs
+        .0
+        .lock()
+        .unwrap()
+        .get(&(path.to_string(), number, thread))
+    {
+        cancel.store(true, Ordering::SeqCst);
+    }
+}
+
+fn gh_thread_conversation_impl(
+    path: String,
+    number: u64,
+    thread: u64,
+) -> Result<Option<ThreadConversation>, String> {
+    let repo = Repo::open(&path).map_err(to_message)?;
+    repo.thread_conversation(number, thread).map_err(to_message)
+}
+
+fn gh_thread_clear_impl(path: String, number: u64, thread: u64) -> Result<(), String> {
+    let repo = Repo::open(&path).map_err(to_message)?;
+    repo.clear_thread_conversation(number, thread)
+        .map_err(to_message)
+}
+
+/// Delete the conversations older than two months; how many went.
+fn gh_thread_prune_impl(path: String) -> Result<usize, String> {
+    let repo = Repo::open(&path).map_err(to_message)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    repo.prune_thread_conversations(now).map_err(to_message)
 }
 
 /// How big a review file may be: a review is text, and this is far past any.
@@ -507,6 +583,42 @@ pub(crate) fn gh_cancel_review(path: String, number: u64, jobs: State<ReviewJobs
 }
 
 #[tauri::command(async)]
+pub(crate) fn gh_thread_turn(
+    path: String,
+    input: ThreadInput,
+    kind: TurnKind,
+    user_text: String,
+    command: String,
+    jobs: State<ThreadJobs>,
+) -> Result<ThreadConversation, String> {
+    gh_thread_turn_impl(&jobs, path, input, kind, user_text, command)
+}
+
+#[tauri::command]
+pub(crate) fn gh_thread_cancel(path: String, number: u64, thread: u64, jobs: State<ThreadJobs>) {
+    gh_thread_cancel_impl(&jobs, &path, number, thread);
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_thread_conversation(
+    path: String,
+    number: u64,
+    thread: u64,
+) -> Result<Option<ThreadConversation>, String> {
+    gh_thread_conversation_impl(path, number, thread)
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_thread_clear(path: String, number: u64, thread: u64) -> Result<(), String> {
+    gh_thread_clear_impl(path, number, thread)
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_thread_prune(path: String) -> Result<usize, String> {
+    gh_thread_prune_impl(path)
+}
+
+#[tauri::command(async)]
 pub(crate) fn read_review_file(path: String) -> Result<String, String> {
     read_review_file_impl(path)
 }
@@ -572,4 +684,76 @@ pub(crate) fn gh_logout(login: Option<String>) -> Result<String, String> {
 #[tauri::command(async)]
 pub(crate) fn open_github_url(url: String) -> Result<(), String> {
     open_github_url_impl(url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_thread_turn_runs_once_per_thread_and_is_keyed_by_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir.path())
+                .env("GIT_AUTHOR_NAME", "T")
+                .env("GIT_AUTHOR_EMAIL", "t@example.com")
+                .env("GIT_COMMITTER_NAME", "T")
+                .env("GIT_COMMITTER_EMAIL", "t@example.com")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        git(&["init", "-q"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "init"]);
+        git(&["remote", "add", "origin", "git@github.com:octo/hello.git"]);
+        let head = git(&["rev-parse", "HEAD"]);
+        let path = dir.path().to_string_lossy().into_owned();
+        let input = |n| gitp_core::ThreadInput {
+            number: n,
+            head: head.clone(),
+            author: "octocat".into(),
+            comments: vec![PrReviewComment {
+                id: 500,
+                author: "anna".into(),
+                body: "?".into(),
+                path: "a".into(),
+                line: Some(1),
+                original_line: Some(1),
+                side: "RIGHT".into(),
+                created_at: String::new(),
+                in_reply_to: None,
+                url: String::new(),
+                diff_hunk: String::new(),
+            }],
+        };
+        let jobs = ThreadJobs::default();
+        // Hold the key as if a turn were running.
+        jobs.0
+            .lock()
+            .unwrap()
+            .insert((path.clone(), 7, 500), Arc::new(AtomicBool::new(false)));
+        let err = gh_thread_turn_impl(&jobs, path.clone(), input(7), TurnKind::Check, String::new(), "echo hi".into())
+            .unwrap_err();
+        assert!(err.contains("already running"), "{err}");
+        // Another thread of the same pull request is free.
+        let c = gh_thread_turn_impl(&jobs, path.clone(), input(8), TurnKind::Check, String::new(), "echo hi".into())
+            .unwrap();
+        assert_eq!(c.turns[0].text.trim(), "hi");
+        assert!(
+            !jobs.0.lock().unwrap().contains_key(&(path.clone(), 8, 500)),
+            "the key is released"
+        );
+        assert_eq!(gh_thread_conversation_impl(path.clone(), 8, 500).unwrap(), Some(c));
+        gh_thread_clear_impl(path.clone(), 8, 500).unwrap();
+        assert_eq!(gh_thread_conversation_impl(path.clone(), 8, 500).unwrap(), None);
+        assert_eq!(gh_thread_prune_impl(path.clone()).unwrap(), 0);
+        let empty = gitp_core::ThreadInput {
+            comments: vec![],
+            ..input(9)
+        };
+        assert!(gh_thread_turn_impl(&jobs, path, empty, TurnKind::Check, String::new(), "echo".into()).is_err());
+    }
 }
