@@ -451,6 +451,15 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         openBlocks.add(root.id);
         cb.threadTurn(pr, thread, kind, text);
       };
+      // Fix: only with an option chosen and no fix elsewhere on the pull
+      // request; it ends in a reply draft, which lands in the Reply box.
+      const fix = () => {
+        if (fixDisabledReason(ts.conversation, fixElsewhere(pr, root.id))) return;
+        pendingReplyDraft.set(root.id, ts.conversation?.turns.length ?? 0);
+        lastKind.set(root.id, "fix");
+        openBlocks.add(root.id);
+        cb.fixThread(pr, thread);
+      };
       if (ts.conversation || ts.running || ts.error) {
         node.append(
           conversationNode({
@@ -462,19 +471,21 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
             onDraft: (text) => followupText.set(root.id, text),
             onFollowup: (text) => turn("followup", text),
             fix: { disabled: fixDisabledReason(ts.conversation, fixElsewhere(pr, root.id)) },
-            onFix: () => {
-              // The fix ends in a reply draft, which lands in the Reply box.
-              pendingReplyDraft.set(root.id, ts.conversation?.turns.length ?? 0);
-              lastKind.set(root.id, "fix");
-              openBlocks.add(root.id);
-              cb.fixThread(pr, thread);
-            },
+            onFix: fix,
             onDrop: () => void cb.dropReply(pr, thread),
             onClear: () =>
               void cb.clearThreadConversation(pr, thread).then((cleared) => {
                 if (cleared) openBlocks.delete(root.id);
               }),
-            onRetry: (kind) => turn(kind),
+            onRetry: (kind) => {
+              // A fix is never a plain turn: it has a worktree, checks and
+              // an undo. A fix whose commit is in but whose reply draft
+              // failed needs only the draft again.
+              const last = ts.conversation?.turns[ts.conversation.turns.length - 1];
+              if (kind === "fix" && last?.kind === "fix" && last.commit) turn("reply-draft");
+              else if (kind === "fix") fix();
+              else turn(kind);
+            },
             onCancel: () => cb.cancelThreadTurn(pr, thread),
             onToggle: () => {
               if (!openBlocks.delete(root.id)) openBlocks.add(root.id);

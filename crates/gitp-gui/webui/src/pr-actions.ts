@@ -67,7 +67,7 @@ import {
 import { defaultWorktreePath } from "./worktree-actions";
 import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
 import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, SKILL_REVIEW_COMMAND } from "./prefs";
-import { finishTurn, lastUserText, preparedReply, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
+import { finishTurn, lastUserText, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
 import { showErrorDialog } from "./views/message-dialog";
@@ -463,10 +463,18 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   reply: async (pr, root, body) => {
     let url = "";
     const ok = await post(`a reply to ${root.author}`, pr.number, body, async () => (url = (await replyToReviewComment(pr.number, root.id, body)).url));
-    // A reply Claude had ready is now posted: Push and reply all skips it.
-    if (ok && preparedReply(threadState(state.repoPath, pr.number, root.id).conversation)) {
-      await markReplyPosted(state.repoPath, pr.number, root.id, url).catch(() => {});
-      await loadThreadConversation(state.repoPath, pr.number, root.id, true);
+    // A reply Claude had ready is now posted, so Push and reply all skips
+    // it. Core says when the thread had none ready; anything else is
+    // reported, since the draft would otherwise be posted again.
+    if (ok) {
+      try {
+        await markReplyPosted(state.repoPath, pr.number, root.id, url);
+      } catch (err) {
+        if (!/no reply ready|no Claude conversation/.test(String(err))) opFailed("Couldn't mark Claude's reply as posted", err);
+      }
+      const s = threadState(state.repoPath, pr.number, root.id);
+      s.loaded = false;
+      await loadThreadConversation(state.repoPath, pr.number, root.id);
     }
     return ok;
   },

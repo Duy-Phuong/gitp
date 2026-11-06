@@ -713,8 +713,10 @@ export const FIX_TOOLS = [
   "Bash(npm test*)",
   "Bash(npx vitest *)",
   "Bash(cargo test *)",
-  "Bash(./gradlew test*)",
-  "Bash(mvn *test*)",
+  "Bash(./gradlew test)",
+  "Bash(./gradlew test --tests *)",
+  "Bash(mvn test)",
+  "Bash(mvn test -*)",
   "Bash(pytest *)",
   "Bash(go test *)",
 ];

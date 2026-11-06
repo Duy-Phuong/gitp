@@ -158,6 +158,9 @@ describe("thread commands", () => {
   it("the fix command may edit, commit and test, never push, post or move branches", () => {
     for (const t of ["Edit", "Write", "Bash(git commit *)", "Bash(git add *)", "Bash(cargo test *)", "Bash(npx vitest *)"]) expect(FIX_TOOLS).toContain(t);
     expect(FIX_TOOLS.filter((t) => /git push|gh api|gh pr (comment|review|merge)|checkout|switch|git reset|rebase/.test(t))).toEqual([]);
+    // A runner pattern must not reach deploy or publish: "mvn *test*" would
+    // match "mvn deploy -DskipTests".
+    expect(FIX_TOOLS.filter((t) => /mvn \*|gradlew test\*/.test(t))).toEqual([]);
     const c = DEFAULT_THREAD_COMMANDS.fix;
     expect(c).toContain("commit exactly once");
     expect(c).toContain("$GITP_THREAD_FILE");

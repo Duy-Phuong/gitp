@@ -1658,6 +1658,12 @@ impl Repo {
         user_text: &str,
         command: &str,
     ) -> Result<ThreadConversation> {
+        if kind == TurnKind::Fix {
+            // A fix has a worktree, checks and an undo: only fix_thread runs it.
+            return Err(Error::Message(
+                "A fix runs through Fix on the thread, not as a plain turn.".into(),
+            ));
+        }
         self.run_turn(gh, input, kind, user_text, command, TurnPlace::main(self))
     }
 
@@ -3537,6 +3543,18 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert!(dir.path().join("fixed.txt").exists());
         let fix = &c.turns[c.turns.len() - 2];
         assert_eq!(fix.worktree.as_deref().map(canonical_str), Some(canonical_str(dir.path().to_str().unwrap())));
+    }
+
+    #[test]
+    fn a_fix_never_runs_as_a_plain_turn() {
+        let fake = Fake::new();
+        let (dir, repo, _wt) = fix_repo();
+        let input = thread_input(&repo);
+        let err = repo
+            .thread_claude_turn(&fake.gh(), &input, TurnKind::Fix, "", "touch ran.txt")
+            .unwrap_err();
+        assert!(message(err).contains("Fix on the thread"));
+        assert!(!dir.path().join("ran.txt").exists());
     }
 
     #[test]
