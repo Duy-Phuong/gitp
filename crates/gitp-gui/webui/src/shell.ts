@@ -762,6 +762,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   $("#activity-view").classList.toggle("hidden", view !== "activity");
   $("#localhistory-view").classList.toggle("hidden", view !== "localhistory");
   $("#pr-view").classList.toggle("hidden", view !== "pr");
+  $("#prlist-view").classList.toggle("hidden", view !== "prlist");
   $("#code-view").classList.toggle("hidden", view !== "code");
   // The Reflog lists in the log's place and shares History's detail pane.
   $("#log-col").classList.toggle("hidden", view === "reflog");
@@ -771,6 +772,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   }
   syncPullRequestTab();
   renderSidebarNow();
+  if (view === "prlist") ui.prListView?.render(state.prs);
   renderConflictBanner(); // entering/leaving the resolver toggles the banner
   renderDetachedBanner(); // History only
   if (view === "config") void refreshConfig();
@@ -1017,6 +1019,8 @@ export function renderSidebarNow(): void {
   const sig = sidebarSignature(active?.name ?? "");
   if (sig === lastSidebarSig) return;
   lastSidebarSig = sig;
+  // The Pull Requests view draws from the same list, filter and search.
+  if (state.view === "prlist") ui.prListView?.render(state.prs);
   renderSidebar(
     $("#sidebar"),
     {
@@ -1086,18 +1090,22 @@ export function renderSidebarNow(): void {
       prReviewBadge: (pr) => reviewBadge(state.repoPath, pr.number),
       onPrFilter: (filter) => refActions.onPrFilter(filter),
       // Debounced like the sidebar's own filter: each search redraws the tree.
-      onPrSearch: (text) => {
-        window.clearTimeout(prSearchDebounce);
-        prSearchDebounce = window.setTimeout(() => {
-          state.prs.query = text;
-          renderSidebarNow();
-        }, 120);
-      },
+      onPrSearch: searchPullRequests,
       onPrOpenNumber: (n) => showPullRequest(n),
       onPrRefresh: () => refActions.onPrRefresh(),
       onGitHubSignIn: () => refActions.onGitHubSignIn(),
     },
   );
+}
+
+// The sidebar's and the Pull Requests view's search, debounced like the
+// sidebar's own filter: each search redraws the tree.
+export function searchPullRequests(text: string): void {
+  window.clearTimeout(prSearchDebounce);
+  prSearchDebounce = window.setTimeout(() => {
+    state.prs.query = text;
+    renderSidebarNow();
+  }, 120);
 }
 
 // Open pull request `number` in the pull request view.

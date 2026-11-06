@@ -24,6 +24,50 @@ export const PR_FILTERS: { value: PrFilter; label: string }[] = [
   { value: "reviewed", label: "Reviewed" },
 ];
 
+// The Pull Requests view's own filters, beside the sidebar's; "" lets any
+// through.
+export interface PrListFilters {
+  author: string;
+  base: string;
+  // success / failure / pending, or "none" for no checks.
+  checks: string;
+  // APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED, or "none".
+  review: string;
+  // "draft" or "ready".
+  draft: string;
+}
+
+export const NO_PR_LIST_FILTERS: PrListFilters = { author: "", base: "", checks: "", review: "", draft: "" };
+
+export function filterPrList(list: PullRequest[], f: PrListFilters): PullRequest[] {
+  return list.filter(
+    (pr) =>
+      (!f.author || pr.author === f.author) &&
+      (!f.base || pr.base === f.base) &&
+      (!f.checks || (pr.checks ?? "none") === f.checks) &&
+      (!f.review || (pr.review_decision ?? "none") === f.review) &&
+      (!f.draft || pr.is_draft === (f.draft === "draft")),
+  );
+}
+
+// The authors and base branches in `list`, for the view's dropdowns, A to Z.
+export function prListChoices(list: PullRequest[]): { authors: string[]; bases: string[] } {
+  const sorted = (values: string[]) => [...new Set(values)].sort((a, b) => a.localeCompare(b));
+  return { authors: sorted(list.map((pr) => pr.author)), bases: sorted(list.map((pr) => pr.base)) };
+}
+
+export type PrSortKey = "number" | "title" | "author" | "branches" | "review" | "updated";
+
+// `list` sorted by `key`: A to Z, oldest or smallest first, or the other way
+// when `descending`; ties keep the newest number first.
+export function sortPrList(list: PullRequest[], key: PrSortKey, descending: boolean): PullRequest[] {
+  const text = (pr: PullRequest): string =>
+    key === "title" ? pr.title : key === "author" ? pr.author : key === "branches" ? `${pr.base}\0${pr.head}` : (pr.review_decision ?? "");
+  const compare = (a: PullRequest, b: PullRequest): number =>
+    key === "number" ? a.number - b.number : key === "updated" ? time(a.updated_at) - time(b.updated_at) : text(a).localeCompare(text(b));
+  return [...list].sort((a, b) => (descending ? compare(b, a) : compare(a, b)) || b.number - a.number);
+}
+
 // A line comment and its replies, oldest first.
 export interface Thread {
   root: PrReviewComment;

@@ -146,6 +146,14 @@ async function accountOrError(): Promise<GhAccount> {
   }
 }
 
+// The action bar's PRs button: the Pull Requests view, its list read when
+// the sidebar hasn't yet.
+export function showPullRequestList(): void {
+  showView("prlist");
+  if (!state.prs.list && !state.prs.loading) void loadPullRequests();
+  ui.prListView?.focusSearch();
+}
+
 export function setPrFilter(filter: PrFilter): void {
   if (filter === state.prs.filter) return;
   state.prs.filter = filter;

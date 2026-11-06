@@ -14,6 +14,7 @@ import type { ActivityHandle } from "./views/activity";
 import type { CodeViewHandle } from "./views/code/index";
 import type { LocalHistoryHandle } from "./views/local-history";
 import type { PullRequestHandle } from "./views/pull-request";
+import type { PullRequestListHandle } from "./views/pr-list";
 import type { WelcomeHandle } from "./views/welcome";
 import type { PrSectionState } from "./views/sidebar";
 import type {
@@ -32,7 +33,17 @@ import type {
   LfsStatus,
 } from "./types";
 
-export type View = "history" | "changes" | "config" | "conflict" | "reflog" | "activity" | "localhistory" | "pr" | "code";
+export type View =
+  | "history"
+  | "changes"
+  | "config"
+  | "conflict"
+  | "reflog"
+  | "activity"
+  | "localhistory"
+  | "pr"
+  | "prlist"
+  | "code";
 
 export const EMPTY_REFS: Refs = { head: null, branches: [], remotes: [], tags: [], stashes: [], recent: [] };
 
@@ -147,6 +158,7 @@ export const ui = {
   localHistoryView: null as LocalHistoryHandle | null,
   codeView: null as CodeViewHandle | null,
   prView: null as PullRequestHandle | null,
+  prListView: null as PullRequestListHandle | null,
   welcomeView: null as WelcomeHandle | null,
   // The live log's handle, from the most recent renderLog — the log view owns
   // keyboard movement through the rows it has on screen (see LogHandle).

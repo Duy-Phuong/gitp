@@ -7,7 +7,11 @@ import {
   githubRemoteName,
   mergeAdvice,
   defaultMergeMethod,
+  filterPrList,
   mergeChoices,
+  NO_PR_LIST_FILTERS,
+  prListChoices,
+  sortPrList,
   lineTarget,
   prMatches,
   prTimeline,
@@ -313,5 +317,48 @@ describe("baseBranches", () => {
 
   it("keeps the default even when it isn't fetched", () => {
     expect(baseBranches([], "origin", "main")).toEqual(["main"]);
+  });
+});
+
+describe("the Pull Requests view's filters and sort", () => {
+  const pr = (number: number, over: Partial<PullRequest> = {}): PullRequest => ({
+    number,
+    title: `pr ${number}`,
+    author: "hubot",
+    is_draft: false,
+    review_decision: null,
+    checks: null,
+    head: `feature/${number}`,
+    base: "develop",
+    updated_at: "2026-11-01T00:00:00Z",
+    url: "",
+    labels: [],
+    ...over,
+  });
+  const list = [
+    pr(1, { author: "phuong", checks: "success", review_decision: "APPROVED", updated_at: "2026-11-03T00:00:00Z" }),
+    pr(2, { is_draft: true, checks: "failure", base: "master", title: "Add a cache" }),
+    pr(3, { author: "ada", review_decision: "REVIEW_REQUIRED", updated_at: "2026-11-02T00:00:00Z" }),
+  ];
+  const numbers = (prs: PullRequest[]) => prs.map((p) => p.number);
+
+  it("keeps the pull requests every set filter lets through", () => {
+    expect(numbers(filterPrList(list, NO_PR_LIST_FILTERS))).toEqual([1, 2, 3]);
+    expect(numbers(filterPrList(list, { ...NO_PR_LIST_FILTERS, author: "hubot" }))).toEqual([2]);
+    expect(numbers(filterPrList(list, { ...NO_PR_LIST_FILTERS, checks: "none" }))).toEqual([3]);
+    expect(numbers(filterPrList(list, { ...NO_PR_LIST_FILTERS, review: "none", draft: "ready" }))).toEqual([]);
+    expect(numbers(filterPrList(list, { ...NO_PR_LIST_FILTERS, base: "develop", draft: "ready" }))).toEqual([1, 3]);
+  });
+
+  it("offers each author and base once, A to Z", () => {
+    expect(prListChoices(list)).toEqual({ authors: ["ada", "hubot", "phuong"], bases: ["develop", "master"] });
+  });
+
+  it("sorts by a column, either way", () => {
+    expect(numbers(sortPrList(list, "updated", true))).toEqual([1, 3, 2]);
+    expect(numbers(sortPrList(list, "number", false))).toEqual([1, 2, 3]);
+    expect(numbers(sortPrList(list, "title", false))).toEqual([2, 1, 3]);
+    // The same author: the newest number first.
+    expect(numbers(sortPrList(list, "author", false))).toEqual([3, 2, 1]);
   });
 });
