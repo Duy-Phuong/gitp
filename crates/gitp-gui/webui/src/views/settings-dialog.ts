@@ -24,6 +24,7 @@ import {
   loadLocalHistoryEnabled,
   DEFAULT_REVIEW_COMMAND,
   loadInlineBlame,
+  loadJiraSite,
   loadReviewCommand,
   loadDetailTab,
   loadPullDefault,
@@ -40,6 +41,7 @@ import {
   saveDefaultBranch,
   saveLocalHistoryEnabled,
   saveInlineBlame,
+  saveJiraSite,
   saveReviewCommand,
   saveDetailTab,
   savePullDefault,
@@ -347,6 +349,12 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
           "Pull requests come through the GitHub CLI (gh), signed in as you. gitp stores no token.",
         ),
         row(
+          "Jira site",
+          jiraSiteField(),
+          "inline",
+          "A pull request whose title or branch names a ticket (UBIID-1234) gets an icon beside its title that opens the ticket here. Blank hides it.",
+        ),
+        row(
           "Review command",
           reviewCommandField(),
           "block",
@@ -630,6 +638,18 @@ function hooksList(actions: SettingsActions): HTMLElement {
 }
 
 // The shell line Run Review Command runs; blank restores the default.
+function jiraSiteField(): HTMLElement {
+  const input = el("input", {
+    class: "settings-select settings-path",
+    placeholder: "https://your-team.atlassian.net",
+    spellcheck: "false",
+    autocomplete: "off",
+  });
+  input.value = loadJiraSite();
+  input.addEventListener("change", () => saveJiraSite(input.value));
+  return input;
+}
+
 function reviewCommandField(): HTMLElement {
   const area = el("textarea", {
     class: "settings-select settings-command",

@@ -756,6 +756,19 @@ export function saveThreadCommand(kind: TurnKind, command: string): void {
   }
 }
 
+const JIRA_SITE_KEY = "gitp-jira-site";
+
+// The Jira site (https://team.atlassian.net) whose tickets the pull request
+// title's Jira icon opens; blank hides the icon.
+export function loadJiraSite(): string {
+  return localStorage.getItem(JIRA_SITE_KEY) ?? "";
+}
+
+export function saveJiraSite(site: string): void {
+  if (site.trim()) localStorage.setItem(JIRA_SITE_KEY, site.trim());
+  else localStorage.removeItem(JIRA_SITE_KEY);
+}
+
 export function loadReviewCommand(): string {
   return localStorage.getItem(REVIEW_COMMAND_KEY) ?? DEFAULT_REVIEW_COMMAND;
 }

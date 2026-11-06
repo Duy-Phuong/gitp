@@ -15,7 +15,8 @@ import { conversationNode, threadClaudeButtons } from "./thread-claude";
 import { threadState } from "../pr-threads";
 import { composerArea, previewToggle } from "./composer";
 import { iconBtn, renderFile, renderSplitDiff, WRAP_ICON } from "./detail";
-import { loadDiffWrap, loadPrDiffSplit, loadPrFilesTree, saveDiffWrap, savePrDiffSplit, savePrFilesTree } from "../prefs";
+import { loadDiffWrap, loadJiraSite, loadPrDiffSplit, loadPrFilesTree, saveDiffWrap, savePrDiffSplit, savePrFilesTree } from "../prefs";
+import { jiraKeyIn, jiraTicketUrl } from "../jira";
 import { renderFileTree } from "./tree";
 import {
   checksSummary,
@@ -133,6 +134,8 @@ const REVIEW_PAGE_ICON = ["M6 3h9l4 4v14H6z", "M14 3v5h5", "M9 12h7", "M9 16h7"]
 const READ_REVIEW_ICON = ["M3 5c3-1 6-1 9 1v14c-3-2-6-2-9-1z", "M21 5c-3-1-6-1-9 1v14c3-2 6-2 9-1z"];
 // A box with an arrow out of it: the pull request on GitHub.
 const PR_LINK_ICON = ["M14 4h6v6", "M20 4l-9 9", "M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"];
+// A ticket: a tag with a hole.
+const JIRA_ICON = ["M20.6 13.4l-7.2 7.2a1 1 0 0 1-1.4 0L3 11.6V4a1 1 0 0 1 1-1h7.6l9 9a1 1 0 0 1 0 1.4z", "M7.5 7.5h.01"];
 // A circling arrow, as on the top bar's Refresh.
 const REFRESH_ICON = "M20 11a8 8 0 10-.6 4M20 4v5h-5";
 // Arrows to the corners: the pull request in a tab of its own.
@@ -321,6 +324,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         el("span", { class: "pr-title", text: pr.title }),
         el("span", { class: "pr-number", text: `#${pr.number}` }),
         ...reviewPageLink(pr),
+        ...jiraLink(pr),
         titleLink(PR_LINK_ICON, `Open #${pr.number} on GitHub\n${pr.url}`, () => cb.openUrl(pr.url)),
       ]),
       meta,
@@ -772,6 +776,13 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     const icon = svg("svg", { viewBox: "0 0 24 24", class: "tb-icon", "aria-hidden": "true" });
     for (const d of paths) icon.append(svg("path", { d }));
     return icon;
+  }
+
+  // The Jira ticket named in the title or branch, when Settings has a site.
+  function jiraLink(pr: PullRequestDetail): HTMLElement[] {
+    const key = jiraKeyIn(pr.title, pr.head);
+    const url = jiraTicketUrl(loadJiraSite(), key);
+    return url ? [titleLink(JIRA_ICON, `Open ${key} in Jira\n${url}`, () => cb.openUrl(url))] : [];
   }
 
   function titleLink(icon: string[], title: string, onClick: () => void): HTMLElement {
