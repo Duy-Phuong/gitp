@@ -5778,9 +5778,16 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 
 /* Settings dialog (the top bar's gear): a section list on the left, the
    chosen section's rows on the right. */
+/* Drag the bottom-right corner to make it bigger. */
 .settings-modal {
   width: min(640px, 92vw);
   height: min(440px, 84vh);
+  min-width: 480px;
+  min-height: 320px;
+  max-width: 96vw;
+  max-height: 94vh;
+  resize: both;
+  overflow: hidden;
 }
 .settings-layout {
   flex: 1 1 auto;

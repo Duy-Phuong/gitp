@@ -6,6 +6,7 @@
 // section is one more entry in `sections`. Reuses the `.modal-overlay` /
 // `.modal` shell.
 
+import { jiraSite } from "../jira";
 import { el } from "../dom";
 import {
   applyZoom,
@@ -351,8 +352,8 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
         row(
           "Jira site",
           jiraSiteField(),
-          "inline",
-          "A pull request whose title or branch names a ticket (UBIID-1234) gets an icon beside its title that opens the ticket here. Blank hides it.",
+          "block",
+          "A pull request whose title or branch names a ticket (UBIID-1234) gets an icon beside its title that opens the ticket here. Paste the site or any ticket link from it. Blank hides it.",
         ),
         row(
           "Review command",
@@ -646,7 +647,10 @@ function jiraSiteField(): HTMLElement {
     autocomplete: "off",
   });
   input.value = loadJiraSite();
-  input.addEventListener("change", () => saveJiraSite(input.value));
+  input.addEventListener("change", () => {
+    saveJiraSite(jiraSite(input.value));
+    input.value = loadJiraSite();
+  });
   return input;
 }
 

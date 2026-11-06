@@ -18,3 +18,14 @@ export function jiraTicketUrl(site: string, key: string | null): string | null {
   if (!base || !key) return null;
   return `${base}/browse/${key}`;
 }
+
+/** The site's origin from what was typed or pasted: an origin, or any link on it such as a ticket's page. */
+export function jiraSite(text: string): string {
+  const t = text.trim();
+  if (!t) return "";
+  try {
+    return new URL(/^https?:\/\//.test(t) ? t : `https://${t}`).origin;
+  } catch {
+    return t;
+  }
+}

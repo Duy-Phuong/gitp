@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { jiraKeyIn, jiraTicketUrl } from "./jira";
+import { jiraKeyIn, jiraSite, jiraTicketUrl } from "./jira";
 
 describe("jiraKeyIn", () => {
   it("finds the first ticket key across the texts given", () => {
@@ -22,5 +22,13 @@ describe("jiraTicketUrl", () => {
   it("is null without a site or a key", () => {
     expect(jiraTicketUrl("", "KW-4")).toBeNull();
     expect(jiraTicketUrl("https://x.atlassian.net", null)).toBeNull();
+  });
+});
+
+describe("jiraSite", () => {
+  it("keeps only the origin of a pasted link", () => {
+    expect(jiraSite("https://mesoneerag.atlassian.net/browse/UBIID-9674")).toBe("https://mesoneerag.atlassian.net");
+    expect(jiraSite("mesoneerag.atlassian.net")).toBe("https://mesoneerag.atlassian.net");
+    expect(jiraSite("  ")).toBe("");
   });
 });
