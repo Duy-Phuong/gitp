@@ -382,8 +382,11 @@ export function showQuickLaunch(first: QuickStage): void {
     }
   };
   document.addEventListener("keydown", onKey, true);
+  // Only a press on the backdrop itself closes. A clicked row that opens a
+  // next list is gone from the panel by the time its press gets here, so
+  // "not in the panel" would close the list it just opened.
   overlay.addEventListener("mousedown", (e) => {
-    if (!panel.contains(e.target as Node)) closeQuickLaunch();
+    if (e.target === overlay) closeQuickLaunch();
   });
 
   renderBar();
