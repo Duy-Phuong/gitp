@@ -54,7 +54,7 @@ mod worktree_ops;
 pub use activity::ActivityEntry;
 pub use bisect::{BisectMark, BisectStatus};
 pub use blame::{BlameCommit, BlameLine, FileBlame};
-pub use branch_ops::MergeMode;
+pub use branch_ops::{AheadCommit, MergeMode};
 pub use checkout::StashSwitch;
 pub use commit_ops::ResetMode;
 pub use compare::{CompareEnd, Comparison, EMPTY_REV, WORKDIR_REV};

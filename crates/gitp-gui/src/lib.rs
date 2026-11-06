@@ -197,6 +197,7 @@ pub fn run() {
             gitflow::gitflow_start,
             gitflow::gitflow_finish,
             remote::push_branch,
+            remote::branch_ahead_log,
             remote::push_branch_to,
             remote::fetch_branch,
             remote::fetch_all,

@@ -5,6 +5,7 @@
 import REVIEW_BRIDGE from "./review-bridge.js?raw";
 import type {
   ActivityEntry,
+  AheadCommit,
   ThreadConversation,
   ThreadInput,
   TurnKind,
@@ -988,6 +989,18 @@ export async function gitflowFinish(branch: string, tagMessage: string | null): 
 export async function pushBranch(name: string, remote?: string): Promise<string> {
   if (!isTauri()) return `Pushed ${name} to ${remote ?? "origin"} (preview mock)`;
   return invokeNetwork<string>("push_branch", { name, remote: remote ?? null });
+}
+
+// The commits of `name` its upstream doesn't have yet, newest first: what
+// a push would send. None without an upstream.
+export async function branchAheadLog(name: string): Promise<AheadCommit[]> {
+  if (!isTauri()) {
+    return [
+      { sha: "a1b2c3d", subject: "fix(review): src/retry.ts:12 — restore >" },
+      { sha: "d4e5f6a", subject: "fix(review): src/upload.ts:40 — cap at 30 s" },
+    ];
+  }
+  return invoke<AheadCommit[]>("branch_ahead_log", { name });
 }
 
 // Push local branch `name` to `remoteBranch` on `remote`, whatever its name

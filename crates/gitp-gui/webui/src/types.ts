@@ -721,6 +721,12 @@ export interface PrReviewComment {
   diff_hunk: string;
 }
 
+// A commit a branch has that its upstream doesn't.
+export interface AheadCommit {
+  sha: string;
+  subject: string;
+}
+
 // What a Claude turn on a thread asked for.
 export type TurnKind = "check" | "explain" | "followup" | "reply-draft" | "fix";
 
