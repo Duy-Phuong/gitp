@@ -1,5 +1,6 @@
 import "./styles.css";
 import { onReviewsChange } from "./pr-reviews";
+import { onThreadsChange } from "./pr-threads";
 import {
   abortConflict,
   addToGitignore,
@@ -540,6 +541,11 @@ async function init(): Promise<void> {
   // A review running in the background moved on: its badge and, when its pull
   // request is the one open, the view.
   onReviewsChange(() => {
+    renderSidebarNow();
+    ui.prView?.redraw();
+  });
+  // So did a Claude turn on one of its threads.
+  onThreadsChange(() => {
     renderSidebarNow();
     ui.prView?.redraw();
   });

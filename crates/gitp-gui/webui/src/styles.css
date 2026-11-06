@@ -5564,6 +5564,77 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   justify-content: flex-end;
   gap: 6px;
 }
+/* Claude on the thread: its conversation under the comments, a left rule in
+   the accent colour, folded to one line until opened. */
+.pr-thread-claude {
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+.pr-thread-claude-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.pr-thread-claude-head:hover {
+  color: var(--text);
+}
+.pr-thread-claude-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pr-thread-claude-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pr-thread-claude-turn.user .pr-card-author {
+  color: var(--text-dim);
+}
+.pr-thread-claude-text {
+  white-space: pre-wrap;
+}
+.pr-thread-claude-running,
+.pr-thread-claude-stale,
+.pr-thread-claude-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.pr-thread-claude-running,
+.pr-thread-claude-stale {
+  color: var(--text-dim);
+}
+.pr-thread-claude-error {
+  color: var(--del-fg, #e5484d);
+}
+.pr-thread-claude-error > span {
+  flex: 1;
+  white-space: pre-wrap;
+}
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: pr-thread-spin 0.8s linear infinite;
+  flex: none;
+}
+@keyframes pr-thread-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 /* A resolved thread folds to its first comment, dimmed, as on GitHub. */
 .pr-thread.resolved {
   opacity: 0.75;

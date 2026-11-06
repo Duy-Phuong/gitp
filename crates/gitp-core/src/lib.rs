@@ -33,6 +33,7 @@ mod local_history;
 mod log;
 mod merge_preview;
 mod pick_plan;
+mod pr_threads;
 mod progress;
 mod rebase;
 mod reflog;
@@ -72,7 +73,7 @@ pub use filelog::FileCommit;
 pub use gh::{
     CommitPullRequest, DiffSide, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings, LineComment, MergeMethod, NewPullRequest,
     PrCheck, PrComment, PrDraft, PrFilter, PrLabel, PrReview, PrReviewComment, PullRequest,
-    PullRequestDetail, ReviewFile, ReviewVerdict, LOGIN_TIMEOUT,
+    PullRequestDetail, ReviewFile, ReviewVerdict, ThreadInput, LOGIN_TIMEOUT,
 };
 pub use gitflow::{FlowKind, GitFlowConfig};
 pub use hooks::{Hook, HookState, Hooks, HOOK_NAMES};
@@ -85,6 +86,7 @@ pub use local_history::{
 pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope, LogWalk};
 pub use merge_preview::MergePreview;
 pub use pick_plan::{PickAction, PickPlanOutcome, PickStep};
+pub use pr_threads::{ThreadConversation, ThreadTurn, TurnKind, TurnRole, THREAD_KEEP};
 pub use progress::{NetworkHooks, Progress, ProgressFn};
 pub use rebase::{RebaseAction, RebaseCommit, RebaseStatus, RebaseStep};
 pub use reflog::ReflogEntry;

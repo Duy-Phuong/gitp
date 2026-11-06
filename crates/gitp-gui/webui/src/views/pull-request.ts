@@ -11,6 +11,8 @@
 
 import { clear, el, githubIcon, svg } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
+import { conversationNode, threadClaudeButtons } from "./thread-claude";
+import { threadState } from "../pr-threads";
 import { composerArea, previewToggle } from "./composer";
 import { iconBtn, renderFile, renderSplitDiff, WRAP_ICON } from "./detail";
 import { loadDiffWrap, loadPrDiffSplit, loadPrFilesTree, saveDiffWrap, savePrDiffSplit, savePrFilesTree } from "../prefs";
@@ -43,7 +45,7 @@ import {
   type Draft,
   type PrReview,
 } from "../pr-reviews";
-import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PullRequestDetail, ReviewVerdict } from "../types";
+import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PullRequestDetail, ReviewVerdict, TurnKind } from "../types";
 
 export interface PullRequestCallbacks {
   fetchDetail: (number: number) => Promise<PullRequestDetail>;
@@ -83,6 +85,8 @@ export interface PullRequestCallbacks {
   // Starts the review command over the diff in the background; its drafts
   // land in the pull request's review (pr-reviews.ts), and the view is told.
   generateDrafts: (pr: PullRequestDetail) => void;
+  // The same with the review skill, whatever the Review command preset.
+  generateDraftsWithSkill: (pr: PullRequestDetail) => void;
   cancelReview: (pr: PullRequestDetail) => void;
   // Reads again the drafts of a review saved before the app last quit.
   restoreDrafts: (number: number) => void;
@@ -91,6 +95,17 @@ export interface PullRequestCallbacks {
   // Posts one review with `comments` after the user confirms; true once it is
   // on GitHub.
   postReview: (pr: PullRequestDetail, verdict: ReviewVerdict, body: string, comments: LineComment[]) => Promise<boolean>;
+  // Claude on a thread (pr-threads.ts): runs a turn in the background and
+  // the view redraws from the thread's state; loads the saved conversation
+  // once; forgets it after the user confirms; prunes the old ones.
+  threadTurn: (pr: PullRequestDetail, thread: Thread, kind: TurnKind, userText: string) => void;
+  cancelThreadTurn: (pr: PullRequestDetail, thread: Thread) => void;
+  loadThreadConversation: (pr: PullRequestDetail, thread: Thread) => void;
+  // True once forgotten; false when the user said no or it failed.
+  clearThreadConversation: (pr: PullRequestDetail, thread: Thread) => Promise<boolean>;
+  pruneThreadConversations: () => void;
+  // Asks before a draft replaces what the user typed.
+  confirm: (message: string) => Promise<boolean>;
   reportError: (title: string, err: unknown) => void;
 }
 
@@ -100,6 +115,7 @@ export interface PullRequestHandle {
   // The header buttons' actions, for Quick Launch: run the review command, or
   // pick a review file, into the Drafts tab of the pull request on screen.
   generateDrafts: () => void;
+  generateDraftsWithSkill: () => void;
   loadReviewFile: () => void;
   // Read it again from GitHub — after a review posted from the menu, say.
   reload: () => void;
@@ -153,6 +169,25 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // Opened with no drafts yet and no tab picked: drafts read back from a saved
   // review a moment later open the Drafts tab.
   let draftsWhenReady = false;
+  // Claude on the threads (pr-threads.ts): which conversation blocks are
+  // open, by root comment id; what each thread last ran, so a turn that just
+  // finished opens its block and a failed one can be tried again; the threads
+  // whose Reply with Claude is to land in the Reply box; and whether the old
+  // conversations were pruned yet for this repo.
+  // The tab drawn last, so a redraw of the same one keeps its scroll.
+  let renderedTab: Tab | null = null;
+  const openBlocks = new Set<number>();
+  const lastKind = new Map<number, TurnKind>();
+  // Reply with Claude: how many turns the thread had when it was clicked, so
+  // only a draft newer than that lands in the Reply box.
+  const pendingReplyDraft = new Map<number, number>();
+  let prunedFor: string | null = null;
+  // What is typed in a thread's Reply box and follow-up box, by root comment
+  // id, and which Reply boxes are open: a redraw (a turn ending on any
+  // thread) keeps them, as `draft` keeps the bottom composer.
+  const replyOpen = new Set<number>();
+  const replyText = new Map<number, string>();
+  const followupText = new Map<number, string>();
 
   const message = (text: string) => {
     clear(host);
@@ -181,6 +216,15 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   function render(): void {
     if (!detail) return;
     const pr = detail;
+    // A redraw of the same tab keeps the scroll position: a turn ending on a
+    // thread must not jump the view to the top. Restored once the tab's
+    // content is in place — an empty body can't scroll — and not on a tab
+    // switch, which starts at the top.
+    const scrolled = renderedTab === tab ? (host.querySelector<HTMLElement>(".pr-body")?.scrollTop ?? 0) : 0;
+    renderedTab = tab;
+    const restore = (body: HTMLElement) => {
+      if (scrolled) body.scrollTop = scrolled;
+    };
     clear(host);
     const body = el("div", { class: "pr-body" });
     // A link in a description or comment opens in the browser (see
@@ -214,10 +258,11 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     );
     host.append(el("div", { class: "pr-view" }, [header(pr), tabs, body]));
     if (tab === "conversation") renderConversation(body, pr);
-    else if (tab === "files") void renderFiles(body, pr);
+    else if (tab === "files") void renderFiles(body, pr).then(() => restore(body));
     else if (tab === "commits") renderCommits(body, pr);
     else if (tab === "drafts") renderDrafts(body, pr);
     else renderChecks(body, pr);
+    restore(body);
   }
 
   function header(pr: PullRequestDetail): HTMLElement {
@@ -246,9 +291,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       button("Check Out", () => cb.checkout(pr), `gh pr checkout ${pr.number}: a local branch tracking ${pr.head}`),
       button("Check Out in New Worktree…", (e) => cb.checkoutInWorktree(pr, e.clientX, e.clientY)),
       button("Review ▾", (e) => cb.reviewMenu(pr, e.clientX, e.clientY), "Approve, request changes or comment"),
-      review().running
-        ? button("Reviewing… Cancel", () => cb.cancelReview(pr), "The review command is running in the background; click to stop it")
-        : generateButton(pr),
+      ...(review().running
+        ? [button("Reviewing… Cancel", () => cb.cancelReview(pr), "The review command is running in the background; click to stop it")]
+        : [generateButton(pr), skillButton(pr)]),
       button("Load Review File…", () => void loadDrafts(pr), "Read a review's findings as draft comments, to approve or discard before posting"),
       open,
     ]);
@@ -355,16 +400,100 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       node.append(el("div", { class: "pr-thread-resolved" }, [el("span", { class: "pr-badge", text: "Resolved" }), el("span", { text: `${1 + thread.replies.length} comment${thread.replies.length ? "s" : ""}` })]));
     }
     for (const c of resolved ? [root] : [root, ...thread.replies]) node.append(card(c.author, c.created_at, "", c.body, [], "pr-thread-comment"));
-    const open = smallButton("Reply…", () => {
-      open.replaceWith(
-        replyBox("Reply (Markdown)", "Reply", async (text) => {
-          if (!(await cb.reply(pr, root, text))) return false;
+    // The Reply box, above the actions row (which the Claude buttons share: a
+    // box in the row would be squeezed beside them), with what was typed in
+    // it kept across redraws.
+    const openReply = () => {
+      replyOpen.add(root.id);
+      const box = replyBox(
+        "Reply (Markdown)",
+        "Reply",
+        async (body) => {
+          if (!(await cb.reply(pr, root, body))) return false;
+          replyOpen.delete(root.id);
+          replyText.delete(root.id);
           await load(true);
           return true;
-        }),
+        },
+        () => {
+          replyOpen.delete(root.id);
+          replyText.delete(root.id);
+          box.remove();
+          actions.append(open);
+        },
       );
-    });
+      const area = box.querySelector("textarea")!;
+      area.value = replyText.get(root.id) ?? "";
+      area.addEventListener("input", () => replyText.set(root.id, area.value));
+      actions.before(box);
+      open.remove();
+    };
+    const open = smallButton("Reply…", () => openReply());
     const actions = el("div", { class: "pr-thread-actions" }, [open]);
+    // Claude on the thread: its conversation block, and the buttons that
+    // start a turn — not on a resolved thread, as on GitHub nothing happens
+    // there any more.
+    if (!resolved) {
+      cb.loadThreadConversation(pr, thread);
+      const ts = threadState(cb.repoPath(), pr.number, root.id);
+      const turn = (kind: TurnKind, text = "") => {
+        lastKind.set(root.id, kind);
+        openBlocks.add(root.id);
+        cb.threadTurn(pr, thread, kind, text);
+      };
+      if (ts.conversation || ts.running || ts.error) {
+        node.append(
+          conversationNode({
+            state: ts,
+            head: pr.head_oid,
+            open: openBlocks.has(root.id),
+            lastKind: lastKind.get(root.id) ?? null,
+            draft: followupText.get(root.id),
+            onDraft: (text) => followupText.set(root.id, text),
+            onFollowup: (text) => turn("followup", text),
+            onClear: () =>
+              void cb.clearThreadConversation(pr, thread).then((cleared) => {
+                if (cleared) openBlocks.delete(root.id);
+              }),
+            onRetry: (kind) => turn(kind),
+            onCancel: () => cb.cancelThreadTurn(pr, thread),
+            onToggle: () => {
+              if (!openBlocks.delete(root.id)) openBlocks.add(root.id);
+              render();
+            },
+          }),
+        );
+      }
+      // A reply draft that arrived since Reply with Claude was clicked lands
+      // in the Reply box — after a confirm when the box holds something.
+      const turns = ts.conversation?.turns ?? [];
+      const last = turns[turns.length - 1];
+      const since = pendingReplyDraft.get(root.id);
+      if (since !== undefined && !ts.running) {
+        if (ts.error) pendingReplyDraft.delete(root.id);
+        else if (turns.length > since && last?.kind === "reply-draft" && last.role === "claude") {
+          pendingReplyDraft.delete(root.id);
+          if (!replyText.get(root.id)?.trim()) replyText.set(root.id, last.text);
+          else {
+            void cb.confirm("Replace what you typed in the Reply box with Claude's draft?").then((ok) => {
+              if (!ok) return;
+              replyText.set(root.id, last.text);
+              replyOpen.add(root.id);
+              render();
+            });
+          }
+        }
+      }
+      for (const b of threadClaudeButtons(false, ts.running)) {
+        const button = smallButton(b.label, () => {
+          if (b.action === "reply-draft") pendingReplyDraft.set(root.id, ts.conversation?.turns.length ?? 0);
+          turn(b.action);
+        });
+        (button as HTMLButtonElement).disabled = b.disabled;
+        button.classList.add("pr-thread-claude-button");
+        actions.append(button);
+      }
+    }
     if (state) {
       actions.prepend(
         smallButton(resolved ? "Unresolve" : "Resolve", () => {
@@ -375,6 +504,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       );
     }
     node.append(actions);
+    if (replyOpen.has(root.id) || (replyText.get(root.id) ?? "") !== "") openReply();
     return node;
   }
 
@@ -602,6 +732,19 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         : "Run the review command (Settings → Git) in the background; its findings become draft comments to approve or discard",
     });
     b.addEventListener("click", () => cb.generateDrafts(pr));
+    return b;
+  }
+
+  // Review with skill: the /review-pr-phuong skill in one click, whatever the
+  // Review command preset in Settings says; the same green dot.
+  function skillButton(pr: PullRequestDetail): HTMLElement {
+    const fresh = hasNewCommits(cb.reviewedHead(pr.number), pr.head_oid);
+    const b = el("button", {
+      class: `btn small ghost${fresh ? " pr-has-news" : ""}`,
+      text: "Review with skill",
+      title: "Run the /review-pr-phuong Claude Code skill in the background, whatever the Review command preset; its review page becomes the drafts",
+    });
+    b.addEventListener("click", () => cb.generateDraftsWithSkill(pr));
     return b;
   }
 
@@ -929,6 +1072,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
 
   return {
     show: (n) => {
+      if (prunedFor !== cb.repoPath()) {
+        prunedFor = cb.repoPath();
+        cb.pruneThreadConversations();
+      }
       if (n !== number) {
         treeSelected = null;
         treeCollapsed.clear();
@@ -958,15 +1105,26 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     generateDrafts: () => {
       if (detail) cb.generateDrafts(detail);
     },
+    generateDraftsWithSkill: () => {
+      if (detail) cb.generateDraftsWithSkill(detail);
+    },
     loadReviewFile: () => {
       if (detail) void loadDrafts(detail);
     },
     reset: () => {
       generation++;
+      openBlocks.clear();
+      lastKind.clear();
+      pendingReplyDraft.clear();
+      replyOpen.clear();
+      replyText.clear();
+      followupText.clear();
+      prunedFor = null;
       number = null;
       detail = null;
       files = null;
       draft = "";
+      renderedTab = null;
       clear(host);
     },
   };

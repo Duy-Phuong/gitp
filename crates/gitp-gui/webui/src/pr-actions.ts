@@ -12,6 +12,8 @@ import {
   commentOnLine,
   commentOnPullRequest,
   cancelReviewDrafts,
+  cancelThreadTurn,
+  clearThreadConversation,
   confirmDialog,
   createPullRequestOnGitHub,
   fetchPullRequest,
@@ -34,6 +36,7 @@ import {
   mergePullRequest,
   openGithubUrl,
   pickReviewFile,
+  pruneThreadConversations,
   pullRequestDraft,
   pushBranch,
   readReviewFile,
@@ -43,6 +46,8 @@ import {
   revealPath,
   reviewPullRequest,
   reviewWithComments,
+  threadConversation,
+  threadTurn,
 } from "./api";
 import { state, ui } from "./app-state";
 import { copyText } from "./clipboard";
@@ -58,7 +63,8 @@ import {
 } from "./shell";
 import { defaultWorktreePath } from "./worktree-actions";
 import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
-import { EXPLAIN_FINDING_COMMAND, loadReviewCommand } from "./prefs";
+import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, SKILL_REVIEW_COMMAND } from "./prefs";
+import { finishTurn, lastUserText, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
 import { showErrorDialog } from "./views/message-dialog";
@@ -76,8 +82,8 @@ import {
 import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
 import { openReviewViewer } from "./views/review-viewer";
-import { baseBranches, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices } from "./pull-requests";
-import type { BranchRef, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict } from "./types";
+import { baseBranches, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices, type Thread } from "./pull-requests";
+import type { BranchRef, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict, TurnKind } from "./types";
 
 // --- The sidebar section ----------------------------------------------------
 
@@ -504,6 +510,7 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
     }),
   repoPath: () => state.repoPath,
   generateDrafts: (pr) => void runReview(state.repoPath, pr.number, pr.head_oid),
+  generateDraftsWithSkill: (pr) => void runReview(state.repoPath, pr.number, pr.head_oid, SKILL_REVIEW_COMMAND),
   reviewedHead: (number) => reviewedHead(state.repoPath, number),
   cancelReview: (pr) => void cancelReviewDrafts(state.repoPath, pr.number),
   restoreDrafts: (number) => void restoreDrafts(state.repoPath, number),
@@ -517,8 +524,88 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
     const preview = comments.map((c) => `${c.path}:${c.line} — ${c.body.split("\n")[0]}`).join("\n");
     return post(what, pr.number, body.trim() ? `${body}\n\n${preview}` : preview, () => reviewWithComments(pr.number, verdict, body, comments));
   },
+  threadTurn: (pr, thread, kind, userText) => void runThreadTurn(state.repoPath, pr, thread, kind, userText),
+  cancelThreadTurn: (pr, thread) =>
+    void cancelThreadTurn(state.repoPath, pr.number, thread.root.id).catch((err) => opFailed("Couldn't cancel Claude's turn", err)),
+  confirm: (message) => confirmDialog(message),
+  loadThreadConversation: (pr, thread) => void loadThreadConversation(state.repoPath, pr.number, thread.root.id),
+  clearThreadConversation: async (pr, thread) => {
+    const repo = state.repoPath;
+    if (!(await confirmDialog(`Forget Claude's conversation on ${thread.root.path} of #${pr.number}?`))) return false;
+    try {
+      await clearThreadConversation(repo, pr.number, thread.root.id);
+      setConversation(repo, pr.number, thread.root.id, null);
+      threadsChanged();
+      return true;
+    } catch (err) {
+      opFailed("Couldn't forget the conversation", err);
+      return false;
+    }
+  },
+  pruneThreadConversations: () => {
+    const repo = state.repoPath;
+    pruneThreadConversations(repo).then(
+      (n) => {
+        if (n) setStatus(`Forgot ${n} Claude conversation${n === 1 ? "" : "s"} older than two months.`);
+      },
+      (err) => readFailed("Couldn't prune the Claude conversations", err),
+    );
+  },
   reportError: readFailed,
 };
+
+// --- Claude on a thread, in the background -----------------------------------
+
+// Run one Claude turn of `kind` on `thread` of `pr`, in the repo at `repo`:
+// the thread shows it running and, when it is done, the answer; the sidebar
+// marks the pull request meanwhile. A reply draft builds on the last thing
+// the user said in the conversation.
+async function runThreadTurn(repo: string, pr: PullRequestDetail, thread: Thread, kind: TurnKind, userText: string): Promise<void> {
+  const { number } = pr;
+  const id = thread.root.id;
+  const where = `${thread.root.path}:${thread.root.line ?? thread.root.original_line ?? "?"}`;
+  if (!startTurn(repo, number, id, kind)) return;
+  const text = kind === "reply-draft" ? lastUserText(threadState(repo, number, id).conversation) : userText;
+  setStatus(`Asking Claude about ${where} of #${number} in the background — keep working; the thread shows when it answers.`);
+  try {
+    const input = { number, head: pr.head_oid, author: pr.author, comments: [thread.root, ...thread.replies] };
+    const conversation = await threadTurn(repo, input, kind, text, loadThreadCommand(kind));
+    finishTurn(repo, number, id, conversation);
+    setStatus(`Claude answered on ${where} of #${number}.`);
+  } catch (err) {
+    if (isCancelled(err)) {
+      finishTurn(repo, number, id, { error: "Cancelled." });
+      setStatus(`Claude's turn on ${where} of #${number} cancelled.`);
+    } else {
+      const title = `Claude couldn't answer on ${where} of #${number}`;
+      finishTurn(repo, number, id, { error: String(err) });
+      setStatus(`${title}: ${String(err)}`);
+      toast(title, { kind: "error", onDetails: () => showErrorDialog(title, String(err)) });
+    }
+    // A failed follow-up kept its question: show it.
+    void loadThreadConversation(repo, number, id, true);
+  }
+}
+
+// Read the thread's saved conversation into its state, once — or again when
+// `force`, after a failed turn that may have kept the question.
+async function loadThreadConversation(repo: string, number: number, id: number, force = false): Promise<void> {
+  const s = threadState(repo, number, id);
+  if (s.loaded && !force) return;
+  s.loaded = true;
+  try {
+    const c = await threadConversation(repo, number, id);
+    if (c || force) {
+      // After a failed turn the error (and Try again) stays on screen.
+      setConversation(repo, number, id, c, { keepError: force });
+      threadsChanged();
+    }
+  } catch (err) {
+    // Stays loaded: a file that can't be read is reported once, not on
+    // every redraw. A turn on the thread reads it again.
+    readFailed("Couldn't read Claude's conversation", err);
+  }
+}
 
 // --- Reviews in the background ---------------------------------------------
 
@@ -526,15 +613,18 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
 // in the background: the sidebar marks the pull request while it runs and
 // when its drafts are ready, and the user can do anything else meanwhile —
 // another pull request, another repo tab.
-async function runReview(repo: string, number: number, head: string): Promise<void> {
+async function runReview(repo: string, number: number, head: string, command = loadReviewCommand()): Promise<void> {
   const r = prReview(repo, number);
-  if (r.running) return;
+  if (r.running) {
+    setStatus(`A review of #${number} is already running.`);
+    return;
+  }
   r.running = true;
   r.error = null;
   reviewsChanged();
   setStatus(`Reviewing #${number} in the background — keep working; the pull request shows when it's done.`);
   try {
-    const out = await generateReviewDrafts(repo, number, loadReviewCommand());
+    const out = await generateReviewDrafts(repo, number, command);
     setReviewedHead(repo, number, reviewedHeadIn(out.text) ?? head);
     const all = parseReviewFile(out.text);
     const found = unposted(repo, number, all);

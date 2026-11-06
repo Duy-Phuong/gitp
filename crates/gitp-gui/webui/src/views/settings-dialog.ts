@@ -46,6 +46,9 @@ import {
   saveSyntaxHighlight,
   saveTerminalFont,
   SKILL_REVIEW_COMMAND,
+  DEFAULT_THREAD_COMMANDS,
+  loadThreadCommand,
+  saveThreadCommand,
   TAB_SIZES,
   type CodePrefs,
   type DateFormat,
@@ -55,7 +58,7 @@ import {
   ZOOM_LEVELS,
 } from "../prefs";
 import type { DetailTab } from "./detail";
-import type { GhAccount, Hooks } from "../types";
+import type { GhAccount, Hooks, TurnKind } from "../types";
 
 export interface SettingsActions {
   // Apply and persist a theme, redrawing whatever CSS alone can't restyle.
@@ -349,6 +352,15 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
           "block",
           "Generate Drafts on a pull request runs this shell line with the diff on its stdin and reads its output as draft comments: \"### path:line\" blocks or a JSON list. GITP_PR_NUMBER, GITP_PR_REPO and GITP_PR_URL are set.",
         ),
+        row(
+          "Check command",
+          threadCommandField("check"),
+          "block",
+          "Check, Explain simply, Reply with Claude and a follow-up on a pull request thread each run a shell line with the thread as JSON in $GITP_THREAD_FILE and the user's text on stdin. GITP_PR_NUMBER, GITP_PR_REPO, GITP_PR_URL, GITP_PR_HEAD, GITP_PR_AUTHOR, GITP_GH_LOGIN, GITP_THREAD_ID, GITP_THREAD_PATH, GITP_THREAD_LINE, GITP_CLAUDE_SESSION and GITP_TURN_KIND are set. Its stdout is the answer: plain Markdown, or claude's --output-format json. Blank restores the default.",
+        ),
+        row("Explain simply command", threadCommandField("explain"), "block"),
+        row("Reply with Claude command", threadCommandField("reply-draft"), "block"),
+        row("Follow-up command", threadCommandField("followup"), "block"),
         row("Git configuration", linkButton("Open Git Config", () => actions.openConfig("git"))),
         row("Dotfiles", linkButton("Open Dotfiles", () => actions.openConfig("dotfiles"))),
       ],
@@ -660,6 +672,27 @@ function reviewCommandField(): HTMLElement {
   });
   show();
   return el("div", { class: "settings-command-row" }, [area, el("div", { class: "settings-command-presets" }, [toggle, custom])]);
+}
+
+// The shell line one of the thread turns runs (see prefs.ts
+// DEFAULT_THREAD_COMMANDS); blank restores the default, and Reset to default
+// shows while the line is a custom one.
+function threadCommandField(kind: TurnKind): HTMLElement {
+  const area = el("textarea", { class: "settings-select settings-command", spellcheck: "false", rows: 3 });
+  const reset = linkButton("Reset to default", () => {
+    saveThreadCommand(kind, "");
+    show();
+  });
+  const show = () => {
+    area.value = loadThreadCommand(kind);
+    reset.hidden = area.value === DEFAULT_THREAD_COMMANDS[kind];
+  };
+  area.addEventListener("change", () => {
+    saveThreadCommand(kind, area.value);
+    show();
+  });
+  show();
+  return el("div", { class: "settings-command-row" }, [area, el("div", { class: "settings-command-presets" }, [reset])]);
 }
 
 // Who gh is signed in as, with Sign In or Sign Out — or how to install gh.

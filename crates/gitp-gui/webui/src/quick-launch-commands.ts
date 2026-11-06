@@ -467,6 +467,7 @@ function repoCommands(): QuickItem[] {
     ...(state.prs.open !== null
       ? [
           { kind: "command" as const, label: "Pull Request: Generate Drafts", detail: "run the review command over the open pull request's diff", run: () => ui.prView?.generateDrafts() },
+          { kind: "command" as const, label: "Pull Request: Review with Skill", detail: "run the /review-pr-phuong skill over the open pull request", run: () => ui.prView?.generateDraftsWithSkill() },
           { kind: "command" as const, label: "Pull Request: Load Review File…", detail: "a review's findings as draft comments", run: () => ui.prView?.loadReviewFile() },
         ]
       : []),
