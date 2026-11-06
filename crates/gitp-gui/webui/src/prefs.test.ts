@@ -8,6 +8,7 @@ import {
   withCodeRecent,
   SKILL_REVIEW_COMMAND,
   DEFAULT_THREAD_COMMANDS,
+  FIX_TOOLS,
   loadThreadCommand,
   saveThreadCommand,
   THREAD_TOOLS,
@@ -141,7 +142,7 @@ describe("thread commands", () => {
     // written by other people reach the model under dontAsk.
     const writes = THREAD_TOOLS.filter((t) => t.startsWith("Edit") || /mkdir|\brm |python3|curl|ArtifactData|git fetch|gh api/.test(t));
     expect(writes).toEqual([]);
-    for (const kind of ["check", "explain", "followup", "reply-draft"] as const) {
+    for (const kind of ["check", "explain", "followup", "reply-draft", "fix"] as const) {
       const c = DEFAULT_THREAD_COMMANDS[kind];
       expect(c.startsWith('claude -p "'), kind).toBe(true);
       expect(c, kind).toContain("--output-format json");
@@ -152,6 +153,16 @@ describe("thread commands", () => {
     }
     expect(DEFAULT_THREAD_COMMANDS["reply-draft"]).toContain("@$GITP_GH_LOGIN");
     expect(DEFAULT_THREAD_COMMANDS.check).toContain("git show $GITP_PR_HEAD:");
+  });
+
+  it("the fix command may edit, commit and test, never push, post or move branches", () => {
+    for (const t of ["Edit", "Write", "Bash(git commit *)", "Bash(git add *)", "Bash(cargo test *)", "Bash(npx vitest *)"]) expect(FIX_TOOLS).toContain(t);
+    expect(FIX_TOOLS.filter((t) => /git push|gh api|gh pr (comment|review|merge)|checkout|switch|git reset|rebase/.test(t))).toEqual([]);
+    const c = DEFAULT_THREAD_COMMANDS.fix;
+    expect(c).toContain("commit exactly once");
+    expect(c).toContain("$GITP_THREAD_FILE");
+    expect(c.indexOf("$GITP_THREAD_FILE")).toBeLessThan(c.indexOf("--allowedTools"));
+    expect(c).toContain('--allowedTools "' + FIX_TOOLS.join(" ") + '"');
   });
 
   describe("saved per kind", () => {
