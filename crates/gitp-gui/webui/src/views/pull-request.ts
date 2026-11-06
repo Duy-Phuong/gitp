@@ -9,7 +9,7 @@
 // of it goes through innerHTML: Markdown is rendered by markdown-preview.ts,
 // which builds text nodes, and the rest is set as text.
 
-import { clear, el, githubIcon, svg } from "../dom";
+import { clear, el, svg } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
 import { conversationNode, threadClaudeButtons } from "./thread-claude";
 import { threadState } from "../pr-threads";
@@ -285,8 +285,6 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       b.addEventListener("click", onClick);
       return b;
     };
-    const open = button("Open on GitHub", () => cb.openUrl(pr.url));
-    open.prepend(githubIcon());
     const actions = el("div", { class: "pr-actions" }, [
       button("Check Out", () => cb.checkout(pr), `gh pr checkout ${pr.number}: a local branch tracking ${pr.head}`),
       button("Check Out in New Worktree…", (e) => cb.checkoutInWorktree(pr, e.clientX, e.clientY)),
@@ -295,7 +293,6 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         ? [button("Reviewing… Cancel", () => cb.cancelReview(pr), "The review command is running in the background; click to stop it")]
         : [generateButton(pr), skillButton(pr)]),
       button("Load Review File…", () => void loadDrafts(pr), "Read a review's findings as draft comments, to approve or discard before posting"),
-      open,
     ]);
     if (pr.state === "OPEN") {
       const merge = button("Merge…", () => cb.merge(pr), `Merge #${pr.number} into ${pr.base} on GitHub`);
