@@ -152,3 +152,54 @@ describe("reviewedHeadIn", () => {
     expect(reviewedHeadIn("### a.ts:1\nno header")).toBeNull();
   });
 });
+
+describe("a comment on the whole pull request", () => {
+  // The review skill's block for the description: a heading with no file and
+  // line, a comment to paste all the same.
+  const REVIEW_WITH_GENERAL = `## Suggested changes and comments to paste
+
+### \`src/a.ts:4\`
+
+**Comment to paste:**
+
+<!-- copy:start -->
+On a line.
+<!-- copy:end -->
+
+### PR description
+
+**Severity:** 🟢 nit
+
+**Explained simply:**
+
+The body says the spec comes later.
+
+**Comment to paste:**
+
+<!-- copy:start -->
+Small one: the spec is in this PR.
+<!-- copy:end -->
+
+### Rules and guards (RG-1 to RG-5)
+
+All five hold; nothing to paste here.
+
+## Final verdict
+`;
+
+  it("is read too, by its heading, when it has a comment to paste", () => {
+    const drafts = parseReviewFile(REVIEW_WITH_GENERAL);
+    expect(drafts.map((d) => [d.path, d.line, d.topic ?? null, d.body, d.severity])).toEqual([
+      ["src/a.ts", 4, null, "On a line.", null],
+      ["", 0, "PR description", "Small one: the spec is in this PR.", "nit"],
+    ]);
+  });
+
+  it("goes in the review message under its heading, never on a line", () => {
+    const general = { path: "", line: 0, side: "RIGHT" as const, body: "Fix the body.", severity: null, topic: "PR description" };
+    expect(checkAnchor(general, [])).toBe("general");
+    expect(withOffDiffDrafts("Thanks.", [general], "https://github.com/o/r/pull/7", "abc")).toBe(
+      "Thanks.\n\n---\n\n**PR description**\n\nFix the body.",
+    );
+  });
+});

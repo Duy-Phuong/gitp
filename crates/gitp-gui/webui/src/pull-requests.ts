@@ -42,10 +42,11 @@ export function prAttentionTags(
   return tags;
 }
 
-// The Pull Requests view's own filters, beside the sidebar's; "" lets any
-// through.
+// The Pull Requests view's own filters, beside the sidebar's; "" (no
+// author) lets any through.
 export interface PrListFilters {
-  author: string;
+  // Any of these.
+  authors: string[];
   base: string;
   // success / failure / pending, or "none" for no checks.
   checks: string;
@@ -55,12 +56,16 @@ export interface PrListFilters {
   draft: string;
 }
 
-export const NO_PR_LIST_FILTERS: PrListFilters = { author: "", base: "", checks: "", review: "", draft: "" };
+export const NO_PR_LIST_FILTERS: PrListFilters = { authors: [], base: "", checks: "", review: "", draft: "" };
+
+export function hasPrListFilters(f: PrListFilters): boolean {
+  return f.authors.length > 0 || Boolean(f.base || f.checks || f.review || f.draft);
+}
 
 export function filterPrList(list: PullRequest[], f: PrListFilters): PullRequest[] {
   return list.filter(
     (pr) =>
-      (!f.author || pr.author === f.author) &&
+      (f.authors.length === 0 || f.authors.includes(pr.author)) &&
       (!f.base || pr.base === f.base) &&
       (!f.checks || (pr.checks ?? "none") === f.checks) &&
       (!f.review || (pr.review_decision ?? "none") === f.review) &&

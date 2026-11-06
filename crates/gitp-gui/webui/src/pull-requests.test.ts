@@ -8,6 +8,7 @@ import {
   mergeAdvice,
   defaultMergeMethod,
   filterPrList,
+  hasPrListFilters,
   prAttentionTags,
   mergeChoices,
   NO_PR_LIST_FILTERS,
@@ -350,10 +351,17 @@ describe("the Pull Requests view's filters and sort", () => {
 
   it("keeps the pull requests every set filter lets through", () => {
     expect(numbers(filterPrList(list, NO_PR_LIST_FILTERS))).toEqual([1, 2, 3]);
-    expect(numbers(filterPrList(list, { ...NO_PR_LIST_FILTERS, author: "hubot" }))).toEqual([2]);
+    expect(numbers(filterPrList(list, { ...NO_PR_LIST_FILTERS, authors: ["hubot"] }))).toEqual([2]);
+    expect(numbers(filterPrList(list, { ...NO_PR_LIST_FILTERS, authors: ["ada", "phuong"] }))).toEqual([1, 3]);
     expect(numbers(filterPrList(list, { ...NO_PR_LIST_FILTERS, checks: "none" }))).toEqual([3]);
     expect(numbers(filterPrList(list, { ...NO_PR_LIST_FILTERS, review: "none", draft: "ready" }))).toEqual([]);
     expect(numbers(filterPrList(list, { ...NO_PR_LIST_FILTERS, base: "develop", draft: "ready" }))).toEqual([1, 3]);
+  });
+
+  it("knows when a filter is set", () => {
+    expect(hasPrListFilters(NO_PR_LIST_FILTERS)).toBe(false);
+    expect(hasPrListFilters({ ...NO_PR_LIST_FILTERS, authors: ["ada"] })).toBe(true);
+    expect(hasPrListFilters({ ...NO_PR_LIST_FILTERS, draft: "draft" })).toBe(true);
   });
 
   it("offers each author and base once, A to Z", () => {

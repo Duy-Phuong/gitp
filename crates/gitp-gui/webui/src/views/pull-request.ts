@@ -57,8 +57,9 @@ export interface PullRequestCallbacks {
   reviewMenu: (pr: PullRequestDetail, x: number, y: number) => void;
   // Asks how, then merges on GitHub and reloads the view.
   merge: (pr: PullRequestDetail) => void;
-  // Shows it in a tab of its own, across the whole window.
+  // Shows it in a tab of its own, across the whole window, and back.
   openInTab: (pr: PullRequestDetail) => void;
+  leaveTab: (pr: PullRequestDetail) => void;
   openUrl: (url: string) => void;
   // Each posts after the user confirms, resolving true once it's on GitHub;
   // the view then reloads the conversation.
@@ -120,6 +121,8 @@ const PR_LINK_ICON = ["M14 4h6v6", "M20 4l-9 9", "M18 14v5a1 1 0 0 1-1 1H5a1 1 0
 const REFRESH_ICON = "M20 11a8 8 0 10-.6 4M20 4v5h-5";
 // Arrows to the corners: the pull request in a tab of its own.
 const TAB_ICON = ["M15 3h6v6", "M21 3l-7 7", "M9 21H3v-6", "M3 21l7-7"];
+// Arrows from the corners: back to the usual layout.
+const LEAVE_TAB_ICON = ["M20 10h-6V4", "M14 10l7-7", "M4 14h6v6", "M10 14l-7 7"];
 
 export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks): PullRequestHandle {
   let number: number | null = null;
@@ -262,7 +265,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     inTab.classList.add("pr-icon-btn", "pr-open-tab");
     inTab.setAttribute("aria-label", "Open in a tab");
     inTab.append(actionIcon(TAB_ICON));
-    actions.append(refresh, inTab);
+    // Shown in place of the one above while the pull request has its tab.
+    const leave = button("", () => cb.leaveTab(pr), "Back to the usual layout, with the sidebar (Esc)");
+    leave.classList.add("pr-icon-btn", "pr-leave-tab");
+    leave.setAttribute("aria-label", "Leave the full window");
+    leave.append(actionIcon(LEAVE_TAB_ICON));
+    actions.append(refresh, inTab, leave);
     return el("div", { class: "pr-head" }, [
       el("div", { class: "pr-title-row" }, [
         el("span", { class: "pr-title", text: pr.title }),
@@ -663,7 +671,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       body.append(el("div", { class: "pr-empty", text: "No draft comments. Load a review file to get some." }));
       return;
     }
-    const anchorOf = (d: Draft) => (files ? checkAnchor(d, files) : "ok");
+    // A comment on the whole pull request needs no diff to place.
+    const anchorOf = (d: Draft) => (files || !d.path ? checkAnchor(d, files ?? []) : "ok");
     const postable = drafts.filter((d) => d.status === "approved" && anchorOf(d) === "ok");
     // GitHub refuses a line comment outside the diff: these go in the review
     // message instead, each linked to its line.
@@ -744,10 +753,14 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
 
   function draftCard(d: Draft, anchor: ReturnType<typeof checkAnchor>): HTMLElement {
     const head = el("div", { class: "pr-draft-head" }, [
-      el("code", { class: "pr-draft-where", text: `${d.path}:${d.line}${d.side === "LEFT" ? " (removed line)" : ""}` }),
+      anchor === "general"
+        ? el("span", { class: "pr-draft-where pr-draft-topic", text: d.topic ?? "On the pull request" })
+        : el("code", { class: "pr-draft-where", text: `${d.path}:${d.line}${d.side === "LEFT" ? " (removed line)" : ""}` }),
     ]);
     if (d.severity) head.append(el("span", { class: `pr-draft-sev ${d.severity.replace(/\W+/g, "-")}`, text: d.severity }));
-    if (anchor !== "ok") {
+    if (anchor === "general") {
+      head.append(el("span", { class: "pr-draft-note", text: "on the whole pull request — posts in the review message" }));
+    } else if (anchor !== "ok") {
       head.append(
         el("span", {
           class: "pr-draft-warn",

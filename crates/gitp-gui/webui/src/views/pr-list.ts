@@ -1,12 +1,14 @@
 // The Pull Requests view: the sidebar's list of the repo's pull requests, as a
 // table across the main panel. It shares the sidebar's All / Created by me /
 // Review requested / Reviewed filter and its search, and adds its own by
-// author, base branch, checks, review and draft, and a sort by any column.
+// authors (any of several), base branch, checks, review and draft, and a
+// sort by any column.
 // A row opens its pull request; its corner arrows, in a tab of its own.
 
 import { clear, el, svg } from "../dom";
 import {
   filterPrList,
+  hasPrListFilters,
   isoSeconds,
   NO_PR_LIST_FILTERS,
   prAttentionTags,
@@ -61,6 +63,9 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
   let filters: PrListFilters = { ...NO_PR_LIST_FILTERS };
   let sort: { key: PrSortKey; descending: boolean } = { key: "updated", descending: true };
   let last: PrSectionState | null = null;
+  // The author checklist is open: kept across a redraw, as the list may
+  // change under it.
+  let authorsOpen = false;
 
   // Built once, so typing in the search keeps its cursor while the table
   // below is drawn again.
@@ -88,7 +93,61 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
     body,
   );
 
-  const picker = (label: string, key: keyof PrListFilters, options: [string, string][]): HTMLElement => {
+  // A click outside the author checklist, or Esc, closes it.
+  document.addEventListener("mousedown", (e) => {
+    if (!authorsOpen || (e.target as Element).closest(".prl-authors")) return;
+    authorsOpen = false;
+    draw();
+  });
+  host.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !authorsOpen) return;
+    e.preventDefault(); // not the pull request tab's Esc
+    authorsOpen = false;
+    draw();
+  });
+
+  // "Author: any", one name, or "3 authors", opening a checklist of the
+  // authors with how many pull requests each has open.
+  const authorPicker = (list: PullRequest[], authors: string[]): HTMLElement => {
+    const chosen = filters.authors;
+    const button = el("button", {
+      class: `prl-picker prl-authors-button${chosen.length ? " set" : ""}`,
+      text: `${chosen.length === 0 ? "any" : chosen.length === 1 ? chosen[0] : `${chosen.length} authors`} ▾`,
+      title: chosen.join(", ") || "Pick one author or more",
+      "aria-haspopup": "true",
+      "aria-expanded": String(authorsOpen),
+    });
+    button.addEventListener("click", () => {
+      authorsOpen = !authorsOpen;
+      draw();
+    });
+    const wrap = el("div", { class: "prl-authors" }, [button]);
+    if (!authorsOpen) return el("label", { class: "prl-picker-label" }, ["Author", wrap]);
+    const menu = el("div", { class: "prl-authors-menu", role: "group", "aria-label": "Authors" });
+    // An author chosen before may have no open pull request in this list.
+    for (const a of [...new Set([...authors, ...chosen])]) {
+      const box = el("input", { type: "checkbox" });
+      box.checked = chosen.includes(a);
+      box.addEventListener("change", () => {
+        filters = { ...filters, authors: box.checked ? [...chosen, a] : chosen.filter((x) => x !== a) };
+        draw();
+      });
+      const n = list.filter((pr) => pr.author === a).length;
+      menu.append(el("label", { class: "prl-authors-row" }, [box, el("span", { text: a }), el("span", { class: "prl-authors-n", text: String(n) })]));
+    }
+    if (chosen.length) {
+      const none = el("button", { class: "btn small ghost", text: "Any author" });
+      none.addEventListener("click", () => {
+        filters = { ...filters, authors: [] };
+        draw();
+      });
+      menu.append(none);
+    }
+    wrap.append(menu);
+    return el("div", { class: "prl-picker-label" }, ["Author", wrap]);
+  };
+
+  const picker = (label: string, key: Exclude<keyof PrListFilters, "authors">, options: [string, string][]): HTMLElement => {
     const select = el("select", { class: "prl-picker", "aria-label": label });
     for (const [value, text] of [["", "any"], ...options]) {
       const o = el("option", { value, text });
@@ -134,7 +193,7 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
 
     const { authors, bases } = prListChoices(p.list);
     pickers.append(
-      picker("Author", "author", authors.map((a) => [a, a])),
+      authorPicker(p.list, authors),
       picker("Base", "base", bases.map((b) => [b, b])),
       picker("Checks", "checks", [
         ["success", "passing"],
@@ -153,10 +212,11 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
         ["draft", "draft"],
       ]),
     );
-    if (Object.values(filters).some(Boolean)) {
+    if (hasPrListFilters(filters)) {
       const reset = el("button", { class: "btn small ghost", text: "Clear filters" });
       reset.addEventListener("click", () => {
         filters = { ...NO_PR_LIST_FILTERS };
+        authorsOpen = false;
         draw();
       });
       pickers.append(reset);
