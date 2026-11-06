@@ -1677,16 +1677,13 @@ impl Repo {
                 thread: root.id,
                 path: root.path.clone(),
                 session: None,
+                fix_session: None,
                 turns: Vec::new(),
             });
         if kind == TurnKind::Followup {
-            conversation.turns.push(ThreadTurn {
-                kind,
-                role: TurnRole::User,
-                at: now_millis(),
-                head: None,
-                text: user_text.to_string(),
-            });
+            conversation
+                .turns
+                .push(ThreadTurn::user(kind, user_text.to_string()));
             self.save_thread_conversation(&conversation)?;
         }
         // After the question is kept: a fetch that fails must not lose it.
@@ -1720,6 +1717,7 @@ impl Repo {
             TurnKind::Explain => "explain",
             TurnKind::Followup => "followup",
             TurnKind::ReplyDraft => "reply-draft",
+            TurnKind::Fix => "fix",
         };
         let mut env = vec![
             ("GITP_PR_NUMBER", number.to_string()),
@@ -1787,13 +1785,9 @@ impl Repo {
         if session.is_some() {
             conversation.session = session;
         }
-        conversation.turns.push(ThreadTurn {
-            kind,
-            role: TurnRole::Claude,
-            at: now_millis(),
-            head: Some(input.head.clone()),
-            text,
-        });
+        conversation
+            .turns
+            .push(ThreadTurn::claude(kind, input.head.clone(), text));
         self.save_thread_conversation(&conversation)?;
         Ok(conversation)
     }

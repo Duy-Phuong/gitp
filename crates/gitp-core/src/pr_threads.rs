@@ -24,6 +24,7 @@ pub enum TurnKind {
     Explain,
     Followup,
     ReplyDraft,
+    Fix,
 }
 
 /// Who wrote a turn.
@@ -45,6 +46,49 @@ pub struct ThreadTurn {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head: Option<String>,
     pub text: String,
+    /// A fix turn: the commit it made, and the worktree it made it in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<String>,
+    /// A reply draft: where it was posted, once it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub posted: Option<String>,
+    /// A reply draft the user decided not to post.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dropped: bool,
+}
+
+impl ThreadTurn {
+    /// A turn Claude wrote, against commit `head`.
+    pub fn claude(kind: TurnKind, head: String, text: String) -> Self {
+        Self {
+            kind,
+            role: TurnRole::Claude,
+            at: now_millis(),
+            head: Some(head),
+            text,
+            commit: None,
+            worktree: None,
+            posted: None,
+            dropped: false,
+        }
+    }
+
+    /// A turn the user wrote.
+    pub fn user(kind: TurnKind, text: String) -> Self {
+        Self {
+            kind,
+            role: TurnRole::User,
+            at: now_millis(),
+            head: None,
+            text,
+            commit: None,
+            worktree: None,
+            posted: None,
+            dropped: false,
+        }
+    }
 }
 
 /// The conversation of one thread.
@@ -57,7 +101,22 @@ pub struct ThreadConversation {
     /// The Claude Code session to resume; `None` until a JSON answer gave one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
+    /// The session of the fixes, made in the pull request branch's worktree:
+    /// Claude Code keeps sessions per directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix_session: Option<String>,
     pub turns: Vec<ThreadTurn>,
+}
+
+/// The reply the thread has ready to post: its latest reply draft, unless
+/// that one was posted or dropped.
+pub fn prepared_reply(c: &ThreadConversation) -> Option<&ThreadTurn> {
+    let last = c
+        .turns
+        .iter()
+        .rev()
+        .find(|t| t.kind == TurnKind::ReplyDraft && t.role == TurnRole::Claude)?;
+    (last.posted.is_none() && !last.dropped).then_some(last)
 }
 
 /// Now, in epoch milliseconds.
@@ -96,6 +155,31 @@ impl Repo {
             .map_err(|e| Error::Message(format!("can't encode the conversation: {e}")))?;
         std::fs::write(&tmp, text).map_err(|e| io_err(&tmp, e))?;
         std::fs::rename(&tmp, &file).map_err(|e| io_err(&file, e))
+    }
+
+    /// The latest reply draft was posted at `url`.
+    pub fn mark_reply_posted(&self, number: u64, thread: u64, url: &str) -> Result<()> {
+        self.change_prepared_reply(number, thread, |t| t.posted = Some(url.to_string()))
+    }
+
+    /// The latest reply draft is not to be posted.
+    pub fn drop_reply(&self, number: u64, thread: u64) -> Result<()> {
+        self.change_prepared_reply(number, thread, |t| t.dropped = true)
+    }
+
+    fn change_prepared_reply(&self, number: u64, thread: u64, change: impl FnOnce(&mut ThreadTurn)) -> Result<()> {
+        let mut c = self
+            .thread_conversation(number, thread)?
+            .ok_or_else(|| Error::Message(format!("#{number} has no Claude conversation on that thread")))?;
+        // Only the latest draft counts: an older one was superseded.
+        let at = c
+            .turns
+            .iter()
+            .rposition(|t| t.kind == TurnKind::ReplyDraft && t.role == TurnRole::Claude)
+            .filter(|&i| c.turns[i].posted.is_none() && !c.turns[i].dropped)
+            .ok_or_else(|| Error::Message("The thread has no reply ready.".into()))?;
+        change(&mut c.turns[at]);
+        self.save_thread_conversation(&c)
     }
 
     /// Delete the conversation; nothing to delete is fine.
@@ -190,12 +274,10 @@ mod tests {
             thread: 1234567890,
             path: "src/retry.ts".into(),
             session: Some("9f3c".into()),
+            fix_session: None,
             turns: vec![ThreadTurn {
-                kind: TurnKind::Check,
-                role: TurnRole::Claude,
                 at: 1_000,
-                head: Some("a1b2".into()),
-                text: "**Bottom line:** …".into(),
+                ..ThreadTurn::claude(TurnKind::Check, "a1b2".into(), "**Bottom line:** …".into())
             }],
         };
         repo.save_thread_conversation(&c).unwrap();
@@ -223,11 +305,9 @@ mod tests {
 
     fn turn(at: u64) -> ThreadTurn {
         ThreadTurn {
-            kind: TurnKind::Check,
-            role: TurnRole::Claude,
             at,
             head: None,
-            text: "x".into(),
+            ..ThreadTurn::claude(TurnKind::Check, String::new(), "x".into())
         }
     }
 
@@ -238,6 +318,7 @@ mod tests {
             thread,
             path: "a".into(),
             session: None,
+            fix_session: None,
             turns: vec![turn(1), turn(at)],
         }
     }
@@ -264,6 +345,53 @@ mod tests {
     }
 
     #[test]
+    fn a_prepared_reply_is_the_latest_draft_until_posted_or_dropped() {
+        let (_dir, repo) = test_repo();
+        let draft = |text: &str| ThreadTurn::claude(TurnKind::ReplyDraft, "h".into(), text.into());
+        let mut c = ThreadConversation {
+            version: 1,
+            pr: 1,
+            thread: 2,
+            path: "a".into(),
+            session: None,
+            fix_session: None,
+            turns: vec![draft("A"), ThreadTurn::user(TurnKind::Followup, "q".into()), draft("B")],
+        };
+        assert_eq!(prepared_reply(&c).map(|t| t.text.as_str()), Some("B"));
+        repo.save_thread_conversation(&c).unwrap();
+        repo.mark_reply_posted(1, 2, "https://x").unwrap();
+        c = repo.thread_conversation(1, 2).unwrap().unwrap();
+        assert_eq!(prepared_reply(&c), None);
+        assert_eq!(c.turns[2].posted.as_deref(), Some("https://x"));
+        assert_eq!(c.turns[0].posted, None, "only the latest draft");
+        c.turns.push(draft("C"));
+        repo.save_thread_conversation(&c).unwrap();
+        assert_eq!(prepared_reply(&c).map(|t| t.text.as_str()), Some("C"));
+        repo.drop_reply(1, 2).unwrap();
+        c = repo.thread_conversation(1, 2).unwrap().unwrap();
+        assert_eq!(prepared_reply(&c), None);
+        assert!(c.turns[3].dropped);
+        assert!(repo.drop_reply(1, 2).is_err(), "nothing left to drop");
+        assert!(repo.mark_reply_posted(9, 9, "u").is_err(), "no conversation");
+    }
+
+    #[test]
+    fn a_turn_without_the_new_fields_still_loads() {
+        let (dir, repo) = test_repo();
+        let file = dir.path().join(".git/gitp/pr-threads/5/6.json");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            r#"{"version":1,"pr":5,"thread":6,"path":"a","session":"s","turns":[{"kind":"check","role":"claude","at":1,"head":"h","text":"x"}]}"#,
+        )
+        .unwrap();
+        let c = repo.thread_conversation(5, 6).unwrap().unwrap();
+        assert_eq!((c.fix_session.clone(), c.turns[0].commit.clone(), c.turns[0].dropped), (None, None, false));
+        let text = serde_json::to_string(&c).unwrap();
+        assert!(!text.contains("dropped") && !text.contains("fix_session"), "{text}");
+    }
+
+    #[test]
     fn a_conversation_with_no_turns_counts_as_stale() {
         let (_dir, repo) = test_repo();
         repo.save_thread_conversation(&ThreadConversation {
@@ -272,6 +400,7 @@ mod tests {
             thread: 1,
             path: "a".into(),
             session: None,
+            fix_session: None,
             turns: vec![],
         })
         .unwrap();
