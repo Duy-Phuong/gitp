@@ -719,6 +719,42 @@ export interface PrReviewComment {
   diff_hunk: string;
 }
 
+// What a Claude turn on a thread asked for.
+export type TurnKind = "check" | "explain" | "followup" | "reply-draft";
+
+// One message of a thread's Claude conversation.
+export interface ThreadTurn {
+  kind: TurnKind;
+  role: "user" | "claude";
+  // Epoch milliseconds.
+  at: number;
+  // The head commit a Claude turn was made against.
+  head?: string;
+  text: string;
+}
+
+// The Claude conversation kept for one line-comment thread, under the
+// repository's .git.
+export interface ThreadConversation {
+  version: number;
+  pr: number;
+  thread: number;
+  path: string;
+  // The Claude Code session to resume, once a JSON answer gave one.
+  session?: string;
+  turns: ThreadTurn[];
+}
+
+// A thread as the pull request view has it, for a turn on it.
+export interface ThreadInput {
+  number: number;
+  head: string;
+  // The pull request's author login.
+  author: string;
+  // Root first.
+  comments: PrReviewComment[];
+}
+
 // A commit of a pull request, oldest first as GitHub lists them.
 export interface PrCommit {
   oid: string;

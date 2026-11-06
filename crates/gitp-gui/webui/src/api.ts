@@ -5,6 +5,9 @@
 import REVIEW_BRIDGE from "./review-bridge.js?raw";
 import type {
   ActivityEntry,
+  ThreadConversation,
+  ThreadInput,
+  TurnKind,
   GitHubRepoSettings,
   MergeMethod,
   NewPullRequest,
@@ -2240,6 +2243,68 @@ export async function reviewPageUrl(number: number): Promise<string> {
 export async function explainReviewFinding(path: string, number: number, finding: string, command: string): Promise<void> {
   if (!isTauri()) return new Promise((resolve) => setTimeout(resolve, 5000));
   return invoke<void>("explain_review_finding", { path, number, finding, command });
+}
+
+// --- Claude on a pull request thread -------------------------------------------
+
+// The preview's conversations, by pull request and thread, so a turn made in
+// `vite dev` comes back on the next load.
+const mockThreads = new Map<string, ThreadConversation>();
+
+const MOCK_TURN_TEXT: Record<TurnKind, string> = {
+  check:
+    "**Bottom line:** the reviewer is right for `n = 3`, and it is a real change.\n\n" +
+    "```\ncaller ──▶ retry(n) ──▶ n >= 3 ? stop   ◄── one try fewer than before\n```\n\n" +
+    "**When it happens:** every call with `n = 3` (src/upload.ts:40, src/sync.ts:77).\n\n" +
+    "| Option | Effect |\n|---|---|\n| Keep `>=`, update the docs | 3 means 3 tries |\n| Restore `>` | no behaviour change |\n| No change | upload.ts gets 2 retries |",
+  explain: "**Bottom line:** the loop now stops one round earlier.\n\n```\ntry 1 ─▶ try 2 ─▶ try 3 ─▶ (stop)\n```\n\nWith `n = 3`: before, three tries; now, two.",
+  followup: "Yes: `>` keeps the documented count, and nothing else reads the condition.",
+  "reply-draft": "Good catch — that was not intended. I'll restore `>` so the documented three tries stay.",
+};
+
+// Run one Claude turn of `kind` on the thread of `input`, in the repository
+// at `path`, with `userText` on the command's stdin; resolves with the
+// conversation the turn was kept in. Only `cancelThreadTurn` stops it.
+export async function threadTurn(path: string, input: ThreadInput, kind: TurnKind, userText: string, command: string): Promise<ThreadConversation> {
+  if (!isTauri()) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const root = input.comments[0];
+    const key = `${input.number}\n${root.id}`;
+    const c = mockThreads.get(key) ?? { version: 1, pr: input.number, thread: root.id, path: root.path, turns: [] };
+    if (kind === "followup") c.turns.push({ kind, role: "user", at: Date.now(), text: userText });
+    c.turns.push({ kind, role: "claude", at: Date.now(), head: input.head, text: MOCK_TURN_TEXT[kind] });
+    mockThreads.set(key, c);
+    return structuredClone(c);
+  }
+  return invoke<ThreadConversation>("gh_thread_turn", { path, input, kind, userText, command });
+}
+
+export async function cancelThreadTurn(path: string, number: number, thread: number): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("gh_thread_cancel", { path, number, thread });
+}
+
+// The saved conversation of `thread` on pull request `number`, or null.
+export async function threadConversation(path: string, number: number, thread: number): Promise<ThreadConversation | null> {
+  if (!isTauri()) {
+    const c = mockThreads.get(`${number}\n${thread}`);
+    return c ? structuredClone(c) : null;
+  }
+  return invoke<ThreadConversation | null>("gh_thread_conversation", { path, number, thread });
+}
+
+export async function clearThreadConversation(path: string, number: number, thread: number): Promise<void> {
+  if (!isTauri()) {
+    mockThreads.delete(`${number}\n${thread}`);
+    return;
+  }
+  return invoke<void>("gh_thread_clear", { path, number, thread });
+}
+
+// Delete the conversations older than two months; how many went.
+export async function pruneThreadConversations(path: string): Promise<number> {
+  if (!isTauri()) return 0;
+  return invoke<number>("gh_thread_prune", { path });
 }
 
 // Pick a review file (Markdown, JSON, or the HTML review page that embeds
