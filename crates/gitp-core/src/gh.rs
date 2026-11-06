@@ -77,7 +77,7 @@ pub struct GhAccount {
     pub message: Option<String>,
 }
 
-/// Which open pull requests the sidebar lists.
+/// Which pull requests the sidebar lists: open ones, or the last merged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrFilter {
@@ -86,7 +86,12 @@ pub enum PrFilter {
     Mine,
     /// Waiting on the signed-in user's review.
     ReviewRequested,
+    /// The last ones merged, newest first.
+    Merged,
 }
+
+/// How many merged pull requests the Merged filter lists.
+const MERGED_LIMIT: &str = "20";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrLabel {
@@ -115,6 +120,8 @@ pub struct PullRequest {
     pub updated_at: String,
     pub url: String,
     pub labels: Vec<PrLabel>,
+    /// When it was merged; none while it isn't.
+    pub merged_at: Option<String>,
     /// The reviewers whose latest review approves it.
     pub approvals: u32,
     /// Its line-comment threads not resolved yet; none when GitHub didn't say.
@@ -747,19 +754,20 @@ impl Repo {
     }
 
     /// The open pull requests, newest first, the way `filter` picks them (at
-    /// most 100).
+    /// most 100); for `Merged`, the last 20 merged, the latest merge first.
     pub fn pull_requests(&self, gh: &Gh, filter: PrFilter) -> Result<Vec<PullRequest>> {
         let target = self.github_target()?;
         let repo = target.repo_arg();
+        let merged = filter == PrFilter::Merged;
         let mut args = vec![
             "pr",
             "list",
             "--repo",
             &repo,
             "--state",
-            "open",
+            if merged { "merged" } else { "open" },
             "--limit",
-            "100",
+            if merged { MERGED_LIMIT } else { "100" },
             "--json",
             LIST_FIELDS,
         ];
@@ -767,10 +775,18 @@ impl Repo {
             PrFilter::All => {}
             PrFilter::Mine => args.extend(["--author", "@me"]),
             PrFilter::ReviewRequested => args.extend(["--search", "review-requested:@me"]),
+            // Merging updates it: the last updated are the last merged, near
+            // enough to sort by when they were.
+            PrFilter::Merged => args.extend(["--search", "sort:updated-desc"]),
         }
         let out = self.gh_call(gh, &target, &args, None, TIMEOUT)?;
         let raw: Vec<RawPr> = parse_json(&out.stdout)?;
         let mut prs: Vec<PullRequest> = raw.into_iter().map(PullRequest::from).collect();
+        if merged {
+            // ISO times sort as text; a merged one always has its time.
+            prs.sort_by(|a, b| b.merged_at.cmp(&a.merged_at));
+            return Ok(prs);
+        }
         // Which threads are resolved is GraphQL's alone; the list does without.
         if let Ok(open) = self.unresolved_threads(gh, &target) {
             for pr in &mut prs {
@@ -1670,7 +1686,7 @@ struct ShellOutput {
 }
 
 const LIST_FIELDS: &str = "number,title,author,isDraft,reviewDecision,statusCheckRollup,\
-     headRefName,baseRefName,updatedAt,url,labels,latestReviews";
+     headRefName,baseRefName,updatedAt,url,labels,latestReviews,mergedAt";
 
 const VIEW_FIELDS: &str = "number,title,body,state,isDraft,author,baseRefName,headRefName,\
      headRefOid,labels,url,createdAt,reviewDecision,statusCheckRollup,reviews,comments,commits,\
@@ -2062,6 +2078,7 @@ struct RawPr {
     labels: Vec<PrLabel>,
     #[serde(default)]
     latest_reviews: Vec<RawReview>,
+    merged_at: Option<String>,
 }
 
 impl From<RawPr> for PullRequest {
@@ -2078,6 +2095,7 @@ impl From<RawPr> for PullRequest {
             updated_at: r.updated_at,
             url: r.url,
             labels: r.labels,
+            merged_at: non_empty(r.merged_at),
             approvals: r
                 .latest_reviews
                 .iter()
@@ -2477,6 +2495,29 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert!(prs[1].is_draft);
         assert_eq!(prs[1].review_decision, None);
         assert_eq!(prs[1].checks.as_deref(), Some("pending"));
+    }
+
+    #[test]
+    fn merged_lists_the_last_twenty_by_when_they_were_merged() {
+        let fake = Fake::new();
+        fake.answer(
+            "pr list",
+            r#"[{"number": 5, "title": "Older", "author": {"login": "a"}, "headRefName": "x",
+                 "baseRefName": "main", "url": "u5", "mergedAt": "2026-11-01T08:00:00Z"},
+                {"number": 3, "title": "Newer", "author": {"login": "b"}, "headRefName": "y",
+                 "baseRefName": "main", "url": "u3", "mergedAt": "2026-11-05T08:00:00Z"}]"#,
+            "",
+            0,
+        );
+        let (_dir, repo) = github_repo();
+        let prs = repo.pull_requests(&fake.gh(), PrFilter::Merged).unwrap();
+
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 1, "no thread query for merged ones");
+        assert_eq!(calls[0][4..8], ["--state", "merged", "--limit", "20"]);
+        assert_eq!(calls[0][10..], ["--search", "sort:updated-desc"]);
+        assert_eq!(prs.iter().map(|p| p.number).collect::<Vec<_>>(), [3, 5]);
+        assert_eq!(prs[0].merged_at.as_deref(), Some("2026-11-05T08:00:00Z"));
     }
 
     #[test]

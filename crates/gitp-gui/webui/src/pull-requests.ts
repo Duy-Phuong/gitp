@@ -17,11 +17,14 @@ import type {
   PullRequestDetail,
 } from "./types";
 
-export const PR_FILTERS: { value: PrFilter; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "mine", label: "Created by me" },
-  { value: "review_requested", label: "Review requested" },
-  { value: "reviewed", label: "Reviewed" },
+// `short` is for the narrow sidebar.
+export const PR_FILTERS: { value: PrFilter; label: string; short: string }[] = [
+  { value: "all", label: "All", short: "All" },
+  { value: "mine", label: "Created by me", short: "Mine" },
+  { value: "review_requested", label: "Review requested", short: "Requested" },
+  { value: "reviewed", label: "Reviewed", short: "Reviewed" },
+  // The last 20 merged, the latest merge first.
+  { value: "merged", label: "Merged", short: "Merged" },
 ];
 
 // The tags that make a pull request stand out in the sidebar and the Pull
@@ -82,12 +85,15 @@ export function prListChoices(list: PullRequest[]): { authors: string[]; bases: 
 export type PrSortKey = "number" | "title" | "author" | "branches" | "review" | "updated";
 
 // `list` sorted by `key`: A to Z, oldest or smallest first, or the other way
-// when `descending`; ties keep the newest number first.
+// when `descending`; ties keep the newest number first. "updated" is when a
+// merged one was merged.
 export function sortPrList(list: PullRequest[], key: PrSortKey, descending: boolean): PullRequest[] {
+  // A merged one's time is its merge.
+  const when = (pr: PullRequest) => time(pr.merged_at ?? pr.updated_at);
   const text = (pr: PullRequest): string =>
     key === "title" ? pr.title : key === "author" ? pr.author : key === "branches" ? `${pr.base}\0${pr.head}` : (pr.review_decision ?? "");
   const compare = (a: PullRequest, b: PullRequest): number =>
-    key === "number" ? a.number - b.number : key === "updated" ? time(a.updated_at) - time(b.updated_at) : text(a).localeCompare(text(b));
+    key === "number" ? a.number - b.number : key === "updated" ? when(a) - when(b) : text(a).localeCompare(text(b));
   return [...list].sort((a, b) => (descending ? compare(b, a) : compare(a, b)) || b.number - a.number);
 }
 

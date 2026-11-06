@@ -181,6 +181,7 @@ describe("prMatches", () => {
     updated_at: "",
     url: "",
     labels: [],
+    merged_at: null,
     approvals: 0,
     unresolved_threads: null,
   };
@@ -338,6 +339,7 @@ describe("the Pull Requests view's filters and sort", () => {
     updated_at: "2026-11-01T00:00:00Z",
     url: "",
     labels: [],
+    merged_at: null,
     approvals: 0,
     unresolved_threads: null,
     ...over,
@@ -374,6 +376,12 @@ describe("the Pull Requests view's filters and sort", () => {
     expect(numbers(sortPrList(list, "title", false))).toEqual([2, 1, 3]);
     // The same author: the newest number first.
     expect(numbers(sortPrList(list, "author", false))).toEqual([3, 2, 1]);
+    // A merged one dates by its merge, not its last update.
+    const merged = [
+      pr(7, { updated_at: "2026-11-06T00:00:00Z", merged_at: "2026-11-01T00:00:00Z" }),
+      pr(8, { updated_at: "2026-11-02T00:00:00Z", merged_at: "2026-11-02T00:00:00Z" }),
+    ];
+    expect(numbers(sortPrList(merged, "updated", true))).toEqual([8, 7]);
   });
 });
 

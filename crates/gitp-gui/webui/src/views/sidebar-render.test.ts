@@ -16,6 +16,7 @@ const pr = (number: number, title: string, author = "octocat", head = "feature/x
   updated_at: "",
   url: "",
   labels: [],
+  merged_at: null,
   approvals: 0,
   unresolved_threads: null,
 });

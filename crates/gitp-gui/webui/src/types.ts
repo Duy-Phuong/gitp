@@ -636,7 +636,7 @@ export interface GhAccount {
 
 // "reviewed" is gitp's own: all of them, narrowed to the ones with a review
 // saved under the repo's review/ folder. GitHub only sees the other three.
-export type PrFilter = "all" | "mine" | "review_requested" | "reviewed";
+export type PrFilter = "all" | "mine" | "review_requested" | "reviewed" | "merged";
 
 // A review saved under the repo's review/ folder, and the pull request it reviews.
 export interface ReviewFile {
@@ -665,6 +665,8 @@ export interface PullRequest {
   updated_at: string;
   url: string;
   labels: PrLabel[];
+  // When it was merged; null while it isn't.
+  merged_at: string | null;
   // The reviewers whose latest review approves it.
   approvals: number;
   // Its line-comment threads not resolved yet; null when GitHub didn't say.
