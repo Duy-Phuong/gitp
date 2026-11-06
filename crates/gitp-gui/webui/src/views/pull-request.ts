@@ -84,6 +84,8 @@ export interface PullRequestCallbacks {
   // Starts the review command over the diff in the background; its drafts
   // land in the pull request's review (pr-reviews.ts), and the view is told.
   generateDrafts: (pr: PullRequestDetail) => void;
+  // The same with the review skill, whatever the Review command preset.
+  generateDraftsWithSkill: (pr: PullRequestDetail) => void;
   cancelReview: (pr: PullRequestDetail) => void;
   // Reads again the drafts of a review saved before the app last quit.
   restoreDrafts: (number: number) => void;
@@ -112,6 +114,7 @@ export interface PullRequestHandle {
   // The header buttons' actions, for Quick Launch: run the review command, or
   // pick a review file, into the Drafts tab of the pull request on screen.
   generateDrafts: () => void;
+  generateDraftsWithSkill: () => void;
   loadReviewFile: () => void;
   // Read it again from GitHub — after a review posted from the menu, say.
   reload: () => void;
@@ -277,9 +280,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       button("Check Out", () => cb.checkout(pr), `gh pr checkout ${pr.number}: a local branch tracking ${pr.head}`),
       button("Check Out in New Worktree…", (e) => cb.checkoutInWorktree(pr, e.clientX, e.clientY)),
       button("Review ▾", (e) => cb.reviewMenu(pr, e.clientX, e.clientY), "Approve, request changes or comment"),
-      review().running
-        ? button("Reviewing… Cancel", () => cb.cancelReview(pr), "The review command is running in the background; click to stop it")
-        : generateButton(pr),
+      ...(review().running
+        ? [button("Reviewing… Cancel", () => cb.cancelReview(pr), "The review command is running in the background; click to stop it")]
+        : [generateButton(pr), skillButton(pr)]),
       button("Load Review File…", () => void loadDrafts(pr), "Read a review's findings as draft comments, to approve or discard before posting"),
       open,
     ]);
@@ -716,6 +719,19 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     return b;
   }
 
+  // Review with skill: the /review-pr-phuong skill in one click, whatever the
+  // Review command preset in Settings says; the same green dot.
+  function skillButton(pr: PullRequestDetail): HTMLElement {
+    const fresh = hasNewCommits(cb.reviewedHead(pr.number), pr.head_oid);
+    const b = el("button", {
+      class: `btn small ghost${fresh ? " pr-has-news" : ""}`,
+      text: "Review with skill",
+      title: "Run the /review-pr-phuong Claude Code skill in the background, whatever the Review command preset; its review page becomes the drafts",
+    });
+    b.addEventListener("click", () => cb.generateDraftsWithSkill(pr));
+    return b;
+  }
+
   // Drafts read back from a saved review just after the pull request opened
   // with none: show them, when no tab was picked meanwhile.
   function toDraftsIfReady(): void {
@@ -1067,6 +1083,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     },
     generateDrafts: () => {
       if (detail) cb.generateDrafts(detail);
+    },
+    generateDraftsWithSkill: () => {
+      if (detail) cb.generateDraftsWithSkill(detail);
     },
     loadReviewFile: () => {
       if (detail) void loadDrafts(detail);

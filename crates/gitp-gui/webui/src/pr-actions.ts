@@ -63,7 +63,7 @@ import {
 } from "./shell";
 import { defaultWorktreePath } from "./worktree-actions";
 import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
-import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand } from "./prefs";
+import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, SKILL_REVIEW_COMMAND } from "./prefs";
 import { finishTurn, lastUserText, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
@@ -509,6 +509,7 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
     }),
   repoPath: () => state.repoPath,
   generateDrafts: (pr) => void runReview(state.repoPath, pr.number, pr.head_oid),
+  generateDraftsWithSkill: (pr) => void runReview(state.repoPath, pr.number, pr.head_oid, SKILL_REVIEW_COMMAND),
   reviewedHead: (number) => reviewedHead(state.repoPath, number),
   cancelReview: (pr) => void cancelReviewDrafts(state.repoPath, pr.number),
   restoreDrafts: (number) => void restoreDrafts(state.repoPath, number),
@@ -611,15 +612,18 @@ async function loadThreadConversation(repo: string, number: number, id: number, 
 // in the background: the sidebar marks the pull request while it runs and
 // when its drafts are ready, and the user can do anything else meanwhile —
 // another pull request, another repo tab.
-async function runReview(repo: string, number: number, head: string): Promise<void> {
+async function runReview(repo: string, number: number, head: string, command = loadReviewCommand()): Promise<void> {
   const r = prReview(repo, number);
-  if (r.running) return;
+  if (r.running) {
+    setStatus(`A review of #${number} is already running.`);
+    return;
+  }
   r.running = true;
   r.error = null;
   reviewsChanged();
   setStatus(`Reviewing #${number} in the background — keep working; the pull request shows when it's done.`);
   try {
-    const out = await generateReviewDrafts(repo, number, loadReviewCommand());
+    const out = await generateReviewDrafts(repo, number, command);
     setReviewedHead(repo, number, reviewedHeadIn(out.text) ?? head);
     const all = parseReviewFile(out.text);
     const found = unposted(repo, number, all);
