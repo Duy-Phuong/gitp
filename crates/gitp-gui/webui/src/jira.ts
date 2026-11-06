@@ -1,20 +1,21 @@
 // The Jira ticket a pull request is for, read from its title or branch, and
 // the page to open it on (Settings → Git → Jira site).
 
-const KEY = /\b([A-Z][A-Z0-9]+-\d+)\b/;
+const KEY = /\b([A-Z][A-Z0-9]+-\d+)\b/g;
+// Words that look like a key and are not one.
+const NOT_KEYS = /^(UTF|SHA|ISO|RFC|HTTP|TLS|SSL|MD|CVE|ES|AES|RSA|BASE|X)-/;
 
-/** The first ticket key such as UBIID-1234 in any of `texts`, or null. */
+/** The first ticket key such as UBIID-1234 in any of `texts` (the first text wins), or null. */
 export function jiraKeyIn(...texts: string[]): string | null {
   for (const t of texts) {
-    const m = KEY.exec(t);
-    if (m) return m[1];
+    for (const m of t.matchAll(KEY)) if (!NOT_KEYS.test(m[1])) return m[1];
   }
   return null;
 }
 
-/** The ticket's page on `site` (an origin or a /browse/ URL); null when either is blank. */
+/** The ticket's page on `site` (an origin, or any link on it); null when either is blank. */
 export function jiraTicketUrl(site: string, key: string | null): string | null {
-  const base = site.trim().replace(/\/+$/, "").replace(/\/browse$/, "");
+  const base = jiraSite(site);
   if (!base || !key) return null;
   return `${base}/browse/${key}`;
 }

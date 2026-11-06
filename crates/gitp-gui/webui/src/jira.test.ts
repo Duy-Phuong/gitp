@@ -11,12 +11,22 @@ describe("jiraKeyIn", () => {
   it("ignores lowercase and sha-like words", () => {
     expect(jiraKeyIn("abc-123 and deadbeef-1")).toBeNull();
   });
+
+  it("skips words that only look like keys", () => {
+    expect(jiraKeyIn("Read UTF-8 and SHA-256 files for UBIID-9674")).toBe("UBIID-9674");
+  });
 });
 
 describe("jiraTicketUrl", () => {
   it("builds the browse page from the site origin", () => {
     expect(jiraTicketUrl("https://x.atlassian.net", "KW-4")).toBe("https://x.atlassian.net/browse/KW-4");
     expect(jiraTicketUrl("https://x.atlassian.net/browse/", "KW-4")).toBe("https://x.atlassian.net/browse/KW-4");
+  });
+
+  it("uses only the site of a saved ticket link", () => {
+    expect(jiraTicketUrl("https://mesoneerag.atlassian.net/browse/UBIID-9674", "UBIID-9800")).toBe(
+      "https://mesoneerag.atlassian.net/browse/UBIID-9800",
+    );
   });
 
   it("is null without a site or a key", () => {

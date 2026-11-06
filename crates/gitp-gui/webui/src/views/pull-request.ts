@@ -865,9 +865,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     return icon;
   }
 
-  // The Jira ticket named in the title or branch, when Settings has a site.
+  // The Jira ticket named in the branch (else the title), when Settings has a site.
   function jiraLink(pr: PullRequestDetail): HTMLElement[] {
-    const key = jiraKeyIn(pr.title, pr.head);
+    const key = jiraKeyIn(pr.head, pr.title);
     const url = jiraTicketUrl(loadJiraSite(), key);
     return url ? [titleLink(JIRA_ICON, `Open ${key} in Jira\n${url}`, () => cb.openUrl(url))] : [];
   }
