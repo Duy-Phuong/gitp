@@ -137,7 +137,9 @@ describe("thread commands", () => {
   it("has a read-only tool list and resumes the session when one is set", () => {
     expect(THREAD_TOOLS).toContain("Read");
     expect(THREAD_TOOLS).toContain("Bash(gh pr view *)");
-    const writes = THREAD_TOOLS.filter((t) => t.startsWith("Edit") || /mkdir|\brm |python3|curl|ArtifactData/.test(t));
+    // Nothing that writes a file, moves a branch or can post: comment bodies
+    // written by other people reach the model under dontAsk.
+    const writes = THREAD_TOOLS.filter((t) => t.startsWith("Edit") || /mkdir|\brm |python3|curl|ArtifactData|git fetch|gh api/.test(t));
     expect(writes).toEqual([]);
     for (const kind of ["check", "explain", "followup", "reply-draft"] as const) {
       const c = DEFAULT_THREAD_COMMANDS[kind];
@@ -172,6 +174,16 @@ describe("thread commands", () => {
       expect(loadThreadCommand("check")).toBe(DEFAULT_THREAD_COMMANDS.check);
       saveThreadCommand("check", DEFAULT_THREAD_COMMANDS.check);
       expect(localStorage.getItem("gitp-thread-command-check")).toBeNull();
+    });
+
+    it("blocked storage gives the default and swallows the save", () => {
+      const blocked = () => {
+        throw new Error("blocked");
+      };
+      (globalThis as { localStorage?: unknown }).localStorage = { getItem: blocked, setItem: blocked, removeItem: blocked };
+      expect(loadThreadCommand("explain")).toBe(DEFAULT_THREAD_COMMANDS.explain);
+      expect(() => saveThreadCommand("explain", "x")).not.toThrow();
+      expect(() => saveThreadCommand("explain", "")).not.toThrow();
     });
   });
 });

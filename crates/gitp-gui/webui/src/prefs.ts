@@ -685,10 +685,13 @@ export const EXPLAIN_FINDING_COMMAND =
 // The commands behind Check, Explain simply, a follow-up and Reply with
 // Claude on a pull request thread. Read-only toward the checkout and GitHub:
 // the review skill's lookups, none of its writes under review/, no python,
-// no board. The thread arrives as JSON in $GITP_THREAD_FILE, the user's text
-// on stdin, and a kept session is resumed (see thread_claude_turn in core).
+// no board — and no git fetch (gitp fetches the head itself; a fetch can move
+// a branch) or gh api (it can post), since the thread's comments, written by
+// other people, reach the model under dontAsk. The thread arrives as JSON in
+// $GITP_THREAD_FILE, the user's text on stdin, and a kept session is resumed
+// (see thread_claude_turn in core).
 export const THREAD_TOOLS = [
-  ...SKILL_TOOLS.filter((t) => !/^Edit\(|mkdir|\brm |python3|curl|ArtifactData/.test(t)),
+  ...SKILL_TOOLS.filter((t) => !/^Edit\(|mkdir|\brm |python3|curl|ArtifactData|git fetch|gh api/.test(t)),
   "ToolSearch",
 ];
 
@@ -734,14 +737,23 @@ export const DEFAULT_THREAD_COMMANDS: Record<TurnKind, string> = {
 const threadCommandKey = (kind: TurnKind) => `gitp-thread-command-${kind}`;
 
 export function loadThreadCommand(kind: TurnKind): string {
-  return localStorage.getItem(threadCommandKey(kind)) ?? DEFAULT_THREAD_COMMANDS[kind];
+  try {
+    return localStorage.getItem(threadCommandKey(kind)) ?? DEFAULT_THREAD_COMMANDS[kind];
+  } catch {
+    // Blocked storage: the default, so a turn can still start.
+    return DEFAULT_THREAD_COMMANDS[kind];
+  }
 }
 
 // Blank, or the default itself, forgets the custom command.
 export function saveThreadCommand(kind: TurnKind, command: string): void {
   const key = threadCommandKey(kind);
-  if (command.trim() === DEFAULT_THREAD_COMMANDS[kind] || !command.trim()) localStorage.removeItem(key);
-  else localStorage.setItem(key, command.trim());
+  try {
+    if (command.trim() === DEFAULT_THREAD_COMMANDS[kind] || !command.trim()) localStorage.removeItem(key);
+    else localStorage.setItem(key, command.trim());
+  } catch {
+    // Full or blocked storage: the command just doesn't survive a restart.
+  }
 }
 
 export function loadReviewCommand(): string {
