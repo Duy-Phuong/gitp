@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import {
   codeCssVars,
   fontStack,
@@ -7,6 +7,10 @@ import {
   parseCodeRecent,
   withCodeRecent,
   SKILL_REVIEW_COMMAND,
+  DEFAULT_THREAD_COMMANDS,
+  loadThreadCommand,
+  saveThreadCommand,
+  THREAD_TOOLS,
   steppedZoom,
   withFavoriteToggled,
   withTabAlias,
@@ -126,5 +130,48 @@ describe("the review skill command", () => {
     expect(prompt).toBeGreaterThan(0);
     expect(prompt).toBeLessThan(SKILL_REVIEW_COMMAND.indexOf("--allowedTools"));
     expect(SKILL_REVIEW_COMMAND.trimEnd().endsWith('"'), "nothing after the tool list").toBe(true);
+  });
+});
+
+describe("thread commands", () => {
+  it("has a read-only tool list and resumes the session when one is set", () => {
+    expect(THREAD_TOOLS).toContain("Read");
+    expect(THREAD_TOOLS).toContain("Bash(gh pr view *)");
+    const writes = THREAD_TOOLS.filter((t) => t.startsWith("Edit") || /mkdir|\brm |python3|curl|ArtifactData/.test(t));
+    expect(writes).toEqual([]);
+    for (const kind of ["check", "explain", "followup", "reply-draft"] as const) {
+      const c = DEFAULT_THREAD_COMMANDS[kind];
+      expect(c.startsWith('claude -p "'), kind).toBe(true);
+      expect(c, kind).toContain("--output-format json");
+      expect(c, kind).toContain('${GITP_CLAUDE_SESSION:+--resume "$GITP_CLAUDE_SESSION"}');
+      expect(c, kind).toContain("$GITP_THREAD_FILE");
+      // The prompt comes before --allowedTools, which would swallow it.
+      expect(c.indexOf("$GITP_THREAD_FILE"), kind).toBeLessThan(c.indexOf("--allowedTools"));
+    }
+    expect(DEFAULT_THREAD_COMMANDS["reply-draft"]).toContain("@$GITP_GH_LOGIN");
+    expect(DEFAULT_THREAD_COMMANDS.check).toContain("git show $GITP_PR_HEAD:");
+  });
+
+  describe("saved per kind", () => {
+    // vitest runs in node: a small localStorage of our own.
+    beforeEach(() => {
+      const store = new Map<string, string>();
+      (globalThis as { localStorage?: unknown }).localStorage = {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => void store.set(k, v),
+        removeItem: (k: string) => void store.delete(k),
+      };
+    });
+
+    it("saves a custom command per kind and blank restores the default", () => {
+      expect(loadThreadCommand("check")).toBe(DEFAULT_THREAD_COMMANDS.check);
+      saveThreadCommand("check", "my-check");
+      expect(loadThreadCommand("check")).toBe("my-check");
+      expect(loadThreadCommand("explain")).toBe(DEFAULT_THREAD_COMMANDS.explain);
+      saveThreadCommand("check", "  ");
+      expect(loadThreadCommand("check")).toBe(DEFAULT_THREAD_COMMANDS.check);
+      saveThreadCommand("check", DEFAULT_THREAD_COMMANDS.check);
+      expect(localStorage.getItem("gitp-thread-command-check")).toBeNull();
+    });
   });
 });

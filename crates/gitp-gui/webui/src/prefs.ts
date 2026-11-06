@@ -3,7 +3,7 @@
 import { isTauri } from "./api";
 import { $ } from "./dom";
 import type { DetailTab } from "./views/detail";
-import type { PullMode } from "./types";
+import type { PullMode, TurnKind } from "./types";
 import { DEFAULT_LOG_COLUMNS, normalizeLogColumns, type LogColumns } from "./log-columns";
 import { state, ui } from "./app-state";
 import { readFailed } from "./report";
@@ -681,6 +681,68 @@ export const EXPLAIN_FINDING_COMMAND =
   `claude -p "/serve-board Review board request: explain finding $GITP_REVIEW_FINDING of $GITP_REVIEW_SLUG. ` +
   `Serve only this line, as the README part 'Lines from the review HTML file' says. Do not arm a watch, ask no questions." ` +
   `--model opus --effort medium --permission-mode dontAsk --allowedTools "${[...SKILL_TOOLS, "ToolSearch"].join(" ")}"`;
+
+// The commands behind Check, Explain simply, a follow-up and Reply with
+// Claude on a pull request thread. Read-only toward the checkout and GitHub:
+// the review skill's lookups, none of its writes under review/, no python,
+// no board. The thread arrives as JSON in $GITP_THREAD_FILE, the user's text
+// on stdin, and a kept session is resumed (see thread_claude_turn in core).
+export const THREAD_TOOLS = [
+  ...SKILL_TOOLS.filter((t) => !/^Edit\(|mkdir|\brm |python3|curl|ArtifactData/.test(t)),
+  "ToolSearch",
+];
+
+const THREAD_RULES =
+  "Read the code at commit $GITP_PR_HEAD with git show $GITP_PR_HEAD:path, never the checkout. " +
+  "Fix nothing, post nothing, ask no questions. Answer in Markdown.";
+
+// The prompt comes first: --allowedTools takes every word after it as a tool.
+const threadCommand = (prompt: string) =>
+  `claude -p "${prompt}" --model opus --effort medium --permission-mode dontAsk ` +
+  `--allowedTools "${THREAD_TOOLS.join(" ")}" --output-format json ` +
+  '${GITP_CLAUDE_SESSION:+--resume "$GITP_CLAUDE_SESSION"}';
+
+export const DEFAULT_THREAD_COMMANDS: Record<TurnKind, string> = {
+  check: threadCommand(
+    "Read the review thread in $GITP_THREAD_FILE on pull request $GITP_PR_URL. Check the reviewer's claim " +
+      "against the code for this one thread, as phase 2 steps 1 and 2 of the answer-pr-comments skill do: " +
+      "then explain it simply: one bottom line, an ASCII flow with the place where it goes wrong marked, " +
+      "when it really happens with proof as file:line, a worked example with real values, and the options " +
+      "(the reviewer's suggestion, an alternative, no change) in a table. " +
+      THREAD_RULES,
+  ),
+  explain: threadCommand(
+    "Read the review thread in $GITP_THREAD_FILE on pull request $GITP_PR_URL. Explain what it is about " +
+      "in the shape of the explain-simply skill: one bottom line, one ASCII diagram, one example with small " +
+      "numbers. Do not judge whether the reviewer is right. " +
+      THREAD_RULES,
+  ),
+  followup: threadCommand(
+    "Continue the conversation about the review thread in $GITP_THREAD_FILE on pull request $GITP_PR_URL; " +
+      "the file holds the conversation so far. The user's message is on stdin. " +
+      THREAD_RULES,
+  ),
+  "reply-draft": threadCommand(
+    "You are @$GITP_GH_LOGIN; the pull request $GITP_PR_URL is by @$GITP_PR_AUTHOR. Draft the reply you post " +
+      "in the review thread in $GITP_THREAD_FILE, building on the conversation in it and on the option on " +
+      "stdin when there is one. Plain, short, in the first person. Print only the reply, no heading, no " +
+      "explanation. " +
+      THREAD_RULES,
+  ),
+};
+
+const threadCommandKey = (kind: TurnKind) => `gitp-thread-command-${kind}`;
+
+export function loadThreadCommand(kind: TurnKind): string {
+  return localStorage.getItem(threadCommandKey(kind)) ?? DEFAULT_THREAD_COMMANDS[kind];
+}
+
+// Blank, or the default itself, forgets the custom command.
+export function saveThreadCommand(kind: TurnKind, command: string): void {
+  const key = threadCommandKey(kind);
+  if (command.trim() === DEFAULT_THREAD_COMMANDS[kind] || !command.trim()) localStorage.removeItem(key);
+  else localStorage.setItem(key, command.trim());
+}
 
 export function loadReviewCommand(): string {
   return localStorage.getItem(REVIEW_COMMAND_KEY) ?? DEFAULT_REVIEW_COMMAND;
