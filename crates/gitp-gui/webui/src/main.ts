@@ -1,3 +1,4 @@
+import { setupClaudeJobs } from "./claude-jobs";
 import "./styles.css";
 import { onReviewsChange } from "./pr-reviews";
 import { onThreadsChange } from "./pr-threads";
@@ -218,6 +219,7 @@ function wireUi(): void {
   setupBranchMenu();
   $("#quick-launch-btn").addEventListener("click", openQuickLaunch);
   setupTerminalPanel();
+  setupClaudeJobs();
   $("#terminal-toggle").addEventListener("click", toggleTerminal);
   $("#terminal-close").addEventListener("click", toggleTerminal);
   $("#terminal-clear").addEventListener("click", () => {

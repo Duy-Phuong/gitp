@@ -29,7 +29,8 @@ use crate::encoding::TextEncoding;
 use crate::error::{Error, Result};
 use crate::git_bin::spawn_path;
 use crate::pr_threads::{now_millis, ThreadConversation, ThreadTurn, TurnKind, TurnRole};
-use crate::progress::kill;
+use crate::claude_transcript::new_session_id;
+use crate::progress::{kill, ClaudeRun, NetworkHooks};
 use crate::repo::Repo;
 use crate::worktree_ops::WorktreeTarget;
 
@@ -1285,7 +1286,7 @@ impl Repo {
             diff.as_bytes(),
             &env,
             REVIEW_TIMEOUT,
-            self.net.cancel.as_deref(),
+            &self.net,
         )?;
         if let Some(file) = review_file_written_since(self.workdir(), started) {
             let text = std::fs::read_to_string(&file)
@@ -1618,7 +1619,7 @@ impl Repo {
             b"",
             &env,
             EXPLAIN_TIMEOUT,
-            self.net.cancel.as_deref(),
+            &self.net,
         )?;
         Ok(())
     }
@@ -1889,7 +1890,7 @@ impl Repo {
                 user_text.as_bytes(),
                 env,
                 place.timeout,
-                self.net.cancel.as_deref(),
+                &self.net,
             )
         };
         let mut out = run(&env);
@@ -2034,16 +2035,21 @@ fn claude_answer(stdout: &str) -> Result<(String, Option<String>)> {
 }
 
 /// Run shell line `command` in `dir` with `input` on stdin and `env` set,
-/// waiting at most `timeout` and only until `cancel` goes up. Fails with the
-/// command's stderr when it exits non-zero.
+/// waiting at most `timeout` and only until the hooks' cancel goes up. Fails
+/// with the command's stderr when it exits non-zero.
+///
+/// A run that doesn't resume a Claude session (no `GITP_CLAUDE_SESSION` in
+/// `env`) is offered a fresh one in `GITP_CLAUDE_NEW_SESSION`, for
+/// `claude --session-id`; either way the hooks hear which session it is.
 fn run_shell(
     dir: &Path,
     command: &str,
     input: &[u8],
     env: &[(&str, String)],
     timeout: Duration,
-    cancel: Option<&AtomicBool>,
+    hooks: &NetworkHooks,
 ) -> Result<ShellOutput> {
+    let cancel = hooks.cancel.as_deref();
     let mut cmd = Command::new("/bin/sh");
     cmd.args(["-lc", command])
         .current_dir(dir)
@@ -2053,6 +2059,22 @@ fn run_shell(
         .stderr(Stdio::piped());
     for (k, v) in env {
         cmd.env(k, v);
+    }
+    let resumed = env
+        .iter()
+        .find(|(k, v)| *k == "GITP_CLAUDE_SESSION" && !v.is_empty())
+        .map(|(_, v)| v.clone());
+    let run = ClaudeRun {
+        resumed: resumed.is_some(),
+        session: resumed.unwrap_or_else(new_session_id),
+        dir: dir.to_path_buf(),
+    };
+    cmd.env(
+        "GITP_CLAUDE_NEW_SESSION",
+        if run.resumed { "" } else { run.session.as_str() },
+    );
+    if let Some(tell) = &hooks.on_claude_run {
+        tell(&run);
     }
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
@@ -3231,6 +3253,35 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert_eq!(json["turns"].as_array().unwrap().len(), 0, "the first turn sees no history");
         assert_eq!(c.session, None, "plain text gives no session");
         assert_eq!(repo.thread_conversation(7, 500).unwrap(), Some(c));
+    }
+
+    #[test]
+    fn a_fresh_turn_is_offered_a_session_id_and_a_resumed_one_is_not() {
+        let fake = Fake::new();
+        let (_dir, mut repo) = github_repo();
+        let runs = Arc::new(std::sync::Mutex::new(Vec::<ClaudeRun>::new()));
+        let seen = Arc::clone(&runs);
+        repo.set_network_hooks(NetworkHooks {
+            on_claude_run: Some(Box::new(move |run| seen.lock().unwrap().push(run.clone()))),
+            ..NetworkHooks::default()
+        });
+        let input = thread_input(&repo);
+        let cmd = r#"printf '{"result":"[%s]","session_id":"%s"}' "$GITP_CLAUDE_NEW_SESSION" "${GITP_CLAUDE_NEW_SESSION:-kept}""#;
+        let c = repo
+            .thread_claude_turn(&fake.gh(), &input, TurnKind::Check, "", cmd)
+            .unwrap();
+        let first = runs.lock().unwrap()[0].clone();
+        assert!(!first.resumed);
+        assert_eq!(first.session.len(), 36, "a fresh UUID");
+        assert_eq!(first.dir, repo.workdir());
+        assert_eq!(c.turns[0].text, format!("[{}]", first.session));
+        assert_eq!(c.session.as_deref(), Some(first.session.as_str()));
+        let c = repo
+            .thread_claude_turn(&fake.gh(), &input, TurnKind::Followup, "why?", cmd)
+            .unwrap();
+        let second = runs.lock().unwrap()[1].clone();
+        assert_eq!((second.resumed, second.session.as_str()), (true, first.session.as_str()));
+        assert_eq!(c.turns.last().unwrap().text, "[]", "no new id on a resume");
     }
 
     #[test]

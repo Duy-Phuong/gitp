@@ -7125,3 +7125,386 @@ mark.find-hit.current {
   background: var(--add-fg);
   box-shadow: 0 0 0 2px var(--bg);
 }
+
+/* Claude jobs ------------------------------------------------------------ */
+/* The full page (#claude-view) and the bottom panel share .claude-jobs: the
+   list on the left, the selected job's conversation on the right. */
+.claude-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.claude-view-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.claude-view-title {
+  font-weight: 600;
+}
+.claude-summary {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.claude-panel {
+  height: var(--claude-h, 300px);
+  min-height: 120px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+.claude-panel.hidden {
+  display: none;
+}
+.claude-jobs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.cj-list {
+  flex: 0 0 38%;
+  max-width: 460px;
+  min-width: 220px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+.cj-section {
+  padding: 8px 12px 3px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.cj-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.cj-row:hover {
+  background: var(--row-hover);
+}
+.cj-row.selected {
+  background: var(--row-sel);
+}
+.cj-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.cj-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cj-row-repo {
+  margin-left: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.cj-num {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.cj-empty,
+.cj-placeholder {
+  padding: 16px 12px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.cj-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex: none;
+}
+.cj-dot.running {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  animation: cj-pulse 1.6s ease-in-out infinite;
+}
+.cj-dot.done {
+  background: var(--add-fg);
+}
+.cj-dot.failed {
+  background: var(--del-fg);
+}
+@keyframes cj-pulse {
+  50% {
+    box-shadow: 0 0 0 5px var(--accent-soft);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cj-dot.running {
+    animation: none;
+  }
+}
+.cj-detail {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cj-head {
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.cj-head-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cj-head-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cj-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+.cj-actions .btn {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+.cj-stop {
+  background: transparent;
+  color: var(--del-fg);
+  border: 1px solid var(--del-fg);
+}
+.cj-meta {
+  margin-top: 3px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.cj-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.cj-command summary,
+.cj-link {
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+.cj-link {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+}
+.cj-link:hover,
+.cj-command summary:hover {
+  color: var(--accent);
+}
+.cj-pre {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--term-bg);
+  color: var(--term-fg);
+  border-radius: 5px;
+  font: 11.5px/1.45 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cj-msg {
+  border-radius: 7px;
+}
+.cj-who {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 3px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.cj-when {
+  color: var(--text-dim);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.cj-prompt {
+  padding: 8px 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cj-prompt .cj-who {
+  color: var(--mod-fg);
+}
+.cj-prompt-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cj-prompt.folded .cj-prompt-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cj-claude {
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--accent);
+  border-radius: 0;
+}
+.cj-claude .cj-who {
+  color: var(--accent);
+}
+.cj-claude.final {
+  padding: 8px 10px;
+  border: 1px solid var(--add-fg);
+  border-radius: 7px;
+  background: var(--add-bg);
+}
+.cj-claude.final .cj-who {
+  color: var(--add-fg);
+}
+.cj-claude.final .cj-who::before {
+  content: "Answer ·";
+}
+.cj-thinking {
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 11.5px;
+  padding-left: 12px;
+}
+.cj-thinking-text {
+  white-space: pre-wrap;
+}
+.cj-tool {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 8px;
+}
+.cj-tool[open] {
+  padding-bottom: 8px;
+}
+.cj-tool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+  list-style: none;
+}
+.cj-tool-head::-webkit-details-marker {
+  display: none;
+}
+.cj-tool-name {
+  flex: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+.cj-tool-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 11.5px var(--mono);
+  color: var(--text);
+}
+.cj-tool-state {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.cj-tool.ok .cj-tool-state {
+  color: var(--add-fg);
+}
+.cj-tool.error .cj-tool-state {
+  color: var(--del-fg);
+}
+.cj-label {
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.earlier {
+  opacity: 0.6;
+}
+.cj-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.cj-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+.cj-tail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cj-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  font-size: 12px;
+}
+.cj-note {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.cj-end {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+.cj-end.failed {
+  border-color: var(--del-fg);
+  color: var(--del-fg);
+  background: var(--del-bg);
+}
+/* The status bar's "● 2 Claude jobs", shown only while jobs run. */
+.status-claude {
+  flex: none;
+  background: var(--accent-soft);
+  border: none;
+  color: var(--accent);
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.status-claude:hover {
+  filter: brightness(1.15);
+}
+.status-claude.hidden {
+  display: none;
+}

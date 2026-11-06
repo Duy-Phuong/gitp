@@ -185,6 +185,7 @@ fn run_on_path<T>(
         on_progress,
         cancel: Some(Arc::clone(&cancel)),
         askpass: None,
+        on_claude_run: None,
     });
     let out = f(&repo);
     ops.0.end(&cancel);

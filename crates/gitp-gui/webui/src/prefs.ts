@@ -635,13 +635,19 @@ export function tildePath(path: string): string {
   return path.replace(/^\/(?:Users|home)\/[^/]+\//, "~/");
 }
 
+// A fresh run's Claude Code session id, which gitp offers in the environment
+// (see run_shell in core): with it the Claude jobs view reads the run's
+// transcript while it goes. Empty on a resume, so nothing is added then.
+export const SESSION_ID_ARG = '${GITP_CLAUDE_NEW_SESSION:+--session-id "$GITP_CLAUDE_NEW_SESSION"}';
+
 // The shell line that writes a review of a pull request's diff (on its
 // stdin), for "Run Review Command". The default asks the Claude Code CLI — Opus
 // at medium effort — for findings in the shape the Drafts tab reads.
 const REVIEW_COMMAND_KEY = "gitp-review-command";
 
 export const DEFAULT_REVIEW_COMMAND =
-  "claude -p --model opus --effort medium 'Review the pull request diff on stdin as a careful senior engineer. " +
+  `claude -p ${SESSION_ID_ARG} --model opus --effort medium ` +
+  "'Review the pull request diff on stdin as a careful senior engineer. " +
   "Report only real problems: bugs, missing error handling, security issues, broken tests. " +
   "For each one write a block: a \"### path/to/file:line\" heading where line is in the new file, " +
   "a \"**Severity:** blocking|minor|nit\" line, then \"**Comment to paste:**\" and the comment for the author " +
@@ -672,7 +678,7 @@ const SKILL_TOOLS = [
 export const SKILL_REVIEW_COMMAND =
   `claude -p "/review-pr-phuong $GITP_PR_URL board mode, with md, no questions: where you would ask, take the default ` +
   `(the sprint folder no-sprint when Jira has no sprint). Write the review Markdown under review/, not in TMPDIR." ` +
-  `--model opus --effort medium --permission-mode dontAsk --allowedTools "${SKILL_TOOLS.join(" ")}"`;
+  `--model opus --effort medium --permission-mode dontAsk ${SESSION_ID_ARG} --allowedTools "${SKILL_TOOLS.join(" ")}"`;
 
 // "Explain more" on a finding of a saved review: the review board's own
 // request, served by its skill, which adds the explanation to the board and to
@@ -680,7 +686,7 @@ export const SKILL_REVIEW_COMMAND =
 export const EXPLAIN_FINDING_COMMAND =
   `claude -p "/serve-board Review board request: explain finding $GITP_REVIEW_FINDING of $GITP_REVIEW_SLUG. ` +
   `Serve only this line, as the README part 'Lines from the review HTML file' says. Do not arm a watch, ask no questions." ` +
-  `--model opus --effort medium --permission-mode dontAsk --allowedTools "${[...SKILL_TOOLS, "ToolSearch"].join(" ")}"`;
+  `--model opus --effort medium --permission-mode dontAsk ${SESSION_ID_ARG} --allowedTools "${[...SKILL_TOOLS, "ToolSearch"].join(" ")}"`;
 
 // The commands behind Check, Explain simply, a follow-up and Reply with
 // Claude on a pull request thread. Read-only toward the checkout and GitHub:
@@ -725,7 +731,8 @@ export const FIX_TOOLS = [
 const threadCommand = (prompt: string, tools = THREAD_TOOLS) =>
   `claude -p "${prompt}" --model opus --effort medium --permission-mode dontAsk ` +
   `--allowedTools "${tools.join(" ")}" --output-format json ` +
-  '${GITP_CLAUDE_SESSION:+--resume "$GITP_CLAUDE_SESSION"}';
+  '${GITP_CLAUDE_SESSION:+--resume "$GITP_CLAUDE_SESSION"} ' +
+  SESSION_ID_ARG;
 
 export const DEFAULT_THREAD_COMMANDS: Record<TurnKind, string> = {
   check: threadCommand(

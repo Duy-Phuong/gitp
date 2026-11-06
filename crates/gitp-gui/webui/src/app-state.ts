@@ -43,6 +43,7 @@ export type View =
   | "localhistory"
   | "pr"
   | "prlist"
+  | "claude"
   | "code";
 
 export const EMPTY_REFS: Refs = { head: null, branches: [], remotes: [], tags: [], stashes: [], recent: [] };
