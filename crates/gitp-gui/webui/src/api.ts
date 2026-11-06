@@ -5,6 +5,7 @@
 import REVIEW_BRIDGE from "./review-bridge.js?raw";
 import type {
   ActivityEntry,
+  AheadCommit,
   ThreadConversation,
   ThreadInput,
   TurnKind,
@@ -988,6 +989,18 @@ export async function gitflowFinish(branch: string, tagMessage: string | null): 
 export async function pushBranch(name: string, remote?: string): Promise<string> {
   if (!isTauri()) return `Pushed ${name} to ${remote ?? "origin"} (preview mock)`;
   return invokeNetwork<string>("push_branch", { name, remote: remote ?? null });
+}
+
+// The commits of `name` its upstream doesn't have yet, newest first: what
+// a push would send. None without an upstream.
+export async function branchAheadLog(name: string): Promise<AheadCommit[]> {
+  if (!isTauri()) {
+    return [
+      { sha: "a1b2c3d", subject: "fix(review): src/retry.ts:12 — restore >" },
+      { sha: "d4e5f6a", subject: "fix(review): src/upload.ts:40 — cap at 30 s" },
+    ];
+  }
+  return invoke<AheadCommit[]>("branch_ahead_log", { name });
 }
 
 // Push local branch `name` to `remoteBranch` on `remote`, whatever its name
@@ -2267,6 +2280,7 @@ const MOCK_TURN_TEXT: Record<TurnKind, string> = {
   explain: "**Bottom line:** the loop now stops one round earlier.\n\n```\ntry 1 ─▶ try 2 ─▶ try 3 ─▶ (stop)\n```\n\nWith `n = 3`: before, three tries; now, two.",
   followup: "Yes: `>` keeps the documented count, and nothing else reads the condition.",
   "reply-draft": "Good catch — that was not intended. I'll restore `>` so the documented three tries stay.",
+  fix: "**Changed** src/retry.ts, src/retry.test.ts (test `retries three times`).\n\nRestored `>` and pinned it with a test.",
 };
 
 // Run one Claude turn of `kind` on the thread of `input`, in the repository
@@ -2308,6 +2322,46 @@ export async function clearThreadConversation(path: string, number: number, thre
     return;
   }
   return invoke<void>("gh_thread_clear", { path, number, thread });
+}
+
+// Fix the thread as the user's last follow-up chose, in the worktree of the
+// pull request's `branch`: change, test, one commit, then the reply draft.
+export async function threadFix(path: string, input: ThreadInput, branch: string, fixCommand: string, replyCommand: string): Promise<ThreadConversation> {
+  if (!isTauri()) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const root = input.comments[0];
+    const key = `${input.number}\n${root.id}`;
+    const c = mockThreads.get(key) ?? { version: 1, pr: input.number, thread: root.id, path: root.path, turns: [] };
+    if (!c.turns.some((t) => t.role === "user")) throw new Error("Send the option you want as a follow-up first.");
+    const commit = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+    c.turns.push({ kind: "fix", role: "claude", at: Date.now(), head: commit, text: MOCK_TURN_TEXT.fix, commit, worktree: `/Users/you/Documents/mideal-${branch.replace(/\//g, "-")}` });
+    c.turns.push({ kind: "reply-draft", role: "claude", at: Date.now(), head: commit, text: `${MOCK_TURN_TEXT["reply-draft"]} Fixed in ${commit.slice(0, 7)}.` });
+    mockThreads.set(key, c);
+    return structuredClone(c);
+  }
+  return invoke<ThreadConversation>("gh_thread_fix", { path, input, branch, fixCommand, replyCommand });
+}
+
+// The thread's latest reply draft was posted at `url`.
+export async function markReplyPosted(path: string, number: number, thread: number, url: string): Promise<void> {
+  if (!isTauri()) {
+    const c = mockThreads.get(`${number}\n${thread}`);
+    const last = c ? [...c.turns].reverse().find((t) => t.kind === "reply-draft") : undefined;
+    if (last) last.posted = url;
+    return;
+  }
+  return invoke<void>("gh_thread_mark_posted", { path, number, thread, url });
+}
+
+// The thread's latest reply draft is not to be posted.
+export async function dropReply(path: string, number: number, thread: number): Promise<void> {
+  if (!isTauri()) {
+    const c = mockThreads.get(`${number}\n${thread}`);
+    const last = c ? [...c.turns].reverse().find((t) => t.kind === "reply-draft") : undefined;
+    if (last) last.dropped = true;
+    return;
+  }
+  return invoke<void>("gh_thread_drop_reply", { path, number, thread });
 }
 
 // Delete the conversations older than two months; how many went.

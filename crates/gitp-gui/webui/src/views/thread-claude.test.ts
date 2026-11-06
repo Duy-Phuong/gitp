@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { expect, it } from "vitest";
-import { conversationNode, conversationSummary, threadClaudeButtons } from "./thread-claude";
+import { conversationNode, conversationSummary, threadBadges, threadClaudeButtons } from "./thread-claude";
 import type { ThreadConversation } from "../types";
 
 it("a resolved thread has no Claude buttons", () => {
@@ -114,4 +114,49 @@ it("the follow-up box keeps what was typed across a redraw and reports edits", (
   area.value = "half a question more";
   area.dispatchEvent(new Event("input"));
   expect(typed).toBe("half a question more");
+});
+
+const opts = (over: Partial<Parameters<typeof conversationNode>[0]>) => ({
+  state: { running: null, error: null, loaded: true, conversation: conv() },
+  head: "aaaa",
+  open: true,
+  lastKind: null,
+  fix: { disabled: null },
+  onFix() {},
+  onDrop() {},
+  onFollowup() {},
+  onClear() {},
+  onRetry() {},
+  onCancel() {},
+  onToggle() {},
+  ...over,
+});
+
+it("the Fix button carries its disabled reason, and a Fix turn shows its commit", () => {
+  const off = conversationNode(opts({ fix: { disabled: "A fix is running on src/a.ts:1" } }));
+  const fix = [...off.querySelectorAll("button")].find((b) => b.textContent === "Fix") as HTMLButtonElement;
+  expect(fix.disabled).toBe(true);
+  expect(fix.title).toBe("A fix is running on src/a.ts:1");
+  const c = conv();
+  c.turns.push({ kind: "fix", role: "claude", at: Date.now(), head: "bbbb", text: "**Changed** x", commit: "a1b2c3d4e5f6", worktree: "/Users/you/mideal-feature" });
+  const on = conversationNode(opts({ state: { running: null, error: null, loaded: true, conversation: c }, head: "bbbb" }));
+  expect(on.textContent).toContain("Commit a1b2c3d in mideal-feature");
+  expect(([...on.querySelectorAll("button")].find((b) => b.textContent === "Fix") as HTMLButtonElement).disabled).toBe(false);
+  const fixing = conversationNode(opts({ state: { running: "fix", error: null, loaded: true, conversation: c } }));
+  expect(fixing.textContent).toContain("Claude is fixing");
+});
+
+it("badges say what the thread has ready", () => {
+  const c = conv();
+  expect(threadBadges(c)).toEqual([]);
+  c.turns.push({ kind: "reply-draft", role: "claude", at: 1, text: "r" });
+  expect(threadBadges(c)).toEqual(["reply ready"]);
+  c.turns.splice(c.turns.length - 1, 0, { kind: "fix", role: "claude", at: 1, text: "f", commit: "abc" });
+  expect(threadBadges(c)).toEqual(["fixed", "reply ready"]);
+  c.turns[c.turns.length - 1].posted = "u";
+  expect(threadBadges(c)).toEqual(["fixed", "posted"]);
+  c.turns[c.turns.length - 1].posted = undefined;
+  c.turns[c.turns.length - 1].dropped = true;
+  expect(threadBadges(c)).toEqual(["fixed"]);
+  expect(threadBadges(null)).toEqual([]);
 });

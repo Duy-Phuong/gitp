@@ -11,8 +11,8 @@
 
 import { clear, el, svg } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
-import { conversationNode, threadClaudeButtons } from "./thread-claude";
-import { threadState } from "../pr-threads";
+import { conversationNode, threadBadges, threadClaudeButtons } from "./thread-claude";
+import { fixDisabledReason, fixRunningOn, preparedReply, runningTurns, threadState } from "../pr-threads";
 import { composerArea, previewToggle } from "./composer";
 import { iconBtn, renderFile, renderSplitDiff, WRAP_ICON } from "./detail";
 import { loadDiffWrap, loadJiraSite, loadPrDiffSplit, loadPrFilesTree, saveDiffWrap, savePrDiffSplit, savePrFilesTree } from "../prefs";
@@ -81,6 +81,9 @@ export interface PullRequestCallbacks {
   readReview: (pr: PullRequestDetail, path: string) => void;
   // The repo the pull requests belong to: their reviews are kept by it.
   repoPath: () => string;
+  // How many commits local branch `name` is ahead of its upstream; 0 when
+  // unknown.
+  branchAhead: (name: string) => number;
   // The head commit the pull request was last reviewed at, if known.
   reviewedHead: (number: number) => string | null;
   // Starts the review command over the diff in the background; its drafts
@@ -100,6 +103,16 @@ export interface PullRequestCallbacks {
   // the view redraws from the thread's state; loads the saved conversation
   // once; forgets it after the user confirms; prunes the old ones.
   threadTurn: (pr: PullRequestDetail, thread: Thread, kind: TurnKind, userText: string) => void;
+  // Fix the thread as the chosen option says, in the branch's worktree,
+  // commit, and prepare the reply; drop a prepared reply after a confirm.
+  fixThread: (pr: PullRequestDetail, thread: Thread) => void;
+  // True once dropped.
+  dropReply: (pr: PullRequestDetail, thread: Thread) => Promise<boolean>;
+  // Pushes the branch and posts every reply Claude has ready, after one
+  // confirm; `edited` is what the Reply boxes hold. The threads whose reply
+  // was posted, or null when nothing was done.
+  pushAndReplyAll: (pr: PullRequestDetail, edited: Map<number, string>) => Promise<number[] | null>;
+  pushReplyInFlight: (pr: PullRequestDetail) => boolean;
   cancelThreadTurn: (pr: PullRequestDetail, thread: Thread) => void;
   loadThreadConversation: (pr: PullRequestDetail, thread: Thread) => void;
   // True once forgotten; false when the user said no or it failed.
@@ -117,6 +130,7 @@ export interface PullRequestHandle {
   // pick a review file, into the Drafts tab of the pull request on screen.
   generateDrafts: () => void;
   generateDraftsWithSkill: () => void;
+  pushAndReplyAll: () => void;
   loadReviewFile: () => void;
   // Read it again from GitHub — after a review posted from the menu, say.
   reload: () => void;
@@ -294,7 +308,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       button("Review ▾", (e) => cb.reviewMenu(pr, e.clientX, e.clientY), "Approve, request changes or comment"),
       ...(review().running
         ? [button("Reviewing… Cancel", () => cb.cancelReview(pr), "The review command is running in the background; click to stop it")]
-        : [generateButton(pr), skillButton(pr)]),
+        : [generateButton(pr), skillButton(pr), ...pushAndReplyButton(pr)]),
       button("Load Review File…", () => void loadDrafts(pr), "Read a review's findings as draft comments, to approve or discard before posting"),
     ]);
     if (pr.state === "OPEN") {
@@ -372,6 +386,15 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     body.append(el("div", { class: "pr-composer" }, [area, el("div", { class: "pr-composer-actions" }, [previewToggle(area).button, post])]));
   }
 
+  // Where a fix runs on the pull request, if one does on another thread:
+  // "path:line", for the other threads' disabled Fix.
+  function fixElsewhere(pr: PullRequestDetail, thisThread: number): string | null {
+    const id = fixRunningOn(cb.repoPath(), pr.number);
+    if (id === null || id === thisThread) return null;
+    const root = pr.review_comments.find((c) => c.id === id);
+    return root ? `${root.path}:${root.line ?? root.original_line ?? "?"}` : "another thread";
+  }
+
   // A line-comment thread: where it is, the code it is on, its comments, and
   // a Reply box behind a button. `withCode`: the conversation shows the lines
   // it was made on; the Files tab shows it under them already.
@@ -442,6 +465,22 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         openBlocks.add(root.id);
         cb.threadTurn(pr, thread, kind, text);
       };
+      // A dropped reply leaves the Reply box too, so nothing posts it.
+      const dropReply = async () => {
+        if (!(await cb.dropReply(pr, thread))) return;
+        replyText.delete(root.id);
+        replyOpen.delete(root.id);
+        render();
+      };
+      // Fix: only with an option chosen and no fix elsewhere on the pull
+      // request; it ends in a reply draft, which lands in the Reply box.
+      const fix = () => {
+        if (fixDisabledReason(ts.conversation, fixElsewhere(pr, root.id))) return;
+        pendingReplyDraft.set(root.id, ts.conversation?.turns.length ?? 0);
+        lastKind.set(root.id, "fix");
+        openBlocks.add(root.id);
+        cb.fixThread(pr, thread);
+      };
       if (ts.conversation || ts.running || ts.error) {
         node.append(
           conversationNode({
@@ -452,11 +491,22 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
             draft: followupText.get(root.id),
             onDraft: (text) => followupText.set(root.id, text),
             onFollowup: (text) => turn("followup", text),
+            fix: { disabled: fixDisabledReason(ts.conversation, fixElsewhere(pr, root.id)) },
+            onFix: fix,
+            onDrop: () => void dropReply(),
             onClear: () =>
               void cb.clearThreadConversation(pr, thread).then((cleared) => {
                 if (cleared) openBlocks.delete(root.id);
               }),
-            onRetry: (kind) => turn(kind),
+            onRetry: (kind) => {
+              // A fix is never a plain turn: it has a worktree, checks and
+              // an undo. A fix whose commit is in but whose reply draft
+              // failed needs only the draft again.
+              const last = ts.conversation?.turns[ts.conversation.turns.length - 1];
+              if (kind === "fix" && last?.kind === "fix" && last.commit) turn("reply-draft");
+              else if (kind === "fix") fix();
+              else turn(kind);
+            },
             onCancel: () => cb.cancelThreadTurn(pr, thread),
             onToggle: () => {
               if (!openBlocks.delete(root.id)) openBlocks.add(root.id);
@@ -484,6 +534,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
             });
           }
         }
+      }
+      for (const text of threadBadges(ts.conversation)) {
+        actions.append(el("span", { class: "pr-badge pr-thread-ready", text }));
+        if (text === "reply ready") actions.append(smallButton("Drop", () => void dropReply()));
       }
       for (const b of threadClaudeButtons(false, ts.running)) {
         const button = smallButton(b.label, () => {
@@ -747,6 +801,42 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     });
     b.addEventListener("click", () => cb.generateDraftsWithSkill(pr));
     return b;
+  }
+
+  // Push and reply all: once a reply is ready or the branch is ahead of its
+  // upstream; off while Claude works on the pull request.
+  function pushAndReplyButton(pr: PullRequestDetail): HTMLElement[] {
+    // Replies ready on the threads still open: a resolved one posts nothing.
+    const ready = reviewThreads(pr.review_comments).filter(
+      (t) =>
+        !pr.review_threads.find((s) => s.comment_ids.includes(t.root.id))?.resolved &&
+        preparedReply(threadState(cb.repoPath(), pr.number, t.root.id).conversation),
+    ).length;
+    const ahead = cb.branchAhead(pr.head);
+    if (!ready && !ahead) return [];
+    const b = el("button", {
+      class: "btn small ghost",
+      text: "Push and reply all",
+      title: `${ahead ? `Push ${pr.head} (${ahead} ahead)` : "Nothing to push"}; ${ready ? `post ${ready} ${ready === 1 ? "reply" : "replies"} Claude has ready` : "no reply ready"} — after one confirm that lists both`,
+    }) as HTMLButtonElement;
+    b.disabled = runningTurns(cb.repoPath(), pr.number) > 0 || cb.pushReplyInFlight(pr);
+    if (cb.pushReplyInFlight(pr)) b.textContent = "Pushing and replying…";
+    b.addEventListener("click", () => void pushAndReplyAll(pr));
+    return [b];
+  }
+
+  async function pushAndReplyAll(pr: PullRequestDetail): Promise<void> {
+    if (cb.pushReplyInFlight(pr)) return;
+    const edited = new Map<number, string>();
+    for (const [id, text] of replyText) if (text.trim()) edited.set(id, text);
+    const posted = await cb.pushAndReplyAll(pr, edited);
+    if (!posted) return;
+    // Only the posted replies' boxes close: a failed one keeps its edit.
+    for (const id of posted) {
+      replyText.delete(id);
+      replyOpen.delete(id);
+    }
+    render();
   }
 
   // Drafts read back from a saved review just after the pull request opened
@@ -1115,6 +1205,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     },
     generateDraftsWithSkill: () => {
       if (detail) cb.generateDraftsWithSkill(detail);
+    },
+    pushAndReplyAll: () => {
+      if (detail) void pushAndReplyAll(detail);
     },
     loadReviewFile: () => {
       if (detail) void loadDrafts(detail);

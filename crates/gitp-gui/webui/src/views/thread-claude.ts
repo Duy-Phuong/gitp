@@ -9,7 +9,7 @@ import { el } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
 import { composerArea } from "./composer";
 import { relativeTime, fullTime } from "../timeago";
-import type { ThreadState } from "../pr-threads";
+import { lastFix, preparedReply, type ThreadState } from "../pr-threads";
 import type { ThreadConversation, ThreadTurn, TurnKind } from "../types";
 
 // What a button starts: a follow-up has its own composer.
@@ -45,7 +45,21 @@ export const TURN_LABELS: Record<TurnKind, string> = {
   explain: "Explain",
   followup: "Follow-up",
   "reply-draft": "Reply draft",
+  fix: "Fix",
 };
+
+// What the thread has ready, for its badges: a committed fix, a reply
+// ready to post, or the latest reply posted.
+export function threadBadges(c: ThreadConversation | null): string[] {
+  if (!c) return [];
+  const out: string[] = [];
+  if (lastFix(c)) out.push("fixed");
+  const drafts = c.turns.filter((t) => t.kind === "reply-draft" && t.role === "claude");
+  const last = drafts[drafts.length - 1];
+  if (preparedReply(c)) out.push("reply ready");
+  else if (last?.posted) out.push("posted");
+  return out;
+}
 
 const lastClaude = (c: ThreadConversation): ThreadTurn | undefined => [...c.turns].reverse().find((t) => t.role === "claude");
 
@@ -68,6 +82,11 @@ export interface ConversationOptions {
   draft?: string;
   onDraft?: (text: string) => void;
   onFollowup: (text: string) => void;
+  // Fix, when the view offers it: off with the reason as the button's title.
+  fix?: { disabled: string | null };
+  onFix?: () => void;
+  // Drop the prepared reply.
+  onDrop?: () => void;
   onClear: () => void;
   onRetry: (kind: TurnKind) => void;
   onCancel: () => void;
@@ -95,7 +114,7 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
   if (open && c) {
     for (const t of c.turns) body.append(turnNode(t, head));
     // The pull request moved on since the last Check: offer another.
-    const stale = c.turns.some((t) => t.role === "claude" && t.head && !sameCommit(t.head, head));
+    const stale = c.turns.some((t) => t.role === "claude" && t.kind === "check" && t.head && !sameCommit(t.head, head));
     if (stale && !state.running) {
       const again = el("button", { class: "btn small ghost", text: "Check again" });
       again.addEventListener("click", (e) => {
@@ -114,7 +133,7 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
     body.append(
       el("div", { class: "pr-thread-claude-running" }, [
         el("span", { class: "spinner" }),
-        el("span", { text: `Claude is thinking (${TURN_LABELS[state.running]})…` }),
+        el("span", { text: state.running === "fix" ? "Claude is fixing (change, test, commit)…" : `Claude is thinking (${TURN_LABELS[state.running]})…` }),
         cancel,
       ]),
     );
@@ -138,6 +157,17 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
     area.addEventListener("input", () => o.onDraft?.(area.value));
     const send = el("button", { class: "btn small", text: "Send" });
     const clear = el("button", { class: "btn small ghost", text: "Clear" }) as HTMLButtonElement;
+    const actions = [clear, send];
+    if (o.fix) {
+      const reason = o.fix.disabled;
+      const fix = el("button", { class: "btn small", text: "Fix", title: reason ?? "Make the change for the chosen option in the branch's worktree, commit it, and prepare the reply" }) as HTMLButtonElement;
+      fix.disabled = state.running !== null || reason !== null;
+      fix.addEventListener("click", (e) => {
+        e.stopPropagation();
+        o.onFix?.();
+      });
+      actions.push(fix);
+    }
     clear.disabled = state.running !== null;
     send.disabled = state.running !== null;
     const submit = () => {
@@ -161,7 +191,7 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
       e.stopPropagation();
       o.onClear();
     });
-    const box = el("div", { class: "pr-composer pr-thread-claude-composer" }, [area, el("div", { class: "pr-composer-actions" }, [clear, send])]);
+    const box = el("div", { class: "pr-composer pr-thread-claude-composer" }, [area, el("div", { class: "pr-composer-actions" }, actions)]);
     box.addEventListener("click", (e) => e.stopPropagation());
     body.append(box);
   }
@@ -181,7 +211,9 @@ function turnNode(t: ThreadTurn, head: string): HTMLElement {
     el("span", { class: "pr-card-verb", text: TURN_LABELS[t.kind] }),
     el("span", { class: "pr-card-time", text: relativeTime(secs), title: fullTime(secs) }),
   ]);
-  if (t.role === "claude" && t.head && !sameCommit(t.head, head)) {
+  // A fix moves the code on purpose, and a reply draft is not an analysis.
+  const analysis = t.kind === "check" || t.kind === "explain" || t.kind === "followup";
+  if (t.role === "claude" && analysis && t.head && !sameCommit(t.head, head)) {
     headLine.append(
       el("span", {
         class: "pr-badge",
@@ -192,5 +224,9 @@ function turnNode(t: ThreadTurn, head: string): HTMLElement {
   }
   const node = el("div", { class: `pr-thread-claude-turn ${t.role}` }, [headLine]);
   node.append(t.role === "user" ? el("div", { class: "pr-thread-claude-text", text: t.text }) : renderGitHubMarkdown(t.text));
+  if (t.kind === "fix" && t.commit) {
+    const where = t.worktree ? ` in ${t.worktree.replace(/\/$/, "").split("/").pop()}` : "";
+    node.append(el("div", { class: "pr-thread-claude-commit", text: `Commit ${t.commit.slice(0, 7)}${where}` }));
+  }
   return node;
 }

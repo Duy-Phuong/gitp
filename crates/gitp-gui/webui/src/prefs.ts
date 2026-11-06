@@ -699,10 +699,32 @@ const THREAD_RULES =
   "Read the code at commit $GITP_PR_HEAD with git show $GITP_PR_HEAD:path, never the checkout. " +
   "Fix nothing, post nothing, ask no questions. Answer in Markdown.";
 
+// The fix's tools: the thread's lookups, plus editing, staging, committing
+// and the test runners — in the pull request branch's worktree, which gitp
+// resets when the run fails. Never push, gh, or anything that moves branches.
+export const FIX_TOOLS = [
+  ...THREAD_TOOLS,
+  "Edit",
+  "Write",
+  "Bash(git add *)",
+  "Bash(git commit *)",
+  "Bash(git status *)",
+  "Bash(git stash list)",
+  "Bash(npm test*)",
+  "Bash(npx vitest *)",
+  "Bash(cargo test *)",
+  "Bash(./gradlew test)",
+  "Bash(./gradlew test --tests *)",
+  "Bash(mvn test)",
+  "Bash(mvn test -*)",
+  "Bash(pytest *)",
+  "Bash(go test *)",
+];
+
 // The prompt comes first: --allowedTools takes every word after it as a tool.
-const threadCommand = (prompt: string) =>
+const threadCommand = (prompt: string, tools = THREAD_TOOLS) =>
   `claude -p "${prompt}" --model opus --effort medium --permission-mode dontAsk ` +
-  `--allowedTools "${THREAD_TOOLS.join(" ")}" --output-format json ` +
+  `--allowedTools "${tools.join(" ")}" --output-format json ` +
   '${GITP_CLAUDE_SESSION:+--resume "$GITP_CLAUDE_SESSION"}';
 
 export const DEFAULT_THREAD_COMMANDS: Record<TurnKind, string> = {
@@ -731,6 +753,16 @@ export const DEFAULT_THREAD_COMMANDS: Record<TurnKind, string> = {
       "stdin when there is one. Plain, short, in the first person. Print only the reply, no heading, no " +
       "explanation. " +
       THREAD_RULES,
+  ),
+  fix: threadCommand(
+    "Read the review thread in $GITP_THREAD_FILE on pull request $GITP_PR_URL; the conversation in it ends " +
+      "with the option the user chose, which is also on stdin. You are in the worktree of the pull request's " +
+      "branch; the tree is clean. Make the smallest change that answers the comment, matching the style " +
+      "around it. Add or update a test and run the project's test command for it. Then commit exactly once " +
+      "on the current branch, with 'fix(review): <path>:<line> — <one line>' as the subject and a body that " +
+      "names the reviewer's point and what changed. Do not push, do not post, do not touch other branches. " +
+      "Print a short summary in Markdown: the files changed, the test, the commit id.",
+    FIX_TOOLS,
   ),
 };
 

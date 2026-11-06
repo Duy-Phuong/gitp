@@ -370,6 +370,12 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
         row("Explain simply command", threadCommandField("explain"), "block"),
         row("Reply with Claude command", threadCommandField("reply-draft"), "block"),
         row("Follow-up command", threadCommandField("followup"), "block"),
+        row(
+          "Fix command",
+          threadCommandField("fix"),
+          "block",
+          "Fix on a thread runs this in the worktree of the pull request's branch, with the chosen option on stdin: it may edit, run the tests and commit exactly once; gitp undoes the run when it fails. GITP_FIX_WORKTREE, GITP_FIX_BRANCH and GITP_FIX_HEAD_BEFORE are set too.",
+        ),
         row("Git configuration", linkButton("Open Git Config", () => actions.openConfig("git"))),
         row("Dotfiles", linkButton("Open Dotfiles", () => actions.openConfig("dotfiles"))),
       ],

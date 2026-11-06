@@ -291,6 +291,12 @@ pub(crate) fn push_branch(
     push_branch_impl(&state, name, remote)
 }
 
+/// The commits of `name` its upstream doesn't have: what a push would send.
+#[tauri::command(async)]
+pub(crate) fn branch_ahead_log(name: String, state: State<RepoState>) -> Result<Vec<gitp_core::AheadCommit>, String> {
+    crate::state::with_repo_unlocked(&state, |repo| repo.ahead_log(&name))
+}
+
 #[tauri::command(async)]
 pub(crate) fn push_branch_to(
     name: String,

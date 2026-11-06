@@ -721,8 +721,14 @@ export interface PrReviewComment {
   diff_hunk: string;
 }
 
+// A commit a branch has that its upstream doesn't.
+export interface AheadCommit {
+  sha: string;
+  subject: string;
+}
+
 // What a Claude turn on a thread asked for.
-export type TurnKind = "check" | "explain" | "followup" | "reply-draft";
+export type TurnKind = "check" | "explain" | "followup" | "reply-draft" | "fix";
 
 // One message of a thread's Claude conversation.
 export interface ThreadTurn {
@@ -733,6 +739,12 @@ export interface ThreadTurn {
   // The head commit a Claude turn was made against.
   head?: string;
   text: string;
+  // A fix turn: the commit it made, in which worktree.
+  commit?: string;
+  worktree?: string;
+  // A reply draft: where it was posted, or that it was dropped.
+  posted?: string;
+  dropped?: boolean;
 }
 
 // The Claude conversation kept for one line-comment thread, under the
@@ -742,8 +754,10 @@ export interface ThreadConversation {
   pr: number;
   thread: number;
   path: string;
-  // The Claude Code session to resume, once a JSON answer gave one.
+  // The Claude Code session to resume, once a JSON answer gave one; the
+  // fixes, made in the branch's worktree, have their own.
   session?: string;
+  fix_session?: string;
   turns: ThreadTurn[];
 }
 

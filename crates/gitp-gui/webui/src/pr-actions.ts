@@ -47,8 +47,13 @@ import {
   reviewPullRequest,
   reviewWithComments,
   threadConversation,
+  threadFix,
   threadTurn,
+  markReplyPosted,
+  dropReply,
+  branchAheadLog,
 } from "./api";
+import { pushAndReplyListing, type ReplyToPost } from "./pr-push-reply";
 import { state, ui } from "./app-state";
 import { copyText } from "./clipboard";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
@@ -64,7 +69,7 @@ import {
 import { defaultWorktreePath } from "./worktree-actions";
 import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
 import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, SKILL_REVIEW_COMMAND } from "./prefs";
-import { finishTurn, lastUserText, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
+import { finishTurn, lastUserText, preparedReply, runningTurns, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
 import { showErrorDialog } from "./views/message-dialog";
@@ -82,8 +87,8 @@ import {
 import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
 import { openReviewViewer } from "./views/review-viewer";
-import { baseBranches, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices, type Thread } from "./pull-requests";
-import type { BranchRef, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict, TurnKind } from "./types";
+import { baseBranches, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices, reviewThreads, type Thread } from "./pull-requests";
+import type { AheadCommit, BranchRef, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict, ThreadConversation, TurnKind } from "./types";
 
 // --- The sidebar section ----------------------------------------------------
 
@@ -457,8 +462,24 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
       return false;
     }
   },
-  reply: (pr, root, body) =>
-    post(`a reply to ${root.author}`, pr.number, body, async () => (await replyToReviewComment(pr.number, root.id, body)).url),
+  reply: async (pr, root, body) => {
+    let url = "";
+    const ok = await post(`a reply to ${root.author}`, pr.number, body, async () => (url = (await replyToReviewComment(pr.number, root.id, body)).url));
+    // A reply Claude had ready is now posted, so Push and reply all skips
+    // it. Core says when the thread had none ready; anything else is
+    // reported, since the draft would otherwise be posted again.
+    if (ok) {
+      try {
+        await markReplyPosted(state.repoPath, pr.number, root.id, url);
+      } catch (err) {
+        if (!/no reply ready|no Claude conversation/.test(String(err))) opFailed("Couldn't mark Claude's reply as posted", err);
+      }
+      const s = threadState(state.repoPath, pr.number, root.id);
+      s.loaded = false;
+      await loadThreadConversation(state.repoPath, pr.number, root.id);
+    }
+    return ok;
+  },
   lineComment: (pr, comment) =>
     post(`a comment on ${comment.path}:${comment.line}`, pr.number, comment.body, async () => (await commentOnLine(pr.number, comment)).url),
   // The pull request's saved review when there is one — it replaces the
@@ -509,6 +530,7 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
       openInBrowser: () => void openReviewPage(path).catch((err) => readFailed("Couldn't open the review page", err)),
     }),
   repoPath: () => state.repoPath,
+  branchAhead: (name) => state.refs.branches.find((b) => b.name === name)?.ahead ?? 0,
   generateDrafts: (pr) => void runReview(state.repoPath, pr.number, pr.head_oid),
   generateDraftsWithSkill: (pr) => void runReview(state.repoPath, pr.number, pr.head_oid, SKILL_REVIEW_COMMAND),
   reviewedHead: (number) => reviewedHead(state.repoPath, number),
@@ -525,6 +547,21 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
     return post(what, pr.number, body.trim() ? `${body}\n\n${preview}` : preview, () => reviewWithComments(pr.number, verdict, body, comments));
   },
   threadTurn: (pr, thread, kind, userText) => void runThreadTurn(state.repoPath, pr, thread, kind, userText),
+  fixThread: (pr, thread) => void runFix(state.repoPath, pr, thread),
+  pushAndReplyAll: (pr, edited) => pushAndReplyAll(state.repoPath, pr, edited),
+  dropReply: async (pr, thread) => {
+    const repo = state.repoPath;
+    if (!(await confirmDialog(`Drop the reply Claude prepared for ${thread.root.path} of #${pr.number}?`))) return false;
+    try {
+      await dropReply(repo, pr.number, thread.root.id);
+      await loadThreadConversation(repo, pr.number, thread.root.id, true);
+      return true;
+    } catch (err) {
+      opFailed("Couldn't drop the reply", err);
+      return false;
+    }
+  },
+  pushReplyInFlight: (pr) => pushReplyInFlight(state.repoPath, pr.number),
   cancelThreadTurn: (pr, thread) =>
     void cancelThreadTurn(state.repoPath, pr.number, thread.root.id).catch((err) => opFailed("Couldn't cancel Claude's turn", err)),
   confirm: (message) => confirmDialog(message),
@@ -585,6 +622,145 @@ async function runThreadTurn(repo: string, pr: PullRequestDetail, thread: Thread
     // A failed follow-up kept its question: show it.
     void loadThreadConversation(repo, number, id, true);
   }
+}
+
+// Fix the thread as the user's last follow-up chose, in the worktree of the
+// pull request's branch, in the background: change, test, one commit, then
+// the reply draft. One fix per pull request at a time (the worktree is
+// shared); core refuses a dirty or outdated worktree and undoes a failed run.
+async function runFix(repo: string, pr: PullRequestDetail, thread: Thread): Promise<void> {
+  const { number } = pr;
+  const id = thread.root.id;
+  const where = `${thread.root.path}:${thread.root.line ?? thread.root.original_line ?? "?"}`;
+  if (!startTurn(repo, number, id, "fix")) return;
+  setStatus(`Fixing ${where} of #${number} in ${pr.head}'s worktree in the background — keep working; the thread shows when it's done.`);
+  try {
+    const input = { number, head: pr.head_oid, author: pr.author, comments: [thread.root, ...thread.replies] };
+    const conversation = await threadFix(repo, input, pr.head, loadThreadCommand("fix"), loadThreadCommand("reply-draft"));
+    finishTurn(repo, number, id, conversation);
+    const commit = [...conversation.turns].reverse().find((t) => t.kind === "fix" && t.commit)?.commit?.slice(0, 7);
+    reportDone(`Fixed ${where} of #${number}${commit ? ` in ${commit}` : ""}; the reply is ready.`);
+  } catch (err) {
+    if (isCancelled(err)) {
+      finishTurn(repo, number, id, { error: "Cancelled; the worktree is back where it was." });
+      setStatus(`Fix of ${where} of #${number} cancelled.`);
+    } else {
+      const title = `Couldn't fix ${where} of #${number}`;
+      finishTurn(repo, number, id, { error: String(err) });
+      setStatus(`${title}: ${String(err)}`);
+      toast(title, { kind: "error", onDetails: () => showErrorDialog(title, String(err)) });
+    }
+    // A fix that committed but whose reply draft failed is still there.
+    void loadThreadConversation(repo, number, id, true);
+  }
+}
+
+// The pull requests a Push and reply all is in flight on (`repo\nnumber`):
+// one at a time, so a second click can't post the same replies twice.
+const pushReplyRuns = new Set<string>();
+
+export function pushReplyInFlight(repo: string, number: number): boolean {
+  return pushReplyRuns.has(`${repo}\n${number}`);
+}
+
+// Push the pull request's branch and post every reply Claude has ready,
+// after one confirm that lists both. The push goes first; a push that fails
+// posts nothing. A reply that fails to post is reported and stays ready.
+// `edited`: what the Reply boxes hold, by thread, which wins over the kept
+// draft of a thread that has one. Resolves with the threads whose reply was
+// posted, or null when nothing was done.
+async function pushAndReplyAll(repo: string, pr: PullRequestDetail, edited: Map<number, string>): Promise<number[] | null> {
+  const { number } = pr;
+  const key = `${repo}\n${number}`;
+  if (pushReplyRuns.has(key)) return null;
+  if (runningTurns(repo, number) > 0) {
+    setStatus(`Claude is still working on #${number}: wait for it before pushing.`);
+    return null;
+  }
+  pushReplyRuns.add(key);
+  threadsChanged();
+  try {
+    return await pushAndReplyAllNow(repo, pr, edited);
+  } finally {
+    pushReplyRuns.delete(key);
+    threadsChanged();
+  }
+}
+
+async function pushAndReplyAllNow(repo: string, pr: PullRequestDetail, edited: Map<number, string>): Promise<number[] | null> {
+  const { number } = pr;
+  const roots = reviewThreads(pr.review_comments)
+    .map((t) => t.root)
+    .filter((root) => !pr.review_threads.find((t) => t.comment_ids.includes(root.id))?.resolved);
+  const replies: (ReplyToPost & { id: number })[] = [];
+  for (const root of roots) {
+    let c: ThreadConversation | null;
+    try {
+      c = await threadConversation(repo, number, root.id);
+    } catch (err) {
+      opFailed(`Couldn't read Claude's conversation on ${root.path}`, err);
+      continue;
+    }
+    setConversation(repo, number, root.id, c);
+    // Only a thread with a reply ready posts: what its box holds, else the draft.
+    const ready = preparedReply(c);
+    const body = ready ? edited.get(root.id)?.trim() || ready.text : null;
+    if (body) replies.push({ id: root.id, where: `${root.path}:${root.line ?? root.original_line ?? "?"}`, body });
+  }
+  // What the push sends, asked now: the cached ahead count can lag a fresh
+  // fix commit, and a reply that says "fixed in X" must not go out alone.
+  let commits: AheadCommit[];
+  try {
+    commits = await branchAheadLog(pr.head);
+  } catch (err) {
+    opFailed(`Couldn't tell what a push of ${pr.head} would send`, err);
+    return null;
+  }
+  const branch = state.refs.branches.find((b) => b.name === pr.head);
+  if (branch && !branch.has_upstream && replies.length) {
+    opFailed(`${pr.head} has no upstream`, "Push it once by hand first, so Push and reply all knows what the pull request has.");
+    return null;
+  }
+  const remote = branch?.upstream_remote ?? githubRemoteName(state.remoteList, state.prs.repo ?? "") ?? "origin";
+  if (!commits.length && !replies.length) {
+    setStatus(`Nothing to push or post on #${number}.`);
+    return null;
+  }
+  if (!(await confirmDialog(pushAndReplyListing({ branch: pr.head, remote, number, commits, replies })))) {
+    setStatus("Not pushed, nothing posted.");
+    return null;
+  }
+  if (commits.length) {
+    setStatus(`Pushing ${pr.head} to ${remote}…`);
+    try {
+      await pushBranch(pr.head, remote);
+    } catch (err) {
+      opFailed(`Couldn't push ${pr.head}; nothing was posted`, err);
+      return null;
+    }
+  }
+  const posted: number[] = [];
+  for (const r of replies) {
+    setStatus(`Posting the reply on ${r.where} of #${number}…`);
+    try {
+      const made = await replyToReviewComment(number, r.id, r.body);
+      posted.push(r.id);
+      await markReplyPosted(repo, number, r.id, made.url).catch((err) => opFailed(`Couldn't mark the reply on ${r.where} as posted`, err));
+    } catch (err) {
+      opFailed(`Couldn't post the reply on ${r.where} of #${number}; it stays ready`, err);
+    }
+    const s = threadState(repo, number, r.id);
+    s.loaded = false;
+    await loadThreadConversation(repo, number, r.id);
+  }
+  if (!commits.length && !posted.length) {
+    setStatus(`Nothing posted on #${number}.`);
+    return null;
+  }
+  const said = [commits.length ? `pushed ${pr.head}` : "", posted.length ? `posted ${posted.length} ${posted.length === 1 ? "reply" : "replies"}` : ""].filter(Boolean).join(" and ");
+  reportDone(`${said.charAt(0).toUpperCase()}${said.slice(1)} on #${number}.`);
+  ui.prView?.reload();
+  return posted;
 }
 
 // Read the thread's saved conversation into its state, once — or again when

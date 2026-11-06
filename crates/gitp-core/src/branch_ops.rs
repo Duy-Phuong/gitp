@@ -6,11 +6,18 @@
 //! Checkout, branch/tag creation, and rebase already live elsewhere
 //! (`checkout.rs`, `commit_ops.rs`) and are reused by the menu as-is.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::remote::ref_arg;
 use crate::repo::Repo;
+
+/// A commit a branch has that its upstream doesn't: for "what a push sends".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AheadCommit {
+    pub sha: String,
+    pub subject: String,
+}
 
 /// How `merge_branch` combines the other branch: git's default (fast-forward
 /// when it can, else a merge commit), always a merge commit (`--no-ff`), only
@@ -188,6 +195,29 @@ impl Repo {
             None => self.remote_target(name).0,
         };
         self.run_git_network(&["push", ref_arg(&remote)?, name])
+    }
+
+    /// The commits of branch `name` its upstream doesn't have yet, newest
+    /// first; none when it has no upstream.
+    pub fn ahead_log(&self, name: &str) -> Result<Vec<AheadCommit>> {
+        let name = ref_arg(name)?;
+        let upstream = format!("{name}@{{u}}");
+        if self
+            .run_git(&["rev-parse", "--verify", "--quiet", &upstream])
+            .is_err()
+        {
+            return Ok(Vec::new());
+        }
+        let range = format!("{upstream}..{name}");
+        let out = self.run_git(&["log", "--format=%h%x09%s", &range])?;
+        Ok(out
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .map(|(sha, subject)| AheadCommit {
+                sha: sha.to_string(),
+                subject: subject.to_string(),
+            })
+            .collect())
     }
 
     /// Push local branch `name` to branch `remote_branch` on `remote`, which
@@ -379,6 +409,39 @@ fn encode_query(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::parse_remote_url;
+
+    #[test]
+    fn the_ahead_log_lists_what_a_push_would_send_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |cwd: &std::path::Path, args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .env("GIT_AUTHOR_NAME", "T")
+                .env("GIT_AUTHOR_EMAIL", "t@example.com")
+                .env("GIT_COMMITTER_NAME", "T")
+                .env("GIT_COMMITTER_EMAIL", "t@example.com")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        };
+        let bare = dir.path().join("remote.git");
+        let work = dir.path().join("work");
+        git(dir.path(), &["init", "-q", "--bare", "remote.git"]);
+        git(dir.path(), &["init", "-q", "-b", "main", "work"]);
+        git(&work, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        git(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        git(&work, &["push", "-q", "-u", "origin", "main"]);
+        git(&work, &["commit", "-q", "--allow-empty", "-m", "first ahead"]);
+        git(&work, &["commit", "-q", "--allow-empty", "-m", "second ahead"]);
+        git(&work, &["branch", "-q", "lonely"]);
+        let repo = crate::repo::Repo::open(&work).unwrap();
+        let ahead = repo.ahead_log("main").unwrap();
+        assert_eq!(ahead.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(), ["second ahead", "first ahead"]);
+        assert!(ahead.iter().all(|c| c.sha.len() >= 7));
+        assert_eq!(repo.ahead_log("lonely").unwrap(), vec![], "no upstream");
+        assert!(repo.ahead_log("-x").is_err(), "a dash is not a branch");
+    }
 
     #[test]
     fn parses_common_remote_url_forms() {

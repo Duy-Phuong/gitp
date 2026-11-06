@@ -468,6 +468,7 @@ function repoCommands(): QuickItem[] {
       ? [
           { kind: "command" as const, label: "Pull Request: Run Review Command", detail: "run the review command over the open pull request's diff", run: () => ui.prView?.generateDrafts() },
           { kind: "command" as const, label: "Pull Request: Run Review Skill", detail: "run the /review-pr-phuong skill over the open pull request", run: () => ui.prView?.generateDraftsWithSkill() },
+          { kind: "command" as const, label: "Pull Request: Push and Reply All", detail: "push the branch and post every reply Claude has ready, after one confirm", run: () => ui.prView?.pushAndReplyAll() },
           { kind: "command" as const, label: "Pull Request: Load Review File…", detail: "a review's findings as draft comments", run: () => ui.prView?.loadReviewFile() },
         ]
       : []),
