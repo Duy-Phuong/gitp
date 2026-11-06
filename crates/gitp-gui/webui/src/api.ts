@@ -1920,6 +1920,13 @@ export async function fetchPullRequestFiles(number: number): Promise<FileDiff[]>
   return invoke<FileDiff[]>("gh_pull_request_files", { number });
 }
 
+// The changed files of commit `oid` as GitHub has it: a pull request's
+// commit needn't be fetched here.
+export async function fetchGitHubCommitFiles(oid: string): Promise<FileDiff[]> {
+  if (!isTauri()) return structuredClone(oid.startsWith("c") ? MOCK_PR_FILES.slice(0, 1) : MOCK_PR_FILES);
+  return invoke<FileDiff[]>("gh_commit_files", { oid });
+}
+
 // `gh pr checkout`: fetches, so it reports through the network status and can
 // be cancelled.
 export async function checkoutPullRequest(number: number): Promise<string> {
@@ -1997,6 +2004,8 @@ export async function createPullRequestOnGitHub(pr: NewPullRequest): Promise<num
       updated_at: new Date().toISOString(),
       url: `https://github.com/example/mideal/pull/${number}`,
       labels: [],
+      approvals: 0,
+      unresolved_threads: 0,
     });
     mockPrDetailOf(number).body = pr.body;
     return number;
@@ -3080,6 +3089,8 @@ const MOCK_PULL_REQUESTS: PullRequest[] = [
     updated_at: "2026-10-30T08:12:00Z",
     url: "https://github.com/example/mideal/pull/42",
     labels: [{ name: "enhancement", color: "a2eeef" }, { name: "backend", color: "5319e7" }],
+    approvals: 2,
+    unresolved_threads: 0,
   },
   {
     number: 41,
@@ -3093,6 +3104,8 @@ const MOCK_PULL_REQUESTS: PullRequest[] = [
     updated_at: "2026-10-29T16:40:00Z",
     url: "https://github.com/example/mideal/pull/41",
     labels: [],
+    approvals: 0,
+    unresolved_threads: 3,
   },
   {
     number: 39,
@@ -3106,6 +3119,8 @@ const MOCK_PULL_REQUESTS: PullRequest[] = [
     updated_at: "2026-10-28T11:05:00Z",
     url: "https://github.com/example/mideal/pull/39",
     labels: [{ name: "bug", color: "d73a4a" }],
+    approvals: 1,
+    unresolved_threads: 1,
   },
 ];
 
@@ -3129,6 +3144,22 @@ function mockPrDetail(pr: PullRequest): PullRequestDetail {
     comments: [],
     review_comments: [],
     review_threads: [],
+    commits: [
+      {
+        oid: mockOid("c"),
+        headline: `Start ${pr.head}`,
+        body: "",
+        authors: [pr.author],
+        committed_at: "2026-11-04T09:12:00Z",
+      },
+      {
+        oid: mockOid("e"),
+        headline: `${pr.title}`,
+        body: "Why it changes, in a second paragraph.",
+        authors: [pr.author, "claude"],
+        committed_at: "2026-11-05T15:40:00Z",
+      },
+    ],
     additions: 2,
     deletions: 1,
     changed_files: 1,

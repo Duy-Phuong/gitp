@@ -8,6 +8,7 @@ import {
   mergeAdvice,
   defaultMergeMethod,
   filterPrList,
+  prAttentionTags,
   mergeChoices,
   NO_PR_LIST_FILTERS,
   prListChoices,
@@ -60,6 +61,7 @@ function detail(over: Partial<PullRequestDetail> = {}): PullRequestDetail {
     comments: [],
     review_comments: [],
     review_threads: [],
+    commits: [],
     additions: 0,
     deletions: 0,
     changed_files: 0,
@@ -178,6 +180,8 @@ describe("prMatches", () => {
     updated_at: "",
     url: "",
     labels: [],
+    approvals: 0,
+    unresolved_threads: null,
   };
   const matcher = (q: string) => (text: string) => text.toLowerCase().includes(q);
   it("matches the number, title, author and branch", () => {
@@ -333,6 +337,8 @@ describe("the Pull Requests view's filters and sort", () => {
     updated_at: "2026-11-01T00:00:00Z",
     url: "",
     labels: [],
+    approvals: 0,
+    unresolved_threads: null,
     ...over,
   });
   const list = [
@@ -360,5 +366,18 @@ describe("the Pull Requests view's filters and sort", () => {
     expect(numbers(sortPrList(list, "title", false))).toEqual([2, 1, 3]);
     // The same author: the newest number first.
     expect(numbers(sortPrList(list, "author", false))).toEqual([3, 2, 1]);
+  });
+});
+
+describe("the tags that make a pull request stand out in the lists", () => {
+  const pr = (approvals: number, unresolved_threads: number | null) => ({ approvals, unresolved_threads });
+
+  it("flags unresolved threads, and two approvals or more", () => {
+    expect(prAttentionTags(pr(0, 0))).toEqual([]);
+    expect(prAttentionTags(pr(1, null))).toEqual([]);
+    expect(prAttentionTags(pr(2, 3)).map((t) => [t.kind, t.text, t.short])).toEqual([
+      ["unresolved", "3 unresolved", "💬 3"],
+      ["approvals", "✓ 2 approvals", "✓ 2"],
+    ]);
   });
 });

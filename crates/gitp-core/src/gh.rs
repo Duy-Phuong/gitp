@@ -10,6 +10,7 @@
 //! timeout, so a `gh` waiting on something it can't get (an answer to a prompt,
 //! a dead network) can't hang the GUI.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -114,6 +115,10 @@ pub struct PullRequest {
     pub updated_at: String,
     pub url: String,
     pub labels: Vec<PrLabel>,
+    /// The reviewers whose latest review approves it.
+    pub approvals: u32,
+    /// Its line-comment threads not resolved yet; none when GitHub didn't say.
+    pub unresolved_threads: Option<u32>,
 }
 
 /// One check run or commit status on the pull request's head.
@@ -176,6 +181,17 @@ pub struct PrReviewThread {
     pub comment_ids: Vec<u64>,
 }
 
+/// A commit of a pull request, oldest first as GitHub lists them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PrCommit {
+    pub oid: String,
+    pub headline: String,
+    pub body: String,
+    /// Logins, or names for authors without an account; co-authors too.
+    pub authors: Vec<String>,
+    pub committed_at: String,
+}
+
 /// Everything the pull request view shows but the changed files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PullRequestDetail {
@@ -201,6 +217,7 @@ pub struct PullRequestDetail {
     /// Empty when the host doesn't answer the GraphQL query (threads are
     /// then shown without a resolved state).
     pub review_threads: Vec<PrReviewThread>,
+    pub commits: Vec<PrCommit>,
     pub additions: u64,
     pub deletions: u64,
     pub changed_files: u64,
@@ -753,7 +770,45 @@ impl Repo {
         }
         let out = self.gh_call(gh, &target, &args, None, TIMEOUT)?;
         let raw: Vec<RawPr> = parse_json(&out.stdout)?;
-        Ok(raw.into_iter().map(PullRequest::from).collect())
+        let mut prs: Vec<PullRequest> = raw.into_iter().map(PullRequest::from).collect();
+        // Which threads are resolved is GraphQL's alone; the list does without.
+        if let Ok(open) = self.unresolved_threads(gh, &target) {
+            for pr in &mut prs {
+                pr.unresolved_threads = open.get(&pr.number).copied();
+            }
+        }
+        Ok(prs)
+    }
+
+    /// How many line-comment threads of each open pull request (the 100
+    /// last updated, as the list has them) aren't resolved, by number.
+    fn unresolved_threads(&self, gh: &Gh, target: &GitHubRepo) -> Result<HashMap<u64, u32>> {
+        let (owner, name) = target
+            .path
+            .split_once('/')
+            .ok_or_else(|| Error::Message(format!("not owner/name: {}", target.path)))?;
+        let query = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { \
+            pullRequests(states: OPEN, first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) { \
+            nodes { number reviewThreads(first: 100) { nodes { isResolved } } } } } }";
+        let mut args = Vec::new();
+        target.api(&mut args);
+        let owner_arg = format!("owner={owner}");
+        let name_arg = format!("name={name}");
+        let query_arg = format!("query={query}");
+        args.extend(["graphql", "-F", &owner_arg, "-F", &name_arg, "-f", &query_arg]);
+        let out = self.gh_call(gh, target, &args, None, TIMEOUT)?;
+        let raw: RawOpenThreadsAnswer = parse_json(&out.stdout)?;
+        Ok(raw
+            .data
+            .repository
+            .pull_requests
+            .nodes
+            .into_iter()
+            .map(|pr| {
+                let open = pr.review_threads.nodes.iter().filter(|t| !t.is_resolved).count();
+                (pr.number, open as u32)
+            })
+            .collect())
     }
 
     /// Pull request `number` with its checks, reviews and conversation: one
@@ -851,6 +906,21 @@ impl Repo {
             None,
             TIMEOUT,
         )?;
+        parse_pr_diff(&out.stdout, self.text_encoding())
+    }
+
+    /// The changed files of commit `oid` of the GitHub repository, from its
+    /// diff there: a pull request's commit needn't be fetched here.
+    pub fn github_commit_files(&self, gh: &Gh, oid: &str) -> Result<Vec<FileDiff>> {
+        if !(7..=40).contains(&oid.len()) || !oid.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(Error::Message(format!("not a commit id: {oid}")));
+        }
+        let target = self.github_target()?;
+        let endpoint = format!("repos/{}/commits/{oid}", target.path);
+        let mut args = Vec::new();
+        target.api(&mut args);
+        args.extend(["-H", "Accept: application/vnd.github.diff", &endpoint]);
+        let out = self.gh_call(gh, &target, &args, None, TIMEOUT)?;
         parse_pr_diff(&out.stdout, self.text_encoding())
     }
 
@@ -1600,10 +1670,10 @@ struct ShellOutput {
 }
 
 const LIST_FIELDS: &str = "number,title,author,isDraft,reviewDecision,statusCheckRollup,\
-     headRefName,baseRefName,updatedAt,url,labels";
+     headRefName,baseRefName,updatedAt,url,labels,latestReviews";
 
 const VIEW_FIELDS: &str = "number,title,body,state,isDraft,author,baseRefName,headRefName,\
-     headRefOid,labels,url,createdAt,reviewDecision,statusCheckRollup,reviews,comments,\
+     headRefOid,labels,url,createdAt,reviewDecision,statusCheckRollup,reviews,comments,commits,\
      additions,deletions,changedFiles,mergeable,mergeStateStatus";
 
 const REPO_SETTINGS_FIELDS: &str = "defaultBranchRef,mergeCommitAllowed,squashMergeAllowed,\
@@ -1820,6 +1890,31 @@ fn parse_review_comments(bytes: &[u8]) -> Result<Vec<PrReviewComment>> {
 }
 
 #[derive(Deserialize)]
+struct RawOpenThreadsAnswer {
+    data: RawOpenThreadsData,
+}
+#[derive(Deserialize)]
+struct RawOpenThreadsData {
+    repository: RawOpenThreadsRepo,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawOpenThreadsRepo {
+    pull_requests: RawNodes<RawOpenThreadsPr>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawOpenThreadsPr {
+    number: u64,
+    review_threads: RawNodes<RawThreadState>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawThreadState {
+    is_resolved: bool,
+}
+
+#[derive(Deserialize)]
 struct RawThreadsAnswer {
     data: RawThreadsData,
 }
@@ -1965,6 +2060,8 @@ struct RawPr {
     url: String,
     #[serde(default)]
     labels: Vec<PrLabel>,
+    #[serde(default)]
+    latest_reviews: Vec<RawReview>,
 }
 
 impl From<RawPr> for PullRequest {
@@ -1981,6 +2078,12 @@ impl From<RawPr> for PullRequest {
             updated_at: r.updated_at,
             url: r.url,
             labels: r.labels,
+            approvals: r
+                .latest_reviews
+                .iter()
+                .filter(|v| v.state == "APPROVED")
+                .count() as u32,
+            unresolved_threads: None,
         }
     }
 }
@@ -2039,6 +2142,8 @@ struct RawPrDetail {
     #[serde(default)]
     comments: Vec<RawComment>,
     #[serde(default)]
+    commits: Vec<RawPrCommit>,
+    #[serde(default)]
     additions: u64,
     #[serde(default)]
     deletions: u64,
@@ -2048,6 +2153,28 @@ struct RawPrDetail {
     mergeable: String,
     #[serde(default)]
     merge_state_status: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawPrCommit {
+    oid: String,
+    #[serde(default)]
+    message_headline: String,
+    #[serde(default)]
+    message_body: String,
+    #[serde(default)]
+    committed_date: String,
+    #[serde(default)]
+    authors: Vec<RawCommitAuthor>,
+}
+
+#[derive(Deserialize)]
+struct RawCommitAuthor {
+    #[serde(default)]
+    login: String,
+    #[serde(default)]
+    name: String,
 }
 
 #[derive(Deserialize)]
@@ -2117,6 +2244,22 @@ impl RawPrDetail {
                 .collect(),
             review_comments,
             review_threads,
+            commits: self
+                .commits
+                .into_iter()
+                .map(|c| PrCommit {
+                    oid: c.oid,
+                    headline: c.message_headline,
+                    body: c.message_body,
+                    authors: c
+                        .authors
+                        .into_iter()
+                        .map(|a| if a.login.is_empty() { a.name } else { a.login })
+                        .filter(|a| !a.is_empty())
+                        .collect(),
+                    committed_at: c.committed_date,
+                })
+                .collect(),
             additions: self.additions,
             deletions: self.deletions,
             changed_files: self.changed_files,
@@ -2267,6 +2410,8 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
        "reviewDecision": "APPROVED", "headRefName": "widgets", "baseRefName": "main",
        "updatedAt": "2026-10-29T10:00:00Z", "url": "https://github.com/octo/hello/pull/12",
        "labels": [{"id": "L1", "name": "enhancement", "color": "a2eeef"}],
+       "latestReviews": [{"author": {"login": "a"}, "state": "APPROVED"},
+         {"author": {"login": "b"}, "state": "APPROVED"}, {"author": {"login": "c"}, "state": "COMMENTED"}],
        "statusCheckRollup": [
          {"__typename": "CheckRun", "name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"},
          {"__typename": "StatusContext", "context": "ci/legacy", "state": "FAILURE"}]},
@@ -2280,11 +2425,20 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
     fn listing_names_the_repo_asks_for_json_and_reads_the_answer() {
         let fake = Fake::new();
         fake.answer("pr list", LIST_JSON, "", 0);
+        fake.answer(
+            "api graphql",
+            r#"{"data": {"repository": {"pullRequests": {"nodes": [
+                {"number": 12, "reviewThreads": {"nodes": [{"isResolved": true}, {"isResolved": false}]}}
+            ]}}}}"#,
+            "",
+            0,
+        );
         let (_dir, repo) = github_repo();
         let prs = repo.pull_requests(&fake.gh(), PrFilter::Mine).unwrap();
 
         let calls = fake.calls();
-        assert_eq!(calls.len(), 1);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1][..2], ["api", "graphql"]);
         let args = &calls[0];
         assert_eq!(
             args[..8],
@@ -2317,6 +2471,8 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
                 color: "a2eeef".into()
             }]
         );
+        assert_eq!((prs[0].approvals, prs[0].unresolved_threads), (2, Some(1)));
+        assert_eq!((prs[1].approvals, prs[1].unresolved_threads), (0, None), "not in GraphQL's answer");
         assert_eq!(prs[1].author, "ghost");
         assert!(prs[1].is_draft);
         assert_eq!(prs[1].review_decision, None);
@@ -2331,7 +2487,8 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         repo.pull_requests(&fake.gh(), PrFilter::ReviewRequested)
             .unwrap();
         repo.pull_requests(&fake.gh(), PrFilter::All).unwrap();
-        let calls = fake.calls();
+        // Each list also asks GraphQL for its threads.
+        let calls: Vec<_> = fake.calls().into_iter().filter(|c| c[0] == "pr").collect();
         assert_eq!(calls[0][10..], ["--search", "review-requested:@me"]);
         assert_eq!(calls[1].len(), 10);
     }
@@ -2843,6 +3000,9 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
                     "body": "Needs work", "submittedAt": "2026-10-29T08:00:00Z"}],
                 "comments": [{"id": "IC_1", "author": {"login": "hubot"}, "body": "Hi",
                     "createdAt": "2026-10-28T09:00:00Z", "url": "https://github.com/x"}],
+                "commits": [{"oid": "abc123", "messageHeadline": "Fix it", "messageBody": "Why",
+                    "committedDate": "2026-10-28T07:00:00Z", "authoredDate": "2026-10-28T07:00:00Z",
+                    "authors": [{"login": "octocat", "name": "Octo"}, {"login": "", "name": "Claude"}]}],
                 "additions": 3, "deletions": 1, "changedFiles": 1,
                 "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"}"#,
             "",
@@ -2871,6 +3031,16 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             ]
         );
         assert_eq!(pr.head_oid, "abc123");
+        assert_eq!(
+            pr.commits,
+            [PrCommit {
+                oid: "abc123".into(),
+                headline: "Fix it".into(),
+                body: "Why".into(),
+                authors: vec!["octocat".into(), "Claude".into()],
+                committed_at: "2026-10-28T07:00:00Z".into(),
+            }]
+        );
         assert_eq!(pr.review_decision.as_deref(), Some("CHANGES_REQUESTED"));
         assert_eq!(
             pr.checks,
@@ -2889,6 +3059,30 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             (pr.mergeable.as_str(), pr.merge_state.as_str()),
             ("CONFLICTING", "DIRTY")
         );
+    }
+
+    #[test]
+    fn a_commit_of_the_pull_request_is_read_as_a_diff_from_github() {
+        let fake = Fake::new();
+        let diff = "diff --git a/a.txt b/a.txt\nindex 1111111..2222222 100644\n\
+            --- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-1\n+2\n";
+        fake.answer("api -H", diff, "", 0);
+        let (_dir, repo) = github_repo();
+        let files = repo.github_commit_files(&fake.gh(), "945dddc").unwrap();
+
+        assert_eq!(
+            fake.calls()[0],
+            [
+                "api",
+                "-H",
+                "Accept: application/vnd.github.diff",
+                "repos/octo/hello/commits/945dddc"
+            ]
+        );
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "a.txt");
+        assert!(repo.github_commit_files(&fake.gh(), "945dddc/../x").is_err());
+        assert_eq!(fake.calls().len(), 1, "a bad id never reaches gh");
     }
 
     #[test]

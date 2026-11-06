@@ -31,6 +31,7 @@ import {
   type Thread,
 } from "../pull-requests";
 import { fullTime, relativeTime } from "../timeago";
+import { copyText } from "../clipboard";
 import { checkAnchor, withOffDiffDrafts } from "../review-drafts";
 import {
   clearDrafts,
@@ -47,6 +48,8 @@ import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, P
 export interface PullRequestCallbacks {
   fetchDetail: (number: number) => Promise<PullRequestDetail>;
   fetchFiles: (number: number) => Promise<FileDiff[]>;
+  // A commit's changed files, from GitHub.
+  fetchCommitFiles: (oid: string) => Promise<FileDiff[]>;
   checkout: (pr: PullRequestDetail) => void;
   // Asks for the folder at (x, y), then checks out there.
   checkoutInWorktree: (pr: PullRequestDetail, x: number, y: number) => void;
@@ -105,7 +108,7 @@ export interface PullRequestHandle {
   reset: () => void;
 }
 
-type Tab = "conversation" | "files" | "checks" | "drafts";
+type Tab = "conversation" | "commits" | "files" | "checks" | "drafts";
 
 // A page with lines: the saved review page.
 const REVIEW_PAGE_ICON = ["M6 3h9l4 4v14H6z", "M14 3v5h5", "M9 12h7", "M9 16h7"];
@@ -123,6 +126,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   let detail: PullRequestDetail | null = null;
   let files: FileDiff[] | null = null;
   let tab: Tab = "conversation";
+  // The Commits tab: the commit whose files are on screen, if one is, and
+  // the files of each commit read so far.
+  let commitOpen: string | null = null;
+  const commitFiles = new Map<string, FileDiff[]>();
   // Drops an answer for a pull request that is no longer the one on screen.
   let generation = 0;
   // The comment box at the bottom of the conversation, kept across re-renders
@@ -191,6 +198,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     };
     tabs.append(
       tabButton("conversation", `Conversation (${prTimeline(pr).length})`),
+      tabButton("commits", `Commits (${pr.commits.length})`),
       tabButton("files", `Files changed (${pr.changed_files})`),
       tabButton("checks", `Checks (${pr.checks.length})`),
       ...(review().drafts.length
@@ -204,6 +212,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     host.append(el("div", { class: "pr-view" }, [header(pr), tabs, body]));
     if (tab === "conversation") renderConversation(body, pr);
     else if (tab === "files") void renderFiles(body, pr);
+    else if (tab === "commits") renderCommits(body, pr);
     else if (tab === "drafts") renderDrafts(body, pr);
     else renderChecks(body, pr);
   }
@@ -771,6 +780,122 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
 
   // --- Checks ---------------------------------------------------------------
 
+  // --- Commits -------------------------------------------------------------
+
+  // The pull request's commits by the day they were made, as GitHub lists
+  // them; one clicked shows its changed files instead.
+  function renderCommits(body: HTMLElement, pr: PullRequestDetail): void {
+    const open = pr.commits.findIndex((c) => c.oid === commitOpen);
+    if (open >= 0) return void renderCommitFiles(body, pr, open);
+    commitOpen = null;
+    if (pr.commits.length === 0) {
+      body.append(el("div", { class: "pr-empty", text: "No commits." }));
+      return;
+    }
+    const list = el("div", { class: "pr-commits" });
+    let day = "";
+    for (const c of pr.commits) {
+      const on = new Date(c.committed_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+      if (on !== day) {
+        day = on;
+        list.append(el("div", { class: "pr-commits-day", text: `Commits on ${on}` }));
+      }
+      const row = el("div", { class: "pr-commit", title: "Show the files it changes" }, [
+        el("div", { class: "pr-commit-main" }, [
+          el("span", { class: "pr-commit-headline", text: c.headline }),
+          el("span", { class: "pr-commit-meta", text: commitMeta(c) }),
+        ]),
+        el("code", { class: "pr-commit-sha", text: c.oid.slice(0, 7) }),
+        copySha(c.oid),
+      ]);
+      row.addEventListener("click", () => {
+        commitOpen = c.oid;
+        render();
+      });
+      list.append(row);
+    }
+    body.append(list);
+  }
+
+  function commitMeta(c: PullRequestDetail["commits"][number]): string {
+    const who = c.authors.length ? c.authors.join(" and ") : "Someone";
+    return `${who} committed ${relativeTime(isoSeconds(c.committed_at))}`;
+  }
+
+  function copySha(oid: string): HTMLElement {
+    const b = el("button", { class: "btn small ghost", text: "Copy", title: `Copy ${oid}` });
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void copyText(oid, `Copied ${oid.slice(0, 7)}`);
+    });
+    return b;
+  }
+
+  // Commit `at` of the pull request: its message, the way to the ones before
+  // and after it, and the files it changes, read from GitHub once.
+  function renderCommitFiles(body: HTMLElement, pr: PullRequestDetail, at: number): void {
+    const c = pr.commits[at];
+    const go = (oid: string | null) => {
+      commitOpen = oid;
+      render();
+    };
+    const step = (text: string, title: string, to: number) => {
+      const b = el("button", { class: "btn small ghost", text, title });
+      if (to < 0 || to >= pr.commits.length) b.setAttribute("disabled", "");
+      else b.addEventListener("click", () => go(pr.commits[to].oid));
+      return b;
+    };
+    const back = el("button", { class: "btn small ghost", text: "← All commits" });
+    back.addEventListener("click", () => go(null));
+    const head = el("div", { class: "pr-commit-head" }, [
+      el("div", { class: "pr-commit-nav" }, [
+        back,
+        el("span", { class: "spacer" }),
+        el("span", { class: "pr-commit-count", text: `Commit ${at + 1} of ${pr.commits.length}` }),
+        step("‹ Previous", "The commit before it", at - 1),
+        step("Next ›", "The commit after it", at + 1),
+      ]),
+      el("div", { class: "pr-commit-headline", text: c.headline }),
+      ...(c.body.trim() ? [el("pre", { class: "pr-commit-body", text: c.body.trim() })] : []),
+      el("div", { class: "pr-commit-nav" }, [
+        el("span", { class: "pr-commit-meta", text: commitMeta(c) }),
+        el("span", { class: "spacer" }),
+        el("code", { class: "pr-commit-sha", text: c.oid.slice(0, 7), title: c.oid }),
+        copySha(c.oid),
+      ]),
+    ]);
+    // Unified or split, wrapped or not, as the Files tab is.
+    const files = el("div", { class: `pr-files-diffs${loadDiffWrap() && !split ? " wrap-lines" : ""}` });
+    body.append(head, files);
+    const show = (list: FileDiff[]) => {
+      clear(files);
+      if (list.length === 0) files.append(el("div", { class: "pr-empty", text: "No changed files." }));
+      for (const file of list) {
+        const node = split ? renderSplitDiff(file) : renderFile(file);
+        if (file.truncated) {
+          node.append(el("div", { class: "diff-truncated", text: "This diff is too long to show in full here; open it on GitHub for the rest." }));
+        }
+        files.append(node);
+      }
+    };
+    const known = commitFiles.get(c.oid);
+    if (known) return show(known);
+    files.append(el("div", { class: "pr-empty", text: "Loading the changed files…" }));
+    const mine = generation;
+    cb.fetchCommitFiles(c.oid).then(
+      (list) => {
+        commitFiles.set(c.oid, list);
+        if (mine === generation && tab === "commits" && commitOpen === c.oid) show(list);
+      },
+      (err: unknown) => {
+        if (mine !== generation || commitOpen !== c.oid) return;
+        clear(files);
+        files.append(el("div", { class: "pr-empty", text: "Couldn't load the changed files." }));
+        cb.reportError(`Couldn't load the files of ${c.oid.slice(0, 7)}`, err);
+      },
+    );
+  }
+
   function renderChecks(body: HTMLElement, pr: PullRequestDetail): void {
     body.append(el("div", { class: "pr-checks-summary", text: checksSummary(pr.checks) }));
     const list = el("div", { class: "pr-checks" });
@@ -797,6 +922,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         number = n;
         detail = null;
         files = null;
+        commitOpen = null;
+        commitFiles.clear();
         draft = "";
         filesQuery = "";
         cb.restoreDrafts(n);

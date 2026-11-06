@@ -218,6 +218,7 @@ pub fn run() {
             gh::gh_pull_requests,
             gh::gh_pull_request,
             gh::gh_pull_request_files,
+            gh::gh_commit_files,
             gh::gh_checkout_pull_request,
             gh::gh_checkout_pull_request_worktree,
             gh::gh_comment,
