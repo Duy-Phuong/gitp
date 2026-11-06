@@ -143,7 +143,7 @@ impl Repo {
             .is_ok_and(|v| !v.is_empty())
     }
 
-    fn cancelled(&self) -> bool {
+    pub(crate) fn cancelled(&self) -> bool {
         cancelled(&self.net)
     }
 }

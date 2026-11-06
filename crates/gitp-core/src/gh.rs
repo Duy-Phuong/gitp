@@ -1705,7 +1705,7 @@ impl Repo {
             TurnKind::Followup => "followup",
             TurnKind::ReplyDraft => "reply-draft",
         };
-        let env = [
+        let mut env = vec![
             ("GITP_PR_NUMBER", number.to_string()),
             ("GITP_PR_REPO", target.repo_arg()),
             (
@@ -1725,14 +1725,36 @@ impl Repo {
             ),
             ("GITP_TURN_KIND", kind_name.to_string()),
         ];
-        let out = run_shell(
-            self.workdir(),
-            command,
-            user_text.as_bytes(),
-            &env,
-            EXPLAIN_TIMEOUT,
-            self.net.cancel.as_deref(),
-        );
+        let run = |env: &[(&str, String)]| {
+            run_shell(
+                self.workdir(),
+                command,
+                user_text.as_bytes(),
+                env,
+                EXPLAIN_TIMEOUT,
+                self.net.cancel.as_deref(),
+            )
+        };
+        let mut out = run(&env);
+        // A kept session Claude Code no longer has (cleaned up after its
+        // retention period, or made from another working directory) fails
+        // the resume: run once more as a fresh conversation. The thread file
+        // carries the turns so far either way.
+        let lost_session = match (&out, &conversation.session) {
+            (Err(Error::Message(text)), Some(session)) => {
+                text.contains(session.as_str()) || text.contains("No conversation found")
+            }
+            _ => false,
+        };
+        if lost_session && !self.cancelled() {
+            if let Some(session) = env.iter_mut().find(|(k, _)| *k == "GITP_CLAUDE_SESSION") {
+                session.1.clear();
+            }
+            out = run(&env);
+            if out.is_ok() {
+                conversation.session = None;
+            }
+        }
         let _ = std::fs::remove_file(&file);
         let out = out?;
         let (text, session) = claude_answer(&out.stdout)?;
@@ -2992,6 +3014,36 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert!(message(err).contains("exit code 2"));
         let c = repo.thread_conversation(7, 500).unwrap().unwrap();
         assert_eq!((c.turns.len(), c.turns[3].text.as_str()), (4, "again?"));
+    }
+
+    #[test]
+    fn a_session_that_no_longer_exists_is_dropped_and_the_turn_runs_fresh() {
+        let fake = Fake::new();
+        let (_dir, repo) = github_repo();
+        let input = thread_input(&repo);
+        repo.thread_claude_turn(
+            &fake.gh(),
+            &input,
+            TurnKind::Check,
+            "",
+            r#"printf '{"result":"first","session_id":"gone"}'"#,
+        )
+        .unwrap();
+        // The command fails on a resume — Claude Code forgot the session —
+        // and answers when run without one.
+        let cmd = r#"q=$(cat); if [ -n "$GITP_CLAUDE_SESSION" ]; then echo "No conversation found with session ID: $GITP_CLAUDE_SESSION" >&2; exit 1; fi; printf '{"result":"fresh: %s","session_id":"new"}' "$q""#;
+        let c = repo
+            .thread_claude_turn(&fake.gh(), &input, TurnKind::Followup, "why?", cmd)
+            .unwrap();
+        assert_eq!(c.turns.last().unwrap().text, "fresh: why?");
+        assert_eq!(c.session.as_deref(), Some("new"));
+        // A command that fails for another reason fails once, not twice.
+        let count = _dir.path().join("runs");
+        let cmd = format!("echo x >> {}; exit 3", count.display());
+        assert!(repo
+            .thread_claude_turn(&fake.gh(), &input, TurnKind::Check, "", &cmd)
+            .is_err());
+        assert_eq!(std::fs::read_to_string(&count).unwrap().lines().count(), 1);
     }
 
     #[test]
