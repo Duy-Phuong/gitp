@@ -22,8 +22,8 @@ export function formatElapsed(ms: number): string {
   return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
 }
 
-// How long a job has run today: its earlier turns, and the current one up to
-// now while it runs (or up to its end).
+// How long a job has run: its earlier turns, and the current one up to now
+// while it runs (or up to its end).
 export function jobElapsed(job: ClaudeJob, now: number): number {
   const end = job.state === "running" ? now : (job.ended ?? job.turn_started);
   return job.spent + Math.max(0, end - job.turn_started);
@@ -39,22 +39,46 @@ export function repoName(path: string): string {
   return path.replace(/\/+$/, "").split("/").pop() || path;
 }
 
-// Running first, then the rest; newest first within each.
-export function groupJobs(jobs: ClaudeJob[]): { running: ClaudeJob[]; today: ClaudeJob[] } {
-  const newest = [...jobs].sort((a, b) => b.turn_started - a.turn_started);
-  return {
-    running: newest.filter((j) => j.state === "running"),
-    today: newest.filter((j) => j.state !== "running"),
-  };
+const startOfDay = (ms: number) => new Date(ms).setHours(0, 0, 0, 0);
+const shortDate = (ms: number) => new Date(ms).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+
+// "Today", "Yesterday", or the date: "Wed, 4 Nov".
+export function dayTitle(ms: number, now: number, date: (ms: number) => string = shortDate): string {
+  const days = Math.round((startOfDay(now) - startOfDay(ms)) / 86_400_000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return date(ms);
 }
 
-// "2 running · 3 finished today".
-export function jobsSummary(jobs: ClaudeJob[]): string {
-  const { running, today } = groupJobs(jobs);
+export interface JobDay {
+  title: string;
+  jobs: ClaudeJob[];
+}
+
+// Running first, then the rest by the day of their last turn; newest first
+// within each.
+export function groupJobs(jobs: ClaudeJob[], now: number = Date.now()): { running: ClaudeJob[]; days: JobDay[] } {
+  const newest = [...jobs].sort((a, b) => b.turn_started - a.turn_started);
+  const days: JobDay[] = [];
+  for (const job of newest.filter((j) => j.state !== "running")) {
+    const title = dayTitle(job.turn_started, now);
+    const last = days[days.length - 1];
+    if (last?.title === title) last.jobs.push(job);
+    else days.push({ title, jobs: [job] });
+  }
+  return { running: newest.filter((j) => j.state === "running"), days };
+}
+
+// "2 running · 3 finished today · 9 earlier this week".
+export function jobsSummary(jobs: ClaudeJob[], now: number = Date.now()): string {
+  const { running, days } = groupJobs(jobs, now);
+  const today = days.find((d) => d.title === "Today")?.jobs.length ?? 0;
+  const earlier = days.reduce((n, d) => n + d.jobs.length, 0) - today;
   const parts = [];
   if (running.length) parts.push(`${running.length} running`);
-  if (today.length) parts.push(`${today.length} finished today`);
-  return parts.join(" · ") || "No Claude jobs today";
+  if (today) parts.push(`${today} finished today`);
+  if (earlier) parts.push(`${earlier} earlier this week`);
+  return parts.join(" · ") || "No Claude jobs in the last 7 days";
 }
 
 // The meta line's token part: "182k tokens · in 170k (cache 160k) · out 12k".

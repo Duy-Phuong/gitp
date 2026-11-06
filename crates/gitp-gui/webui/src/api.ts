@@ -2269,7 +2269,7 @@ export async function explainReviewFinding(path: string, number: number, finding
 
 // --- Claude jobs ----------------------------------------------------------------
 
-// Every Claude Code run gitp starts (see claude_jobs.rs): today's, newest first.
+// Every Claude Code run gitp starts (see claude_jobs.rs): the last 7 days', newest first.
 export type ClaudeJobKind = "review" | "explain" | "thread";
 export type ClaudeJobState = "running" | "done" | "failed" | "stopped" | "interrupted";
 
@@ -2400,11 +2400,11 @@ const MOCK_JOBS: ClaudeJob[] = [
   }),
   mockJob({
     id: 4, kind: "explain", label: "Explain more · finding 3 · #3401", pr: 3401, finding: "3", state: "stopped",
-    started: MOCK_START - 5_400_000, turn_started: MOCK_START - 5_400_000, ended: MOCK_START - 5_290_000, tokens: mockUsage(38_000, 2_000),
+    started: MOCK_START - 86_400_000, turn_started: MOCK_START - 86_400_000, ended: MOCK_START - 86_290_000, tokens: mockUsage(38_000, 2_000),
   }),
   mockJob({
     id: 5, kind: "thread", label: "Foo.ts:12 · #3398", activity: "Reply", pr: 3398, thread: 77, repo: "/Users/you/src/booking-app",
-    state: "failed", started: MOCK_START - 7_200_000, turn_started: MOCK_START - 7_200_000, ended: MOCK_START - 7_191_000,
+    state: "failed", started: MOCK_START - 3 * 86_400_000, turn_started: MOCK_START - 3 * 86_400_000, ended: MOCK_START - 3 * 86_400_000 + 9_000,
     tokens: mockUsage(2_800, 200), error: "The thread command failed (exit code 1).\n\nNo conversation found with session ID: s-5",
   }),
 ];

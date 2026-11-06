@@ -40,7 +40,7 @@ By Phuong:
   Current state).
 - **Quitting with jobs running asks first.** "2 Claude jobs are running. Stop
   them and quit?" Stop and quit, or Cancel.
-- **Finished jobs stay for today only.**
+- **Finished jobs stay for 7 days** (changed on 2026-11-06; it was today only).
 - **Both ways in** (from the mockups):
   - A **"Claude" button right after "PRs"** in the History action toolbar opens
     the full jobs page in the main area, the way PRs opens the pull request
@@ -60,8 +60,8 @@ change them:
 - **The list shows jobs from every repository**, not only the open one.
 - **The status-bar chip is hidden when no job runs.** The toolbar button stays,
   and its badge is hidden when no job runs.
-- **"Today" means started since local midnight**, and those jobs stay in the
-  list across a restart.
+- **"7 days" means today and the 6 days before it**, from local midnight. A
+  job stays while its last turn is in that window, also across a restart.
 - **gitp gives each fresh run its session id up front** and reads Claude Code's
   own transcript file live. The commands in Settings keep working (see 2).
 
@@ -80,11 +80,15 @@ Claude's calls, made after the builder check, not yet seen by Phuong:
   the stdin itself, which for a review is the whole diff), and the final output
   capped at 64 KB. A finished job can then still show its result after a
   restart, or once its transcript is gone.
-- **A thread row's numbers cover today's turns only.**
-  - Time is the sum of today's turn durations, and the running turn counts up.
+- **A thread row's numbers cover its turns of the kept 7 days.**
+  - Time is the sum of the row's turn durations, and the running turn counts up.
   - Tokens count from the job's start.
-  - The conversation still shows the whole session. Turns from before today
-    are marked "earlier".
+  - The conversation still shows the whole session. Turns from before the
+    job's start are marked "Earlier".
+- **gitp keeps the transcripts of only the last 3 jobs opened in memory**, and
+  of every running job. A job opened again reads its transcript again. With a
+  week of jobs, clicking through old ones would otherwise keep adding up: a
+  big review's transcript can be tens of MB.
 - **Thinking shows only as a folded "Thinking" line.** Claude Code keeps its
   text empty.
 - **Stop and quit waits for each job's call to return**, not only for the
@@ -95,7 +99,7 @@ Claude's calls, made after the builder check, not yet seen by Phuong:
 - Starting a Claude run from the jobs view, or typing to Claude there.
 - Opening a run in a terminal or in the Claude app.
 - Token or cost budgets that stop a run by themselves.
-- Jobs from before today, and a search over old jobs.
+- Jobs older than 7 days, and a search over old jobs.
 - Claude runs started outside gitp (a terminal, the Claude app).
 - Finding and killing runs left over after gitp crashed (see 4).
 
@@ -197,11 +201,12 @@ The existing Cancel buttons and the new Stop button set the same flag, so the
 messages ("Claude's turn on … cancelled") don't change.
 
 **A thread is one job across its turns.** The job's key is (repo, PR, thread).
-A new turn on a thread finds the job from today, adds a turn and sets the job
-back to running. A thread job's `sessions` can hold two ids: the conversation
-session and the fix session. A thread first touched on an earlier day starts a
-new job today. Its conversation still shows the earlier turns from the session
-file, which is fine.
+A new turn on a thread finds the thread's job while the list keeps it (its
+last turn in the last 7 days), adds a turn and sets the job back to running.
+A thread job's `sessions` can hold two ids: the conversation session and the
+fix session. A thread whose last turn has left the 7 days starts a new job. Its
+conversation still shows the earlier turns from the session file, which is
+fine.
 
 Explain more now gets a cancel flag through `set_network_hooks`, like the
 others, and so it also gets a Stop.
@@ -266,14 +271,15 @@ How the frontend gets updates is the builder's call. A simple way: poll a
 `claude_job_events(id, after)` only while that job's conversation is open. A
 Tauri event pushed from the job thread would also work.
 
-### 4. Today's list across a restart
+### 4. The week's list across a restart
 
 - gitp saves the jobs index (everything in section 1 except the cancel flag) as
   a small JSON file in the app's data directory each time a job changes. It
   does not copy any transcript: the conversation is always read from Claude
   Code's file.
-- At start, gitp loads the jobs started since local midnight and drops the
-  rest.
+- At start, gitp loads the jobs whose last turn is in the last 7 days and
+  drops the rest. A job that leaves the window while gitp runs leaves the list
+  and the file too.
 - A job saved as running from a previous launch shows as **interrupted**.
   gitp doesn't try to find or kill its process: after a normal quit the prompt
   in 5 already stopped it, and after a crash this is a non-goal.
@@ -298,7 +304,8 @@ Tauri event pushed from the job thread would also work.
 - A badge shows the number of running jobs, like `#pull-badge`, and is hidden
   at 0.
 - It opens a new `#claude-view` in the main area. That view has a "Claude jobs"
-  header, a line like "2 running · 3 finished today", and "← Back to history".
+  header, a line like "2 running · 3 finished today · 9 earlier this week", and
+  "← Back to history".
 
 **The status-bar chip.**
 
@@ -310,7 +317,9 @@ Tauri event pushed from the job thread would also work.
 
 **The same list and conversation in both places.**
 
-- **The list**, on the left. "Running" comes first, then "Today", newest first.
+- **The list**, on the left. "Running" comes first, then one section per day
+  of the jobs' last turns: "Today", "Yesterday", then dates like "Wed, 4 Nov".
+  Newest first. Times outside today show their day too.
   Each row has:
   - a state dot: running blue and pulsing, done green, failed red, stopped and
     interrupted grey

@@ -1,13 +1,13 @@
 //! The Claude jobs: every Claude Code run gitp starts — a review, Explain
 //! more on a finding, a turn or a fix on a pull request thread — in one list,
 //! with its conversation read live from Claude Code's transcript, a Stop,
-//! and today's finished jobs kept across a restart.
+//! and the finished jobs of the last [`KEEP_DAYS`] days kept across a restart.
 //!
 //! A job is registered before its run starts ([`ClaudeJobs::begin`]), hears
 //! which Claude session the run writes through the core's `on_claude_run`
 //! hook, and ends with [`Running::finish`]. One review per pull request and
 //! one turn per thread run at a time, as before; a thread is one job across
-//! its turns of the day.
+//! its turns of the kept days.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -33,6 +33,20 @@ const OUTPUT_LIMIT: usize = 64 * 1024;
 
 /// How long Stop and quit waits for the stopped runs to return.
 const QUIT_WAIT: Duration = Duration::from_secs(15);
+
+/// The days of jobs the list keeps: today and the 6 before it.
+const KEEP_DAYS: u64 = 7;
+
+/// How many jobs keep their transcripts in memory once read: the last ones
+/// opened. A running job always keeps its own.
+const KEEP_READ: usize = 3;
+
+const DAY_MS: u64 = 86_400_000;
+
+/// The start of the oldest day the list keeps.
+fn kept_from(now: u64) -> u64 {
+    local_day_start(now.saturating_sub((KEEP_DAYS - 1) * DAY_MS))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -176,6 +190,8 @@ struct Inner {
     jobs: Vec<Job>,
     cancels: HashMap<u64, Arc<AtomicBool>>,
     reads: HashMap<String, SessionRead>,
+    // The jobs whose conversation was read last, newest first.
+    opened: Vec<u64>,
     next_id: u64,
     store: Option<PathBuf>,
     quitting: bool,
@@ -257,16 +273,16 @@ impl Running {
 }
 
 impl ClaudeJobs {
-    /// Keep the list in `file`, and load today's jobs from it: those saved as
-    /// running are interrupted.
+    /// Keep the list in `file`, and load the kept days' jobs from it: those
+    /// saved as running are interrupted.
     pub fn load(&self, file: PathBuf) {
-        let today = local_day_start((self.now)());
+        let from = kept_from((self.now)());
         let saved: Vec<Job> = std::fs::read(&file)
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
         let mut inner = self.inner.lock().unwrap();
-        for mut job in saved.into_iter().filter(|j| j.started >= today) {
+        for mut job in saved.into_iter().filter(|j| j.turn_started >= from) {
             if job.state == JobState::Running {
                 job.state = JobState::Interrupted;
             }
@@ -277,10 +293,11 @@ impl ClaudeJobs {
     }
 
     /// Register a run about to start, or refuse it while the same review or
-    /// a turn on the same thread runs. A thread's run joins its job of today.
+    /// a turn on the same thread runs. A thread's run joins its job, if the
+    /// list still keeps it.
     pub fn begin(&self, new: NewJob) -> Result<Running, String> {
         let now = (self.now)();
-        let today = local_day_start(now);
+        let from = kept_from(now);
         let mut inner = self.inner.lock().unwrap();
         let same = |j: &Job| {
             j.kind == new.kind
@@ -309,7 +326,7 @@ impl ClaudeJobs {
         let id = match inner
             .jobs
             .iter_mut()
-            .find(|j| reuse && same(j) && j.started >= today)
+            .find(|j| reuse && same(j) && j.turn_started >= from)
         {
             Some(job) => {
                 job.state = JobState::Running;
@@ -378,10 +395,19 @@ impl ClaudeJobs {
         }
     }
 
-    /// Today's jobs, newest first, with the running ones' tokens read again.
+    /// The kept days' jobs, newest first, with the running ones' tokens read
+    /// again. Older ones leave the list and the saved file.
     pub fn list(&self) -> Vec<Job> {
-        let today = local_day_start((self.now)());
+        let from = kept_from((self.now)());
         let mut inner = self.inner.lock().unwrap();
+        let before = inner.jobs.len();
+        inner
+            .jobs
+            .retain(|j| j.state == JobState::Running || j.turn_started >= from);
+        if inner.jobs.len() != before {
+            forget_reads(&mut inner);
+            save(&inner);
+        }
         let running: Vec<u64> = inner
             .jobs
             .iter()
@@ -391,12 +417,7 @@ impl ClaudeJobs {
         for id in running {
             refresh_job(&mut inner, id, &*self.find);
         }
-        let mut jobs: Vec<Job> = inner
-            .jobs
-            .iter()
-            .filter(|j| j.started >= today)
-            .cloned()
-            .collect();
+        let mut jobs: Vec<Job> = inner.jobs.clone();
         jobs.sort_by(|a, b| b.turn_started.cmp(&a.turn_started));
         jobs
     }
@@ -405,7 +426,10 @@ impl ClaudeJobs {
     /// sessions merged by time.
     pub fn events(&self, id: u64, after: usize) -> Result<EventsPage, String> {
         let mut inner = self.inner.lock().unwrap();
+        inner.opened.retain(|&j| j != id);
+        inner.opened.insert(0, id);
         refresh_job(&mut inner, id, &*self.find);
+        forget_reads(&mut inner);
         let job = inner
             .jobs
             .iter()
@@ -674,6 +698,26 @@ fn save(inner: &Inner) {
     }
 }
 
+/// Drop the transcripts read for jobs that no longer need them: a job keeps
+/// its own while it runs or while it is one of the last [`KEEP_READ`] opened.
+/// A job opened again reads its transcript again from the start.
+fn forget_reads(inner: &mut Inner) {
+    let Inner {
+        jobs,
+        opened,
+        reads,
+        ..
+    } = inner;
+    opened.retain(|id| jobs.iter().any(|j| j.id == *id));
+    opened.truncate(KEEP_READ);
+    let keep: std::collections::HashSet<&str> = jobs
+        .iter()
+        .filter(|j| j.state == JobState::Running || opened.contains(&j.id))
+        .flat_map(|j| j.sessions.iter().map(|s| s.id.as_str()))
+        .collect();
+    reads.retain(|session, _| keep.contains(session.as_str()));
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -758,7 +802,7 @@ mod tests {
     }
 
     #[test]
-    fn a_thread_is_one_job_across_its_turns_of_the_day() {
+    fn a_thread_is_one_job_across_its_turns_of_the_kept_days() {
         let dir = tempfile::tempdir().unwrap();
         let clock = Arc::new(AtomicU64::new(T0));
         let jobs = jobs_at(Arc::clone(&clock), dir.path().into());
@@ -782,6 +826,14 @@ mod tests {
             (2, "Follow-up", 7_000)
         );
         assert_eq!(job.output.as_deref(), Some("more"));
+        clock.store(T0 + 3 * DAY_MS, Ordering::SeqCst);
+        let later = jobs.begin(turn("Reply")).unwrap();
+        assert_eq!(later.id, 0, "three days on, still the same job");
+        later.finish(Ok("reply".into()), &[]);
+        clock.store(T0 + 3 * DAY_MS + KEEP_DAYS * DAY_MS, Ordering::SeqCst);
+        let fresh = jobs.begin(turn("Check")).unwrap();
+        assert_eq!(fresh.id, 1, "a week after its last turn, a new job");
+        assert_eq!(jobs.list().len(), 1, "the old one left the list");
     }
 
     #[test]
@@ -847,7 +899,7 @@ mod tests {
     }
 
     #[test]
-    fn todays_jobs_come_back_after_a_restart_and_a_running_one_is_interrupted() {
+    fn the_weeks_jobs_come_back_after_a_restart_and_a_running_one_is_interrupted() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("jobs").join("claude-jobs.json");
         let clock = Arc::new(AtomicU64::new(T0));
@@ -866,10 +918,47 @@ mod tests {
             (JobState::Failed, JobState::Interrupted)
         );
         assert_eq!(again.begin(review(3)).unwrap().id, 2, "ids go on");
-        clock.store(T0 + 2 * 86_400_000, Ordering::SeqCst);
-        let later = jobs_at(clock, dir.path().into());
-        later.load(file);
-        assert!(later.list().is_empty(), "yesterday's jobs are gone");
+        clock.store(T0 + (KEEP_DAYS - 1) * DAY_MS, Ordering::SeqCst);
+        let later = jobs_at(Arc::clone(&clock), dir.path().into());
+        later.load(file.clone());
+        assert_eq!(later.list().len(), 3, "six days on, still kept");
+        clock.store(T0 + KEEP_DAYS * DAY_MS, Ordering::SeqCst);
+        assert!(later.list().is_empty(), "a week on, gone from the list");
+        let after = jobs_at(clock, dir.path().into());
+        after.load(file);
+        assert!(after.list().is_empty(), "and from the saved file");
+    }
+
+    #[test]
+    fn only_the_last_jobs_opened_keep_their_transcripts_in_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        let jobs = jobs_at(Arc::new(AtomicU64::new(T0)), dir.path().into());
+        for pr in 0..4u64 {
+            let run = jobs.begin(review(pr)).unwrap();
+            let session = format!("s{pr}");
+            (run.hooks().on_claude_run.unwrap())(&gitp_core::ClaudeRun {
+                session: session.clone(),
+                resumed: false,
+                dir: "/src/app".into(),
+            });
+            transcript(
+                dir.path(),
+                &session,
+                &[answer("a", "2026-11-06T10:00:01.000Z", "Done.", 5)],
+            );
+            run.finish(Ok("ok".into()), &[]);
+        }
+        for id in 0..4 {
+            assert_eq!(jobs.events(id, 0).unwrap().events.len(), 1);
+        }
+        let kept = |jobs: &ClaudeJobs| {
+            let mut k: Vec<String> = jobs.inner.lock().unwrap().reads.keys().cloned().collect();
+            k.sort();
+            k
+        };
+        assert_eq!(kept(&jobs), ["s1", "s2", "s3"]);
+        assert_eq!(jobs.events(0, 0).unwrap().events.len(), 1, "read again");
+        assert_eq!(kept(&jobs), ["s0", "s2", "s3"]);
     }
 
     #[test]
