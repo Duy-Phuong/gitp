@@ -3,7 +3,7 @@
 // controller (claude-jobs.ts) feeds both the jobs and each job's steps.
 
 import type { ClaudeEvent, ClaudeJob } from "../api";
-import { atBottom, endNote, formatElapsed, formatTokens, groupJobs, jobElapsed, jobTitle, repoName, tokensDetail, usageTotal } from "../claude-jobs-model";
+import { atBottom, dayTitle, endNote, formatElapsed, formatTokens, groupJobs, jobElapsed, jobTitle, repoName, tokensDetail, usageTotal } from "../claude-jobs-model";
 import { clear, el } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
 
@@ -26,6 +26,11 @@ export interface ClaudeJobsView {
 }
 
 const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+// The time, with the day when it isn't today: "Yesterday 10:47".
+const when = (ms: number) => {
+  const day = dayTitle(ms, Date.now());
+  return day === "Today" ? time(ms) : `${day} ${time(ms)}`;
+};
 
 export function setupClaudeJobsView(root: HTMLElement, cb: ClaudeJobsCallbacks): ClaudeJobsView {
   const list = el("div", { class: "cj-list", role: "listbox", "aria-label": "Claude jobs" });
@@ -47,8 +52,8 @@ export function setupClaudeJobsView(root: HTMLElement, cb: ClaudeJobsCallbacks):
   function renderList(jobs: ClaudeJob[], selected: number | null, openRepo: string): void {
     const keep = list.scrollTop;
     clear(list);
-    const { running, today } = groupJobs(jobs);
     const now = Date.now();
+    const { running, days } = groupJobs(jobs, now);
     const section = (title: string, rows: ClaudeJob[]) => {
       if (!rows.length) return;
       list.append(el("div", { class: "cj-section" }, [title]));
@@ -79,8 +84,8 @@ export function setupClaudeJobsView(root: HTMLElement, cb: ClaudeJobsCallbacks):
       }
     };
     section("Running", running);
-    section("Today", today);
-    if (!jobs.length) list.append(el("div", { class: "cj-empty" }, ["No Claude jobs today. Reviews, Explain more and the turns on pull request threads show here while they run."]));
+    for (const day of days) section(day.title, day.jobs);
+    if (!jobs.length) list.append(el("div", { class: "cj-empty" }, ["No Claude jobs in the last 7 days. Reviews, Explain more and the turns on pull request threads show here while they run."]));
     list.scrollTop = keep;
   }
 
@@ -100,9 +105,11 @@ export function setupClaudeJobsView(root: HTMLElement, cb: ClaudeJobsCallbacks):
     );
     open.addEventListener("click", () => cb.openThread(job));
     actions.append(open);
-    const meta = [repoName(job.repo), job.ended && job.state !== "running" ? `${time(job.started)} → ${time(job.ended)}` : `started ${time(job.started)}`];
+    const sameDay = (a: number, b: number) => new Date(a).toDateString() === new Date(b).toDateString();
+    const end = job.ended && (sameDay(job.started, job.ended) ? time(job.ended) : when(job.ended));
+    const meta = [repoName(job.repo), end && job.state !== "running" ? `${when(job.started)} → ${end}` : `started ${when(job.started)}`];
     meta.push(`${job.state === "running" ? "running" : job.state} ${formatElapsed(jobElapsed(job, Date.now()))}`);
-    if (job.turns > 1) meta.push(`${job.turns} turns today`);
+    if (job.turns > 1) meta.push(`${job.turns} turns`);
     meta.push(tokensDetail(job.tokens));
     if (job.kind === "thread" && job.state === "running" && job.turns > 1) meta.push(`this turn ${formatTokens(usageTotal(job.turn_tokens))}`);
     head.append(
@@ -144,10 +151,10 @@ export function setupClaudeJobsView(root: HTMLElement, cb: ClaudeJobsCallbacks):
     for (const e of events) {
       if (job.kind === "thread" && e.at < job.started && !earlierMarked) {
         earlierMarked = true;
-        body.insertBefore(el("div", { class: "cj-divider" }, ["Earlier, before today"]), tail);
+        body.insertBefore(el("div", { class: "cj-divider" }, ["Earlier"]), tail);
       }
-      if (job.kind === "thread" && earlierMarked && e.at >= job.started && body.querySelector(".cj-divider.today") === null) {
-        body.insertBefore(el("div", { class: "cj-divider today" }, ["Today"]), tail);
+      if (job.kind === "thread" && earlierMarked && e.at >= job.started && body.querySelector(".cj-divider.since") === null) {
+        body.insertBefore(el("div", { class: "cj-divider since" }, [dayTitle(job.started, Date.now())]), tail);
       }
       const node = eventNode(job, e);
       if (!node) continue;
@@ -162,7 +169,7 @@ export function setupClaudeJobsView(root: HTMLElement, cb: ClaudeJobsCallbacks):
         const first = !firstPromptSeen;
         firstPromptSeen = true;
         const box = el("div", { class: "cj-msg cj-prompt folded" });
-        const who = el("div", { class: "cj-who" }, [first ? "Prompt gitp sent" : "Sent", el("span", { class: "cj-when" }, [time(e.at)])]);
+        const who = el("div", { class: "cj-who" }, [first ? "Prompt gitp sent" : "Sent", el("span", { class: "cj-when" }, [when(e.at)])]);
         const text = el("div", { class: "cj-prompt-text" }, [e.text]);
         const more = el("button", { class: "cj-link", type: "button" }, ["Show all"]);
         more.addEventListener("click", () => {
@@ -174,7 +181,7 @@ export function setupClaudeJobsView(root: HTMLElement, cb: ClaudeJobsCallbacks):
       }
       case "text": {
         const box = el("div", { class: "cj-msg cj-claude" });
-        const who = el("div", { class: "cj-who" }, ["Claude", el("span", { class: "cj-when" }, [time(e.at) + (e.tokens ? ` · ${formatTokens(e.tokens)}` : "")])]);
+        const who = el("div", { class: "cj-who" }, ["Claude", el("span", { class: "cj-when" }, [when(e.at) + (e.tokens ? ` · ${formatTokens(e.tokens)}` : "")])]);
         box.append(who, renderGitHubMarkdown(e.text));
         return box;
       }
@@ -264,7 +271,7 @@ export function setupClaudeJobsView(root: HTMLElement, cb: ClaudeJobsCallbacks):
       if (data.found) tail.append(el("div", { class: "cj-live" }, [el("span", { class: "cj-dot running" }), `Working · ${formatElapsed(jobElapsed(job, Date.now()))}`]));
       return;
     }
-    const note = endNote(job, time);
+    const note = endNote(job, when);
     if (note) tail.append(el("div", { class: `cj-end ${job.state}` }, [note]));
   }
 

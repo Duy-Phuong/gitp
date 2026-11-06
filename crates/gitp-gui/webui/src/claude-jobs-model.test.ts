@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ClaudeJob } from "./api";
-import { atBottom, endNote, formatElapsed, formatTokens, groupJobs, jobElapsed, jobsSummary, jobTitle, repoName, tokensDetail } from "./claude-jobs-model";
+import { atBottom, dayTitle, endNote, formatElapsed, formatTokens, groupJobs, jobElapsed, jobsSummary, jobTitle, repoName, tokensDetail } from "./claude-jobs-model";
 
 const usage = { input: 0, cache_creation: 0, cache_read: 0, output: 0 };
 const job = (j: Partial<ClaudeJob>): ClaudeJob => ({
@@ -42,18 +42,34 @@ describe("the Claude jobs list", () => {
     expect(jobElapsed(job({ state: "done", turn_started: 1000, ended: 3000, spent: 5000 }), 99_000)).toBe(7000);
   });
 
-  it("puts running jobs first, newest first, and says how many", () => {
+  it("puts running jobs first, then the rest by day, newest first, and says how many", () => {
+    const now = new Date(2026, 10, 6, 15, 0).getTime();
+    const hoursAgo = (h: number) => now - h * 3_600_000;
     const jobs = [
-      job({ id: 1, state: "done", turn_started: 5 }),
-      job({ id: 2, state: "running", turn_started: 1 }),
-      job({ id: 3, state: "failed", turn_started: 9 }),
-      job({ id: 4, state: "running", turn_started: 3 }),
+      job({ id: 1, state: "done", turn_started: hoursAgo(2) }),
+      job({ id: 2, state: "running", turn_started: hoursAgo(3) }),
+      job({ id: 3, state: "failed", turn_started: hoursAgo(1) }),
+      job({ id: 4, state: "running", turn_started: hoursAgo(2) }),
+      job({ id: 5, state: "done", turn_started: hoursAgo(20) }),
+      job({ id: 6, state: "stopped", turn_started: hoursAgo(72) }),
     ];
-    const g = groupJobs(jobs);
+    const g = groupJobs(jobs, now);
     expect(g.running.map((j) => j.id)).toEqual([4, 2]);
-    expect(g.today.map((j) => j.id)).toEqual([3, 1]);
-    expect(jobsSummary(jobs)).toBe("2 running · 2 finished today");
-    expect(jobsSummary([])).toBe("No Claude jobs today");
+    expect(g.days.map((d) => [d.title === "Today" || d.title === "Yesterday" ? d.title : "date", d.jobs.map((j) => j.id)])).toEqual([
+      ["Today", [3, 1]],
+      ["Yesterday", [5]],
+      ["date", [6]],
+    ]);
+    expect(jobsSummary(jobs, now)).toBe("2 running · 2 finished today · 2 earlier this week");
+    expect(jobsSummary([], now)).toBe("No Claude jobs in the last 7 days");
+  });
+
+  it("names a day today, yesterday, or by its date", () => {
+    const now = new Date(2026, 10, 6, 0, 30).getTime();
+    const date = () => "Wed, 4 Nov";
+    expect(dayTitle(now - 10 * 60_000, now, date)).toBe("Today");
+    expect(dayTitle(now - 40 * 60_000, now, date)).toBe("Yesterday");
+    expect(dayTitle(now - 2 * 86_400_000, now, date)).toBe("Wed, 4 Nov");
   });
 
   it("names a thread job by what it does now", () => {
