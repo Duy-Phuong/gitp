@@ -201,6 +201,17 @@ function resetRepoViews(): void {
 let prTabs: { number: number; title: string }[] = [];
 let prTabOpen: number | null = null;
 
+// Esc leaves a pull request's tab for the usual layout — not while typing,
+// nor when a dialog or menu would take the Esc for itself.
+function leavePullRequestTabOnEsc(e: KeyboardEvent): void {
+  if (e.key !== "Escape" || e.defaultPrevented || prTabOpen === null) return;
+  const target = e.target as HTMLElement | null;
+  if (target?.closest("input, textarea, select, [contenteditable]")) return;
+  if (document.querySelector(".modal-overlay, .menu:not(.hidden)")) return;
+  showPullRequest(prTabOpen);
+}
+document.addEventListener("keydown", leavePullRequestTabOnEsc);
+
 // Open pull request `number` in its tab, made if it isn't there yet.
 export function openPullRequestTab(number: number, title: string): void {
   const tab = prTabs.find((t) => t.number === number);

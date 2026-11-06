@@ -438,6 +438,7 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   reviewMenu: (pr, x, y) => reviewMenu(pr.number, x, y),
   merge: mergeAction,
   openInTab: (pr) => openPullRequestTab(pr.number, pr.title),
+  leaveTab: (pr) => showPullRequest(pr.number),
   openUrl: (url) => void openUrl(url),
   comment: (pr, body) => post("a comment", pr.number, body, () => commentOnPullRequest(pr.number, body)),
   resolve: async (pr, thread, resolve) => {

@@ -10,7 +10,9 @@
 //   with or without backticks. The comment is what lies between
 //   `<!-- copy:start -->` and `<!-- copy:end -->`, else what follows a
 //   "Comment to paste" label, else the block's text. A `**Severity:**` line
-//   is kept as a tag.
+//   is kept as a tag. A `###` block about the whole pull request ("PR
+//   description") has no location: it is read only when it marks a comment
+//   to paste, and goes in the review's message under its heading.
 // - JSON: an array of `{path, line, body, severity?, side?}`, or an object
 //   holding one under `findings` or `comments`.
 // - An HTML review page (the review skills' output) carries its Markdown in
@@ -25,6 +27,9 @@ export interface DraftComment {
   body: string;
   /// "blocking", "minor", "nit" or whatever the file said; null when it didn't.
   severity: string | null;
+  /// The heading of a comment on the whole pull request, which has no path
+  /// ("") and no line (0).
+  topic?: string;
 }
 
 /// The findings in a review file, in file order. Blocks without a location or
@@ -80,6 +85,8 @@ function parseJson(text: string): DraftComment[] {
 
 // `### path/to/file.ext:42`, `### \`src/a.rs:10-12\``, `### src/a.rs:7 — title`.
 const HEADING = /^###\s+`?([^\s`:]+(?:\/[^\s`:]+)*):(\d+)(?:-(\d+))?`?/;
+// Any other `###` heading: a comment on the whole pull request, if it has one.
+const TOPIC = /^###\s+(.+?)\s*$/;
 const COPY_START = "<!-- copy:start -->";
 const COPY_END = "<!-- copy:end -->";
 
@@ -89,7 +96,8 @@ function parseMarkdown(text: string): DraftComment[] {
   let i = 0;
   while (i < lines.length) {
     const m = HEADING.exec(lines[i]);
-    if (!m) {
+    const topic = m ? null : TOPIC.exec(lines[i]);
+    if (!m && !topic) {
       i++;
       continue;
     }
@@ -97,19 +105,23 @@ function parseMarkdown(text: string): DraftComment[] {
     let j = i + 1;
     while (j < lines.length && !/^#{1,3}\s/.test(lines[j])) j++;
     const block = lines.slice(i + 1, j).join("\n");
-    const body = commentOf(block);
-    if (body) {
-      drafts.push({
-        path: m[1],
-        line: Number(m[3] ?? m[2]),
-        side: "RIGHT",
-        body,
-        severity: severityOf(block),
-      });
+    if (m) {
+      const body = commentOf(block);
+      if (body) drafts.push({ path: m[1], line: Number(m[3] ?? m[2]), side: "RIGHT", body, severity: severityOf(block) });
+    } else if (topic && marksComment(block)) {
+      const body = commentOf(block);
+      const name = topic[1].replace(/`/g, "");
+      if (body) drafts.push({ path: "", line: 0, side: "RIGHT", body, severity: severityOf(block), topic: name });
     }
     i = j;
   }
   return drafts;
+}
+
+/// Whether the block says which text is the comment: copy markers or a
+/// "Comment to paste" label. A section of the review without one isn't.
+function marksComment(block: string): boolean {
+  return block.includes(COPY_START) || /\*\*Comment to paste:?\*\*/i.test(block);
 }
 
 /// The comment inside the copy markers; else after a "Comment to paste"
@@ -142,7 +154,8 @@ function severityOf(block: string): string | null {
   return word ? word.toLowerCase() : null;
 }
 
-export type AnchorCheck = "ok" | "no-file" | "no-line";
+// "general": a comment on the whole pull request, never on a line.
+export type AnchorCheck = "ok" | "no-file" | "no-line" | "general";
 
 /// The head commit a review says it reviewed: the skill's header line,
 /// "**Head:** `feature/x` (`e0a21160a5`)". Null when it names none.
@@ -153,10 +166,12 @@ export function reviewedHeadIn(text: string): string | null {
 
 /// The review message with `drafts` — ones GitHub won't take as line comments,
 /// their line being outside the diff — added after it, each under a link to
-/// its line at `headOid` in the repository at `prUrl` (the pull request's page).
+/// its line at `headOid` in the repository at `prUrl` (the pull request's page);
+/// one on the whole pull request under its heading.
 export function withOffDiffDrafts(message: string, drafts: DraftComment[], prUrl: string, headOid: string): string {
   const repo = prUrl.replace(/\/pull\/\d+\/?$/, "");
   const blocks = drafts.map((d) => {
+    if (!d.path) return `**${d.topic ?? "On the pull request"}**\n\n${d.body.trim()}`;
     // A removed line isn't in the head commit: link the file.
     const anchor = d.side === "RIGHT" ? `#L${d.line}` : "";
     const where = `${d.path}:${d.line}${d.side === "LEFT" ? " (removed line)" : ""}`;
@@ -169,6 +184,7 @@ export function withOffDiffDrafts(message: string, drafts: DraftComment[], prUrl
 /// be in the pull request and the line part of its diff (a line outside every
 /// hunk is refused by the API). `files` is the pull request's diff.
 export function checkAnchor(draft: DraftComment, files: FileDiff[]): AnchorCheck {
+  if (!draft.path) return "general";
   const file = files.find((f) => f.path === draft.path || f.old_path === draft.path);
   if (!file) return "no-file";
   // A truncated diff may hold the line in a hunk that wasn't sent.
