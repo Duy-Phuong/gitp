@@ -68,7 +68,7 @@ import {
 } from "./shell";
 import { defaultWorktreePath } from "./worktree-actions";
 import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
-import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, SKILL_REVIEW_COMMAND } from "./prefs";
+import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, SKILL_REVIEW_COMMAND, withClaudeChoice } from "./prefs";
 import { finishTurn, lastUserText, preparedReply, runningTurns, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
@@ -525,7 +525,7 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   readReview: (pr, path) =>
     openReviewViewer(state.repoPath, pr.number, pr.title, {
       pageUrl: reviewPageUrl,
-      explain: (repo, number, finding) => explainReviewFinding(repo, number, finding, EXPLAIN_FINDING_COMMAND),
+      explain: (repo, number, finding) => explainReviewFinding(repo, number, finding, withClaudeChoice(EXPLAIN_FINDING_COMMAND)),
       openUrl: (url) => void openGithubUrl(url).catch((err) => readFailed("Couldn't open the page", err)),
       openInBrowser: () => void openReviewPage(path).catch((err) => readFailed("Couldn't open the review page", err)),
     }),
@@ -606,7 +606,7 @@ async function runThreadTurn(repo: string, pr: PullRequestDetail, thread: Thread
   setStatus(`Asking Claude about ${where} of #${number} in the background — keep working; the thread shows when it answers.`);
   try {
     const input = { number, head: pr.head_oid, author: pr.author, comments: [thread.root, ...thread.replies] };
-    const conversation = await threadTurn(repo, input, kind, text, loadThreadCommand(kind));
+    const conversation = await threadTurn(repo, input, kind, text, withClaudeChoice(loadThreadCommand(kind)));
     finishTurn(repo, number, id, conversation);
     setStatus(`Claude answered on ${where} of #${number}.`);
   } catch (err) {
@@ -636,7 +636,7 @@ async function runFix(repo: string, pr: PullRequestDetail, thread: Thread): Prom
   setStatus(`Fixing ${where} of #${number} in ${pr.head}'s worktree in the background — keep working; the thread shows when it's done.`);
   try {
     const input = { number, head: pr.head_oid, author: pr.author, comments: [thread.root, ...thread.replies] };
-    const conversation = await threadFix(repo, input, pr.head, loadThreadCommand("fix"), loadThreadCommand("reply-draft"));
+    const conversation = await threadFix(repo, input, pr.head, withClaudeChoice(loadThreadCommand("fix")), withClaudeChoice(loadThreadCommand("reply-draft")));
     finishTurn(repo, number, id, conversation);
     const commit = [...conversation.turns].reverse().find((t) => t.kind === "fix" && t.commit)?.commit?.slice(0, 7);
     reportDone(`Fixed ${where} of #${number}${commit ? ` in ${commit}` : ""}; the reply is ready.`);
@@ -800,7 +800,7 @@ async function runReview(repo: string, number: number, head: string, command = l
   reviewsChanged();
   setStatus(`Reviewing #${number} in the background — keep working; the pull request shows when it's done.`);
   try {
-    const out = await generateReviewDrafts(repo, number, command, command === SKILL_REVIEW_COMMAND ? "Review with Skill" : "Generate Drafts");
+    const out = await generateReviewDrafts(repo, number, withClaudeChoice(command), command === SKILL_REVIEW_COMMAND ? "Review with Skill" : "Generate Drafts");
     setReviewedHead(repo, number, reviewedHeadIn(out.text) ?? head);
     const all = parseReviewFile(out.text);
     const found = unposted(repo, number, all);

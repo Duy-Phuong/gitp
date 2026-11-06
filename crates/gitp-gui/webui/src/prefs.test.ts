@@ -9,6 +9,9 @@ import {
   DEFAULT_REVIEW_COMMAND,
   EXPLAIN_FINDING_COMMAND,
   SESSION_ID_ARG,
+  loadClaudeChoice,
+  saveClaudeChoice,
+  withClaudeChoice,
   SKILL_REVIEW_COMMAND,
   DEFAULT_THREAD_COMMANDS,
   FIX_TOOLS,
@@ -144,6 +147,47 @@ describe("the session id of a fresh run", () => {
     for (const c of [SKILL_REVIEW_COMMAND, EXPLAIN_FINDING_COMMAND]) {
       expect(c.indexOf(SESSION_ID_ARG)).toBeLessThan(c.indexOf("--allowedTools"));
     }
+  });
+});
+
+describe("the Claude model and effort", () => {
+  // vitest runs in node: a small localStorage of our own.
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    store.clear();
+    (globalThis as { localStorage?: unknown }).localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    };
+  });
+
+  it("sets every default command's --model and --effort", () => {
+    const choice = { model: "sonnet", effort: "high" } as const;
+    const all = [DEFAULT_REVIEW_COMMAND, SKILL_REVIEW_COMMAND, EXPLAIN_FINDING_COMMAND, ...Object.values(DEFAULT_THREAD_COMMANDS)];
+    for (const c of all) {
+      const out = withClaudeChoice(c, choice);
+      expect(out).toContain("--model sonnet --effort high");
+      expect(out).not.toMatch(/--model opus|--effort medium/);
+      expect(out.replace("--model sonnet --effort high", "--model opus --effort medium")).toBe(c);
+    }
+  });
+
+  it("sets a hand-written command's flags in any spelling, and leaves one without them", () => {
+    const choice = { model: "haiku", effort: "max" } as const;
+    expect(withClaudeChoice(`claude -p --model="opus" --effort=low 'x'`, choice)).toBe(`claude -p --model=haiku --effort=max 'x'`);
+    expect(withClaudeChoice("claude -p --model 'claude-opus-5-5' x", choice)).toBe("claude -p --model haiku x");
+    expect(withClaudeChoice("my-review.sh", choice)).toBe("my-review.sh");
+  });
+
+  it("is Opus at medium until changed, and keeps only a known value", () => {
+    expect(loadClaudeChoice()).toEqual({ model: "opus", effort: "medium" });
+    saveClaudeChoice({ model: "sonnet", effort: "xhigh" });
+    expect(loadClaudeChoice()).toEqual({ model: "sonnet", effort: "xhigh" });
+    localStorage.setItem("gitp-claude-model", "gpt");
+    expect(loadClaudeChoice().model).toBe("opus");
+    saveClaudeChoice({ model: "opus", effort: "medium" });
+    expect(store.size).toBe(0);
   });
 });
 

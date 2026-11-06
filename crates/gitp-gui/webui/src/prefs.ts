@@ -640,6 +640,59 @@ export function tildePath(path: string): string {
 // transcript while it goes. Empty on a resume, so nothing is added then.
 export const SESSION_ID_ARG = '${GITP_CLAUDE_NEW_SESSION:+--session-id "$GITP_CLAUDE_NEW_SESSION"}';
 
+// The model and effort of every Claude run gitp starts (Settings → Claude
+// model, Claude effort). gitp writes them into each command's --model and
+// --effort as it starts it, so a command edited by hand follows them too; a
+// command with neither flag runs as written.
+export const CLAUDE_MODELS = ["opus", "sonnet", "haiku"] as const;
+export const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type ClaudeModel = (typeof CLAUDE_MODELS)[number];
+export type ClaudeEffort = (typeof CLAUDE_EFFORTS)[number];
+export interface ClaudeChoice {
+  model: ClaudeModel;
+  effort: ClaudeEffort;
+}
+const CLAUDE_MODEL_KEY = "gitp-claude-model";
+const CLAUDE_EFFORT_KEY = "gitp-claude-effort";
+export const DEFAULT_CLAUDE_CHOICE: ClaudeChoice = { model: "opus", effort: "medium" };
+
+const stored = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+export function loadClaudeChoice(): ClaudeChoice {
+  const model = stored(CLAUDE_MODEL_KEY);
+  const effort = stored(CLAUDE_EFFORT_KEY);
+  return {
+    model: CLAUDE_MODELS.find((m) => m === model) ?? DEFAULT_CLAUDE_CHOICE.model,
+    effort: CLAUDE_EFFORTS.find((e) => e === effort) ?? DEFAULT_CLAUDE_CHOICE.effort,
+  };
+}
+
+// The default forgets the key, like the commands.
+export function saveClaudeChoice(choice: ClaudeChoice): void {
+  try {
+    if (choice.model === DEFAULT_CLAUDE_CHOICE.model) localStorage.removeItem(CLAUDE_MODEL_KEY);
+    else localStorage.setItem(CLAUDE_MODEL_KEY, choice.model);
+    if (choice.effort === DEFAULT_CLAUDE_CHOICE.effort) localStorage.removeItem(CLAUDE_EFFORT_KEY);
+    else localStorage.setItem(CLAUDE_EFFORT_KEY, choice.effort);
+  } catch {
+    // Full or blocked storage: the choice just doesn't survive a restart.
+  }
+}
+
+// `command` with every --model and --effort value set to `choice`: "--model
+// x", "--model=x" or a quoted value.
+export function withClaudeChoice(command: string, choice: ClaudeChoice = loadClaudeChoice()): string {
+  return command
+    .replace(/(--model)(\s+|=)("[^"]*"|'[^']*'|[^\s"']+)/g, `$1$2${choice.model}`)
+    .replace(/(--effort)(\s+|=)("[^"]*"|'[^']*'|[^\s"']+)/g, `$1$2${choice.effort}`);
+}
+
 // The shell line that writes a review of a pull request's diff (on its
 // stdin), for "Run Review Command". The default asks the Claude Code CLI — Opus
 // at medium effort — for findings in the shape the Drafts tab reads.
