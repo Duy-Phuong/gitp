@@ -35,11 +35,12 @@ export function threadState(repo: string, number: number, thread: number): Threa
 }
 
 // What the store holds for the thread: the saved conversation, or none.
-export function setConversation(repo: string, number: number, thread: number, c: ThreadConversation | null): void {
+// `keepError`: a reload after a failed turn, whose error stays on screen.
+export function setConversation(repo: string, number: number, thread: number, c: ThreadConversation | null, opts: { keepError?: boolean } = {}): void {
   const s = threadState(repo, number, thread);
   s.conversation = c;
   s.loaded = true;
-  s.error = null;
+  if (!opts.keepError) s.error = null;
 }
 
 // Mark a turn of `kind` as running; false when one already is.

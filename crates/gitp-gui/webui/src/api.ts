@@ -2268,6 +2268,8 @@ const MOCK_TURN_TEXT: Record<TurnKind, string> = {
 export async function threadTurn(path: string, input: ThreadInput, kind: TurnKind, userText: string, command: string): Promise<ThreadConversation> {
   if (!isTauri()) {
     await new Promise((r) => setTimeout(r, 1500));
+    // "fail" in a follow-up shows the error path.
+    if (/\bfail\b/i.test(userText)) throw new Error("The thread command failed (exit code 1).\n\nNo model today.");
     const root = input.comments[0];
     const key = `${input.number}\n${root.id}`;
     const c = mockThreads.get(key) ?? { version: 1, pr: input.number, thread: root.id, path: root.path, turns: [] };

@@ -90,3 +90,25 @@ it("a collapsed block shows only its summary line, and Clear is off while a turn
   expect(running.textContent).toContain("Claude is thinking");
   expect([...running.querySelectorAll("button")].map((b) => b.textContent)).toContain("Cancel");
 });
+
+it("the follow-up box keeps what was typed across a redraw and reports edits", () => {
+  let typed = "";
+  const node = conversationNode({
+    state: { running: null, error: null, loaded: true, conversation: conv() },
+    head: "aaaa",
+    open: true,
+    lastKind: null,
+    draft: "half a question",
+    onDraft: (t) => (typed = t),
+    onFollowup() {},
+    onClear() {},
+    onRetry() {},
+    onCancel() {},
+    onToggle() {},
+  });
+  const area = node.querySelector("textarea") as HTMLTextAreaElement;
+  expect(area.value).toBe("half a question");
+  area.value = "half a question more";
+  area.dispatchEvent(new Event("input"));
+  expect(typed).toBe("half a question more");
+});

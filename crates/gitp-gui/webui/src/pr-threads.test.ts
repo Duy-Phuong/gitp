@@ -47,3 +47,11 @@ it("the last user turn is what a reply draft builds on", () => {
   expect(lastUserText(c)).toBe("restore >");
   expect(lastUserText(conv(1))).toBe("");
 });
+
+it("a reload after a failed turn keeps the error, so Try again stays", () => {
+  finishTurn("/r", 10, 1, { error: "boom" });
+  setConversation("/r", 10, 1, conv(1), { keepError: true });
+  expect(threadState("/r", 10, 1)).toEqual({ running: null, error: "boom", conversation: conv(1), loaded: true });
+  setConversation("/r", 10, 1, null, { keepError: true });
+  expect(threadState("/r", 10, 1).error).toBe("boom");
+});

@@ -98,8 +98,11 @@ export interface PullRequestCallbacks {
   threadTurn: (pr: PullRequestDetail, thread: Thread, kind: TurnKind, userText: string) => void;
   cancelThreadTurn: (pr: PullRequestDetail, thread: Thread) => void;
   loadThreadConversation: (pr: PullRequestDetail, thread: Thread) => void;
-  clearThreadConversation: (pr: PullRequestDetail, thread: Thread) => Promise<void>;
+  // True once forgotten; false when the user said no or it failed.
+  clearThreadConversation: (pr: PullRequestDetail, thread: Thread) => Promise<boolean>;
   pruneThreadConversations: () => void;
+  // Asks before a draft replaces what the user typed.
+  confirm: (message: string) => Promise<boolean>;
   reportError: (title: string, err: unknown) => void;
 }
 
@@ -167,8 +170,16 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // conversations were pruned yet for this repo.
   const openBlocks = new Set<number>();
   const lastKind = new Map<number, TurnKind>();
-  const pendingReplyDraft = new Set<number>();
+  // Reply with Claude: how many turns the thread had when it was clicked, so
+  // only a draft newer than that lands in the Reply box.
+  const pendingReplyDraft = new Map<number, number>();
   let prunedFor: string | null = null;
+  // What is typed in a thread's Reply box and follow-up box, by root comment
+  // id, and which Reply boxes are open: a redraw (a turn ending on any
+  // thread) keeps them, as `draft` keeps the bottom composer.
+  const replyOpen = new Set<number>();
+  const replyText = new Map<number, string>();
+  const followupText = new Map<number, string>();
 
   const message = (text: string) => {
     clear(host);
@@ -197,6 +208,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   function render(): void {
     if (!detail) return;
     const pr = detail;
+    // A redraw keeps the scroll position: a turn ending on a thread must not
+    // jump the view to the top.
+    const scrolled = host.querySelector<HTMLElement>(".pr-body")?.scrollTop ?? 0;
     clear(host);
     const body = el("div", { class: "pr-body" });
     // A link in a description or comment opens in the browser (see
@@ -229,6 +243,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       ]),
     );
     host.append(el("div", { class: "pr-view" }, [header(pr), tabs, body]));
+    if (scrolled) body.scrollTop = scrolled;
     if (tab === "conversation") renderConversation(body, pr);
     else if (tab === "files") void renderFiles(body, pr);
     else if (tab === "commits") renderCommits(body, pr);
@@ -366,15 +381,31 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       node.append(el("div", { class: "pr-thread-resolved" }, [el("span", { class: "pr-badge", text: "Resolved" }), el("span", { text: `${1 + thread.replies.length} comment${thread.replies.length ? "s" : ""}` })]));
     }
     for (const c of resolved ? [root] : [root, ...thread.replies]) node.append(card(c.author, c.created_at, "", c.body, [], "pr-thread-comment"));
-    const openReply = (text = "") => {
-      const box = replyBox("Reply (Markdown)", "Reply", async (body) => {
-        if (!(await cb.reply(pr, root, body))) return false;
-        await load(true);
-        return true;
-      });
-      if (text) box.querySelector("textarea")!.value = text;
-      // Above the actions row, which the Claude buttons share: a box in the
-      // row would be squeezed beside them.
+    // The Reply box, above the actions row (which the Claude buttons share: a
+    // box in the row would be squeezed beside them), with what was typed in
+    // it kept across redraws.
+    const openReply = () => {
+      replyOpen.add(root.id);
+      const box = replyBox(
+        "Reply (Markdown)",
+        "Reply",
+        async (body) => {
+          if (!(await cb.reply(pr, root, body))) return false;
+          replyOpen.delete(root.id);
+          replyText.delete(root.id);
+          await load(true);
+          return true;
+        },
+        () => {
+          replyOpen.delete(root.id);
+          replyText.delete(root.id);
+          box.remove();
+          actions.append(open);
+        },
+      );
+      const area = box.querySelector("textarea")!;
+      area.value = replyText.get(root.id) ?? "";
+      area.addEventListener("input", () => replyText.set(root.id, area.value));
       actions.before(box);
       open.remove();
     };
@@ -398,8 +429,13 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
             head: pr.head_oid,
             open: openBlocks.has(root.id),
             lastKind: lastKind.get(root.id) ?? null,
+            draft: followupText.get(root.id),
+            onDraft: (text) => followupText.set(root.id, text),
             onFollowup: (text) => turn("followup", text),
-            onClear: () => void cb.clearThreadConversation(pr, thread).then(() => openBlocks.delete(root.id)),
+            onClear: () =>
+              void cb.clearThreadConversation(pr, thread).then((cleared) => {
+                if (cleared) openBlocks.delete(root.id);
+              }),
             onRetry: (kind) => turn(kind),
             onCancel: () => cb.cancelThreadTurn(pr, thread),
             onToggle: () => {
@@ -409,15 +445,29 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
           }),
         );
       }
-      // A reply draft that just arrived lands in the Reply box.
-      const last = ts.conversation?.turns[ts.conversation.turns.length - 1];
-      if (pendingReplyDraft.has(root.id) && !ts.running && last?.kind === "reply-draft" && last.role === "claude") {
-        pendingReplyDraft.delete(root.id);
-        requestAnimationFrame(() => openReply(last.text));
+      // A reply draft that arrived since Reply with Claude was clicked lands
+      // in the Reply box — after a confirm when the box holds something.
+      const turns = ts.conversation?.turns ?? [];
+      const last = turns[turns.length - 1];
+      const since = pendingReplyDraft.get(root.id);
+      if (since !== undefined && !ts.running) {
+        if (ts.error) pendingReplyDraft.delete(root.id);
+        else if (turns.length > since && last?.kind === "reply-draft" && last.role === "claude") {
+          pendingReplyDraft.delete(root.id);
+          if (!replyText.get(root.id)?.trim()) replyText.set(root.id, last.text);
+          else {
+            void cb.confirm("Replace what you typed in the Reply box with Claude's draft?").then((ok) => {
+              if (!ok) return;
+              replyText.set(root.id, last.text);
+              replyOpen.add(root.id);
+              render();
+            });
+          }
+        }
       }
       for (const b of threadClaudeButtons(false, ts.running)) {
         const button = smallButton(b.label, () => {
-          if (b.action === "reply-draft") pendingReplyDraft.add(root.id);
+          if (b.action === "reply-draft") pendingReplyDraft.set(root.id, ts.conversation?.turns.length ?? 0);
           turn(b.action);
         });
         (button as HTMLButtonElement).disabled = b.disabled;
@@ -435,6 +485,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       );
     }
     node.append(actions);
+    if (replyOpen.has(root.id) || (replyText.get(root.id) ?? "") !== "") openReply();
     return node;
   }
 
@@ -1025,6 +1076,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       openBlocks.clear();
       lastKind.clear();
       pendingReplyDraft.clear();
+      replyOpen.clear();
+      replyText.clear();
+      followupText.clear();
       prunedFor = null;
       number = null;
       detail = null;

@@ -523,17 +523,21 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
     return post(what, pr.number, body.trim() ? `${body}\n\n${preview}` : preview, () => reviewWithComments(pr.number, verdict, body, comments));
   },
   threadTurn: (pr, thread, kind, userText) => void runThreadTurn(state.repoPath, pr, thread, kind, userText),
-  cancelThreadTurn: (pr, thread) => void cancelThreadTurn(state.repoPath, pr.number, thread.root.id),
+  cancelThreadTurn: (pr, thread) =>
+    void cancelThreadTurn(state.repoPath, pr.number, thread.root.id).catch((err) => opFailed("Couldn't cancel Claude's turn", err)),
+  confirm: (message) => confirmDialog(message),
   loadThreadConversation: (pr, thread) => void loadThreadConversation(state.repoPath, pr.number, thread.root.id),
   clearThreadConversation: async (pr, thread) => {
     const repo = state.repoPath;
-    if (!(await confirmDialog(`Forget Claude's conversation on ${thread.root.path} of #${pr.number}?`))) return;
+    if (!(await confirmDialog(`Forget Claude's conversation on ${thread.root.path} of #${pr.number}?`))) return false;
     try {
       await clearThreadConversation(repo, pr.number, thread.root.id);
       setConversation(repo, pr.number, thread.root.id, null);
       threadsChanged();
+      return true;
     } catch (err) {
       opFailed("Couldn't forget the conversation", err);
+      return false;
     }
   },
   pruneThreadConversations: () => {
@@ -590,11 +594,13 @@ async function loadThreadConversation(repo: string, number: number, id: number, 
   try {
     const c = await threadConversation(repo, number, id);
     if (c || force) {
-      setConversation(repo, number, id, c);
+      // After a failed turn the error (and Try again) stays on screen.
+      setConversation(repo, number, id, c, { keepError: force });
       threadsChanged();
     }
   } catch (err) {
-    s.loaded = false;
+    // Stays loaded: a file that can't be read is reported once, not on
+    // every redraw. A turn on the thread reads it again.
     readFailed("Couldn't read Claude's conversation", err);
   }
 }

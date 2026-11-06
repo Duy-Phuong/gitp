@@ -64,6 +64,9 @@ export interface ConversationOptions {
   open: boolean;
   // The kind the last failed turn was, for Try again.
   lastKind: TurnKind | null;
+  // What the follow-up box holds, kept by the view across redraws.
+  draft?: string;
+  onDraft?: (text: string) => void;
   onFollowup: (text: string) => void;
   onClear: () => void;
   onRetry: (kind: TurnKind) => void;
@@ -76,7 +79,7 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
   const { state, head, open } = o;
   const c = state.conversation;
   const node = el("div", { class: `pr-thread-claude${open ? " open" : ""}` });
-  const summary = c ? conversationSummary(c) : state.running ? "Claude" : "Claude";
+  const summary = c ? conversationSummary(c) : "Claude";
   const headLine = el("div", { class: "pr-thread-claude-head" }, [
     el("span", { class: "pr-thread-claude-arrow", text: open ? "▾" : "▸" }),
     el("span", { text: summary }),
@@ -119,6 +122,8 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
   }
   if (open && c) {
     const area = composerArea({ placeholder: "Ask a follow-up…" });
+    if (o.draft) area.value = o.draft;
+    area.addEventListener("input", () => o.onDraft?.(area.value));
     const send = el("button", { class: "btn small", text: "Send" });
     const clear = el("button", { class: "btn small ghost", text: "Clear" }) as HTMLButtonElement;
     clear.disabled = state.running !== null;
@@ -127,6 +132,7 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
       const text = area.value.trim();
       if (!text) return area.focus();
       area.value = "";
+      o.onDraft?.("");
       o.onFollowup(text);
     };
     send.addEventListener("click", (e) => {
