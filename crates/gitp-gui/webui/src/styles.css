@@ -5009,6 +5009,17 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   background: color-mix(in srgb, var(--label) 22%, transparent);
   color: var(--text);
 }
+/* An icon-only button, as tall as the labelled ones beside it. */
+.pr-actions .pr-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.pr-actions .pr-icon-btn .tb-icon {
+  width: 14px;
+  height: 14px;
+}
 .pr-actions .btn .remote-icon {
   width: 12px;
   height: 12px;
