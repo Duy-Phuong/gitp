@@ -5550,13 +5550,15 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   white-space: pre-wrap;
 }
 .pr-thread-claude-running,
+.pr-thread-claude-stale,
 .pr-thread-claude-error {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 12px;
 }
-.pr-thread-claude-running {
+.pr-thread-claude-running,
+.pr-thread-claude-stale {
   color: var(--text-dim);
 }
 .pr-thread-claude-error {

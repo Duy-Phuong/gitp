@@ -54,6 +54,7 @@ it("the block marks turns made against an older commit, offers Try again on an e
     onToggle() {},
   });
   expect(node.querySelector(".pr-badge")?.textContent).toBe("older commit");
+  expect([...node.querySelectorAll("button")].map((b) => b.textContent)).toContain("Check again");
   expect(node.querySelector(".pr-thread-claude-error")?.textContent).toContain("boom");
   expect([...node.querySelectorAll("button")].map((b) => b.textContent)).toContain("Try again");
   expect(node.querySelector(".github-markdown strong")?.textContent).toBe("x");
@@ -73,6 +74,8 @@ it("a collapsed block shows only its summary line, and Clear is off while a turn
     onToggle() {},
   });
   expect(closed.querySelector(".pr-thread-claude-turn")).toBeNull();
+  const current = conversationNode({ state: { running: null, error: null, loaded: true, conversation: conv() }, head: "aaaa", open: true, lastKind: null, onFollowup() {}, onClear() {}, onRetry() {}, onCancel() {}, onToggle() {} });
+  expect([...current.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Check again");
   expect(closed.querySelector(".pr-thread-claude-head")?.textContent).toContain("3 turns");
   const running = conversationNode({
     state: { running: "check", error: null, loaded: true, conversation: conv() },

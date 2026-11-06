@@ -171,6 +171,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // finished opens its block and a failed one can be tried again; the threads
   // whose Reply with Claude is to land in the Reply box; and whether the old
   // conversations were pruned yet for this repo.
+  // The tab drawn last, so a redraw of the same one keeps its scroll.
+  let renderedTab: Tab | null = null;
   const openBlocks = new Set<number>();
   const lastKind = new Map<number, TurnKind>();
   // Reply with Claude: how many turns the thread had when it was clicked, so
@@ -211,9 +213,15 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   function render(): void {
     if (!detail) return;
     const pr = detail;
-    // A redraw keeps the scroll position: a turn ending on a thread must not
-    // jump the view to the top.
-    const scrolled = host.querySelector<HTMLElement>(".pr-body")?.scrollTop ?? 0;
+    // A redraw of the same tab keeps the scroll position: a turn ending on a
+    // thread must not jump the view to the top. Restored once the tab's
+    // content is in place — an empty body can't scroll — and not on a tab
+    // switch, which starts at the top.
+    const scrolled = renderedTab === tab ? (host.querySelector<HTMLElement>(".pr-body")?.scrollTop ?? 0) : 0;
+    renderedTab = tab;
+    const restore = (body: HTMLElement) => {
+      if (scrolled) body.scrollTop = scrolled;
+    };
     clear(host);
     const body = el("div", { class: "pr-body" });
     // A link in a description or comment opens in the browser (see
@@ -246,12 +254,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       ]),
     );
     host.append(el("div", { class: "pr-view" }, [header(pr), tabs, body]));
-    if (scrolled) body.scrollTop = scrolled;
     if (tab === "conversation") renderConversation(body, pr);
-    else if (tab === "files") void renderFiles(body, pr);
+    else if (tab === "files") void renderFiles(body, pr).then(() => restore(body));
     else if (tab === "commits") renderCommits(body, pr);
     else if (tab === "drafts") renderDrafts(body, pr);
     else renderChecks(body, pr);
+    restore(body);
   }
 
   function header(pr: PullRequestDetail): HTMLElement {
@@ -1103,6 +1111,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       detail = null;
       files = null;
       draft = "";
+      renderedTab = null;
       clear(host);
     },
   };

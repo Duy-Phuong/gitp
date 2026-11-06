@@ -92,7 +92,19 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
   if (!open && !state.running && !state.error) return node;
 
   const body = el("div", { class: "pr-thread-claude-body" });
-  if (open && c) for (const t of c.turns) body.append(turnNode(t, head));
+  if (open && c) {
+    for (const t of c.turns) body.append(turnNode(t, head));
+    // The pull request moved on since the last Check: offer another.
+    const stale = c.turns.some((t) => t.role === "claude" && t.head && !sameCommit(t.head, head));
+    if (stale && !state.running) {
+      const again = el("button", { class: "btn small ghost", text: "Check again" });
+      again.addEventListener("click", (e) => {
+        e.stopPropagation();
+        o.onRetry("check");
+      });
+      body.append(el("div", { class: "pr-thread-claude-stale" }, [el("span", { text: "The pull request has new commits since." }), again]));
+    }
+  }
   if (state.running) {
     const cancel = el("button", { class: "btn small ghost", text: "Cancel" });
     cancel.addEventListener("click", (e) => {
@@ -157,6 +169,9 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
   return node;
 }
 
+// Whether two commit ids, either abbreviated, name the same commit.
+const sameCommit = (a: string, b: string) => !a || !b || a.startsWith(b) || b.startsWith(a);
+
 // One turn: who, which kind, when, against which commit, and the text.
 function turnNode(t: ThreadTurn, head: string): HTMLElement {
   const secs = Math.floor(t.at / 1000);
@@ -166,7 +181,7 @@ function turnNode(t: ThreadTurn, head: string): HTMLElement {
     el("span", { class: "pr-card-verb", text: TURN_LABELS[t.kind] }),
     el("span", { class: "pr-card-time", text: relativeTime(secs), title: fullTime(secs) }),
   ]);
-  if (t.role === "claude" && t.head && head && !(t.head.startsWith(head) || head.startsWith(t.head))) {
+  if (t.role === "claude" && t.head && !sameCommit(t.head, head)) {
     headLine.append(
       el("span", {
         class: "pr-badge",
