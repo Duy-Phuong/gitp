@@ -54,6 +54,8 @@ export interface PullRequestCallbacks {
   reviewMenu: (pr: PullRequestDetail, x: number, y: number) => void;
   // Asks how, then merges on GitHub and reloads the view.
   merge: (pr: PullRequestDetail) => void;
+  // Shows it in a tab of its own, across the whole window.
+  openInTab: (pr: PullRequestDetail) => void;
   openUrl: (url: string) => void;
   // Each posts after the user confirms, resolving true once it's on GitHub;
   // the view then reloads the conversation.
@@ -113,6 +115,8 @@ const READ_REVIEW_ICON = ["M3 5c3-1 6-1 9 1v14c-3-2-6-2-9-1z", "M21 5c-3-1-6-1-9
 const PR_LINK_ICON = ["M14 4h6v6", "M20 4l-9 9", "M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"];
 // A circling arrow, as on the top bar's Refresh.
 const REFRESH_ICON = "M20 11a8 8 0 10-.6 4M20 4v5h-5";
+// Arrows to the corners: the pull request in a tab of its own.
+const TAB_ICON = ["M15 3h6v6", "M21 3l-7 7", "M9 21H3v-6", "M3 21l7-7"];
 
 export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks): PullRequestHandle {
   let number: number | null = null;
@@ -244,10 +248,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     const refresh = button("", () => void load(false), `Refresh: read #${pr.number} again from GitHub`);
     refresh.classList.add("pr-icon-btn");
     refresh.setAttribute("aria-label", "Refresh");
-    const icon = svg("svg", { viewBox: "0 0 24 24", class: "tb-icon", "aria-hidden": "true" });
-    icon.append(svg("path", { d: REFRESH_ICON }));
-    refresh.append(icon);
-    actions.append(refresh);
+    refresh.append(actionIcon([REFRESH_ICON]));
+    const inTab = button("", () => cb.openInTab(pr), `Open #${pr.number} in a tab of its own, across the whole window`);
+    inTab.classList.add("pr-icon-btn", "pr-open-tab");
+    inTab.setAttribute("aria-label", "Open in a tab");
+    inTab.append(actionIcon(TAB_ICON));
+    actions.append(refresh, inTab);
     return el("div", { class: "pr-head" }, [
       el("div", { class: "pr-title-row" }, [
         el("span", { class: "pr-title", text: pr.title }),
@@ -602,6 +608,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   }
 
   // A small icon button beside the title.
+  function actionIcon(paths: string[]): SVGElement {
+    const icon = svg("svg", { viewBox: "0 0 24 24", class: "tb-icon", "aria-hidden": "true" });
+    for (const d of paths) icon.append(svg("path", { d }));
+    return icon;
+  }
+
   function titleLink(icon: string[], title: string, onClick: () => void): HTMLElement {
     const b = iconBtn(icon, title, false, onClick);
     b.classList.add("pr-title-link");

@@ -20,7 +20,8 @@ export function tabDragHandle(tab: HTMLElement, onMove: (to: number) => void): v
 }
 
 function startPress(tab: HTMLElement, down: MouseEvent, onMove: (to: number) => void): void {
-  const tabs = [...(tab.parentElement?.children ?? [])] as HTMLElement[];
+  // Pull request tabs follow their repository's and don't move.
+  const tabs = [...(tab.parentElement?.children ?? [])].filter((t) => !t.classList.contains("pr-tab")) as HTMLElement[];
   const from = tabs.indexOf(tab);
   let dragging = false;
   let cancelled = false;

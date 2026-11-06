@@ -177,6 +177,9 @@ export function applyWorkspace(ws: Workspace): void {
 // views are singletons, so without this repo A's state leaks into repo B —
 // up to amending B's HEAD with A's message.
 function resetRepoViews(): void {
+  prTabs = [];
+  prTabOpen = null;
+  $("#app").classList.remove("pr-tab-mode");
   ui.changesView?.reset();
   ui.conflictView?.reset();
   ui.reflogView?.reset();
@@ -191,6 +194,40 @@ function resetRepoViews(): void {
   conflictPrefill = null;
 }
 
+// Pull requests opened in tabs of their own, after the active repository's
+// tab, and the one on screen: it shows the pull request view across the whole
+// window, without the sidebar and the action bar. They belong to the active
+// repository and go when it changes.
+let prTabs: { number: number; title: string }[] = [];
+let prTabOpen: number | null = null;
+
+// Open pull request `number` in its tab, made if it isn't there yet.
+export function openPullRequestTab(number: number, title: string): void {
+  const tab = prTabs.find((t) => t.number === number);
+  if (tab) tab.title = title;
+  else prTabs.push({ number, title });
+  prTabOpen = number;
+  state.prs.open = number;
+  ui.prView?.show(number);
+  showView("pr");
+}
+
+// Close the tab of pull request `number`; when it was on screen, the pull
+// request stays, in the usual layout.
+function closePullRequestTab(number: number): void {
+  prTabs = prTabs.filter((t) => t.number !== number);
+  if (prTabOpen === number) showPullRequest(number);
+  else renderRepoTabs();
+}
+
+// The layout and the tab bar for the tab on screen. Any view but the pull
+// request leaves its tab.
+function syncPullRequestTab(): void {
+  if (state.view !== "pr") prTabOpen = null;
+  $("#app").classList.toggle("pr-tab-mode", prTabOpen !== null);
+  renderRepoTabs();
+}
+
 function renderRepoTabs(): void {
   const host = $("#repo-tabs");
   host.classList.toggle("hidden", state.repos.length === 0);
@@ -200,13 +237,17 @@ function renderRepoTabs(): void {
   for (const repo of state.repos) {
     const active = repo.path === state.repoPath;
     const alias = aliases[repo.path];
-    const tab = el("div", { class: `repo-tab${active ? " active" : ""}`, title: repo.path }, [
+    const tab = el("div", { class: `repo-tab${active && prTabOpen === null ? " active" : ""}`, title: repo.path }, [
       alias ?? repo.name,
     ]);
     if (favorites.includes(repo.path)) {
       tab.prepend(el("span", { class: "repo-tab-star", title: "Favorite", "aria-label": "Favorite" }, ["★"]));
     }
-    tab.addEventListener("click", () => void switchRepo(repo.path));
+    tab.addEventListener("click", () => {
+      // Back from a pull request's tab: the pull request, in the usual layout.
+      if (active && prTabOpen !== null) showPullRequest(prTabOpen);
+      else void switchRepo(repo.path);
+    });
     tabDragHandle(tab, (to) => void moveRepoTab(repo.path, to));
     tab.addEventListener("contextmenu", (e) => {
       e.preventDefault();
@@ -229,7 +270,23 @@ function renderRepoTabs(): void {
     });
     tab.append(close);
     host.append(tab);
+    if (active) for (const pr of prTabs) host.append(pullRequestTab(pr));
   }
+}
+
+function pullRequestTab(pr: { number: number; title: string }): HTMLElement {
+  const tab = el("div", {
+    class: `repo-tab pr-tab${pr.number === prTabOpen ? " active" : ""}`,
+    title: `#${pr.number} ${pr.title}`,
+  }, [el("span", { class: "pr-tab-number", text: `#${pr.number}` }), el("span", { class: "pr-tab-title", text: pr.title })]);
+  tab.addEventListener("click", () => openPullRequestTab(pr.number, pr.title));
+  const close = el("span", { class: "repo-tab-close", title: "Close" }, ["×"]);
+  close.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closePullRequestTab(pr.number);
+  });
+  tab.append(close);
+  return tab;
 }
 
 // Star or unstar `path` (see loadFavoriteRepos) and show it on its tab.
@@ -712,6 +769,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   for (const el of document.querySelectorAll<HTMLElement>(".tab")) {
     el.classList.toggle("active", el.dataset.tab === view);
   }
+  syncPullRequestTab();
   renderSidebarNow();
   renderConflictBanner(); // entering/leaving the resolver toggles the banner
   renderDetachedBanner(); // History only
@@ -1044,6 +1102,7 @@ export function renderSidebarNow(): void {
 
 // Open pull request `number` in the pull request view.
 export function showPullRequest(number: number): void {
+  prTabOpen = null;
   state.prs.open = number;
   ui.prView?.show(number);
   showView("pr");

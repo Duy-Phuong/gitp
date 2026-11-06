@@ -1671,6 +1671,28 @@ body.tab-dragging * {
   cursor: grabbing !important;
   user-select: none;
 }
+/* A pull request's tab, after its repository's (shell.ts). */
+.pr-tab {
+  max-width: 320px;
+  gap: 6px;
+}
+.pr-tab-number {
+  color: var(--text-dim);
+}
+.pr-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A pull request's tab on screen: its view across the whole window. */
+#app.pr-tab-mode .action-bar,
+#app.pr-tab-mode #sidebar,
+#app.pr-tab-mode #sidebar-divider,
+#app.pr-tab-mode .pr-open-tab {
+  display: none;
+}
+#app.pr-tab-mode .content {
+  grid-template-columns: minmax(0, 1fr);
+}
 .repo-tab-star {
   margin-right: -4px;
   color: var(--accent);
