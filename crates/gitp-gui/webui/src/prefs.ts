@@ -636,7 +636,7 @@ export function tildePath(path: string): string {
 }
 
 // The shell line that writes a review of a pull request's diff (on its
-// stdin), for "Generate Drafts". The default asks the Claude Code CLI — Opus
+// stdin), for "Run Review Command". The default asks the Claude Code CLI — Opus
 // at medium effort — for findings in the shape the Drafts tab reads.
 const REVIEW_COMMAND_KEY = "gitp-review-command";
 

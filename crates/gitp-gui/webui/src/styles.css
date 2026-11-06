@@ -7103,7 +7103,7 @@ mark.find-hit.current {
   text-decoration: underline;
 }
 
-/* Generate Drafts after new commits since the last review: a green dot. */
+/* Run Review Command / Skill after new commits since the last review: a green dot. */
 .pr-has-news {
   position: relative;
 }

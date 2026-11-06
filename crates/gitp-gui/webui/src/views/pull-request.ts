@@ -719,30 +719,30 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     return node;
   }
 
-  // Generate Drafts, with a green dot when commits arrived since the last
+  // Run Review Command, with a green dot when commits arrived since the last
   // review: time to review again.
   function generateButton(pr: PullRequestDetail): HTMLElement {
     const reviewed = cb.reviewedHead(pr.number);
     const fresh = hasNewCommits(reviewed, pr.head_oid);
     const b = el("button", {
       class: `btn small ghost${fresh ? " pr-has-news" : ""}`,
-      text: "Generate Drafts",
+      text: "Run Review Command",
       title: fresh
         ? `New commits since the last review (${reviewed!.slice(0, 8)} → ${pr.head_oid.slice(0, 8)}): run the review command again`
-        : "Run the review command (Settings → Git) in the background; its findings become draft comments to approve or discard",
+        : "Run the review command (Settings → Git) over the diff in the background; its findings become draft comments to approve or discard",
     });
     b.addEventListener("click", () => cb.generateDrafts(pr));
     return b;
   }
 
-  // Review with skill: the /review-pr-phuong skill in one click, whatever the
+  // Run Review Skill: the /review-pr-phuong skill in one click, whatever the
   // Review command preset in Settings says; the same green dot.
   function skillButton(pr: PullRequestDetail): HTMLElement {
     const fresh = hasNewCommits(cb.reviewedHead(pr.number), pr.head_oid);
     const b = el("button", {
       class: `btn small ghost${fresh ? " pr-has-news" : ""}`,
-      text: "Review with skill",
-      title: "Run the /review-pr-phuong Claude Code skill in the background, whatever the Review command preset; its review page becomes the drafts",
+      text: "Run Review Skill",
+      title: "Run the /review-pr-phuong Claude Code skill in the background, whatever the Review command preset; its findings become draft comments",
     });
     b.addEventListener("click", () => cb.generateDraftsWithSkill(pr));
     return b;

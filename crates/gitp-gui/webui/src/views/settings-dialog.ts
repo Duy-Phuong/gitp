@@ -350,7 +350,7 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
           "Review command",
           reviewCommandField(),
           "block",
-          "Generate Drafts on a pull request runs this shell line with the diff on its stdin and reads its output as draft comments: \"### path:line\" blocks or a JSON list. GITP_PR_NUMBER, GITP_PR_REPO and GITP_PR_URL are set.",
+          "Run Review Command on a pull request runs this shell line with the diff on its stdin and reads its output as draft comments: \"### path:line\" blocks or a JSON list. GITP_PR_NUMBER, GITP_PR_REPO and GITP_PR_URL are set.",
         ),
         row(
           "Check command",
@@ -629,7 +629,7 @@ function hooksList(actions: SettingsActions): HTMLElement {
   return host;
 }
 
-// The shell line Generate Drafts runs; blank restores the default.
+// The shell line Run Review Command runs; blank restores the default.
 function reviewCommandField(): HTMLElement {
   const area = el("textarea", {
     class: "settings-select settings-command",
