@@ -2219,12 +2219,14 @@ export interface GeneratedReview {
 // Run the review command over pull request `number` of the repo at `path`, in
 // the background: it stays out of the status bar, and only
 // `cancelReviewDrafts` stops it.
-export async function generateReviewDrafts(path: string, number: number, command: string): Promise<GeneratedReview> {
+// `label` names the run in the Claude jobs list: "Generate Drafts", "Review
+// with Skill".
+export async function generateReviewDrafts(path: string, number: number, command: string, label?: string): Promise<GeneratedReview> {
   if (!isTauri()) {
     await new Promise((r) => setTimeout(r, 4000));
     return { text: MOCK_REVIEW_FILE, file: "/Users/you/review/no-sprint/pr-review-42.html" };
   }
-  return invoke<GeneratedReview>("gh_generate_review", { path, number, command });
+  return invoke<GeneratedReview>("gh_generate_review", { path, number, command, label: label ?? null });
 }
 
 export async function cancelReviewDrafts(path: string, number: number): Promise<void> {
@@ -2263,6 +2265,202 @@ export async function reviewPageUrl(number: number): Promise<string> {
 export async function explainReviewFinding(path: string, number: number, finding: string, command: string): Promise<void> {
   if (!isTauri()) return new Promise((resolve) => setTimeout(resolve, 5000));
   return invoke<void>("explain_review_finding", { path, number, finding, command });
+}
+
+// --- Claude jobs ----------------------------------------------------------------
+
+// Every Claude Code run gitp starts (see claude_jobs.rs): today's, newest first.
+export type ClaudeJobKind = "review" | "explain" | "thread";
+export type ClaudeJobState = "running" | "done" | "failed" | "stopped" | "interrupted";
+
+export interface ClaudeUsage {
+  input: number;
+  cache_creation: number;
+  cache_read: number;
+  output: number;
+}
+
+export interface ClaudeJob {
+  id: number;
+  kind: ClaudeJobKind;
+  label: string;
+  // What a thread job does now: "Check", "Follow-up", "Fix"; empty otherwise.
+  activity: string;
+  repo: string;
+  pr: number;
+  thread: number | null;
+  finding: string | null;
+  state: ClaudeJobState;
+  // Ms since the Unix epoch.
+  started: number;
+  ended: number | null;
+  turn_started: number;
+  // The time of the turns before the current one, in ms.
+  spent: number;
+  turns: number;
+  error: string | null;
+  command: string;
+  stdin_bytes: number;
+  output: string | null;
+  sessions: { id: string; dir: string }[];
+  tokens: ClaudeUsage;
+  turn_tokens: ClaudeUsage;
+}
+
+// One step of a job's conversation; `cut` is the full length of a tool's
+// input or output that was cut (claudeJobFull has it all).
+export type ClaudeEvent = { at: number; cut: number | null } & (
+  | { kind: "prompt"; text: string }
+  | { kind: "text"; text: string; tokens: number | null }
+  | { kind: "thinking"; text: string; tokens: number | null }
+  | { kind: "tool"; id: string; name: string; summary: string; input: string; tokens: number | null }
+  | { kind: "result"; tool_id: string; ok: boolean; text: string }
+);
+
+export interface ClaudeEventsPage {
+  events: ClaudeEvent[];
+  // The index to ask from next time.
+  next: number;
+  // Whether any transcript of the job exists.
+  found: boolean;
+}
+
+export async function claudeJobs(): Promise<ClaudeJob[]> {
+  if (!isTauri()) return mockClaudeJobs();
+  return invoke<ClaudeJob[]>("claude_jobs", {});
+}
+
+export async function claudeJobEvents(id: number, after: number): Promise<ClaudeEventsPage> {
+  if (!isTauri()) return mockClaudeEvents(id, after);
+  return invoke<ClaudeEventsPage>("claude_job_events", { id, after });
+}
+
+export async function claudeJobFull(id: number, tool: string): Promise<{ input: string; output: string }> {
+  if (!isTauri()) return { input: '{\n  "command": "gh pr diff 3426"\n}', output: MOCK_LONG_OUTPUT + "\n…and the rest of it." };
+  return invoke<{ input: string; output: string }>("claude_job_full", { id, tool });
+}
+
+export async function stopClaudeJob(id: number): Promise<void> {
+  if (!isTauri()) {
+    const job = MOCK_JOBS.find((j) => j.id === id);
+    if (job && job.state === "running") Object.assign(job, { state: "stopped", ended: Date.now() });
+    return;
+  }
+  return invoke<void>("claude_job_stop", { id });
+}
+
+// Stop every job, wait for them, and quit (the answer to onQuitWithClaudeJobs).
+export async function stopClaudeJobsAndQuit(): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("claude_jobs_quit", {});
+}
+
+// A quit or a window close held back because Claude jobs run: their labels.
+export async function onQuitWithClaudeJobs(cb: (labels: string[]) => void): Promise<void> {
+  if (!isTauri()) return;
+  const { listen } = await import("@tauri-apps/api/event");
+  await listen<string[]>("claude-jobs-quit", (event) => cb(event.payload));
+}
+
+// The preview's jobs: a skill review that grows a step every couple of
+// seconds, a thread with two turns, and three finished ones.
+const MOCK_START = Date.now();
+const mockUsage = (input: number, output: number): ClaudeUsage => ({ input: 4, cache_creation: input / 10, cache_read: input, output });
+const mockJob = (j: Partial<ClaudeJob> & Pick<ClaudeJob, "id" | "kind" | "label" | "state">): ClaudeJob => ({
+  activity: "",
+  repo: "/Users/you/src/mideal",
+  pr: 3426,
+  thread: null,
+  finding: null,
+  started: MOCK_START - 60_000,
+  ended: null,
+  turn_started: MOCK_START - 60_000,
+  spent: 0,
+  turns: 1,
+  error: null,
+  command: 'claude -p "/review-pr-phuong $GITP_PR_URL board mode…" --model opus --effort medium',
+  stdin_bytes: 0,
+  output: null,
+  sessions: [{ id: `s-${j.id}`, dir: "/Users/you/src/mideal" }],
+  tokens: mockUsage(0, 0),
+  turn_tokens: mockUsage(0, 0),
+  ...j,
+});
+const MOCK_JOBS: ClaudeJob[] = [
+  mockJob({ id: 1, kind: "review", label: "Review with Skill · #3426", state: "running", started: MOCK_START - 252_000, turn_started: MOCK_START - 252_000 }),
+  mockJob({
+    id: 2, kind: "thread", label: "OrderService.java:88 · #3426", activity: "Check", thread: 500, state: "done",
+    started: MOCK_START - 900_000, turn_started: MOCK_START - 600_000, ended: MOCK_START - 542_000, spent: 60_000, turns: 2,
+    tokens: mockUsage(22_000, 2_100), turn_tokens: mockUsage(11_000, 900), output: "The reviewer is right.",
+  }),
+  mockJob({
+    id: 3, kind: "review", label: "Generate Drafts · #3419", pr: 3419, state: "done",
+    started: MOCK_START - 3_600_000, turn_started: MOCK_START - 3_600_000, ended: MOCK_START - 3_477_000,
+    tokens: mockUsage(60_000, 4_000), stdin_bytes: 48_213, command: "claude -p --model opus --effort medium 'Review the pull request diff on stdin…'",
+  }),
+  mockJob({
+    id: 4, kind: "explain", label: "Explain more · finding 3 · #3401", pr: 3401, finding: "3", state: "stopped",
+    started: MOCK_START - 5_400_000, turn_started: MOCK_START - 5_400_000, ended: MOCK_START - 5_290_000, tokens: mockUsage(38_000, 2_000),
+  }),
+  mockJob({
+    id: 5, kind: "thread", label: "Foo.ts:12 · #3398", activity: "Reply", pr: 3398, thread: 77, repo: "/Users/you/src/booking-app",
+    state: "failed", started: MOCK_START - 7_200_000, turn_started: MOCK_START - 7_200_000, ended: MOCK_START - 7_191_000,
+    tokens: mockUsage(2_800, 200), error: "The thread command failed (exit code 1).\n\nNo conversation found with session ID: s-5",
+  }),
+];
+const MOCK_LONG_OUTPUT = Array.from({ length: 60 }, (_, i) => `@@ -${84 + i},7 +${84 + i},12 @@ public class OrderService {`).join("\n");
+const at = (s: number) => MOCK_START - 252_000 + s * 1000;
+const MOCK_REVIEW_EVENTS: ClaudeEvent[] = [
+  { kind: "prompt", at: at(0), cut: null, text: "/review-pr-phuong https://github.com/mesoneer-ag/mideal/pull/3426 board mode, with md, no questions: where you would ask, take the default (the sprint folder no-sprint when Jira has no sprint). Write the review Markdown under review/, not in TMPDIR." },
+  { kind: "thinking", at: at(2), cut: null, text: "", tokens: 1_840 },
+  { kind: "text", at: at(3), cut: null, text: "I'll start by loading the review skill and reading the diff of #3426.", tokens: null },
+  { kind: "tool", at: at(4), cut: null, id: "t1", name: "Skill", summary: "review-pr-phuong", input: '{\n  "skill": "review-pr-phuong"\n}', tokens: null },
+  { kind: "result", at: at(5), cut: null, tool_id: "t1", ok: true, text: "Launching skill: review-pr-phuong" },
+  { kind: "tool", at: at(9), cut: null, id: "t2", name: "Bash", summary: "gh pr diff 3426", input: '{\n  "command": "gh pr diff 3426"\n}', tokens: 3_100 },
+  { kind: "result", at: at(11), cut: 182_331, tool_id: "t2", ok: true, text: MOCK_LONG_OUTPUT },
+  { kind: "tool", at: at(30), cut: null, id: "t3", name: "Read", summary: "ubiid-api/src/main/java/com/ubitec/OrderService.java", input: '{\n  "file_path": "ubiid-api/src/main/java/com/ubitec/OrderService.java"\n}', tokens: 2_400 },
+  { kind: "result", at: at(31), cut: null, tool_id: "t3", ok: true, text: "    84\t    while (true) {\n    85\t      try {\n    86\t        return gateway.submit(order);" },
+  { kind: "text", at: at(95), cut: null, text: "Two findings so far. The retry loop in `OrderService.submit` no longer has a limit: a gateway that keeps answering **503** holds the request thread forever.\n\nI'll check whether the tests cover it.", tokens: 1_100 },
+  { kind: "tool", at: at(96), cut: null, id: "t4", name: "Bash", summary: "git log --oneline main..HEAD", input: '{\n  "command": "git log --oneline main..HEAD"\n}', tokens: null },
+  { kind: "result", at: at(97), cut: null, tool_id: "t4", ok: false, text: "Permission to use Bash has been denied because Claude Code is running in don't ask mode." },
+  { kind: "tool", at: at(120), cut: null, id: "t5", name: "Grep", summary: "maxRetries", input: '{\n  "pattern": "maxRetries"\n}', tokens: 900 },
+];
+const MOCK_THREAD_EVENTS: ClaudeEvent[] = [
+  { kind: "prompt", at: MOCK_START - 900_000, cut: null, text: "Read the review thread in $GITP_THREAD_FILE on pull request https://github.com/mesoneer-ag/mideal/pull/3426. Check the reviewer's claim against the code for this one thread…" },
+  { kind: "tool", at: MOCK_START - 898_000, cut: null, id: "u1", name: "Bash", summary: "git show a1b2c3d:src/main/java/OrderService.java", input: "{}", tokens: 8_000 },
+  { kind: "result", at: MOCK_START - 897_000, cut: null, tool_id: "u1", ok: true, text: "public class OrderService {" },
+  { kind: "text", at: MOCK_START - 850_000, cut: null, text: "## The reviewer is right\n\nThe loop at line 88 retries forever. `maxRetries` is read from config at line 31 but never used since this change.", tokens: 3_000 },
+  { kind: "prompt", at: MOCK_START - 600_000, cut: null, text: "why does the test still pass?" },
+  { kind: "text", at: MOCK_START - 545_000, cut: null, text: "The test stubs the gateway to succeed on the **second** call, so the loop ends after one retry and the missing bound never shows.", tokens: 11_900 },
+];
+
+function mockClaudeJobs(): ClaudeJob[] {
+  const review = MOCK_JOBS[0];
+  if (review.state === "running") {
+    const shown = MOCK_REVIEW_EVENTS.filter((e) => e.at <= mockNow());
+    const out = shown.reduce((n, e) => n + ("tokens" in e && e.tokens ? e.tokens : 0), 0);
+    review.tokens = mockUsage(out * 12, Math.round(out / 6));
+    review.turn_tokens = review.tokens;
+  }
+  return MOCK_JOBS.map((j) => ({ ...j }));
+}
+
+// The review replays its steps faster than they happened: two seconds of
+// preview time are about thirty of the run's.
+function mockNow(): number {
+  return MOCK_START - 252_000 + 100_000 + (Date.now() - MOCK_START) * 15;
+}
+
+function mockClaudeEvents(id: number, after: number): ClaudeEventsPage {
+  const all =
+    id === 1
+      ? MOCK_REVIEW_EVENTS.filter((e) => MOCK_JOBS[0].state !== "running" || e.at <= mockNow())
+      : id === 2
+        ? MOCK_THREAD_EVENTS
+        : id === 4
+          ? MOCK_REVIEW_EVENTS.slice(0, 5)
+          : [];
+  return { events: all.slice(after), next: all.length, found: id !== 3 && id !== 5 };
 }
 
 // --- Claude on a pull request thread -------------------------------------------

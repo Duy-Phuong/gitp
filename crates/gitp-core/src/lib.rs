@@ -7,6 +7,7 @@ mod bisect;
 mod blame;
 mod branch_ops;
 mod checkout;
+mod claude_transcript;
 mod commit_ops;
 mod compare;
 mod config;
@@ -56,6 +57,10 @@ pub use bisect::{BisectMark, BisectStatus};
 pub use blame::{BlameCommit, BlameLine, FileBlame};
 pub use branch_ops::{AheadCommit, MergeMode};
 pub use checkout::StashSwitch;
+pub use claude_transcript::{
+    local_day_start, new_session_id, subagent_transcripts, transcript_path, transcript_path_in, Transcript,
+    TranscriptEvent, Usage,
+};
 pub use commit_ops::ResetMode;
 pub use compare::{CompareEnd, Comparison, EMPTY_REV, WORKDIR_REV};
 pub use config::{ConfigEntry, ConfigScope};
@@ -87,7 +92,7 @@ pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope, LogWalk};
 pub use merge_preview::MergePreview;
 pub use pick_plan::{PickAction, PickPlanOutcome, PickStep};
 pub use pr_threads::{prepared_reply, ThreadConversation, ThreadTurn, TurnKind, TurnRole, THREAD_KEEP};
-pub use progress::{NetworkHooks, Progress, ProgressFn};
+pub use progress::{ClaudeRun, ClaudeRunFn, NetworkHooks, Progress, ProgressFn};
 pub use rebase::{RebaseAction, RebaseCommit, RebaseStatus, RebaseStep};
 pub use reflog::ReflogEntry;
 pub use refs::{BranchRef, Refs, RemoteBranch, StashRef, TagRef};

@@ -6,6 +6,9 @@ import {
   parseTabAliases,
   parseCodeRecent,
   withCodeRecent,
+  DEFAULT_REVIEW_COMMAND,
+  EXPLAIN_FINDING_COMMAND,
+  SESSION_ID_ARG,
   SKILL_REVIEW_COMMAND,
   DEFAULT_THREAD_COMMANDS,
   FIX_TOOLS,
@@ -131,6 +134,16 @@ describe("the review skill command", () => {
     expect(prompt).toBeGreaterThan(0);
     expect(prompt).toBeLessThan(SKILL_REVIEW_COMMAND.indexOf("--allowedTools"));
     expect(SKILL_REVIEW_COMMAND.trimEnd().endsWith('"'), "nothing after the tool list").toBe(true);
+  });
+});
+
+describe("the session id of a fresh run", () => {
+  it("is passed by every default command, before --allowedTools", () => {
+    const all = [DEFAULT_REVIEW_COMMAND, SKILL_REVIEW_COMMAND, EXPLAIN_FINDING_COMMAND, ...Object.values(DEFAULT_THREAD_COMMANDS)];
+    for (const c of all) expect(c).toContain(SESSION_ID_ARG);
+    for (const c of [SKILL_REVIEW_COMMAND, EXPLAIN_FINDING_COMMAND]) {
+      expect(c.indexOf(SESSION_ID_ARG)).toBeLessThan(c.indexOf("--allowedTools"));
+    }
   });
 });
 

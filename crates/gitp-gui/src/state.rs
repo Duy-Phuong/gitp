@@ -393,6 +393,7 @@ fn run_networked<P, T>(
         on_progress: state.1.reporter(op),
         cancel: Some(Arc::clone(&cancel)),
         askpass: prompt.then(|| state.1.askpass.get().cloned()).flatten(),
+        on_claude_run: None,
     });
     let out = f(&repo);
     state.1.end(&cancel);
@@ -421,6 +422,7 @@ pub(crate) fn run_networked_unopened<T>(
         on_progress: state.1.reporter(op),
         cancel: Some(Arc::clone(&cancel)),
         askpass: state.1.askpass.get().cloned(),
+        on_claude_run: None,
     };
     let out = f(&hooks);
     state.1.end(&cancel);

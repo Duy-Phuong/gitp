@@ -12,6 +12,7 @@ mod activity;
 mod askpass;
 mod bisect;
 mod branches;
+mod claude_jobs;
 mod code;
 mod commits;
 mod compare;
@@ -88,8 +89,7 @@ pub fn run() {
         .manage(TerminalState::default())
         .manage(local_workspaces::WorkspaceOps::default())
         .manage(gh::GhLoginState::default())
-        .manage(gh::ReviewJobs::default())
-        .manage(gh::ThreadJobs::default())
+        .manage(claude_jobs::ClaudeJobs::default())
         .manage(gh::FixJobs::default())
         .register_asynchronous_uri_scheme_protocol(review_page::SCHEME, review_page::serve)
         .setup(|app| {
@@ -122,6 +122,9 @@ pub fn run() {
             });
             // ... and ask for missing credentials in a dialog, which needs the
             // helper script on disk (it asks through osascript, so macOS only).
+            // Today's Claude jobs, kept across a restart.
+            app.state::<claude_jobs::ClaudeJobs>()
+                .load(app.path().app_data_dir()?.join("claude-jobs.json"));
             #[cfg(target_os = "macos")]
             if let Some(path) = askpass::prepare(&app.path().app_data_dir()?) {
                 app.state::<RepoState>().1.set_askpass(path);
@@ -241,6 +244,11 @@ pub fn run() {
             gh::explain_review_finding,
             gh::gh_generate_review,
             gh::gh_cancel_review,
+            claude_jobs::claude_jobs,
+            claude_jobs::claude_job_events,
+            claude_jobs::claude_job_full,
+            claude_jobs::claude_job_stop,
+            claude_jobs::claude_jobs_quit,
             gh::gh_thread_turn,
             gh::gh_thread_cancel,
             gh::gh_thread_conversation,
@@ -380,8 +388,36 @@ pub fn run() {
             lfs::lfs_fetch,
             lfs::lfs_pull,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running gitp");
+        // Closing the window or quitting while Claude jobs run asks first:
+        // the frontend shows the dialog, and Stop and quit comes back as
+        // `claude_jobs_quit`.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if ask_before_quit(window.app_handle()) {
+                    api.prevent_close();
+                }
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building gitp")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if ask_before_quit(app) {
+                    api.prevent_exit();
+                }
+            }
+        });
+}
+
+/// Whether Claude jobs run, so a quit waits: then the frontend is asked to
+/// show the dialog with their labels.
+fn ask_before_quit(app: &tauri::AppHandle) -> bool {
+    let running = app.state::<claude_jobs::ClaudeJobs>().running();
+    if running.is_empty() {
+        return false;
+    }
+    let _ = app.emit(claude_jobs::QUIT_EVENT, running);
+    true
 }
 
 #[cfg(test)]

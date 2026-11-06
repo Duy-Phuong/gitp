@@ -43,6 +43,19 @@ pub struct Progress {
 /// A progress callback (see [`NetworkHooks`]).
 pub type ProgressFn = Box<dyn Fn(&Progress) + Send>;
 
+/// A shell command about to run a Claude Code session (see
+/// [`NetworkHooks::on_claude_run`]): the session it resumes, or the fresh id
+/// it was offered in `GITP_CLAUDE_NEW_SESSION`, and where it runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaudeRun {
+    pub session: String,
+    pub resumed: bool,
+    pub dir: PathBuf,
+}
+
+/// Told of each [`ClaudeRun`] just before it starts.
+pub type ClaudeRunFn = Box<dyn Fn(&ClaudeRun) + Send>;
+
 /// Where a [`Repo`]'s network commands report progress, the flag that stops
 /// them, and the program that asks the user for credentials. All optional; a
 /// `Repo` without hooks runs its network commands exactly as before, just
@@ -64,6 +77,10 @@ pub struct NetworkHooks {
     /// `GIT_ASKPASS` / `SSH_ASKPASS` in the process environment, but that is
     /// the caller's to check: it owns the environment, and leaves this `None`.
     pub askpass: Option<PathBuf>,
+    /// Told of each review, explain or thread command before it runs, with
+    /// the Claude Code session it will write — so its transcript can be read
+    /// while it goes.
+    pub on_claude_run: Option<ClaudeRunFn>,
 }
 
 /// How often the run loop wakes to check the cancel flag when git is quiet

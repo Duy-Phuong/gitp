@@ -800,7 +800,7 @@ async function runReview(repo: string, number: number, head: string, command = l
   reviewsChanged();
   setStatus(`Reviewing #${number} in the background — keep working; the pull request shows when it's done.`);
   try {
-    const out = await generateReviewDrafts(repo, number, command);
+    const out = await generateReviewDrafts(repo, number, command, command === SKILL_REVIEW_COMMAND ? "Review with Skill" : "Generate Drafts");
     setReviewedHead(repo, number, reviewedHeadIn(out.text) ?? head);
     const all = parseReviewFile(out.text);
     const found = unposted(repo, number, all);

@@ -13,13 +13,14 @@ use std::sync::{Arc, Mutex};
 
 use gitp_core::{
     CommitPullRequest, FileDiff, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings,
-    LineComment, MergeMethod, NetworkHooks, NewPullRequest, PrDraft, PrFilter, PrReviewComment,
+    LineComment, MergeMethod, NewPullRequest, PrDraft, PrFilter, PrReviewComment,
     PullRequest, PullRequestDetail, Repo, ReviewFile, ReviewVerdict, ThreadConversation,
     ThreadInput, TurnKind, Undoable, LOGIN_TIMEOUT,
 };
 use serde::Serialize;
 use tauri::State;
 
+use crate::claude_jobs::{ClaudeJobs, JobKind, NewJob, Running};
 use crate::os::{open_in_browser, open_in_default_app};
 use crate::state::{
     invalidate_status, to_message, with_repo, with_repo_networked, with_repo_networked_prepared,
@@ -201,86 +202,110 @@ fn gh_review_with_comments_impl(
     })
 }
 
-/// The review commands running in the background, by repository path and
-/// pull request, each with the flag that cancels it. A review can run for most
-/// of an hour, so it stays out of the status bar's network operations: their
-/// Cancel would stop it, and it would hold their spinner the whole time.
-#[derive(Default)]
-pub(crate) struct ReviewJobs(Mutex<HashMap<(String, u64), Arc<AtomicBool>>>);
-
 /// Run the user's review command over pull request `number` of the repository
 /// at `path` — named, not the active one, so switching tabs while it runs
 /// changes nothing. Holds no lock while the model thinks; one review per pull
-/// request at a time.
+/// request at a time. A review can run for most of an hour, so it stays out
+/// of the status bar's network operations: it is a Claude job, with its own
+/// Stop. `label` names it in the jobs list ("Review with Skill").
 fn gh_generate_review_impl(
-    jobs: &ReviewJobs,
+    jobs: &ClaudeJobs,
     path: String,
     number: u64,
     command: String,
+    label: Option<String>,
 ) -> Result<GeneratedReview, String> {
     let mut repo = Repo::open(&path).map_err(to_message)?;
-    let key = (path, number);
-    let cancel = Arc::new(AtomicBool::new(false));
-    {
-        let mut running = jobs.0.lock().unwrap();
-        if running.contains_key(&key) {
-            return Err(format!("A review of #{number} is already running."));
-        }
-        running.insert(key.clone(), Arc::clone(&cancel));
-    }
-    repo.set_network_hooks(NetworkHooks {
-        cancel: Some(cancel),
-        ..NetworkHooks::default()
-    });
-    let out = repo.generate_review_drafts(&Gh::system(), number, &command);
-    jobs.0.lock().unwrap().remove(&key);
-    out.map_err(to_message)
+    let run = jobs.begin(NewJob {
+        kind: JobKind::Review,
+        label: format!("{} · #{number}", label.as_deref().unwrap_or("Review")),
+        activity: String::new(),
+        repo: path,
+        pr: number,
+        thread: None,
+        finding: None,
+        command: command.clone(),
+        stdin_bytes: 0,
+    })?;
+    repo.set_network_hooks(run.hooks());
+    let out = repo
+        .generate_review_drafts(&Gh::system(), number, &command)
+        .map_err(to_message);
+    run.finish(out.as_ref().map(|r| r.text.clone()).map_err(Clone::clone), &[]);
+    out
 }
-
-/// Stop the review of pull request `number` in the repository at `path`, if
-/// one is running; it then fails as cancelled.
-fn gh_cancel_review_impl(jobs: &ReviewJobs, path: &str, number: u64) {
-    if let Some(cancel) = jobs.0.lock().unwrap().get(&(path.to_string(), number)) {
-        cancel.store(true, Ordering::SeqCst);
-    }
-}
-
-/// The Claude turns running on pull request threads, by repository path,
-/// pull request and thread, each with the flag that cancels it. One turn per
-/// thread at a time; like reviews, they stay out of the status bar.
-#[derive(Default)]
-pub(crate) struct ThreadJobs(Mutex<HashMap<(String, u64, u64), Arc<AtomicBool>>>);
 
 /// Run one Claude turn on the thread of `input` in the repository at `path`
 /// — named, not the active one — and return the conversation it is kept in.
 fn gh_thread_turn_impl(
-    jobs: &ThreadJobs,
+    jobs: &ClaudeJobs,
     path: String,
     input: ThreadInput,
     kind: TurnKind,
     user_text: String,
     command: String,
 ) -> Result<ThreadConversation, String> {
+    let job = thread_job(&path, &input, kind, &command, user_text.len())?;
+    let mut repo = Repo::open(&path).map_err(to_message)?;
+    let run = jobs.begin(job)?;
+    repo.set_network_hooks(run.hooks());
+    let out = repo
+        .thread_claude_turn(&Gh::system(), &input, kind, &user_text, &command)
+        .map_err(to_message);
+    finish_turn(run, &path, &out);
+    out
+}
+
+/// The job of a turn of `kind` on the thread of `input`: one per thread.
+fn thread_job(
+    path: &str,
+    input: &ThreadInput,
+    kind: TurnKind,
+    command: &str,
+    stdin_bytes: usize,
+) -> Result<NewJob, String> {
     let Some(root) = input.comments.first() else {
         return Err("The thread has no comments.".into());
     };
-    let mut repo = Repo::open(&path).map_err(to_message)?;
-    let key = (path, input.number, root.id);
-    let cancel = Arc::new(AtomicBool::new(false));
-    {
-        let mut running = jobs.0.lock().unwrap();
-        if running.contains_key(&key) {
-            return Err("A turn on this thread is already running.".into());
+    let file = root.path.rsplit('/').next().unwrap_or(&root.path);
+    let place = match root.line.or(root.original_line) {
+        Some(line) => format!("{file}:{line}"),
+        None => file.to_string(),
+    };
+    Ok(NewJob {
+        kind: JobKind::Thread,
+        label: format!("{place} · #{}", input.number),
+        activity: match kind {
+            TurnKind::Check => "Check",
+            TurnKind::Explain => "Explain simply",
+            TurnKind::Followup => "Follow-up",
+            TurnKind::ReplyDraft => "Reply",
+            TurnKind::Fix => "Fix",
         }
-        running.insert(key.clone(), Arc::clone(&cancel));
+        .into(),
+        repo: path.to_string(),
+        pr: input.number,
+        thread: Some(root.id),
+        finding: None,
+        command: command.to_string(),
+        stdin_bytes,
+    })
+}
+
+/// End a thread job's turn with its answer; the sessions it keeps join the
+/// job, for a command whose session came only in its JSON answer.
+fn finish_turn(run: Running, path: &str, out: &Result<ThreadConversation, String>) {
+    let mut sessions = Vec::new();
+    if let Ok(c) = out {
+        for s in [&c.session, &c.fix_session].into_iter().flatten() {
+            sessions.push((s.clone(), path.to_string()));
+        }
     }
-    repo.set_network_hooks(NetworkHooks {
-        cancel: Some(cancel),
-        ..NetworkHooks::default()
-    });
-    let out = repo.thread_claude_turn(&Gh::system(), &input, kind, &user_text, &command);
-    jobs.0.lock().unwrap().remove(&key);
-    out.map_err(to_message)
+    let answer = out
+        .as_ref()
+        .map(|c| c.turns.last().map(|t| t.text.clone()).unwrap_or_default())
+        .map_err(Clone::clone);
+    run.finish(answer, &sessions);
 }
 
 /// The fixes running, by repository path and pull request: one at a time
@@ -292,7 +317,7 @@ pub(crate) struct FixJobs(Mutex<HashMap<(String, u64), ()>>);
 /// request's `branch`: the thread lock as a turn, plus the pull request's
 /// fix lock.
 fn gh_thread_fix_impl(
-    jobs: &ThreadJobs,
+    jobs: &ClaudeJobs,
     fixes: &FixJobs,
     path: String,
     input: ThreadInput,
@@ -300,9 +325,7 @@ fn gh_thread_fix_impl(
     fix_command: String,
     reply_command: String,
 ) -> Result<ThreadConversation, String> {
-    let Some(root) = input.comments.first() else {
-        return Err("The thread has no comments.".into());
-    };
+    let job = thread_job(&path, &input, TurnKind::Fix, &fix_command, 0)?;
     let pr_key = (path.clone(), input.number);
     {
         let mut running = fixes.0.lock().unwrap();
@@ -311,31 +334,15 @@ fn gh_thread_fix_impl(
         }
         running.insert(pr_key.clone(), ());
     }
-    let key = (path.clone(), input.number, root.id);
-    let cancel = Arc::new(AtomicBool::new(false));
-    let taken = {
-        let mut running = jobs.0.lock().unwrap();
-        if running.contains_key(&key) {
-            false
-        } else {
-            running.insert(key.clone(), Arc::clone(&cancel));
-            true
-        }
-    };
-    let out = if !taken {
-        Err("A turn on this thread is already running.".to_string())
-    } else {
+    let out = jobs.begin(job).and_then(|run| {
         let out = Repo::open(&path).map_err(to_message).and_then(|mut repo| {
-            repo.set_network_hooks(NetworkHooks {
-                cancel: Some(cancel),
-                ..NetworkHooks::default()
-            });
+            repo.set_network_hooks(run.hooks());
             repo.fix_thread(&Gh::system(), &input, &branch, &fix_command, &reply_command)
                 .map_err(to_message)
         });
-        jobs.0.lock().unwrap().remove(&key);
+        finish_turn(run, &path, &out);
         out
-    };
+    });
     fixes.0.lock().unwrap().remove(&pr_key);
     out
 }
@@ -348,18 +355,6 @@ fn gh_thread_mark_posted_impl(path: String, number: u64, thread: u64, url: Strin
 fn gh_thread_drop_reply_impl(path: String, number: u64, thread: u64) -> Result<(), String> {
     let repo = Repo::open(&path).map_err(to_message)?;
     repo.drop_reply(number, thread).map_err(to_message)
-}
-
-/// Stop the turn running on `thread` of pull request `number`, if any.
-fn gh_thread_cancel_impl(jobs: &ThreadJobs, path: &str, number: u64, thread: u64) {
-    if let Some(cancel) = jobs
-        .0
-        .lock()
-        .unwrap()
-        .get(&(path.to_string(), number, thread))
-    {
-        cancel.store(true, Ordering::SeqCst);
-    }
 }
 
 fn gh_thread_conversation_impl(
@@ -426,14 +421,30 @@ pub(crate) fn review_files_impl(state: &RepoState) -> Result<Vec<ReviewFile>, St
 /// ("Explain more"), with `command`, in the repository at `path`. Holds no
 /// lock while the model thinks.
 fn explain_review_finding_impl(
+    jobs: &ClaudeJobs,
     path: String,
     number: u64,
     finding: String,
     command: String,
 ) -> Result<(), String> {
-    let repo = Repo::open(&path).map_err(to_message)?;
-    repo.explain_review_finding(number, &finding, &command)
-        .map_err(to_message)
+    let mut repo = Repo::open(&path).map_err(to_message)?;
+    let run = jobs.begin(NewJob {
+        kind: JobKind::Explain,
+        label: format!("Explain more · finding {finding} · #{number}"),
+        activity: String::new(),
+        repo: path,
+        pr: number,
+        thread: None,
+        finding: Some(finding.clone()),
+        command: command.clone(),
+        stdin_bytes: 0,
+    })?;
+    repo.set_network_hooks(run.hooks());
+    let out = repo
+        .explain_review_finding(number, &finding, &command)
+        .map_err(to_message);
+    run.finish(out.clone().map(|()| String::new()), &[]);
+    out
 }
 
 /// Open the saved review page at `path` in the default app — the browser, for
@@ -639,14 +650,15 @@ pub(crate) fn gh_generate_review(
     path: String,
     number: u64,
     command: String,
-    jobs: State<ReviewJobs>,
+    label: Option<String>,
+    jobs: State<ClaudeJobs>,
 ) -> Result<GeneratedReview, String> {
-    gh_generate_review_impl(&jobs, path, number, command)
+    gh_generate_review_impl(&jobs, path, number, command, label)
 }
 
 #[tauri::command]
-pub(crate) fn gh_cancel_review(path: String, number: u64, jobs: State<ReviewJobs>) {
-    gh_cancel_review_impl(&jobs, &path, number);
+pub(crate) fn gh_cancel_review(path: String, number: u64, jobs: State<ClaudeJobs>) {
+    jobs.stop_matching(JobKind::Review, &path, number, None);
 }
 
 #[tauri::command(async)]
@@ -656,14 +668,14 @@ pub(crate) fn gh_thread_turn(
     kind: TurnKind,
     user_text: String,
     command: String,
-    jobs: State<ThreadJobs>,
+    jobs: State<ClaudeJobs>,
 ) -> Result<ThreadConversation, String> {
     gh_thread_turn_impl(&jobs, path, input, kind, user_text, command)
 }
 
 #[tauri::command]
-pub(crate) fn gh_thread_cancel(path: String, number: u64, thread: u64, jobs: State<ThreadJobs>) {
-    gh_thread_cancel_impl(&jobs, &path, number, thread);
+pub(crate) fn gh_thread_cancel(path: String, number: u64, thread: u64, jobs: State<ClaudeJobs>) {
+    jobs.stop_matching(JobKind::Thread, &path, number, Some(thread));
 }
 
 #[tauri::command(async)]
@@ -692,7 +704,7 @@ pub(crate) fn gh_thread_fix(
     branch: String,
     fix_command: String,
     reply_command: String,
-    jobs: State<ThreadJobs>,
+    jobs: State<ClaudeJobs>,
     fixes: State<FixJobs>,
 ) -> Result<ThreadConversation, String> {
     gh_thread_fix_impl(&jobs, &fixes, path, input, branch, fix_command, reply_command)
@@ -733,8 +745,9 @@ pub(crate) fn explain_review_finding(
     number: u64,
     finding: String,
     command: String,
+    jobs: State<ClaudeJobs>,
 ) -> Result<(), String> {
-    explain_review_finding_impl(path, number, finding, command)
+    explain_review_finding_impl(&jobs, path, number, finding, command)
 }
 
 #[tauri::command(async)]
@@ -819,12 +832,11 @@ mod tests {
                 diff_hunk: String::new(),
             }],
         };
-        let jobs = ThreadJobs::default();
-        // Hold the key as if a turn were running.
-        jobs.0
-            .lock()
-            .unwrap()
-            .insert((path.clone(), 7, 500), Arc::new(AtomicBool::new(false)));
+        let jobs = ClaudeJobs::default();
+        // Hold the thread as if a turn were running.
+        let held = jobs
+            .begin(thread_job(&path, &input(7), TurnKind::Check, "", 0).unwrap())
+            .unwrap();
         let err = gh_thread_turn_impl(&jobs, path.clone(), input(7), TurnKind::Check, String::new(), "echo hi".into())
             .unwrap_err();
         assert!(err.contains("already running"), "{err}");
@@ -832,10 +844,8 @@ mod tests {
         let c = gh_thread_turn_impl(&jobs, path.clone(), input(8), TurnKind::Check, String::new(), "echo hi".into())
             .unwrap();
         assert_eq!(c.turns[0].text.trim(), "hi");
-        assert!(
-            !jobs.0.lock().unwrap().contains_key(&(path.clone(), 8, 500)),
-            "the key is released"
-        );
+        assert_eq!(jobs.running(), ["Check · a:1 · #7"], "the turn on #8 is released");
+        held.finish(Ok(String::new()), &[]);
         assert_eq!(gh_thread_conversation_impl(path.clone(), 8, 500).unwrap(), Some(c));
         gh_thread_clear_impl(path.clone(), 8, 500).unwrap();
         assert_eq!(gh_thread_conversation_impl(path.clone(), 8, 500).unwrap(), None);
@@ -849,7 +859,7 @@ mod tests {
 
     #[test]
     fn a_fix_is_refused_while_another_runs_on_the_pull_request() {
-        let jobs = ThreadJobs::default();
+        let jobs = ClaudeJobs::default();
         let fixes = FixJobs::default();
         let comment = PrReviewComment {
             id: 500,
@@ -877,9 +887,9 @@ mod tests {
         fixes.0.lock().unwrap().clear();
         // No comments: refused before any lock is taken.
         assert!(gh_thread_fix_impl(&jobs, &fixes, "/nowhere".into(), input(vec![]), "b".into(), "true".into(), "true".into()).is_err());
-        assert!(fixes.0.lock().unwrap().is_empty() && jobs.0.lock().unwrap().is_empty());
+        assert!(fixes.0.lock().unwrap().is_empty() && jobs.running().is_empty());
         // A repository that doesn't exist fails and releases both locks.
         assert!(gh_thread_fix_impl(&jobs, &fixes, "/nowhere".into(), input(vec![comment]), "b".into(), "true".into(), "true".into()).is_err());
-        assert!(fixes.0.lock().unwrap().is_empty() && jobs.0.lock().unwrap().is_empty());
+        assert!(fixes.0.lock().unwrap().is_empty() && jobs.running().is_empty());
     }
 }

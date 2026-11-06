@@ -111,6 +111,15 @@
           </svg>
         </button>
         <span class="action-sep"></span>
+        <button id="claude-btn" class="action-btn" title="Claude jobs: the reviews and thread turns Claude runs, with their conversations and Stop">
+          <span class="action-label">Claude</span>
+          <span id="claude-badge" class="action-badge hidden"></span>
+          <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />
+            <path d="M19 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z" />
+          </svg>
+        </button>
+        <span class="action-sep"></span>
         <button id="stash-btn" class="action-btn" title="Stash local changes">
           <span class="action-label">Stash</span>
           <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -183,6 +192,15 @@
           <section id="localhistory-view" class="view hidden"></section>
           <section id="pr-view" class="view hidden"></section>
           <section id="prlist-view" class="view prlist-view hidden"></section>
+          <section id="claude-view" class="view claude-view hidden" aria-label="Claude jobs">
+            <div class="claude-view-head">
+              <span class="claude-view-title">Claude jobs</span>
+              <span id="claude-summary" class="claude-summary"></span>
+              <span class="spacer"></span>
+              <button id="claude-back" class="btn ghost" type="button">← Back to history</button>
+            </div>
+            <div id="claude-jobs-page" class="claude-jobs"></div>
+          </section>
           <section id="code-view" class="view code-view hidden">
             <div id="code-explorer" class="code-explorer" role="tree"></div>
             <div id="code-explorer-divider" class="pane-divider" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
@@ -216,11 +234,27 @@
         <div id="terminal-host" class="terminal-host"></div>
       </section>
 
+      <section id="claude-panel" class="claude-panel hidden" aria-label="Claude jobs">
+        <div class="terminal-head">
+          <span class="terminal-title">Claude jobs</span>
+          <span id="claude-panel-summary" class="claude-summary"></span>
+          <span class="spacer"></span>
+          <button id="claude-panel-full" class="term-btn" title="Open the Claude jobs page">Open full page ⤢</button>
+          <button id="claude-panel-close" class="term-btn" title="Hide the Claude jobs" aria-label="Hide the Claude jobs">
+            <svg class="term-btn-icon" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+        <div id="claude-jobs-panel" class="claude-jobs"></div>
+      </section>
+
       <footer id="statusbar" class="statusbar">
         <span id="status-message" class="status-message"></span>
         <button id="status-cancel" class="status-cancel hidden" type="button" title="Stop the running fetch, pull or push">Cancel</button>
         <span id="status-fetched" class="status-fetched hidden" title="How long ago this repository's remotes were last fetched. Ahead/behind counts are only as current as this."></span>
         <button id="status-lfs" class="status-lfs hidden" type="button"></button>
+        <button id="status-claude" class="status-claude hidden" type="button" title="Show the Claude jobs running"></button>
       </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>

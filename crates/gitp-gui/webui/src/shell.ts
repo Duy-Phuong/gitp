@@ -774,6 +774,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   $("#localhistory-view").classList.toggle("hidden", view !== "localhistory");
   $("#pr-view").classList.toggle("hidden", view !== "pr");
   $("#prlist-view").classList.toggle("hidden", view !== "prlist");
+  $("#claude-view").classList.toggle("hidden", view !== "claude");
   $("#code-view").classList.toggle("hidden", view !== "code");
   // The Reflog lists in the log's place and shares History's detail pane.
   $("#log-col").classList.toggle("hidden", view === "reflog");
