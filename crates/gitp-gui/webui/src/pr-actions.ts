@@ -51,7 +51,9 @@ import {
   threadTurn,
   markReplyPosted,
   dropReply,
+  branchAheadLog,
 } from "./api";
+import { pushAndReplyListing, type ReplyToPost } from "./pr-push-reply";
 import { state, ui } from "./app-state";
 import { copyText } from "./clipboard";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
@@ -67,7 +69,7 @@ import {
 import { defaultWorktreePath } from "./worktree-actions";
 import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
 import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, SKILL_REVIEW_COMMAND } from "./prefs";
-import { finishTurn, lastUserText, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
+import { finishTurn, lastUserText, preparedReply, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
 import { showErrorDialog } from "./views/message-dialog";
@@ -85,7 +87,7 @@ import {
 import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
 import { openReviewViewer } from "./views/review-viewer";
-import { baseBranches, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices, type Thread } from "./pull-requests";
+import { baseBranches, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices, reviewThreads, type Thread } from "./pull-requests";
 import type { BranchRef, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict, TurnKind } from "./types";
 
 // --- The sidebar section ----------------------------------------------------
@@ -528,6 +530,7 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
       openInBrowser: () => void openReviewPage(path).catch((err) => readFailed("Couldn't open the review page", err)),
     }),
   repoPath: () => state.repoPath,
+  branchAhead: (name) => state.refs.branches.find((b) => b.name === name)?.ahead ?? 0,
   generateDrafts: (pr) => void runReview(state.repoPath, pr.number, pr.head_oid),
   generateDraftsWithSkill: (pr) => void runReview(state.repoPath, pr.number, pr.head_oid, SKILL_REVIEW_COMMAND),
   reviewedHead: (number) => reviewedHead(state.repoPath, number),
@@ -545,6 +548,7 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   },
   threadTurn: (pr, thread, kind, userText) => void runThreadTurn(state.repoPath, pr, thread, kind, userText),
   fixThread: (pr, thread) => void runFix(state.repoPath, pr, thread),
+  pushAndReplyAll: (pr, edited) => pushAndReplyAll(state.repoPath, pr, edited),
   dropReply: async (pr, thread) => {
     const repo = state.repoPath;
     if (!(await confirmDialog(`Drop the reply Claude prepared for ${thread.root.path} of #${pr.number}?`))) return;
@@ -646,6 +650,63 @@ async function runFix(repo: string, pr: PullRequestDetail, thread: Thread): Prom
     // A fix that committed but whose reply draft failed is still there.
     void loadThreadConversation(repo, number, id, true);
   }
+}
+
+// Push the pull request's branch and post every reply Claude has ready,
+// after one confirm that lists both. The push goes first; a push that fails
+// posts nothing. A reply that fails to post is reported and stays ready.
+// `edited`: what the Reply boxes hold, by thread, which wins over the kept
+// draft. Resolves true once something was pushed or posted.
+async function pushAndReplyAll(repo: string, pr: PullRequestDetail, edited: Map<number, string>): Promise<boolean> {
+  const { number } = pr;
+  const roots = reviewThreads(pr.review_comments)
+    .map((t) => t.root)
+    .filter((root) => !pr.review_threads.find((t) => t.comment_ids.includes(root.id))?.resolved);
+  const replies: (ReplyToPost & { id: number })[] = [];
+  for (const root of roots) {
+    const c = await threadConversation(repo, number, root.id).catch(() => null);
+    setConversation(repo, number, root.id, c);
+    const body = edited.get(root.id)?.trim() || preparedReply(c)?.text;
+    if (body) replies.push({ id: root.id, where: `${root.path}:${root.line ?? root.original_line ?? "?"}`, body });
+  }
+  const branch = state.refs.branches.find((b) => b.name === pr.head);
+  const remote = branch?.upstream_remote ?? githubRemoteName(state.remoteList, state.prs.repo ?? "") ?? "origin";
+  const commits = branch?.ahead ? await branchAheadLog(pr.head).catch(() => []) : [];
+  if (!commits.length && !replies.length) {
+    setStatus(`Nothing to push or post on #${number}.`);
+    return false;
+  }
+  if (!(await confirmDialog(pushAndReplyListing({ branch: pr.head, remote, number, commits, replies })))) {
+    setStatus("Not pushed, nothing posted.");
+    return false;
+  }
+  if (commits.length) {
+    setStatus(`Pushing ${pr.head} to ${remote}…`);
+    try {
+      await pushBranch(pr.head, remote);
+    } catch (err) {
+      opFailed(`Couldn't push ${pr.head}; nothing was posted`, err);
+      return false;
+    }
+  }
+  let posted = 0;
+  for (const r of replies) {
+    setStatus(`Posting the reply on ${r.where} of #${number}…`);
+    try {
+      const made = await replyToReviewComment(number, r.id, r.body);
+      await markReplyPosted(repo, number, r.id, made.url).catch((err) => opFailed(`Couldn't mark the reply on ${r.where} as posted`, err));
+      posted++;
+    } catch (err) {
+      opFailed(`Couldn't post the reply on ${r.where} of #${number}; it stays ready`, err);
+    }
+    const s = threadState(repo, number, r.id);
+    s.loaded = false;
+    await loadThreadConversation(repo, number, r.id);
+  }
+  const said = [commits.length ? `pushed ${pr.head}` : "", posted ? `posted ${posted} ${posted === 1 ? "reply" : "replies"}` : ""].filter(Boolean).join(" and ");
+  reportDone(`${said.charAt(0).toUpperCase()}${said.slice(1)} on #${number}.`);
+  ui.prView?.reload();
+  return true;
 }
 
 // Read the thread's saved conversation into its state, once — or again when

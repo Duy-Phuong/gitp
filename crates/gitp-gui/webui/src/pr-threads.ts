@@ -97,6 +97,14 @@ export function lastFix(c: ThreadConversation | null): ThreadTurn | null {
   return (c ? [...c.turns].reverse().find((t) => t.kind === "fix" && t.commit) : undefined) ?? null;
 }
 
+// How many loaded threads of the pull request have a reply ready.
+export function preparedReplies(repo: string, number: number): number {
+  const prefix = `${repo}\n${number}\n`;
+  let n = 0;
+  for (const [key, s] of threads) if (key.startsWith(prefix) && preparedReply(s.conversation)) n++;
+  return n;
+}
+
 // The thread a fix runs on in the pull request, if one does: one fix per
 // pull request at a time, since they share the branch's worktree.
 export function fixRunningOn(repo: string, number: number): number | null {

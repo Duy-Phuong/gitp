@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { finishTurn, fixDisabledReason, fixRunningOn, hasChosenOption, lastFix, lastUserText, onThreadsChange, preparedReply, runningTurns, setConversation, startTurn, threadState } from "./pr-threads";
+import { finishTurn, fixDisabledReason, fixRunningOn, hasChosenOption, lastFix, lastUserText, onThreadsChange, preparedReplies, preparedReply, runningTurns, setConversation, startTurn, threadState } from "./pr-threads";
 import type { ThreadConversation } from "./types";
 
 const conv = (turns = 1): ThreadConversation => ({
@@ -76,6 +76,15 @@ it("the prepared reply is the latest draft unless posted or dropped, and the las
   expect(preparedReply({ ...c, turns: [...c.turns.slice(0, 2), t("reply-draft", "claude", { text: "B", dropped: true })] })).toBeNull();
   expect(lastFix({ ...c, turns: [t("fix", "claude")] })).toBeNull();
   expect(preparedReply(null)).toBeNull();
+});
+
+it("counts the loaded threads with a reply ready", () => {
+  expect(preparedReplies("/p", 5)).toBe(0);
+  setConversation("/p", 5, 1, { ...conv(0), turns: [t("reply-draft", "claude")] });
+  setConversation("/p", 5, 2, { ...conv(0), turns: [t("reply-draft", "claude", { posted: "u" })] });
+  setConversation("/p", 5, 3, { ...conv(0), turns: [t("reply-draft", "claude")] });
+  expect(preparedReplies("/p", 5)).toBe(2);
+  expect(preparedReplies("/p", 6)).toBe(0);
 });
 
 it("one fix per pull request: the running one disables the others with its place", () => {
