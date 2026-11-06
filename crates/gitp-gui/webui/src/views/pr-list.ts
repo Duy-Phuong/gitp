@@ -244,13 +244,14 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
       body.append(el("div", { class: "prl-note" }, [open]));
     }
     if (shown.length === 0) {
-      note(p.list.length ? "No pull request matches." : "No open pull requests.");
+      note(p.list.length ? "No pull request matches." : p.filter === "merged" ? "No merged pull requests." : "No open pull requests.");
       return;
     }
     const table = el("table", { class: "prl-table" });
     const headRow = el("tr");
     for (const c of COLUMNS) {
-      const th = el("th", { class: c.cls, text: c.label });
+      // The merged list dates each by its merge.
+      const th = el("th", { class: c.cls, text: c.key === "updated" && p.filter === "merged" ? "Merged" : c.label });
       if (c.key) {
         const key = c.key;
         th.classList.add("sortable");
@@ -302,7 +303,11 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
         el("code", { text: pr.head }),
       ]),
       el("td", { class: "prl-review" }, review ? [el("span", { class: `sb-badge review-${pr.review_decision!.toLowerCase()}`, text: review })] : []),
-      el("td", { class: "prl-updated", title: pr.updated_at, text: relativeTime(isoSeconds(pr.updated_at)) }),
+      el("td", {
+        class: "prl-updated",
+        title: pr.merged_at ? `merged ${pr.merged_at}` : pr.updated_at,
+        text: relativeTime(isoSeconds(pr.merged_at ?? pr.updated_at)),
+      }),
       el("td", { class: "prl-actions" }, [inTab]),
     ]);
     tr.addEventListener("click", () => cb.open(pr.number));

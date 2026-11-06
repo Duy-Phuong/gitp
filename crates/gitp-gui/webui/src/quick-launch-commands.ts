@@ -461,6 +461,7 @@ function repoCommands(): QuickItem[] {
       ? [
           { kind: "command" as const, label: "Pull Requests: Reviewed", detail: "the open ones with a saved review", run: () => showPrFilter("reviewed") },
           { kind: "command" as const, label: "Pull Requests: Created by Me", run: () => showPrFilter("mine") },
+          { kind: "command" as const, label: "Pull Requests: Merged", detail: "the last 20 merged", run: () => showPrFilter("merged") },
         ]
       : []),
     ...(state.prs.open !== null

@@ -1899,6 +1899,7 @@ export async function listPullRequests(filter: Exclude<PrFilter, "reviewed">): P
   if (!isTauri()) {
     await mockNetworkDelay();
     const me = MOCK_GH_ACCOUNT.login;
+    if (filter === "merged") return MOCK_MERGED_PULL_REQUESTS.map((pr) => ({ ...pr }));
     return MOCK_PULL_REQUESTS.filter(
       (pr) => filter === "all" || (filter === "mine" ? pr.author === me : pr.author !== me && !pr.is_draft),
     ).map((pr) => ({ ...pr }));
@@ -1908,7 +1909,12 @@ export async function listPullRequests(filter: Exclude<PrFilter, "reviewed">): P
 
 export async function fetchPullRequest(number: number): Promise<PullRequestDetail> {
   if (!isTauri()) {
-    const detail = MOCK_PR_DETAILS.get(number) ?? mockPrDetail(MOCK_PULL_REQUESTS.find((p) => p.number === number) ?? MOCK_PULL_REQUESTS[0]);
+    const merged = MOCK_MERGED_PULL_REQUESTS.find((p) => p.number === number);
+    const detail =
+      MOCK_PR_DETAILS.get(number) ??
+      (merged
+        ? { ...mockPrDetail(merged), state: "MERGED", merge_state: "UNKNOWN" }
+        : mockPrDetail(MOCK_PULL_REQUESTS.find((p) => p.number === number) ?? MOCK_PULL_REQUESTS[0]));
     return structuredClone(detail);
   }
   return invoke<PullRequestDetail>("gh_pull_request", { number });
@@ -2004,6 +2010,7 @@ export async function createPullRequestOnGitHub(pr: NewPullRequest): Promise<num
       updated_at: new Date().toISOString(),
       url: `https://github.com/example/mideal/pull/${number}`,
       labels: [],
+      merged_at: null,
       approvals: 0,
       unresolved_threads: 0,
     });
@@ -3076,6 +3083,42 @@ const MOCK_LFS: LfsStatus = { installed: true, used: true, initialized: true, pa
 // user's own waiting on review.
 const MOCK_GH_ACCOUNT: GhAccount = { installed: true, signed_in: true, login: "you", scopes: ["repo", "read:org"], message: null };
 
+// The Merged filter's list in the preview: the latest merge first.
+const MOCK_MERGED_PULL_REQUESTS: PullRequest[] = [
+  {
+    number: 40,
+    title: "Show the session timeout in the settings",
+    author: "you",
+    is_draft: false,
+    review_decision: "APPROVED",
+    checks: "success",
+    head: "feature/session-timeout",
+    base: "main",
+    updated_at: "2026-11-05T16:20:00Z",
+    url: "https://github.com/example/mideal/pull/40",
+    labels: [],
+    merged_at: "2026-11-05T16:20:00Z",
+    approvals: 2,
+    unresolved_threads: null,
+  },
+  {
+    number: 38,
+    title: "Bump the form engine to 4.2",
+    author: "octocat",
+    is_draft: false,
+    review_decision: "APPROVED",
+    checks: "success",
+    head: "chore/form-engine-4.2",
+    base: "main",
+    updated_at: "2026-11-03T09:00:00Z",
+    url: "https://github.com/example/mideal/pull/38",
+    labels: [{ name: "dependencies", color: "0366d6" }],
+    merged_at: "2026-11-03T09:00:00Z",
+    approvals: 1,
+    unresolved_threads: null,
+  },
+];
+
 const MOCK_PULL_REQUESTS: PullRequest[] = [
   {
     number: 42,
@@ -3089,6 +3132,7 @@ const MOCK_PULL_REQUESTS: PullRequest[] = [
     updated_at: "2026-10-30T08:12:00Z",
     url: "https://github.com/example/mideal/pull/42",
     labels: [{ name: "enhancement", color: "a2eeef" }, { name: "backend", color: "5319e7" }],
+    merged_at: null,
     approvals: 2,
     unresolved_threads: 0,
   },
@@ -3104,6 +3148,7 @@ const MOCK_PULL_REQUESTS: PullRequest[] = [
     updated_at: "2026-10-29T16:40:00Z",
     url: "https://github.com/example/mideal/pull/41",
     labels: [],
+    merged_at: null,
     approvals: 0,
     unresolved_threads: 3,
   },
@@ -3119,6 +3164,7 @@ const MOCK_PULL_REQUESTS: PullRequest[] = [
     updated_at: "2026-10-28T11:05:00Z",
     url: "https://github.com/example/mideal/pull/39",
     labels: [{ name: "bug", color: "d73a4a" }],
+    merged_at: null,
     approvals: 1,
     unresolved_threads: 1,
   },

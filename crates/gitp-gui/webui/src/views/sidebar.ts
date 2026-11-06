@@ -600,7 +600,7 @@ function buildPullRequests(
 
   const filters = el("div", { class: "seg-toggle sb-pr-filters", role: "group" });
   for (const f of PR_FILTERS) {
-    const b = el("button", { class: f.value === p.filter ? "seg active" : "seg", text: f.label });
+    const b = el("button", { class: f.value === p.filter ? "seg active" : "seg", text: f.short, title: f.label });
     b.addEventListener("click", () => cb.onPrFilter(f.value));
     filters.append(b);
   }
@@ -632,7 +632,15 @@ function buildPullRequests(
     open.addEventListener("click", () => cb.onPrOpenNumber(number));
     tree.append(open);
   } else if (shown.length === 0) {
-    note(p.filter === "reviewed" ? "No saved review of an open pull request" : p.list.length ? "No matches" : "No open pull requests");
+    note(
+      p.filter === "reviewed"
+        ? "No saved review of an open pull request"
+        : p.list.length
+          ? "No matches"
+          : p.filter === "merged"
+            ? "No merged pull requests"
+            : "No open pull requests",
+    );
   }
   for (const pr of shown) tree.append(prLeaf(pr, p.open === pr.number && s.activeView === "pr", cb));
 }
