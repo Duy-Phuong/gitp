@@ -90,6 +90,7 @@ pub fn run() {
         .manage(gh::GhLoginState::default())
         .manage(gh::ReviewJobs::default())
         .manage(gh::ThreadJobs::default())
+        .manage(gh::FixJobs::default())
         .register_asynchronous_uri_scheme_protocol(review_page::SCHEME, review_page::serve)
         .setup(|app| {
             // Repository watchers push changes on disk to the frontend (see
@@ -244,6 +245,9 @@ pub fn run() {
             gh::gh_thread_conversation,
             gh::gh_thread_clear,
             gh::gh_thread_prune,
+            gh::gh_thread_fix,
+            gh::gh_thread_mark_posted,
+            gh::gh_thread_drop_reply,
             gh::gh_login_start,
             gh::gh_login_wait,
             gh::gh_login_cancel,

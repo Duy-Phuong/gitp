@@ -283,6 +283,73 @@ fn gh_thread_turn_impl(
     out.map_err(to_message)
 }
 
+/// The fixes running, by repository path and pull request: one at a time
+/// per pull request, since they share the branch's worktree.
+#[derive(Default)]
+pub(crate) struct FixJobs(Mutex<HashMap<(String, u64), ()>>);
+
+/// Fix the thread of `input` as the user chose, in the worktree of the pull
+/// request's `branch`: the thread lock as a turn, plus the pull request's
+/// fix lock.
+fn gh_thread_fix_impl(
+    jobs: &ThreadJobs,
+    fixes: &FixJobs,
+    path: String,
+    input: ThreadInput,
+    branch: String,
+    fix_command: String,
+    reply_command: String,
+) -> Result<ThreadConversation, String> {
+    let Some(root) = input.comments.first() else {
+        return Err("The thread has no comments.".into());
+    };
+    let pr_key = (path.clone(), input.number);
+    {
+        let mut running = fixes.0.lock().unwrap();
+        if running.contains_key(&pr_key) {
+            return Err(format!("A fix is already running on #{}.", input.number));
+        }
+        running.insert(pr_key.clone(), ());
+    }
+    let key = (path.clone(), input.number, root.id);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let taken = {
+        let mut running = jobs.0.lock().unwrap();
+        if running.contains_key(&key) {
+            false
+        } else {
+            running.insert(key.clone(), Arc::clone(&cancel));
+            true
+        }
+    };
+    let out = if !taken {
+        Err("A turn on this thread is already running.".to_string())
+    } else {
+        let out = Repo::open(&path).map_err(to_message).and_then(|mut repo| {
+            repo.set_network_hooks(NetworkHooks {
+                cancel: Some(cancel),
+                ..NetworkHooks::default()
+            });
+            repo.fix_thread(&Gh::system(), &input, &branch, &fix_command, &reply_command)
+                .map_err(to_message)
+        });
+        jobs.0.lock().unwrap().remove(&key);
+        out
+    };
+    fixes.0.lock().unwrap().remove(&pr_key);
+    out
+}
+
+fn gh_thread_mark_posted_impl(path: String, number: u64, thread: u64, url: String) -> Result<(), String> {
+    let repo = Repo::open(&path).map_err(to_message)?;
+    repo.mark_reply_posted(number, thread, &url).map_err(to_message)
+}
+
+fn gh_thread_drop_reply_impl(path: String, number: u64, thread: u64) -> Result<(), String> {
+    let repo = Repo::open(&path).map_err(to_message)?;
+    repo.drop_reply(number, thread).map_err(to_message)
+}
+
 /// Stop the turn running on `thread` of pull request `number`, if any.
 fn gh_thread_cancel_impl(jobs: &ThreadJobs, path: &str, number: u64, thread: u64) {
     if let Some(cancel) = jobs
@@ -619,6 +686,29 @@ pub(crate) fn gh_thread_prune(path: String) -> Result<usize, String> {
 }
 
 #[tauri::command(async)]
+pub(crate) fn gh_thread_fix(
+    path: String,
+    input: ThreadInput,
+    branch: String,
+    fix_command: String,
+    reply_command: String,
+    jobs: State<ThreadJobs>,
+    fixes: State<FixJobs>,
+) -> Result<ThreadConversation, String> {
+    gh_thread_fix_impl(&jobs, &fixes, path, input, branch, fix_command, reply_command)
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_thread_mark_posted(path: String, number: u64, thread: u64, url: String) -> Result<(), String> {
+    gh_thread_mark_posted_impl(path, number, thread, url)
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_thread_drop_reply(path: String, number: u64, thread: u64) -> Result<(), String> {
+    gh_thread_drop_reply_impl(path, number, thread)
+}
+
+#[tauri::command(async)]
 pub(crate) fn read_review_file(path: String) -> Result<String, String> {
     read_review_file_impl(path)
 }
@@ -755,5 +845,41 @@ mod tests {
             ..input(9)
         };
         assert!(gh_thread_turn_impl(&jobs, path, empty, TurnKind::Check, String::new(), "echo".into()).is_err());
+    }
+
+    #[test]
+    fn a_fix_is_refused_while_another_runs_on_the_pull_request() {
+        let jobs = ThreadJobs::default();
+        let fixes = FixJobs::default();
+        let comment = PrReviewComment {
+            id: 500,
+            author: "anna".into(),
+            body: "?".into(),
+            path: "a".into(),
+            line: Some(1),
+            original_line: Some(1),
+            side: "RIGHT".into(),
+            created_at: String::new(),
+            in_reply_to: None,
+            url: String::new(),
+            diff_hunk: String::new(),
+        };
+        let input = |comments: Vec<PrReviewComment>| gitp_core::ThreadInput {
+            number: 7,
+            head: "0".repeat(40),
+            author: "octocat".into(),
+            comments,
+        };
+        fixes.0.lock().unwrap().insert(("/nowhere".into(), 7), ());
+        let err = gh_thread_fix_impl(&jobs, &fixes, "/nowhere".into(), input(vec![comment.clone()]), "b".into(), "true".into(), "true".into())
+            .unwrap_err();
+        assert!(err.contains("already running on #7"), "{err}");
+        fixes.0.lock().unwrap().clear();
+        // No comments: refused before any lock is taken.
+        assert!(gh_thread_fix_impl(&jobs, &fixes, "/nowhere".into(), input(vec![]), "b".into(), "true".into(), "true".into()).is_err());
+        assert!(fixes.0.lock().unwrap().is_empty() && jobs.0.lock().unwrap().is_empty());
+        // A repository that doesn't exist fails and releases both locks.
+        assert!(gh_thread_fix_impl(&jobs, &fixes, "/nowhere".into(), input(vec![comment]), "b".into(), "true".into(), "true".into()).is_err());
+        assert!(fixes.0.lock().unwrap().is_empty() && jobs.0.lock().unwrap().is_empty());
     }
 }
