@@ -1698,17 +1698,21 @@ impl Repo {
                 ))
             })?;
         let dir = PathBuf::from(&worktree.path);
-        if !git_in(&dir, &["status", "--porcelain"])?.is_empty() {
+        if !git_in(&dir, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
             return Err(Error::Message(format!(
                 "Commit or stash the changes in {} first.",
                 dir.display()
             )));
         }
         self.ensure_pull_request_head(input.number, &input.head)?;
-        if git_in(&dir, &["merge-base", "--is-ancestor", &input.head, "HEAD"]).is_err() {
-            return Err(Error::Message(
-                "The local branch is behind GitHub: pull it first.".into(),
-            ));
+        if let Err(e) = git_in(&dir, &["merge-base", "--is-ancestor", &input.head, "HEAD"]) {
+            // Exit 1 is "not an ancestor", silently; anything said is a real error.
+            return Err(Error::Message(match e {
+                Error::Message(text) if text.is_empty() => {
+                    "The local branch is behind GitHub: pull it first.".into()
+                }
+                other => format!("couldn't compare the branch with the pull request's head: {other}"),
+            }));
         }
         let before = git_in(&dir, &["rev-parse", "HEAD"])?;
         let place = TurnPlace {
@@ -1724,37 +1728,47 @@ impl Repo {
         let fixed = self
             .run_turn(gh, input, TurnKind::Fix, &option, fix_command, place)
             .and_then(|c| {
-                let after = git_in(&dir, &["rev-parse", "HEAD"])?;
-                let made = git_in(&dir, &["rev-list", "--count", &format!("{before}..{after}")])?;
-                if made != "1" {
-                    return Err(Error::Message(format!(
-                        "The fix must make exactly one commit; it made {made}."
-                    )));
-                }
-                if !git_in(&dir, &["status", "--porcelain"])?.is_empty() {
-                    return Err(Error::Message(
-                        "The fix left uncommitted changes behind.".into(),
-                    ));
-                }
                 if git_in(&dir, &["rev-parse", "--abbrev-ref", "HEAD"])? != branch {
                     return Err(Error::Message(format!(
                         "The fix left the worktree off {branch}."
                     )));
+                }
+                let after = git_in(&dir, &["rev-parse", "HEAD"])?;
+                // Exactly one new commit whose only parent is where the run
+                // started: not none, not two, not an amend, not a merge.
+                let parents = git_in(&dir, &["rev-list", "--parents", "-n", "1", &after])?;
+                if parents != format!("{after} {before}") {
+                    let made = git_in(&dir, &["rev-list", "--count", &format!("{before}..{after}")])
+                        .unwrap_or_else(|_| "?".into());
+                    return Err(Error::Message(format!(
+                        "The fix must make exactly one commit on top of {}; it made {made}{}.",
+                        &before[..7],
+                        if after == before { " (none)" } else if made == "1" { " (amended or rebased)" } else { "" }
+                    )));
+                }
+                if !git_in(&dir, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
+                    return Err(Error::Message(
+                        "The fix left uncommitted changes behind.".into(),
+                    ));
                 }
                 Ok((c, after))
             });
         let (mut c, after) = match fixed {
             Ok(ok) => ok,
             Err(e) => {
-                // Back to where the run started: the tree was clean then.
-                let _ = git_in(&dir, &["reset", "-q", "--hard", &before]);
-                let _ = git_in(&dir, &["clean", "-fdq"]);
-                // The failed turn, if it was saved, goes with it.
-                if let Some(mut saved) = self.thread_conversation(input.number, root.id)? {
+                // The failed turn, if it was saved, goes; a bookkeeping
+                // error here must not hide the real one.
+                if let Ok(Some(mut saved)) = self.thread_conversation(input.number, root.id) {
                     saved.turns.retain(|t| t.kind != TurnKind::Fix || t.commit.is_some());
-                    self.save_thread_conversation(&saved)?;
+                    let _ = self.save_thread_conversation(&saved);
                 }
-                return Err(e);
+                return Err(match undo_fix(&dir, branch, &before) {
+                    Ok(()) => e,
+                    Err(undo) => Error::Message(format!(
+                        "{e}\n\nAnd the undo failed in {}: {undo}",
+                        dir.display()
+                    )),
+                });
             }
         };
         if let Some(fix) = c.turns.iter_mut().rev().find(|t| t.kind == TurnKind::Fix) {
@@ -1882,9 +1896,12 @@ impl Repo {
         } else {
             &mut conversation.session
         };
+        // A fix runs again only on the explicit message: it may have changed
+        // the tree already, and a blind retry would build on that.
         let lost_session = match (&out, &*kept) {
             (Err(Error::Message(text)), Some(session)) => {
-                text.contains(session.as_str()) || text.contains("No conversation found")
+                text.contains("No conversation found")
+                    || (!place.fix_session && text.contains(session.as_str()))
             }
             _ => false,
         };
@@ -1949,8 +1966,8 @@ impl TurnPlace {
     }
 }
 
-/// `git <args>` in `dir`, with prompts off; the trimmed combined output, or
-/// it as the error.
+/// `git <args>` in `dir`, with prompts off: its trimmed stdout, or on
+/// failure its trimmed stderr (stdout when there is none) as the error.
 pub(crate) fn git_in(dir: &Path, args: &[&str]) -> Result<String> {
     let out = crate::git_bin::git_command()
         .current_dir(dir)
@@ -1958,14 +1975,31 @@ pub(crate) fn git_in(dir: &Path, args: &[&str]) -> Result<String> {
         .args(args)
         .output()
         .map_err(|e| Error::Message(format!("failed to run git: {e}")))?;
-    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
-    text.push_str(&String::from_utf8_lossy(&out.stderr));
-    let text = text.trim().to_string();
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if out.status.success() {
-        Ok(text)
+        Ok(stdout)
     } else {
-        Err(Error::Message(text))
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        Err(Error::Message(if stderr.is_empty() { stdout } else { stderr }))
     }
+}
+
+/// Put the worktree back where a fix started: on `branch` at `before`, with
+/// nothing untracked. Tried a few times: a test runner or git the run left
+/// behind may still hold the index for a moment after it was stopped.
+fn undo_fix(dir: &Path, branch: &str, before: &str) -> Result<()> {
+    let mut last = Ok(());
+    for _ in 0..20 {
+        last = git_in(dir, &["checkout", "-q", "-f", branch])
+            .and_then(|_| git_in(dir, &["reset", "-q", "--hard", before]))
+            .and_then(|_| git_in(dir, &["clean", "-fdq"]))
+            .map(|_| ());
+        if last.is_ok() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+    last
 }
 
 /// What a thread command printed: the answer, and the session to resume
@@ -3357,7 +3391,7 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         (dir, repo, wt)
     }
 
-    const COMMIT_ONCE: &str = r#"printf '{"result":"fixed in %s before=%s","session_id":"fs"}' "$PWD" "$GITP_FIX_HEAD_BEFORE"; echo x > fixed.txt; git add fixed.txt; git -c user.name=T -c user.email=t@example.com commit -qm "fix(review): src/retry.ts:12 — x""#;
+    const COMMIT_ONCE: &str = r#"printf '{"result":"fixed in %s before=%s session=%s","session_id":"fs"}' "$PWD" "$GITP_FIX_HEAD_BEFORE" "$GITP_CLAUDE_SESSION"; echo x > fixed.txt; git add fixed.txt; git -c user.name=T -c user.email=t@example.com commit -qm "fix(review): src/retry.ts:12 — x""#;
     const REPLY: &str = r#"printf '{"result":"reply from %s session=%s","session_id":"rs"}' "$PWD" "$GITP_CLAUDE_SESSION""#;
 
     #[test]
@@ -3380,6 +3414,7 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert_eq!(fix.worktree.as_deref().map(canonical_str), Some(canonical_str(wt.to_str().unwrap())));
         assert!(fix.text.contains(&format!("before={before}")), "{}", fix.text);
         assert!(fix.text.contains(&canonical_str(wt.to_str().unwrap())), "{}", fix.text);
+        assert!(fix.text.contains("session=") && !fix.text.contains("session=main-s"), "the fix never resumes the main session: {}", fix.text);
         assert_eq!((reply.kind, reply.role), (TurnKind::ReplyDraft, TurnRole::Claude));
         assert!(reply.text.contains(&canonical_str(dir.path().to_str().unwrap())), "{}", reply.text);
         assert!(reply.text.contains("session=main-s"), "{}", reply.text);
@@ -3417,6 +3452,41 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert_eq!(repo.resolve_commit("feature").unwrap(), before);
         let c = repo.thread_conversation(7, 500).unwrap().unwrap();
         assert!(c.turns.iter().all(|t| t.kind != TurnKind::Fix), "no fix turn kept");
+    }
+
+    #[test]
+    fn a_fix_that_amends_or_leaves_the_branch_is_undone_on_the_branch() {
+        let fake = Fake::new();
+        let (_dir, repo, wt) = fix_repo();
+        let input = thread_input(&repo);
+        let before = repo.resolve_commit("feature").unwrap();
+        // An amend: one commit ahead of nothing, the old one gone.
+        let amend = r#"echo amended; echo a > a.txt; git add a.txt; git -c user.name=T -c user.email=t@example.com commit -q --amend --no-edit"#;
+        let err = message(repo.fix_thread(&fake.gh(), &input, "feature", amend, REPLY).unwrap_err());
+        assert!(err.contains("one commit"), "{err}");
+        assert_eq!(repo.resolve_commit("feature").unwrap(), before);
+        assert!(!wt.join("a.txt").exists());
+        // A commit on another branch: that branch is left alone, the
+        // worktree goes back to feature at before.
+        let elsewhere = format!("git checkout -q -b other; {COMMIT_ONCE}");
+        let err = message(repo.fix_thread(&fake.gh(), &input, "feature", &elsewhere, REPLY).unwrap_err());
+        assert!(err.contains("off feature") || err.contains("one commit"), "{err}");
+        assert_eq!(git_in(&wt, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap(), "feature");
+        assert_eq!(repo.resolve_commit("feature").unwrap(), before);
+        assert_ne!(repo.resolve_commit("other").unwrap(), before, "other keeps its commit");
+        assert!(!wt.join("fixed.txt").exists());
+    }
+
+    #[test]
+    fn a_fix_sees_untracked_files_whatever_the_status_config_says() {
+        let fake = Fake::new();
+        let (_dir, repo, wt) = fix_repo();
+        let input = thread_input(&repo);
+        git_in(&wt, &["config", "status.showUntrackedFiles", "no"]).unwrap();
+        std::fs::write(wt.join("mine.txt"), "wip").unwrap();
+        let err = repo.fix_thread(&fake.gh(), &input, "feature", "touch ran.txt", REPLY).unwrap_err();
+        assert!(message(err).contains("Commit or stash"));
+        assert!(wt.join("mine.txt").exists() && !wt.join("ran.txt").exists());
     }
 
     #[test]
