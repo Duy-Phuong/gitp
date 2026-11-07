@@ -149,6 +149,7 @@ export interface ChangesHandle {
   // Apply a status snapshot the host already fetched, instead of running
   // `git status` again ourselves — the single most expensive read on a large
   // repo, so it should happen once per refresh, not once per view.
+  // A refresh's status (the sidebar's): redrawn only when the lists changed.
   applyStatus: (status: StatusLists) => void;
   // Re-read the selected file's diff even though its status hasn't changed —
   // it may have been edited outside gitp — and repaint only if it differs.
@@ -175,6 +176,8 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   // hunks for the currently selected file only.
   let staged: FileDiff[] = [];
   let unstaged: FileDiff[] = [];
+  // The status lists last drawn, so an unchanged refresh draws nothing.
+  let lastStatusSig = "";
   let selected: { panel: Panel; path: string } | null = null;
   let selectedDiff: FileDiff | null = null;
   // The status-list summary (path/old_path/status, no hunks) that selectedDiff
@@ -265,19 +268,29 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     paintLines?.();
   }
 
+  // The view's own reload, after an action of its own (a commit, a stage):
+  // always redrawn, since the action may have changed more than the lists.
   async function reload(): Promise<void> {
-    applyStatus(await cb.fetchStatus());
+    applyStatus(await cb.fetchStatus(), true);
   }
 
   // Render from an already-fetched status snapshot. The selected file's hunks
   // are loaded in the background (they have their own loading state and a
   // staleness token), so callers don't wait on a second round trip.
-  function applyStatus(s: StatusLists): void {
+  function applyStatus(s: StatusLists, force = false): void {
+    // A refresh runs on any click (external-refresh.ts). Redrawing the same
+    // lists would swap the row under the pointer between its mousedown and
+    // mouseup, and the click — or a double-click to stage — would be lost.
+    const sig = JSON.stringify([s.staged, s.unstaged]);
+    const same = !force && sig === lastStatusSig && host.childElementCount > 0;
+    lastStatusSig = sig;
     staged = s.staged;
     unstaged = s.unstaged;
-    pruneChecked();
-    resolveSelection();
-    render();
+    if (!same) {
+      pruneChecked();
+      resolveSelection();
+      render();
+    }
     // Distinct changed paths (a file can be both staged and unstaged).
     const paths = new Set([...staged, ...unstaged].map((f) => f.path));
     cb.onChanged(paths.size);
@@ -1477,6 +1490,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   function reset(): void {
     staged = [];
     unstaged = [];
+    lastStatusSig = "";
     selected = null;
     selectedDiff = null;
     selectedDiffSummary = null;
@@ -1505,7 +1519,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   }
 
   render();
-  return { reload, isBusy: () => busy, applyStatus, recheckDiff, prefillMessage, clearPrefill, reset, draftMessage: startDraft };
+  return { reload, isBusy: () => busy, applyStatus: (st) => applyStatus(st), recheckDiff, prefillMessage, clearPrefill, reset, draftMessage: startDraft };
 }
 
 // A commit.template's text as a subject and body: lines starting with `#` are

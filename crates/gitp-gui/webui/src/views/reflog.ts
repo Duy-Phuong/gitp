@@ -46,6 +46,8 @@ export function setupReflog(host: HTMLElement, cb: ReflogCallbacks): ReflogHandl
   let selectedKey: string | null = null;
   // Drops a slow reload's result once a newer one has started.
   let generation = 0;
+  // The ref and entries last drawn.
+  let lastSig = "";
 
   const title = el("span", { class: "reflog-title" });
   const headBtn = el("button", { class: "btn small ghost", text: "Show HEAD", title: "Show HEAD's reflog" });
@@ -138,8 +140,14 @@ export function setupReflog(host: HTMLElement, cb: ReflogCallbacks): ReflogHandl
       return;
     }
     if (mine !== generation) return;
+    // Every sidebar refresh reloads an open reflog; the same entries are not
+    // redrawn, so a click on a row isn't lost under a fresh one.
+    const sig = `${refname}\n${fetched.map(entryKey).join("\n")}`;
+    const same = sig === lastSig && host.childElementCount > 0;
+    lastSig = sig;
     entries = fetched;
     const kept = entries.find((e) => entryKey(e) === selectedKey);
+    if (same) return;
     render();
     // Show something in the shared detail pane right away: the newest entry,
     // unless the one already selected is still listed.
