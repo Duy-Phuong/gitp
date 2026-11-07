@@ -730,9 +730,12 @@ body {
   font-size: 12px;
   margin: 4px 0 10px;
 }
+/* The plan comes first: the list shows its rows (up to half the window) and
+   the preview takes what is left. */
 .rebase-list {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 0 0 auto;
+  max-height: 45vh;
+  min-height: 80px;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -886,6 +889,13 @@ body {
   color: var(--text);
   padding: 4px 8px;
   font-size: 13px;
+  font-family: inherit;
+  line-height: 1.4;
+  resize: vertical;
+}
+/* A reword's message is several lines: the row's controls stay at its top. */
+.rebase-row.action-reword {
+  align-items: flex-start;
 }
 .rebase-warn {
   color: var(--danger, #ff7b72);
@@ -4484,6 +4494,76 @@ textarea:focus-visible,
 }
 .rebase-row.drop-below {
   box-shadow: inset 0 -2px 0 0 var(--accent);
+}
+/* What the plan produces: the commit count in the header, the bulk actions
+   above the list, squash/fixup rows joined under the commit they meld into,
+   and the combined message of a squash group. */
+.rebase-summary {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.rebase-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.rebase-toolbar .spacer {
+  flex: 1;
+}
+.rebase-row.focused {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.rebase-row.meld {
+  padding-left: 28px;
+  background: color-mix(in srgb, var(--accent-soft) 40%, transparent);
+}
+.rebase-row.meld.selected {
+  background: var(--accent-soft);
+}
+.rebase-row.group-head {
+  border-bottom-style: dashed;
+}
+.rebase-into {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.rebase-group {
+  border-bottom: 1px solid var(--border);
+}
+.rebase-group:empty {
+  display: none;
+}
+.rebase-group-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.rebase-group-message {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 0 10px 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 8px;
+  font: 13px/1.4 inherit;
+  font-family: inherit;
+  resize: vertical;
+}
+.rebase-group-message:focus {
+  border-color: var(--accent);
+  outline: none;
 }
 /* A dropped row keeps its strikethrough, but the chip has to stay readable. */
 .rebase-row.action-drop .rebase-action-chip {

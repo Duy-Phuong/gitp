@@ -164,3 +164,19 @@ fn a_plan_starting_with_a_squash_or_with_an_option_is_refused() {
     assert!(err.contains("read as an option"), "{err}");
     assert_eq!(messages(&fx), vec!["base"], "nothing applied");
 }
+
+#[test]
+fn a_squash_with_a_message_uses_it_for_the_combined_commit() {
+    let (fx, repo, main) = repo_with_side();
+    let s1 = fx.commit_file("f1.txt", "1\n", "s1");
+    let s2 = fx.commit_file("f2.txt", "2\n", "s2");
+    repo.checkout_branch(&main).unwrap();
+
+    repo.cherry_pick_plan(&[
+        step(s1, PickAction::Pick, None),
+        step(s2, PickAction::Squash, Some("both, said once")),
+    ])
+    .unwrap();
+
+    assert_eq!(messages(&fx), vec!["both, said once", "base"]);
+}

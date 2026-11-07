@@ -301,3 +301,36 @@ fn update_refs_moves_a_dependent_branch_along_with_the_rebase() {
         "dep follows the rewritten c1"
     );
 }
+
+#[test]
+fn a_squash_group_takes_the_message_given_on_its_last_meld() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("base.txt", "b\n", "base");
+    let base = fx.repo.head().unwrap().peel_to_commit().unwrap();
+    fx.repo.branch("target", &base, false).unwrap();
+    fx.commit_file("f1.txt", "1\n", "head");
+    fx.commit_file("f2.txt", "2\n", "squash me");
+    fx.commit_file("f3.txt", "3\n", "fix me");
+
+    let repo = Repo::open(fx.path()).unwrap();
+    let todo = repo.rebase_todo("target").unwrap();
+    let steps = vec![
+        step(&todo[0].sha, RebaseAction::Pick, None),
+        step(&todo[1].sha, RebaseAction::Squash, None),
+        step(
+            &todo[2].sha,
+            RebaseAction::Fixup,
+            Some("one change\n\nwith a body"),
+        ),
+    ];
+    repo.interactive_rebase("target", &steps, false).unwrap();
+
+    assert_eq!(subjects(&repo), vec!["one change", "base"]);
+    assert_eq!(
+        repo.commit_detail("HEAD").unwrap().message.trim(),
+        "one change\n\nwith a body"
+    );
+    for f in ["f1.txt", "f2.txt", "f3.txt"] {
+        assert!(fx.path().join(f).exists(), "{f} kept");
+    }
+}
