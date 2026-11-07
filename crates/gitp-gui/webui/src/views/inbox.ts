@@ -36,6 +36,8 @@ export function setupInbox(host: HTMLElement, cb: InboxCallbacks): InboxHandle {
   let run = 0;
   let asked = 0;
   let reading = false;
+  // The repositories the latest run asked, in order.
+  let paths: string[] = [];
   let stopPolling: (() => void) | null = null;
 
   const status = el("span", { class: "inbox-status", "aria-live": "polite" });
@@ -62,7 +64,13 @@ export function setupInbox(host: HTMLElement, cb: InboxCallbacks): InboxHandle {
 
   const row = (pr: InboxPr): HTMLElement => {
     const unresolved = pr.unresolved ?? 0;
-    const threads = unresolved > 0 ? `${unresolved} unresolved${pr.prepared > 0 ? ` · ${pr.prepared} prepared` : ""}` : "";
+    // Unknown (GitHub's thread query failed) is not none.
+    const threads =
+      pr.unresolved === null
+        ? "? unresolved"
+        : unresolved > 0
+          ? `${unresolved} unresolved${pr.prepared > 0 ? ` · ${pr.prepared} prepared` : ""}`
+          : "";
     const button = el("button", { class: "inbox-row", type: "button", title: `Open ${pr.repo}#${pr.number}` }, [
       el("span", { class: `pr-check-dot ${pr.checks ?? "none"}`, title: pr.checks ? `checks: ${pr.checks}` : "no checks" }),
       el("span", { class: "inbox-repo", text: pr.repo }),
@@ -83,15 +91,29 @@ export function setupInbox(host: HTMLElement, cb: InboxCallbacks): InboxHandle {
 
   const render = () => {
     clear(body);
-    const answers = [...results.values()];
-    const prs = answers.flatMap((r) => r.prs);
+    // In the order asked, so of two paths of one GitHub repository (both
+    // answered while the recent list changed) the first one's rows show.
+    const order = (r: InboxRepo) => {
+      const i = paths.indexOf(r.path);
+      return i < 0 ? paths.length : i;
+    };
+    const answers = [...results.values()].sort((a, b) => order(a) - order(b));
+    const seen = new Set<string>();
+    const prs = answers
+      .flatMap((r) => r.prs)
+      .filter((pr) => {
+        const key = `${pr.repo.toLowerCase()}#${pr.number}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     const failed = answers.filter((r) => r.error);
     const left = asked - answers.length;
     status.textContent = reading && left > 0 ? `Reading ${left} ${left === 1 ? "repository" : "repositories"}…` : "";
     const { needs, waiting } = groupInbox(prs);
     if (needs.length > 0) body.append(group("Needs you", needs));
     if (waiting.length > 0) body.append(group("Waiting on others", waiting));
-    if (prs.length === 0 && !reading) {
+    if (prs.length === 0 && !reading && answers.some((r) => !r.error)) {
       body.append(el("div", { class: "inbox-empty", text: "Nothing open needs you or waits on others." }));
     }
     if (failed.length > 0) {
@@ -115,7 +137,7 @@ export function setupInbox(host: HTMLElement, cb: InboxCallbacks): InboxHandle {
   // of the same GitHub repository) goes when the run ends.
   const refresh = async () => {
     const mine = ++run;
-    const paths = cb.paths();
+    paths = cb.paths();
     const answered = new Set<string>();
     asked = paths.length;
     reading = true;

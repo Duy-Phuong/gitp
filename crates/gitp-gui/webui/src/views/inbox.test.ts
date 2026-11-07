@@ -146,6 +146,31 @@ describe("the review inbox", () => {
     expect(texts(host, ".inbox-number")).toEqual(["#1"]);
   });
 
+  it("shows an unknown thread count as unknown, not as none", () => {
+    const { host, handle, runs } = mount();
+    handle.show();
+    runs[0].onRepo({ path: "/r/hello", repo: "octo/hello", prs: [pr({ number: 1, unresolved: null })], error: null });
+    expect(host.querySelector(".inbox-threads")?.textContent).toBe("? unresolved");
+  });
+
+  it("lists a pull request once when two paths of one repository both answered", () => {
+    const { host, handle, runs } = mount();
+    handle.show();
+    runs[0].onRepo({ path: "/r/hello", repo: "octo/hello", prs: [pr({ number: 1, unresolved: 1 })], error: null });
+    runs[0].onRepo({ path: "/r/hello-wt", repo: "octo/hello", prs: [pr({ path: "/r/hello-wt", number: 1, unresolved: 1 })], error: null });
+    expect(texts(host, ".inbox-number")).toEqual(["#1"]);
+  });
+
+  it("claims nothing is open only when some repository was read", async () => {
+    const { host, handle, runs } = mount();
+    handle.show();
+    runs[0].onRepo({ path: "/r/hello", repo: "octo/hello", prs: [], error: "not signed in" });
+    runs[0].finish();
+    await flush();
+    expect(host.querySelector(".inbox-empty")).toBeNull();
+    expect(texts(host, ".inbox-failed-reason")).toEqual(["not signed in"]);
+  });
+
   it("closes with its Back button and with Esc", () => {
     const { host, cb, handle } = mount();
     handle.show();
