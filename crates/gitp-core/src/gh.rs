@@ -704,12 +704,12 @@ impl Repo {
         self.find_github_remote().map(|(_, repo)| repo)
     }
 
-    /// `find_github_repo` with the name of the remote it was found on.
     /// The name of the remote `find_github_remote` picks.
     pub(crate) fn github_remote_name(&self) -> Option<String> {
         self.find_github_remote().map(|(name, _)| name)
     }
 
+    /// `find_github_repo` with the name of the remote it was found on.
     fn find_github_remote(&self) -> Option<(String, GitHubRepo)> {
         let names = self.inner.remotes().ok()?;
         let config = self.inner.config().ok();
