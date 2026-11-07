@@ -1,6 +1,9 @@
 import { beforeEach, describe, it, expect } from "vitest";
 import {
   codeCssVars,
+  loadAuthorInitials,
+  loadAvatarStyle,
+  saveAvatarStyle,
   fontStack,
   nextToggleTheme,
   parseTabAliases,
@@ -278,5 +281,26 @@ describe("thread commands", () => {
       expect(() => saveThreadCommand("explain", "x")).not.toThrow();
       expect(() => saveThreadCommand("explain", "")).not.toThrow();
     });
+  });
+});
+
+describe("the graph's author pictures", () => {
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    store.clear();
+    (globalThis as { localStorage?: unknown }).localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    };
+  });
+
+  it("are avatars by default, initials for the old switch, and as chosen after", () => {
+    expect(loadAvatarStyle()).toBe("gravatar");
+    localStorage.setItem("gitp-author-initials", "1");
+    expect(loadAvatarStyle()).toBe("initials");
+    saveAvatarStyle("custom");
+    expect(loadAvatarStyle()).toBe("custom");
+    expect(loadAuthorInitials()).toBe(false);
   });
 });

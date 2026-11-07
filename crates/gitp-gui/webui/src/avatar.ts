@@ -1,14 +1,37 @@
 // Author avatars via Gravatar. We hash the email with SHA-256 (Gravatar accepts
 // SHA-256 hashes) using the built-in WebCrypto — no md5 dependency. Missing
 // Gravatars fall back to a generated identicon (d=identicon), and a failed image
-// load falls back to the plain lane-colored dot in the graph.
+// load falls back to the plain lane-colored dot in the graph. With Settings'
+// Custom, an author gets one of gitp's own pictures instead.
 //
 // Note: this sends the email hash to gravatar.com to fetch the image — unless
-// Settings shows author initials instead, when nothing is fetched at all.
+// Settings shows author initials or the custom pictures, when nothing is
+// fetched at all.
 
-import { loadAuthorInitials } from "./prefs";
+import { loadAvatarStyle } from "./prefs";
+
+// gitp's own pictures (src/assets/avatars), bundled by Vite, in name order.
+export const CUSTOM_AVATARS: string[] = Object.entries(
+  import.meta.glob<string>("./assets/avatars/*.jpg", { eager: true, import: "default", query: "?url" }),
+)
+  .sort(([a], [b]) => a.localeCompare(b))
+  .map(([, url]) => url);
+
+// The picture of `email`'s author: picked by a hash of the email (FNV-1a), so
+// the pick looks random but an author keeps theirs across redraws and runs.
+export function customAvatar(email: string, urls: string[] = CUSTOM_AVATARS): string | undefined {
+  if (!urls.length) return undefined;
+  let h = 0x811c9dc5;
+  for (const c of email.trim().toLowerCase()) {
+    h ^= c.codePointAt(0)!;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return urls[h % urls.length];
+}
 
 const cache = new Map<string, string>(); // email -> avatar URL
+// The style the cache holds URLs of: a switch in Settings starts it again.
+let cachedStyle: string | null = null;
 
 async function sha256Hex(text: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -18,8 +41,20 @@ async function sha256Hex(text: string): Promise<string> {
 // Resolve avatar URLs for every given email (deduped, cached) so renderLog can
 // look them up synchronously afterwards.
 export async function ensureAvatars(emails: string[]): Promise<void> {
-  if (loadAuthorInitials()) return;
+  const style = loadAvatarStyle();
+  if (style === "initials") return;
+  if (style !== cachedStyle) {
+    cache.clear();
+    cachedStyle = style;
+  }
   const pending = [...new Set(emails)].filter((e) => e && !cache.has(e));
+  if (style === "custom") {
+    for (const email of pending) {
+      const url = customAvatar(email);
+      if (url) cache.set(email, url);
+    }
+    return;
+  }
   await Promise.all(
     pending.map(async (email) => {
       const hash = await sha256Hex(email.trim().toLowerCase());

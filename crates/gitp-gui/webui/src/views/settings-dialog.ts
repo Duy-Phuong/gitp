@@ -17,7 +17,7 @@ import {
   DATE_FORMATS,
   FONT_FAMILIES,
   FONT_SIZES,
-  loadAuthorInitials,
+  loadAvatarStyle,
   loadAutoFetchMinutes,
   loadAutoFetchPrune,
   loadBranchHoverFade,
@@ -36,7 +36,8 @@ import {
   loadZoom,
   PULL_DEFAULT_LABEL,
   PULL_DEFAULTS,
-  saveAuthorInitials,
+  saveAvatarStyle,
+  type AvatarStyle,
   saveAutoFetchPrune,
   saveBranchHoverFade,
   saveCodePrefs,
@@ -168,19 +169,20 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
         ),
         row(
           "Commit graph shows",
-          segToggle(
+          segToggle<AvatarStyle>(
             [
-              { value: false, label: "Avatars" },
-              { value: true, label: "Initials" },
+              { value: "gravatar", label: "Avatars" },
+              { value: "initials", label: "Initials" },
+              { value: "custom", label: "Custom" },
             ],
-            loadAuthorInitials(),
-            (on) => {
-              saveAuthorInitials(on);
+            loadAvatarStyle(),
+            (style) => {
+              saveAvatarStyle(style);
               actions.redrawDisplay();
             },
           ),
           "inline",
-          "Avatars come from gravatar.com, which is sent a hash of each author's email; initials fetch nothing.",
+          "Avatars come from gravatar.com, which is sent a hash of each author's email. Custom gives each author one of gitp's own pictures, the same one every time; it and initials fetch nothing.",
         ),
       ],
     },

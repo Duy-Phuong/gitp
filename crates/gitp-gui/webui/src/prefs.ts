@@ -288,16 +288,27 @@ export function saveDateFormat(format: DateFormat): void {
   localStorage.setItem(DATE_FORMAT_KEY, format);
 }
 
-// Author initials in the graph's commit nodes instead of Gravatar images —
-// which also stops sending email hashes to gravatar.com.
+// What the graph's commit nodes show for their author: Gravatar images (the
+// default), initials, or a picture of gitp's own (src/assets/avatars), the
+// same one for an author every time. Initials and the pictures send nothing
+// to gravatar.com.
+export type AvatarStyle = "gravatar" | "initials" | "custom";
+const AVATAR_STYLE_KEY = "gitp-avatar-style";
+// The switch before Custom existed: "1" for initials.
 const AUTHOR_INITIALS_KEY = "gitp-author-initials";
 
-export function loadAuthorInitials(): boolean {
-  return localStorage.getItem(AUTHOR_INITIALS_KEY) === "1";
+export function loadAvatarStyle(): AvatarStyle {
+  const saved = localStorage.getItem(AVATAR_STYLE_KEY);
+  if (saved === "gravatar" || saved === "initials" || saved === "custom") return saved;
+  return localStorage.getItem(AUTHOR_INITIALS_KEY) === "1" ? "initials" : "gravatar";
 }
 
-export function saveAuthorInitials(on: boolean): void {
-  localStorage.setItem(AUTHOR_INITIALS_KEY, on ? "1" : "0");
+export function saveAvatarStyle(style: AvatarStyle): void {
+  localStorage.setItem(AVATAR_STYLE_KEY, style);
+}
+
+export function loadAuthorInitials(): boolean {
+  return loadAvatarStyle() === "initials";
 }
 
 // The branch Init Repository starts a new repository on, prefilled in its
