@@ -36,9 +36,12 @@ import {
 import { fullTime, relativeTime } from "../timeago";
 import { copyText } from "../clipboard";
 import { checkAnchor, withOffDiffDrafts } from "../review-drafts";
+import { draftCard, placeDraftCards, type DraftCardOptions } from "./draft-cards";
 import {
   clearDrafts,
   hasNewCommits,
+  isOpen,
+  saveSoon,
   markPosted,
   prReview,
   reviewsChanged,
@@ -118,6 +121,11 @@ export interface PullRequestCallbacks {
   // True once forgotten; false when the user said no or it failed.
   clearThreadConversation: (pr: PullRequestDetail, thread: Thread) => Promise<boolean>;
   pruneThreadConversations: () => void;
+  // Fix on the review drafts of a pull request the signed-in user wrote
+  // (null on anyone else's): why it is off for a draft, or null; and the run.
+  draftFix: (pr: PullRequestDetail) => { reason: (d: Draft) => string | null; run: (d: Draft) => void } | null;
+  // Shows a commit in History.
+  openCommit: (sha: string) => void;
   // Asks before a draft replaces what the user typed.
   confirm: (message: string) => Promise<boolean>;
   reportError: (title: string, err: unknown) => void;
@@ -266,7 +274,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       tabButton("files", `Files changed (${pr.changed_files})`),
       tabButton("checks", `Checks (${pr.checks.length})`),
       ...(review().drafts.length
-        ? [tabButton("drafts", `Drafts (${review().drafts.filter((d) => d.status !== "discarded").length})`)]
+        ? [tabButton("drafts", `Drafts (${review().drafts.filter(isOpen).length})`)]
         : []),
       el("span", { class: "pr-diffstat" }, [
         el("span", { class: "pr-add", text: `+${pr.additions}` }),
@@ -746,6 +754,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         after = n;
       }
     }
+    // The review's drafts on this file, under their lines.
+    const mine = review().drafts.filter((d) => d.path === file.path && d.line > 0);
+    placeDraftCards(node, file, mine.map((d) => ({ d, line: d.line, side: d.side })), (d) => prDraftCard(pr, d, "inline", "ok"));
     if (file.truncated) {
       node.append(el("div", { class: "diff-truncated", text: "This diff is too long to show in full here; open it on GitHub for the rest." }));
     }
@@ -842,7 +853,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // Drafts read back from a saved review just after the pull request opened
   // with none: show them, when no tab was picked meanwhile.
   function toDraftsIfReady(): void {
-    if (draftsWhenReady && review().drafts.some((d) => d.status !== "discarded")) {
+    if (draftsWhenReady && review().drafts.some(isOpen)) {
       tab = "drafts";
       draftsWhenReady = false;
     }
@@ -907,7 +918,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   function renderDrafts(body: HTMLElement, pr: PullRequestDetail): void {
     const r = review();
     const drafts = r.drafts;
-    const live = drafts.filter((d) => d.status !== "discarded");
+    const live = drafts.filter(isOpen);
     if (live.length === 0 && drafts.length === 0) {
       body.append(el("div", { class: "pr-empty", text: "No draft comments. Load a review file to get some." }));
       return;
@@ -959,7 +970,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
           const posted = new Set([...postable, ...offDiff].map((d) => d.id));
           r.drafts = r.drafts.filter((d) => !posted.has(d.id));
           r.body = "";
-          if (!r.drafts.some((d) => d.status !== "discarded")) {
+          if (!r.drafts.some(isOpen)) {
             clearDrafts(cb.repoPath(), pr.number);
             tab = "conversation";
           }
@@ -968,7 +979,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         });
     });
     const setAll = (status: Draft["status"]) => {
-      for (const d of drafts) if (d.status !== "discarded" || status === "pending") d.status = status;
+      // A fixed draft keeps its mark.
+      for (const d of drafts) if (isOpen(d) || (status === "pending" && d.status === "discarded" && !d.fix)) d.status = status;
       reviewsChanged();
     };
     const summary = `${live.length} draft${live.length === 1 ? "" : "s"} · ${drafts.filter((d) => d.status === "approved").length} approved${offDiff.length ? ` · ${offDiff.length} in the review message (line not in this diff)` : ""}`;
@@ -989,47 +1001,42 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       ]),
       message,
     );
-    for (const d of drafts) body.append(draftCard(d, anchorOf(d)));
+    for (const d of drafts) body.append(prDraftCard(pr, d, "list", anchorOf(d)));
   }
 
-  function draftCard(d: Draft, anchor: ReturnType<typeof checkAnchor>): HTMLElement {
-    const head = el("div", { class: "pr-draft-head" }, [
+  // A draft's card in the Drafts tab or under its line in the Files tab.
+  function prDraftCard(pr: PullRequestDetail, d: Draft, where: "list" | "inline", anchor: ReturnType<typeof checkAnchor>): HTMLElement {
+    const fixer = cb.draftFix(pr);
+    const note =
       anchor === "general"
-        ? el("span", { class: "pr-draft-where pr-draft-topic", text: d.topic ?? "On the pull request" })
-        : el("code", { class: "pr-draft-where", text: `${d.path}:${d.line}${d.side === "LEFT" ? " (removed line)" : ""}` }),
-    ]);
-    if (d.severity) head.append(el("span", { class: `pr-draft-sev ${d.severity.replace(/\W+/g, "-")}`, text: d.severity }));
-    if (anchor === "general") {
-      head.append(el("span", { class: "pr-draft-note", text: "on the whole pull request — posts in the review message" }));
-    } else if (anchor !== "ok") {
-      head.append(
-        el("span", {
-          class: "pr-draft-warn",
-          text: `${anchor === "no-file" ? "file not in this pull request" : "line not in this diff"} — posts in the review message`,
-          title: "GitHub only takes line comments on lines of the diff, so this one goes in the review's message, linked to its line.",
-        }),
-      );
-    }
-    head.append(el("span", { class: "spacer" }));
-    const toggle = (status: Draft["status"]) => () => {
-      d.status = d.status === status ? "pending" : status;
-      reviewsChanged();
+        ? "on the whole pull request — posts in the review message"
+        : anchor === "no-file"
+          ? "file not in this pull request — posts in the review message"
+          : anchor === "no-line"
+            ? "line not in this diff — posts in the review message"
+            : null;
+    const o: DraftCardOptions = {
+      where,
+      note,
+      fix: fixer && d.path ? { reason: fixer.reason(d), run: () => fixer.run(d) } : null,
+      showInDiff: where === "list" && anchor === "ok" && d.path ? () => showInDiff(d) : null,
+      openCommit: cb.openCommit,
+      changed: (redraw) => (redraw ? reviewsChanged() : saveSoon()),
     };
-    if (d.status !== "discarded") {
-      head.append(smallButton(d.status === "approved" ? "Approved ✓" : "Approve", toggle("approved")));
-      head.append(smallButton("Discard", toggle("discarded")));
-    } else {
-      head.append(smallButton("Restore", toggle("discarded")));
-    }
-    const card = el("div", { class: `pr-draft ${d.status}` }, [head]);
-    if (d.status !== "discarded") {
-      const area = composerArea({ class: "pr-draft-text" });
-      area.value = d.body;
-      area.addEventListener("input", () => (d.body = area.value));
-      head.append(previewToggle(area).button);
-      card.append(area);
-    }
-    return card;
+    return draftCard(d, o);
+  }
+
+  // The Files tab, scrolled to the draft's card.
+  function showInDiff(d: Draft): void {
+    tab = "files";
+    filesQuery = "";
+    render();
+    const find = (tries: number) => {
+      const card = host.querySelector<HTMLElement>(`.pr-draft.inline[data-draft="${d.id}"]`);
+      if (card) card.scrollIntoView({ block: "center" });
+      else if (tries > 0) setTimeout(() => find(tries - 1), 100);
+    };
+    find(20);
   }
 
   // --- Checks ---------------------------------------------------------------
@@ -1186,7 +1193,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         filesQuery = "";
         cb.restoreDrafts(n);
         // A review that finished while the user was elsewhere opens on its drafts.
-        tab = review().drafts.some((d) => d.status !== "discarded") ? "drafts" : "conversation";
+        tab = review().drafts.some(isOpen) ? "drafts" : "conversation";
         draftsWhenReady = tab === "conversation";
       }
       void load(true);

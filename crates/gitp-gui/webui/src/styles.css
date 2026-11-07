@@ -6295,6 +6295,18 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .pr-draft.discarded {
   opacity: 0.55;
 }
+/* Fixed in a commit: kept to look at again. */
+.pr-draft.fixed {
+  border-color: var(--add-fg);
+}
+.pr-draft-fixed {
+  color: var(--add-fg);
+}
+/* Under its line in the Files tab, among the threads. */
+.pr-draft.inline {
+  margin: 6px 12px 8px 48px;
+  white-space: normal;
+}
 .pr-draft-head {
   display: flex;
   align-items: center;

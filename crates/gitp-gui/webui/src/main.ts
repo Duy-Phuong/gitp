@@ -1,6 +1,7 @@
 import { setupClaudeJobs } from "./claude-jobs";
 import "./styles.css";
-import { onReviewsChange } from "./pr-reviews";
+import { onReviewsChange, setReviewSaver } from "./pr-reviews";
+import { storedReviewDelete, storedReviewSave } from "./api";
 import { onThreadsChange } from "./pr-threads";
 import {
   abortConflict,
@@ -539,6 +540,8 @@ async function init(): Promise<void> {
     signIn: () => void signInToGitHub(),
     reviewBadge: (pr) => reviewBadge(state.repoPath, pr.number),
   });
+  // Review drafts are kept on disk (a branch's and a pull request's).
+  setReviewSaver({ save: storedReviewSave, remove: storedReviewDelete });
   // A review running in the background moved on: its badge and, when its pull
   // request is the one open, the view.
   onReviewsChange(() => {
