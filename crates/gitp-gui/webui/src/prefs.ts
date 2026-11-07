@@ -741,6 +741,16 @@ export const EXPLAIN_FINDING_COMMAND =
   `Serve only this line, as the README part 'Lines from the review HTML file' says. Do not arm a watch, ask no questions." ` +
   `--model opus --effort medium --permission-mode dontAsk ${SESSION_ID_ARG} --allowedTools "${[...SKILL_TOOLS, "ToolSearch"].join(" ")}"`;
 
+// "Suggest with Claude" in the conflict resolver: the conflicts of one file
+// come on stdin (see conflictPrompt in conflict-help.ts), with the answer's
+// JSON format. Claude may read the repository for context but change nothing:
+// dontAsk refuses every tool the list doesn't name.
+export const RESOLVE_CONFLICT_COMMAND =
+  `claude -p "Resolve the merge conflicts described on stdin and answer exactly as it says. ` +
+  `Read the repository for context when it helps, but change nothing and ask no questions." ` +
+  `--model opus --effort medium --permission-mode dontAsk --output-format json ${SESSION_ID_ARG} ` +
+  `--allowedTools "Read Grep Glob Bash(git log *) Bash(git show *) Bash(git diff *) Bash(git blame *)"`;
+
 // The commands behind Check, Explain simply, a follow-up and Reply with
 // Claude on a pull request thread. Read-only toward the checkout and GitHub:
 // the review skill's lookups, none of its writes under review/, no python,

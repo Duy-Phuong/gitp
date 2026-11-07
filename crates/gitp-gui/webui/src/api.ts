@@ -26,6 +26,7 @@ import type {
   ConfigScope,
   ConflictSides,
   ConflictStatus,
+  SideCommits,
   DotfileKind,
   Editor,
   FileCommit,
@@ -1557,6 +1558,28 @@ export async function conflictSides(path: string): Promise<ConflictSides> {
   return invoke<ConflictSides>("conflict_sides", { path });
 }
 
+// The commits each side made to the conflicted `path` since the sides split.
+export async function conflictSideCommits(path: string): Promise<SideCommits> {
+  if (!isTauri()) return structuredClone(MOCK_SIDE_COMMITS);
+  return invoke<SideCommits>("conflict_side_commits", { path });
+}
+
+// Run `command` (Claude) to suggest resolutions for the conflicts of `path`,
+// described in `input` (its stdin). A Claude job: it shows in the jobs list
+// with its Stop. Resolves with what Claude answered.
+export async function suggestConflictResolution(path: string, command: string, input: string): Promise<string> {
+  if (!isTauri()) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const ids = [...input.matchAll(/^### Conflict (\d+)/gm)].map((m) => Number(m[1]));
+    const lines = (id: number) =>
+      path === "reset.css" ? ["  margin: 20px; /* theirs; ours was 10px */"] : [`Support PDF/A Compliance. (test-1 and test-2, #${id})`];
+    return JSON.stringify({
+      resolutions: ids.map((id) => ({ id, lines: lines(id), why: "Both sides changed this line; this keeps the intent of both." })),
+    });
+  }
+  return invoke<string>("suggest_conflict_resolution", { path, command, input });
+}
+
 export async function resolveConflict(path: string, content: string): Promise<void> {
   if (!isTauri()) {
     if (MOCK_SIDES[path]) MOCK_SIDES[path] = { ...MOCK_SIDES[path], working: content };
@@ -1576,7 +1599,7 @@ export async function resolveConflictSide(path: string, ours: boolean): Promise<
 
 export async function abortConflict(): Promise<string> {
   if (!isTauri()) {
-    MOCK_CONFLICT = { kind: "none", summary: "", conflicted: [], message: "" };
+    MOCK_CONFLICT = { ...NO_CONFLICT };
     return "Merge aborted (preview mock)";
   }
   return invoke<string>("abort_conflict", {});
@@ -1584,7 +1607,7 @@ export async function abortConflict(): Promise<string> {
 
 export async function finishConflict(message: string): Promise<string> {
   if (!isTauri()) {
-    MOCK_CONFLICT = { kind: "none", summary: "", conflicted: [], message: "" };
+    MOCK_CONFLICT = { ...NO_CONFLICT };
     return `Committed merge (preview mock): ${message.split("\n")[0]}`;
   }
   return invoke<string>("finish_conflict", { message });
@@ -2270,7 +2293,7 @@ export async function explainReviewFinding(path: string, number: number, finding
 // --- Claude jobs ----------------------------------------------------------------
 
 // Every Claude Code run gitp starts (see claude_jobs.rs): the last 7 days', newest first.
-export type ClaudeJobKind = "review" | "explain" | "thread";
+export type ClaudeJobKind = "review" | "explain" | "thread" | "resolve";
 export type ClaudeJobState = "running" | "done" | "failed" | "stopped" | "interrupted";
 
 export interface ClaudeUsage {
@@ -3113,11 +3136,36 @@ const MOCK_SIDES: Record<string, ConflictSides> = {
   },
 };
 
+const NO_CONFLICT: ConflictStatus = {
+  kind: "none",
+  summary: "",
+  conflicted: [],
+  message: "",
+  ours_label: "",
+  theirs_label: "",
+  step: null,
+  steps: null,
+  clean: [],
+};
+
 let MOCK_CONFLICT: ConflictStatus = {
   kind: "merge",
   summary: "Merge remote-tracking branch 'origin/test-1' into test-2",
   conflicted: ["README.md", "reset.css"],
   message: "Merge remote-tracking branch 'origin/test-1' into test-2\n",
+  ours_label: "test-2",
+  theirs_label: "origin/test-1",
+  step: null,
+  steps: null,
+  clean: [],
+};
+
+const MOCK_SIDE_COMMITS: SideCommits = {
+  ours: [
+    { short: "a1b2c3d", author: "Ada Lovelace", when: "2 days ago", subject: "docs: say which branch the build is from" },
+    { short: "b2c3d4e", author: "Ada Lovelace", when: "5 days ago", subject: "docs: add the test-2 notes" },
+  ],
+  theirs: [{ short: "c3d4e5f", author: "Grace Hopper", when: "yesterday", subject: "docs: list the sample requests" }],
 };
 
 export const MOCK_CONFIG: ConfigEntry[] = [

@@ -7,12 +7,24 @@
 // is saved (staged) once every conflict is resolved; when all files are resolved
 // Commit and Merge (merge) / Continue Rebase (rebase) is enabled.
 
+import { conflictPrompt, parseSuggestions, type ConflictQuestion } from "../conflict-help";
 import { clear, el } from "../dom";
-import type { ConflictSides, ConflictStatus } from "../types";
+import { highlighter, type Run } from "../highlight";
+import { loadSyntaxHighlight } from "../prefs";
+import type { ConflictSides, ConflictStatus, SideCommits } from "../types";
+import { wordDiff, type Seg } from "../worddiff";
+import { appendCode } from "./detail";
 
 export interface ConflictCallbacks {
   fetchStatus: () => Promise<ConflictStatus>;
   fetchSides: (path: string) => Promise<ConflictSides>;
+  // The commits each side made to the file since the sides split.
+  fetchSideCommits: (path: string) => Promise<SideCommits>;
+  // Ask Claude to resolve the conflicts described in `input`; resolves with
+  // its answer (see conflictPrompt / parseSuggestions).
+  suggest: (path: string, input: string) => Promise<string>;
+  // git rerere (remember resolutions) for this repository.
+  rerere: { get: () => Promise<boolean>; set: (on: boolean) => Promise<void> };
   resolve: (path: string, content: string) => Promise<void>;
   resolveSide: (path: string, ours: boolean) => Promise<void>;
   // Open the file in the OS default application (e.g. the user's editor).
@@ -246,7 +258,31 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   let res: (string[] | null)[] = [];
   // Which sides have been accepted into each resolution — parallel to `res`.
   let accepted: Set<Side>[] = [];
-  const resStore = new Map<string, { res: (string[] | null)[]; accepted: Set<Side>[] }>();
+  // Claude's reason for each change it resolved — keyed like `res`. Its
+  // blocks show purple until the file is saved.
+  let why = new Map<number, string>();
+  const resStore = new Map<
+    string,
+    { res: (string[] | null)[]; accepted: Set<Side>[]; why: Map<number, string> }
+  >();
+  const store = () => resStore.set(selected!, { res, accepted, why });
+  // The selected file's commits per side ("why each side changed").
+  let sideCommits: SideCommits | null = null;
+  let whyOpen = true;
+  // Files Claude is working on now.
+  const suggesting = new Set<string>();
+  // Syntax runs of the selected file's ours/theirs lines, by line index.
+  let oursRuns: Run[][] | null = null;
+  let theirsRuns: Run[][] | null = null;
+  // Show the base (the text before both sides changed it) in the Result
+  // column of an undecided change.
+  let showBase = loadShowBase();
+  let rerereOn: boolean | null = null;
+  // The keys of the editor on screen (n / p / [ / ] / ⌘S), or null.
+  let editorKeys: Record<string, () => void> | null = null;
+  let editorSave: (() => void) | null = null;
+  // Scroll the focused change into view after the next render (keys move it).
+  let scrollToCur = false;
   // Whether the sides ended with "\n" (splitLines drops it; see assembleLines).
   let trailingNewline = true;
   // Which changed chunk the ↑/↓ nav is focused on.
@@ -254,7 +290,17 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   let busy = false;
 
   async function reload(): Promise<void> {
+    // A refresh runs on any click (see external-refresh.ts). Redrawing when
+    // nothing changed would swap the row under the pointer between its
+    // mousedown and mouseup, and the click would be lost.
+    const before = host.childElementCount ? JSON.stringify(status) : null;
     status = await cb.fetchStatus();
+    if (rerereOn === null && status.kind !== "none") {
+      void cb.rerere.get().then((on) => {
+        rerereOn = on;
+        render();
+      }, () => {});
+    }
     for (const p of status.conflicted) initial.add(p);
     if (!messageInit && status.message) {
       message = status.message;
@@ -265,7 +311,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
       selected = null;
     }
     if (!selected && status.conflicted.length) void selectFile(status.conflicted[0]);
-    else render();
+    else if (JSON.stringify(status) !== before) render();
   }
 
   function resolvedList(): string[] {
@@ -286,6 +332,8 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     changedChunks = [];
     res = [];
     accepted = [];
+    why = new Map<number, string>();
+    sideCommits = null;
     curChange = 0;
     status = null;
   }
@@ -293,8 +341,17 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   async function selectFile(path: string): Promise<void> {
     selected = path;
     sides = null;
+    sideCommits = null;
     sidesLoading = true;
     render();
+    void cb.fetchSideCommits(path).then(
+      (c) => {
+        if (selected !== path) return;
+        sideCommits = c;
+        render();
+      },
+      () => {},
+    );
     const s = await cb.fetchSides(path);
     if (selected !== path) return; // selection moved on
     sides = s;
@@ -306,7 +363,12 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     const stored = resStore.get(path);
     res = stored?.res ?? changedChunks.map(() => null);
     accepted = stored?.accepted ?? changedChunks.map(() => new Set<Side>());
-    resStore.set(path, { res, accepted });
+    why = stored?.why ?? new Map<number, string>();
+    store();
+    // Each side highlighted as one text, so a line reads with what came
+    // before it in its own version.
+    oursRuns = highlight(path, splitLines(s.ours));
+    theirsRuns = highlight(path, splitLines(s.theirs));
     trailingNewline = (s.ours?.endsWith("\n") ?? false) || (s.theirs?.endsWith("\n") ?? false);
     curChange = 0;
     render();
@@ -335,6 +397,8 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   // --- rendering ------------------------------------------------------------
 
   function render(): void {
+    editorKeys = null;
+    editorSave = null;
     clear(host);
     if (!status || status.kind === "none") {
       host.append(el("div", { class: "detail-empty", text: "No conflicts to resolve." }));
@@ -348,6 +412,22 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   function leftPanel(): HTMLElement {
     const box = el("div", { class: "conflict-side" });
     box.append(el("div", { class: "conflict-summary", text: status!.summary || "Resolving conflicts" }));
+    const { step, steps } = status!;
+    if (status!.kind === "rebase" && step && steps) {
+      box.append(el("div", { class: "conflict-progress", text: `Commit ${step} of ${steps}` }));
+    }
+    box.append(
+      el("div", { class: "conflict-sides" }, [
+        el("div", {}, [el("span", { class: "conflict-side-tag ours", text: "Ours" }), el("span", { text: oursLabel() })]),
+        el("div", {}, [
+          el("span", { class: "conflict-side-tag theirs", text: "Theirs" }),
+          el("span", { text: theirsLabel() }),
+        ]),
+        ...(status!.kind === "rebase"
+          ? [el("div", { class: "conflict-sides-note", text: "In a rebase git swaps the sides: ours is the branch you rebase onto, theirs is your commit." })]
+          : []),
+      ]),
+    );
 
     const conflicted = status!.conflicted;
     const cHead = el("div", { class: "conflict-list-head" }, [
@@ -360,7 +440,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     }
     box.append(cHead);
     const cList = el("div", { class: "conflict-list" });
-    for (const p of conflicted) cList.append(fileRow(p, false));
+    for (const p of conflicted) cList.append(fileRow(p, false, status!.clean.includes(p)));
     if (!conflicted.length) cList.append(el("div", { class: "stage-empty", text: "All conflicts resolved" }));
     box.append(cList);
 
@@ -374,12 +454,12 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     return box;
   }
 
-  function fileRow(path: string, resolved: boolean): HTMLElement {
+  function fileRow(path: string, resolved: boolean, clean = false): HTMLElement {
     const row = el("div", {
-      class: `conflict-file${selected === path ? " selected" : ""}${resolved ? " resolved" : ""}`,
-      title: path,
+      class: `conflict-file${selected === path ? " selected" : ""}${resolved ? " resolved" : ""}${clean ? " clean" : ""}`,
+      title: clean ? `${path}\nNo conflict markers left — Mark Resolved stages it as it is.` : path,
     });
-    row.append(el("span", { class: "conflict-file-icon", text: resolved ? "✓" : "⚠" }));
+    row.append(el("span", { class: "conflict-file-icon", text: resolved || clean ? "✓" : "⚠" }));
     row.append(el("span", { class: "tree-name", text: path }));
     row.addEventListener("click", () => void selectFile(path));
     return row;
@@ -416,7 +496,43 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     abortBtn.addEventListener("click", () => void abort());
 
     box.append(el("div", { class: "conflict-footer-actions" }, [abortBtn, finishBtn]));
+    if (rerereOn !== null) {
+      const check = el("input", { type: "checkbox" });
+      check.checked = rerereOn;
+      check.addEventListener("change", () => {
+        const on = check.checked;
+        void cb.rerere.set(on).then(
+          () => {
+            rerereOn = on;
+            cb.setStatus(on ? "git rerere is on: resolutions are remembered from the next conflict on." : "git rerere is off.");
+          },
+          (err) => {
+            check.checked = !on;
+            cb.reportError("Could not change git rerere", String(err));
+          },
+        );
+      });
+      box.append(
+        el(
+          "label",
+          {
+            class: "conflict-rerere",
+            title:
+              "git rerere records how you resolve a conflict, and resolves the same conflict the same way when it comes back " +
+              "(for example when you rebase this branch again). It starts with the next conflict.",
+          },
+          [check, el("span", { text: "Remember my resolutions (git rerere)" })],
+        ),
+      );
+    }
     return box;
+  }
+
+  function oursLabel(): string {
+    return status?.ours_label || "current";
+  }
+  function theirsLabel(): string {
+    return status?.theirs_label || "incoming";
   }
 
   function mainPanel(): HTMLElement {
@@ -463,8 +579,8 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
       el("div", { class: "conflict-binary" }, [
         el("span", {
           text: oursDeleted
-            ? "Deleted on ours (current) / Modified on theirs (incoming)"
-            : "Modified on ours (current) / Deleted on theirs (incoming)",
+            ? `Deleted on ours (${oursLabel()}) / Modified on theirs (${theirsLabel()})`
+            : `Modified on ours (${oursLabel()}) / Deleted on theirs (${theirsLabel()})`,
         }),
         btn(oursDeleted ? "Keep file (take theirs)" : "Keep file (take ours)", !oursDeleted),
         btn(oursDeleted ? "Delete file (take ours)" : "Delete file (take theirs)", oursDeleted),
@@ -541,7 +657,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
         accepted[i] = new Set([side]);
         return changedChunks[i][side].slice();
       });
-      resStore.set(selected!, { res, accepted });
+      store();
       render();
     };
     const applyNonConflicting = (mode: "ours" | "theirs" | "both") => {
@@ -551,7 +667,7 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
         accepted[i] = new Set(mode === "both" ? ["ours", "theirs"] : [mode]);
         return (mode === "ours" ? c.ours : mode === "theirs" ? c.theirs : (c.auto ?? [])).slice();
       });
-      resStore.set(selected!, { res, accepted });
+      store();
       render();
     };
     const gotoChange = (delta: number) => {
@@ -560,6 +676,18 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
       highlightChange();
       anchors[curChange]?.scrollIntoView({ block: "center" });
     };
+    // [ / ]: take a side for the focused change, then move to the next
+    // undecided one.
+    const takeFocused = (ours: boolean) => {
+      if (curChange < 0 || curChange >= total) return;
+      const side: Side = ours ? "ours" : "theirs";
+      res[curChange] = acceptLines(res[curChange], accepted[curChange], side, changedChunks[curChange][side]);
+      store();
+      const next = nextUndecided(curChange);
+      if (next >= 0) curChange = next;
+      scrollToCur = true;
+      render();
+    };
 
     const tbBtn = (label: string, title: string, onClick: () => void, disabled = false) => {
       const b = el("button", { class: "btn ghost small icon-btn", text: label, title });
@@ -567,8 +695,8 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
       b.addEventListener("click", onClick);
       return b;
     };
-    const txtBtn = (label: string, onClick: () => void, disabled = false) => {
-      const b = el("button", { class: "btn ghost small", text: label });
+    const txtBtn = (label: string, onClick: () => void, disabled = false, title = "") => {
+      const b = el("button", { class: "btn ghost small", text: label, title });
       b.disabled = disabled;
       b.addEventListener("click", onClick);
       return b;
@@ -576,9 +704,19 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     const save = el("button", { class: "btn", text: "Save" });
     save.disabled = !allResolved();
     save.title = allResolved()
-      ? "Stage this file as resolved"
+      ? "Stage this file as resolved (⌘S)"
       : `Resolve ${unresolved} more change${unresolved !== 1 ? "s" : ""} to save`;
     save.addEventListener("click", () => void saveFile());
+
+    editorKeys = {
+      n: () => gotoChange(1),
+      p: () => gotoChange(-1),
+      "[": () => takeFocused(true),
+      "]": () => takeFocused(false),
+    };
+    editorSave = () => {
+      if (allResolved()) void saveFile();
+    };
 
     // Remaining-work indicator; decrements as blocks are resolved. Clickable to
     // jump to the first unresolved change (so it's clear what's blocking Save).
@@ -593,38 +731,90 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
       count.addEventListener("click", jumpToUnresolved);
     }
 
+    const path = selected!;
+    const thinking = suggesting.has(path);
+    const suggestBtn = txtBtn(
+      thinking ? "✦ Claude is thinking…" : "✦ Suggest with Claude",
+      () => void suggestWithClaude(),
+      thinking || unresolvedConflicts === 0,
+      unresolvedConflicts
+        ? "Ask Claude to resolve the red conflicts of this file. Its proposals show in purple for you to check before Save."
+        : "No conflicts left to resolve",
+    );
+    suggestBtn.classList.add("cf-suggest-btn");
+    const baseBtn = txtBtn(
+      "Base",
+      () => {
+        showBase = !showBase;
+        saveShowBase(showBase);
+        render();
+      },
+      false,
+      "Show the base (the text before both sides changed it) in Result while a change is undecided",
+    );
+    if (showBase) baseBtn.classList.add("active");
+
     box.append(
       el("div", { class: "conflict-editor-head" }, [
-        el("span", { class: "conflict-editor-file", text: selected! }),
+        el("span", { class: "conflict-editor-file", text: path }),
         count,
         el("div", { class: "conflict-editor-actions" }, [
-          tbBtn("↑", "Previous change", () => gotoChange(-1), !total),
-          tbBtn("↓", "Next change", () => gotoChange(1), !total),
+          tbBtn("↑", "Previous change (p)", () => gotoChange(-1), !total),
+          tbBtn("↓", "Next change (n)", () => gotoChange(1), !total),
           el("span", { class: "conflict-tb-label", text: "Apply non-conflicting:" }),
           tbBtn("≫", "Take all non-conflicting from the left (ours)", () => applyNonConflicting("ours")),
           tbBtn("⇄", "Apply all non-conflicting changes", () => applyNonConflicting("both")),
           tbBtn("≪", "Take all non-conflicting from the right (theirs)", () => applyNonConflicting("theirs")),
           el("span", { class: "conflict-tb-sep" }),
+          suggestBtn,
+          baseBtn,
           txtBtn("Accept All Ours", () => acceptAll(true)),
           txtBtn("Accept All Theirs", () => acceptAll(false)),
           txtBtn("Cancel", () => cancelFile(), !touched),
-          txtBtn("Edit File", () => void cb.openInEditor(selected!)),
-          txtBtn("Open in Merge Tool", () => cb.openInMergeTool(selected!)),
+          txtBtn("Edit File", () => void cb.openInEditor(path)),
+          txtBtn("Open in Merge Tool", () => cb.openInMergeTool(path)),
           txtBtn("Mark Resolved", () => void markFileResolved()),
           save,
         ]),
       ]),
     );
 
+    if (status?.clean.includes(path)) {
+      box.append(
+        el("div", { class: "conflict-banner" }, [
+          el("span", {
+            text: "This file has no conflict markers left on disk: git rerere or an edit already resolved it. Mark Resolved stages it as it is.",
+          }),
+          txtBtn("Mark Resolved", () => void markFileResolved()),
+        ]),
+      );
+    }
+    const proposals = [...why.keys()].filter((i) => res[i] !== null).length;
+    if (proposals) {
+      box.append(
+        el("div", { class: "conflict-banner claude" }, [
+          el("span", {
+            text: `✦ Claude resolved ${proposals} conflict${proposals === 1 ? "" : "s"}: the purple blocks. Read each one (hover for Claude's reason), change or reset it, then Save.`,
+          }),
+        ]),
+      );
+    }
+    box.append(whyPanel());
+
+    // Result lines as they stand, highlighted as one text: the line numbers
+    // of the Result column count exactly these.
+    const resultRuns = highlight(path, assembleLines(chunks, res, false).split("\n"));
+
     const grid = el("div", { class: "merge3" });
     grid.append(
-      headCell("Ours (current)"),
+      headCell(`Ours · ${oursLabel()}`),
       el("div", { class: "merge-head merge-gutter" }),
       headCell("Result"),
       el("div", { class: "merge-head merge-gutter" }),
-      headCell("Theirs (incoming)"),
+      headCell(`Theirs · ${theirsLabel()}`),
     );
 
+    const runsAt = (runs: Run[][] | null, n: number) => runs?.[n - 1];
     // Per-column running line numbers (each column numbers its own file).
     const no = { o: 1, c: 1, t: 1 };
     let ci = 0;
@@ -633,11 +823,11 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
         for (const l of c.lines) {
           appendRow(
             grid,
-            { text: l, cls: "", no: no.o++ },
+            { text: l, cls: "", no: no.o, runs: runsAt(oursRuns, no.o++) },
             null,
-            { text: l, cls: "", no: no.c++ },
+            { text: l, cls: "", no: no.c, runs: runsAt(resultRuns, no.c++) },
             null,
-            { text: l, cls: "", no: no.t++ },
+            { text: l, cls: "", no: no.t, runs: runsAt(theirsRuns, no.t++) },
             null,
           );
         }
@@ -652,21 +842,38 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
       const side: Cell["cls"] = resolved ? "done" : kind;
       const oursCh = !eqLines(c.ours, c.base);
       const theirsCh = !eqLines(c.theirs, c.base);
-      const h = Math.max(c.ours.length, c.theirs.length, r?.length ?? 0, 1);
+      const reason = resolved ? why.get(idx) : undefined;
+      const ghost = !resolved && showBase ? c.base : [];
+      const h = Math.max(c.ours.length, c.theirs.length, r?.length ?? 0, ghost.length, 1);
       const blockCells: HTMLElement[] = [];
       for (let x = 0; x < h; x++) {
+        // The words that differ between the two sides of an open conflict.
+        const words =
+          c.conflict && !resolved && x < c.ours.length && x < c.theirs.length
+            ? wordDiff(c.ours[x], c.theirs[x])
+            : null;
         const center: Cell | null = !resolved
-          ? { text: "", cls: kind, no: null } // undecided gap, tinted by kind
+          ? { text: ghost[x] ?? "", cls: kind, no: null, ghost: x < ghost.length } // undecided gap, tinted by kind
           : x < r.length
-            ? { text: r[x], cls: "", no: no.c++ }
+            ? {
+                text: r[x],
+                cls: reason !== undefined ? "claude" : "",
+                no: no.c,
+                runs: runsAt(resultRuns, no.c++),
+                title: reason ? `Claude: ${reason}` : undefined,
+              }
             : null;
         const cells = appendRow(
           grid,
-          x < c.ours.length ? { text: c.ours[x], cls: oursCh ? side : "", no: no.o++ } : null,
+          x < c.ours.length
+            ? { text: c.ours[x], cls: oursCh ? side : "", no: no.o, runs: runsAt(oursRuns, no.o++), segs: words?.left }
+            : null,
           x === 0 ? leftGutter(idx, resolved) : null,
           center,
           x === 0 ? rightGutter(idx, resolved) : null,
-          x < c.theirs.length ? { text: c.theirs[x], cls: theirsCh ? side : "", no: no.t++ } : null,
+          x < c.theirs.length
+            ? { text: c.theirs[x], cls: theirsCh ? side : "", no: no.t, runs: runsAt(theirsRuns, no.t++), segs: words?.right }
+            : null,
           resolved && x < r.length ? { ci: idx, li: x } : null,
         );
         blockCells.push(...cells);
@@ -678,13 +885,136 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     grid.addEventListener("copy", onCopy);
     isolateMergeColumnDrag(grid);
     highlightChange();
+    if (scrollToCur) {
+      scrollToCur = false;
+      requestAnimationFrame(() => anchors[curChange]?.scrollIntoView({ block: "center" }));
+    }
     return box;
+  }
+
+  // The first undecided change after `from` (wrapping), or -1 when none is.
+  function nextUndecided(from: number): number {
+    for (let k = 1; k <= res.length; k++) {
+      const i = (from + k) % res.length;
+      if (res[i] === null) return i;
+    }
+    return -1;
+  }
+
+  // "Why each side changed": the commits that touched this file on each side
+  // since they split, which tell the intent behind the lines in conflict.
+  function whyPanel(): HTMLElement {
+    const details = el("details", { class: "conflict-why" });
+    details.open = whyOpen;
+    details.addEventListener("toggle", () => (whyOpen = details.open));
+    const list = (title: string, commits: SideCommits["ours"] | undefined) =>
+      el("div", { class: "conflict-why-side" }, [
+        el("div", { class: "conflict-why-title", text: title }),
+        ...(commits === undefined
+          ? [el("div", { class: "conflict-why-empty", text: "Loading…" })]
+          : commits.length
+            ? commits.map((c) =>
+                el("div", { class: "conflict-why-commit", title: `${c.short} ${c.subject}\n${c.author}, ${c.when}` }, [
+                  el("span", { class: "conflict-why-sha", text: c.short }),
+                  el("span", { class: "conflict-why-subject", text: c.subject }),
+                  el("span", { class: "conflict-why-meta", text: `${c.author} · ${c.when}` }),
+                ]),
+              )
+            : [el("div", { class: "conflict-why-empty", text: "No commits found" })]),
+      ]);
+    details.append(
+      el("summary", { text: "Why each side changed this file" }),
+      el("div", { class: "conflict-why-body" }, [
+        list(`Ours · ${oursLabel()}`, sideCommits?.ours),
+        list(`Theirs · ${theirsLabel()}`, sideCommits?.theirs),
+      ]),
+    );
+    return details;
+  }
+
+  // Ask Claude to resolve this file's open (red) conflicts. Its answers fill
+  // those changes in Result, marked purple with its reason, for the user to
+  // check, change or reset before Save. Nothing is staged.
+  async function suggestWithClaude(): Promise<void> {
+    const path = selected;
+    if (!path || suggesting.has(path) || !status) return;
+    const fileChunks = chunks;
+    const fileRes = res;
+    const asked: number[] = []; // conflict id - 1 → index into the changed chunks
+    const questions: ConflictQuestion[] = [];
+    let ci = -1;
+    fileChunks.forEach((c, k) => {
+      if (c.kind !== "changed") return;
+      ci++;
+      if (!c.conflict || fileRes[ci] !== null) return;
+      const prev = fileChunks[k - 1];
+      const next = fileChunks[k + 1];
+      asked.push(ci);
+      questions.push({
+        id: asked.length,
+        before: prev?.kind === "stable" ? prev.lines.slice(-3) : [],
+        base: c.base,
+        ours: c.ours,
+        theirs: c.theirs,
+        after: next?.kind === "stable" ? next.lines.slice(0, 3) : [],
+      });
+    });
+    if (!questions.length) return;
+    const input = conflictPrompt(
+      {
+        path,
+        kind: status.kind,
+        oursLabel: oursLabel(),
+        theirsLabel: theirsLabel(),
+        oursCommits: sideCommits?.ours ?? [],
+        theirsCommits: sideCommits?.theirs ?? [],
+      },
+      questions,
+    );
+    suggesting.add(path);
+    cb.setStatus(`Claude is resolving ${questions.length} conflict${questions.length === 1 ? "" : "s"} in ${path}…`);
+    render();
+    try {
+      const answer = await cb.suggest(path, input);
+      const found = parseSuggestions(answer);
+      // The file's own state, even when another file is on screen now; none
+      // when it was saved or the session ended meanwhile.
+      const target = resStore.get(path);
+      let applied = 0;
+      if (target && target.res === fileRes) {
+        for (const [id, sug] of found) {
+          const idx = asked[id - 1];
+          if (idx === undefined || target.res[idx] !== null) continue;
+          target.res[idx] = sug.lines.slice();
+          target.accepted[idx] = new Set();
+          target.why.set(idx, sug.why);
+          applied++;
+        }
+      }
+      const left = questions.length - applied;
+      cb.reportDone(
+        applied
+          ? `Claude resolved ${applied} of ${questions.length} conflict${questions.length === 1 ? "" : "s"} in ${path}${left ? `; ${left} left for you` : ""}. Check the purple blocks, then Save.`
+          : `Claude left the conflicts in ${path} for you.`,
+      );
+    } catch (err) {
+      cb.reportError("Claude could not suggest a resolution", String(err));
+    } finally {
+      suggesting.delete(path);
+      render();
+    }
   }
 
   interface Cell {
     text: string;
-    cls: "" | "new" | "conflict" | "done";
+    cls: "" | "new" | "conflict" | "done" | "claude";
     no: number | null;
+    // Syntax runs and word-diff segments of the text, when it has them.
+    runs?: Run[];
+    segs?: Seg[] | null;
+    title?: string;
+    // The base's text shown in an undecided change: not part of the result.
+    ghost?: boolean;
   }
 
   function headCell(text: string): HTMLElement {
@@ -763,14 +1093,17 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   }
 
   function lineCell(c: Cell | null, side: string, edit: { ci: number; li: number } | null): HTMLElement {
-    const cls = c ? (c.cls ? ` cf-${c.cls}` : "") : " cf-filler";
+    const cls = c ? (c.cls ? ` cf-${c.cls}` : "") + (c.ghost ? " cf-ghost" : "") : " cf-filler";
     const div = el("div", { class: `cf-line ${side}${cls}` });
+    if (c?.title) div.title = c.title;
     div.append(el("span", { class: "cf-no", text: c && c.no != null ? String(c.no) : "" }));
     const tx = el("span", { class: "cf-tx" });
-    tx.textContent = c ? c.text || " " : " ";
+    if (c && c.text && (c.runs || c.segs)) appendCode(tx, c.text, c.segs ?? null, c.runs, "cf-word");
+    else tx.textContent = c ? c.text || " " : " ";
     // The exact source text (blank lines render as " "), so a column copy
-    // reproduces the file verbatim; absent on filler/gap rows so copy skips them.
-    if (c) tx.dataset.raw = c.text;
+    // reproduces the file verbatim; absent on filler/gap rows (and on the base
+    // shown in an undecided change) so copy skips them.
+    if (c && !c.ghost) tx.dataset.raw = c.text;
     if (edit) {
       tx.setAttribute("contenteditable", "plaintext-only");
       tx.addEventListener("input", () => {
@@ -806,19 +1139,23 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
   function acceptSide(idx: number, ours: boolean): void {
     const side: Side = ours ? "ours" : "theirs";
     res[idx] = acceptLines(res[idx], accepted[idx], side, changedChunks[idx][side]);
-    resStore.set(selected!, { res, accepted });
+    curChange = idx;
+    store();
     render();
   }
   function resetConflict(idx: number): void {
     res[idx] = null;
     accepted[idx] = new Set();
-    resStore.set(selected!, { res, accepted });
+    why.delete(idx);
+    curChange = idx;
+    store();
     render();
   }
   function cancelFile(): void {
     res = changedChunks.map(() => null);
     accepted = changedChunks.map(() => new Set<Side>());
-    resStore.set(selected!, { res, accepted });
+    why = new Map<number, string>();
+    store();
     cb.setStatus(`Reverted resolutions for ${selected}.`);
     render();
   }
@@ -926,5 +1263,50 @@ export function setupConflict(host: HTMLElement, cb: ConflictCallbacks): Conflic
     });
   }
 
+  // The editor's keys: n / p move between changes, [ / ] take ours /
+  // theirs for the focused one, ⌘S saves. Single keys only while not typing.
+  document.addEventListener("keydown", (e) => {
+    if (!editorKeys || !host.isConnected || host.offsetParent === null) return;
+    if (document.querySelector(".modal-overlay, .ql-overlay")) return;
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      editorSave?.();
+      return;
+    }
+    const t = e.target as HTMLElement;
+    if (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA") return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const act = editorKeys[e.key];
+    if (!act) return;
+    e.preventDefault();
+    act();
+  });
+
   return { reload, reset: resetSession };
+}
+
+// `lines` of `path` with syntax runs per line, or null when highlighting is
+// off (Settings) or the file has no language.
+function highlight(path: string, lines: string[]): Run[][] | null {
+  const hl = loadSyntaxHighlight() ? highlighter(path) : null;
+  return hl ? hl(lines) : null;
+}
+
+const SHOW_BASE_KEY = "gitp-conflict-show-base";
+
+function loadShowBase(): boolean {
+  try {
+    return localStorage.getItem(SHOW_BASE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveShowBase(on: boolean): void {
+  try {
+    if (on) localStorage.setItem(SHOW_BASE_KEY, "1");
+    else localStorage.removeItem(SHOW_BASE_KEY);
+  } catch {
+    // Not remembered; the toggle still works for this session.
+  }
 }

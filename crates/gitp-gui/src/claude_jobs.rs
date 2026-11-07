@@ -54,6 +54,9 @@ pub(crate) enum JobKind {
     Review,
     Explain,
     Thread,
+    /// Suggest resolutions for a conflicted file (no pull request: `pr` 0,
+    /// the file's path in `finding`).
+    Resolve,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -318,6 +321,10 @@ impl ClaudeJobs {
                     "Finding {} of #{} is already being explained.",
                     new.finding.as_deref().unwrap_or_default(),
                     new.pr
+                ),
+                JobKind::Resolve => format!(
+                    "Claude is already suggesting a resolution for {}.",
+                    new.finding.as_deref().unwrap_or_default()
                 ),
             });
         }

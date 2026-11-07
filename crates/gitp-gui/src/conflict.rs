@@ -1,9 +1,10 @@
 //! Merge / rebase conflict resolution.
 
-use gitp_core::{ConflictSides, ConflictStatus, HeadMoveMode, Repo};
+use gitp_core::{ConflictSides, ConflictStatus, HeadMoveMode, Repo, SideCommits};
 use tauri::State;
 
-use crate::state::{with_repo, with_repo_clearing_undo, RepoState};
+use crate::claude_jobs::{ClaudeJobs, JobKind, NewJob};
+use crate::state::{to_message, with_repo, with_repo_clearing_undo, with_repo_unlocked, RepoState};
 use crate::undo::with_recorded_head_move;
 
 /// The in-progress conflict session (merge or rebase), if any.
@@ -50,6 +51,47 @@ fn finish_conflict_impl(state: &RepoState, message: String) -> Result<String, St
     })
 }
 
+/// The commits each side made to `path` since the sides split.
+fn conflict_side_commits_impl(state: &RepoState, path: String) -> Result<SideCommits, String> {
+    with_repo_unlocked(state, |repo| repo.conflict_side_commits(&path))
+}
+
+/// Run `command` to suggest resolutions for the conflicts of `path`, with
+/// `input` on its stdin: a Claude job, so it shows in the jobs list with its
+/// Stop, and holds no lock while the model thinks.
+fn suggest_conflict_resolution_impl(
+    state: &RepoState,
+    jobs: &ClaudeJobs,
+    path: String,
+    command: String,
+    input: String,
+) -> Result<String, String> {
+    let repo_path = {
+        let guard = state.workspace();
+        let idx = guard.active.ok_or("no repository is open")?;
+        guard.sessions[idx].path.clone()
+    };
+    let mut repo = Repo::open(&repo_path).map_err(to_message)?;
+    let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+    let run = jobs.begin(NewJob {
+        kind: JobKind::Resolve,
+        label: format!("Resolve conflict · {name}"),
+        activity: String::new(),
+        repo: repo_path.clone(),
+        pr: 0,
+        thread: None,
+        finding: Some(path),
+        command: command.clone(),
+        stdin_bytes: input.len(),
+    })?;
+    repo.set_network_hooks(run.hooks());
+    let out = repo
+        .suggest_conflict_resolution(&command, &input)
+        .map_err(to_message);
+    run.finish(out.clone(), &[]);
+    out
+}
+
 // --- Tauri commands --------------------------------------------------------
 
 #[tauri::command(async)]
@@ -91,4 +133,23 @@ pub(crate) fn abort_conflict(state: State<RepoState>) -> Result<String, String> 
 #[tauri::command(async)]
 pub(crate) fn finish_conflict(message: String, state: State<RepoState>) -> Result<String, String> {
     finish_conflict_impl(&state, message)
+}
+
+#[tauri::command(async)]
+pub(crate) fn conflict_side_commits(
+    path: String,
+    state: State<RepoState>,
+) -> Result<SideCommits, String> {
+    conflict_side_commits_impl(&state, path)
+}
+
+#[tauri::command(async)]
+pub(crate) fn suggest_conflict_resolution(
+    path: String,
+    command: String,
+    input: String,
+    state: State<RepoState>,
+    jobs: State<ClaudeJobs>,
+) -> Result<String, String> {
+    suggest_conflict_resolution_impl(&state, &jobs, path, command, input)
 }

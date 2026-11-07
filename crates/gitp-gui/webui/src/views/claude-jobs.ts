@@ -98,13 +98,16 @@ export function setupClaudeJobsView(root: HTMLElement, cb: ClaudeJobsCallbacks):
       stop.addEventListener("click", () => cb.stop(job));
       actions.append(stop);
     }
-    const open = el(
-      "button",
-      { class: "btn ghost", type: "button", title: job.repo === openRepo ? "" : `In ${repoName(job.repo)}` },
-      [job.kind === "thread" ? "Open thread ↗" : "Open pull request ↗"],
-    );
-    open.addEventListener("click", () => cb.openThread(job));
-    actions.append(open);
+    // A conflict suggestion belongs to no pull request: nothing to open.
+    if (job.kind !== "resolve") {
+      const open = el(
+        "button",
+        { class: "btn ghost", type: "button", title: job.repo === openRepo ? "" : `In ${repoName(job.repo)}` },
+        [job.kind === "thread" ? "Open thread ↗" : "Open pull request ↗"],
+      );
+      open.addEventListener("click", () => cb.openThread(job));
+      actions.append(open);
+    }
     const sameDay = (a: number, b: number) => new Date(a).toDateString() === new Date(b).toDateString();
     const end = job.ended && (sameDay(job.started, job.ended) ? time(job.ended) : when(job.ended));
     const meta = [repoName(job.repo), end && job.state !== "running" ? `${when(job.started)} → ${end}` : `started ${when(job.started)}`];

@@ -2012,7 +2012,7 @@ fn undo_fix(dir: &Path, branch: &str, before: &str) -> Result<()> {
 /// What a thread command printed: the answer, and the session to resume
 /// when it was a `claude -p --output-format json` answer. Such an answer
 /// that reports an error is the error.
-fn claude_answer(stdout: &str) -> Result<(String, Option<String>)> {
+pub(crate) fn claude_answer(stdout: &str) -> Result<(String, Option<String>)> {
     let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout.trim()) else {
         return Ok((stdout.to_string(), None));
     };
@@ -2041,7 +2041,7 @@ fn claude_answer(stdout: &str) -> Result<(String, Option<String>)> {
 /// A run that doesn't resume a Claude session (no `GITP_CLAUDE_SESSION` in
 /// `env`) is offered a fresh one in `GITP_CLAUDE_NEW_SESSION`, for
 /// `claude --session-id`; either way the hooks hear which session it is.
-fn run_shell(
+pub(crate) fn run_shell(
     dir: &Path,
     command: &str,
     input: &[u8],
@@ -2138,8 +2138,8 @@ fn run_shell(
     }
 }
 
-struct ShellOutput {
-    stdout: String,
+pub(crate) struct ShellOutput {
+    pub(crate) stdout: String,
     stderr: String,
 }
 

@@ -10,6 +10,7 @@ import {
   clearLocalHistory,
   commitChanges,
   confirmDialog,
+  conflictSideCommits,
   conflictSides,
   conflictStatus,
   createBranchAt,
@@ -72,6 +73,9 @@ import {
   codeWriteFile,
   onCodeFilesChanged,
   onCodeIndexReady,
+  fetchConfig,
+  saveConfig,
+  suggestConflictResolution,
 } from "./api";
 import { $ } from "./dom";
 import { setupDetail } from "./views/detail";
@@ -109,8 +113,11 @@ import {
   saveDetailTab,
   savePushAfterCommit,
   updatePullButtonTitle,
+  RESOLVE_CONFLICT_COMMAND,
+  withClaudeChoice,
 } from "./prefs";
 import { refsAt } from "./commit-refs";
+import { rerereEnabled } from "./conflict-help";
 import { setupConfigTabs } from "./config-panel";
 import { setupPaneResizer, setupSidebarResizer, setupTerminalResizer } from "./resizers";
 import { applyWorkspace, jumpToCommit, leaveComparison, loadChanges, loadRepo, loadSidebar, openPullRequestTab, refreshHistory, refreshUndoLabels, refreshWipRow, renderSidebarNow, restoreWorkspace, searchPullRequests, setRefActions, showPullRequest, showReflogDetail, showStashDetail, showView, startAutoFetch, updateLogView } from "./shell";
@@ -472,6 +479,16 @@ async function init(): Promise<void> {
   ui.conflictView = setupConflict($("#conflict-pane"), {
     fetchStatus: conflictStatus,
     fetchSides: conflictSides,
+    fetchSideCommits: conflictSideCommits,
+    suggest: (path, input) => suggestConflictResolution(path, withClaudeChoice(RESOLVE_CONFLICT_COMMAND), input),
+    rerere: {
+      get: async () => rerereEnabled(await fetchConfig()),
+      // Where it is set for this repository already, else for every one.
+      set: async (on) => {
+        const local = (await fetchConfig()).some((e) => e.scope === "Local" && e.name.toLowerCase() === "rerere.enabled");
+        await saveConfig(local ? "Local" : "Global", "rerere.enabled", on ? "true" : "false");
+      },
+    },
     resolve: resolveConflict,
     resolveSide: resolveConflictSide,
     openInEditor,

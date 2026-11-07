@@ -1212,7 +1212,7 @@ function sideCell(
 // A line's code: its text, with the changed word-diff segments wrapped in a
 // `changedClass` mark and, when it was highlighted, the syntax token spans
 // inside those (see overlay in highlight.ts).
-function appendCode(
+export function appendCode(
   host: HTMLElement,
   text: string,
   segs: Seg[] | null,

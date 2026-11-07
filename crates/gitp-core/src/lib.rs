@@ -64,7 +64,7 @@ pub use claude_transcript::{
 pub use commit_ops::ResetMode;
 pub use compare::{CompareEnd, Comparison, EMPTY_REV, WORKDIR_REV};
 pub use config::{ConfigEntry, ConfigScope};
-pub use conflict_ops::{ConflictSides, ConflictStatus};
+pub use conflict_ops::{ConflictCommit, ConflictSides, ConflictStatus, SideCommits};
 pub use create::{clone_repo, init_repo, CloneOptions};
 pub use diff::{
     ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff, DEFAULT_CONTEXT_LINES, MAX_DIFF_LINES,
