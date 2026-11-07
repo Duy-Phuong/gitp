@@ -17,6 +17,24 @@ export interface FormField {
   required?: boolean;
   // A dropdown of these instead of a text field; `value` picks the option.
   choices?: { value: string; label: string }[];
+  // A button beside the label that acts on the dialog (Draft with Claude).
+  action?: FieldAction;
+}
+
+export interface FieldAction {
+  label: string;
+  run: (form: FormAccess) => void;
+}
+
+// What a field action can reach: every field's value, its own button, a
+// status line under its field (hidden while empty), and whether the dialog
+// is still open.
+export interface FormAccess {
+  value: (index: number) => string;
+  set: (index: number, value: string) => void;
+  button: HTMLButtonElement;
+  status: HTMLElement;
+  isOpen: () => boolean;
 }
 
 export interface FormOptions {
@@ -24,6 +42,8 @@ export interface FormOptions {
   sub?: string;
   fields: FormField[];
   submitLabel: string;
+  // Called once when the dialog closes, whichever way.
+  onClose?: () => void;
 }
 
 // `onSubmit` gets each field's value, trimmed, in `fields` order.
@@ -32,9 +52,13 @@ export function openFormDialog(opts: FormOptions, onSubmit: (values: string[]) =
   const modal = el("div", { class: "modal rename-modal" });
   overlay.append(modal);
 
+  let open = true;
   const close = () => {
+    if (!open) return;
+    open = false;
     document.removeEventListener("keydown", onKey, true);
     overlay.remove();
+    opts.onClose?.();
   };
   const inputs = opts.fields.map((f) => {
     if (f.choices) {
@@ -84,12 +108,27 @@ export function openFormDialog(opts: FormOptions, onSubmit: (values: string[]) =
         submit();
       }
     });
-    modal.append(
-      el("div", { class: `rename-row${f.multiline ? " multiline" : ""}` }, [
-        el("span", { class: "rename-label", text: f.label }),
-        input,
-      ]),
-    );
+    const label = el("span", { class: "rename-label", text: f.label });
+    modal.append(el("div", { class: `rename-row${f.multiline ? " multiline" : ""}` }, [label, input]));
+    if (f.action) {
+      const action = f.action;
+      const button = el("button", { class: "btn ghost form-field-action", type: "button", text: action.label });
+      const status = el("div", { class: "form-field-status" });
+      status.hidden = true;
+      label.append(button);
+      modal.append(status);
+      button.addEventListener("click", () =>
+        action.run({
+          value: (index) => inputs[index]?.value ?? "",
+          set: (index, value) => {
+            if (inputs[index]) inputs[index].value = value;
+          },
+          button,
+          status,
+          isOpen: () => open,
+        }),
+      );
+    }
   });
 
   const cancel = el("button", { class: "btn ghost", text: "Cancel" });
