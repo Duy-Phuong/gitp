@@ -3,53 +3,77 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { pausePollingFor, startPolling } from "./poller";
 
+let hidden = false;
 const stops: (() => void)[] = [];
-function poll(key: string, ms: number, tick: () => Promise<void> | void) {
+const start = (key: string, ms: number, tick: () => Promise<void> | void) => {
   const stop = startPolling(key, ms, tick);
   stops.push(stop);
   return stop;
-}
-
-function setHidden(hidden: boolean) {
-  Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+};
+const blur = () => window.dispatchEvent(new Event("blur"));
+const focus = () => window.dispatchEvent(new Event("focus"));
+const setHidden = (h: boolean) => {
+  hidden = h;
   document.dispatchEvent(new Event("visibilitychange"));
-}
+};
 
-// Each test an hour after the last, so no pause carries over.
-let clock = Date.now();
 beforeEach(() => {
-  vi.useFakeTimers({ now: (clock += 3_600_000) });
-  setHidden(false);
-  window.dispatchEvent(new Event("focus"));
+  vi.useFakeTimers();
+  hidden = false;
+  Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+  focus();
 });
+
 afterEach(() => {
-  stops.splice(0).forEach((s) => s());
+  for (const stop of stops.splice(0)) stop();
+  pausePollingFor(0);
   vi.useRealTimers();
 });
 
-describe("the poller", () => {
-  it("ticks every interval, not at the start", async () => {
+describe("startPolling", () => {
+  it("ticks every interval while focused", async () => {
     const tick = vi.fn();
-    poll("a", 1000, tick);
+    start("a", 1000, tick);
     expect(tick).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(3000);
     expect(tick).toHaveBeenCalledTimes(3);
   });
 
-  it("pauses while the window is unfocused and ticks at once on refocus", async () => {
+  it("stops when its stop function is called", async () => {
     const tick = vi.fn();
-    poll("a", 1000, tick);
-    window.dispatchEvent(new Event("blur"));
-    await vi.advanceTimersByTimeAsync(5000);
+    const stop = start("a", 1000, tick);
+    stop();
+    await vi.advanceTimersByTimeAsync(3000);
     expect(tick).not.toHaveBeenCalled();
-    window.dispatchEvent(new Event("focus"));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(tick).toHaveBeenCalledTimes(1);
   });
 
-  it("pauses while the document is hidden and ticks when it shows", async () => {
+  it("pauses while the window is blurred and polls at once on focus", async () => {
     const tick = vi.fn();
-    poll("a", 1000, tick);
+    start("a", 1000, tick);
+    blur();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(tick).not.toHaveBeenCalled();
+    focus();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(tick).toHaveBeenCalledTimes(1);
+    // Then on the interval again, counted from the refocus.
+    await vi.advanceTimersByTimeAsync(999);
+    expect(tick).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(tick).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not tick on a focus while already focused", async () => {
+    const tick = vi.fn();
+    start("a", 1000, tick);
+    focus();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(tick).not.toHaveBeenCalled();
+  });
+
+  it("pauses while the document is hidden", async () => {
+    const tick = vi.fn();
+    start("a", 1000, tick);
     setHidden(true);
     await vi.advanceTimersByTimeAsync(5000);
     expect(tick).not.toHaveBeenCalled();
@@ -58,51 +82,71 @@ describe("the poller", () => {
     expect(tick).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps one timer per key: a new start replaces the old", async () => {
+  it("a new start with the same key replaces the old", async () => {
     const first = vi.fn();
     const second = vi.fn();
-    const stopFirst = poll("a", 1000, first);
-    poll("a", 1000, second);
-    stopFirst(); // the replaced one's stop leaves the new one alone
+    start("a", 1000, first);
+    start("a", 1000, second);
     await vi.advanceTimersByTimeAsync(2000);
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledTimes(2);
   });
 
-  it("stops", async () => {
-    const tick = vi.fn();
-    const stop = poll("a", 1000, tick);
-    stop();
-    await vi.advanceTimersByTimeAsync(3000);
-    window.dispatchEvent(new Event("focus"));
-    expect(tick).not.toHaveBeenCalled();
+  it("keys run side by side", async () => {
+    const a = vi.fn();
+    const b = vi.fn();
+    start("a", 1000, a);
+    start("b", 2000, b);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(a).toHaveBeenCalledTimes(4);
+    expect(b).toHaveBeenCalledTimes(2);
   });
 
-  it("skips the ticks inside a pause", async () => {
-    const tick = vi.fn();
-    poll("a", 1000, tick);
-    pausePollingFor(2500);
-    await vi.advanceTimersByTimeAsync(3000);
-    expect(tick).toHaveBeenCalledTimes(1); // the one at 3 s
+  it("a stale stop does not stop the replacement", async () => {
+    const second = vi.fn();
+    const staleStop = start("a", 1000, vi.fn());
+    start("a", 1000, second);
+    staleStop();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(second).toHaveBeenCalledTimes(1);
   });
 
-  it("does not start a tick while the previous one is still running", async () => {
-    let finish = () => {};
-    const tick = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
-    poll("a", 1000, tick);
+  it("does not start a tick while the last is still running", async () => {
+    let release: () => void = () => undefined;
+    const tick = vi.fn(() => new Promise<void>((r) => (release = r)));
+    start("a", 1000, tick);
     await vi.advanceTimersByTimeAsync(3000);
     expect(tick).toHaveBeenCalledTimes(1);
-    finish();
+    release();
     await vi.advanceTimersByTimeAsync(1000);
     expect(tick).toHaveBeenCalledTimes(2);
   });
 
-  it("survives a tick that throws", async () => {
-    const tick = vi.fn(() => {
-      throw new Error("boom");
-    });
-    poll("a", 1000, tick);
+  it("a failing tick does not stop polling", async () => {
+    const tick = vi.fn(() => Promise.reject(new Error("offline")));
+    start("a", 1000, tick);
     await vi.advanceTimersByTimeAsync(2000);
     expect(tick).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("pausePollingFor", () => {
+  it("skips ticks of every key until it ends", async () => {
+    const a = vi.fn();
+    const b = vi.fn();
+    start("a", 1000, a);
+    start("b", 1000, b);
+    pausePollingFor(10_000);
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(a).not.toHaveBeenCalled();
+    expect(b).not.toHaveBeenCalled();
+    // A refocus during the pause doesn't poll either.
+    blur();
+    focus();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(a).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(a).toHaveBeenCalled();
+    expect(b).toHaveBeenCalled();
   });
 });

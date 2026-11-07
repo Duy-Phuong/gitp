@@ -51,10 +51,15 @@ import {
   type Draft,
   type PrReview,
 } from "../pr-reviews";
-import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PullRequestDetail, ReviewVerdict, TurnKind } from "../types";
+import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PrSignature, PullRequestDetail, ReviewVerdict, TurnKind } from "../types";
+import { pausePollingFor, startPolling } from "../poller";
+import { isRateLimit, NOTICE_MS, PR_VIEW_POLL_MS, RATE_LIMIT_NOTICE, RATE_LIMIT_PAUSE_MS, refreshNotice, signatureChanged } from "../pr-refresh";
 
 export interface PullRequestCallbacks {
   fetchDetail: (number: number) => Promise<PullRequestDetail>;
+  // The cheap signature polled every 30 s while the view is open; no polling
+  // without it.
+  fetchSignature?: (number: number) => Promise<PrSignature>;
   fetchFiles: (number: number) => Promise<FileDiff[]>;
   // A commit's changed files, from GitHub.
   fetchCommitFiles: (oid: string) => Promise<FileDiff[]>;
@@ -156,6 +161,16 @@ export interface PullRequestHandle {
 
 type Tab = "conversation" | "commits" | "files" | "checks" | "drafts";
 
+// A line comment being written in the Files tab: where, the code that was on
+// the line when it was clicked, and the text so far.
+interface LineDraft {
+  path: string;
+  side: "LEFT" | "RIGHT";
+  line: number;
+  content: string;
+  text: string;
+}
+
 // A page with lines: the saved review page.
 const REVIEW_PAGE_ICON = ["M6 3h9l4 4v14H6z", "M14 3v5h5", "M9 12h7", "M9 16h7"];
 // An open book: the saved review, read inside gitp.
@@ -223,6 +238,19 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   const replyOpen = new Set<number>();
   const replyText = new Map<number, string>();
   const followupText = new Map<number, string>();
+  // The Files tab's open line comment boxes and what they hold, by lineKey,
+  // so a redraw opens them again (or, for a line no longer in the diff,
+  // keeps the text in a box at the top of its file).
+  const lineDrafts = new Map<string, LineDraft>();
+  // Refreshing on its own (pr-refresh.ts): the signature last seen, the
+  // poll's stop, the notice at the top, and a redraw waiting for a text box
+  // to lose focus.
+  let signature: PrSignature | null = null;
+  let stopPolling: (() => void) | null = null;
+  let notice: { text: string; timer: ReturnType<typeof setTimeout> } | null = null;
+  let waiting: { run: () => void; gen: number } | null = null;
+  // The user's own loads in flight: a poll meanwhile would announce them.
+  let loads = 0;
 
   const message = (text: string) => {
     clear(host);
@@ -234,10 +262,13 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     const mine = ++generation;
     if (!detail || detail.number !== number) message(`Loading pull request #${number}…`);
     if (!keepFiles) files = null;
+    // The user's own reloads set the signature quietly: no notice for them.
+    loads++;
     try {
-      const d = await cb.fetchDetail(number);
+      const [d, sig] = await Promise.all([cb.fetchDetail(number), quietSignature(number)]);
       if (mine !== generation) return;
       detail = d;
+      signature = sig;
       toDraftsIfReady();
       if (tab === "drafts" && !files) void showDrafts(d);
       else render();
@@ -245,6 +276,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       if (mine !== generation) return;
       message(`Couldn't load pull request #${number}.`);
       cb.reportError(`Couldn't load pull request #${number}`, err);
+    } finally {
+      loads--;
     }
   }
 
@@ -302,6 +335,106 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       body.querySelector<HTMLElement>(`[data-thread="${focus}"]`)?.scrollIntoView({ block: "start" });
       focus = null;
     }
+    drawNotice();
+  }
+
+  // --- Refreshing on its own ------------------------------------------------
+
+  // The signature, or null when there is none to be had.
+  async function quietSignature(n: number): Promise<PrSignature | null> {
+    try {
+      return (await cb.fetchSignature?.(n)) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  // One poll: the signature, and when it moved, the pull request read again
+  // and drawn — once no text box in the view has focus.
+  async function poll(): Promise<void> {
+    const n = number;
+    const mine = generation;
+    const stale = () => mine !== generation || loads > 0;
+    if (n === null || !cb.fetchSignature || host.closest(".hidden") || stale()) return;
+    try {
+      const now = await cb.fetchSignature(n);
+      if (stale() || !now) return;
+      if (!signatureChanged(signature, now)) {
+        signature = now;
+        return;
+      }
+      const d = await cb.fetchDetail(n);
+      if (stale()) return;
+      const old = detail;
+      signature = now;
+      detail = d;
+      if (old && old.head_oid !== d.head_oid) files = null;
+      const text = old ? refreshNotice(old, d) : "Updated";
+      whenIdle(() => {
+        redraw();
+        showNotice(text);
+      });
+    } catch (err) {
+      if (!isRateLimit(err)) return;
+      pausePollingFor(RATE_LIMIT_PAUSE_MS);
+      showNotice(RATE_LIMIT_NOTICE, RATE_LIMIT_PAUSE_MS);
+    }
+  }
+
+  // A text box in the view has focus, or text in it is selected: a redraw
+  // now would take it away.
+  function busy(): boolean {
+    const active = document.activeElement;
+    if (active && host.contains(active) && active.matches("textarea, input")) return true;
+    const sel = window.getSelection();
+    return !!sel && !sel.isCollapsed && !!sel.anchorNode && host.contains(sel.anchorNode);
+  }
+
+  // Run `apply` now, or as soon as the view is no longer busy (the latest
+  // one only).
+  function whenIdle(apply: () => void): void {
+    if (!busy()) {
+      apply();
+      return;
+    }
+    const pending = waiting === null;
+    waiting = { run: apply, gen: generation };
+    if (!pending) return;
+    // Dropped when a load (another pull request, a reset, the user's own
+    // reload) came after it.
+    const check = () =>
+      setTimeout(() => {
+        const w = waiting;
+        const current = w !== null && w.gen === generation;
+        if (current && busy()) return;
+        host.removeEventListener("focusout", check);
+        document.removeEventListener("selectionchange", check);
+        waiting = null;
+        if (current) w.run();
+      }, 0);
+    host.addEventListener("focusout", check);
+    document.addEventListener("selectionchange", check);
+  }
+
+  function showNotice(text: string, ms = NOTICE_MS): void {
+    if (notice) clearTimeout(notice.timer);
+    notice = { text, timer: setTimeout(hideNotice, ms) };
+    drawNotice();
+  }
+
+  function hideNotice(): void {
+    if (notice) clearTimeout(notice.timer);
+    notice = null;
+    host.querySelector(".pr-refresh-notice")?.remove();
+  }
+
+  function drawNotice(): void {
+    host.querySelector(".pr-refresh-notice")?.remove();
+    const view = host.querySelector(".pr-view");
+    if (!notice || !view) return;
+    const line = el("div", { class: "pr-refresh-notice", text: notice.text, title: "Click to dismiss" });
+    line.addEventListener("click", hideNotice);
+    view.prepend(line);
   }
 
   function header(pr: PullRequestDetail): HTMLElement {
@@ -493,7 +626,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     // The Reply box, above the actions row (which the Claude buttons share: a
     // box in the row would be squeezed beside them), with what was typed in
     // it kept across redraws.
-    const openReply = () => {
+    const openReply = (focus = true) => {
       replyOpen.add(root.id);
       const box = replyBox(
         "Reply (Markdown)",
@@ -511,6 +644,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
           box.remove();
           actions.append(open);
         },
+        focus,
       );
       const area = box.querySelector("textarea")!;
       area.value = replyText.get(root.id) ?? "";
@@ -628,7 +762,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       );
     }
     node.append(actions);
-    if (replyOpen.has(root.id) || (replyText.get(root.id) ?? "") !== "") openReply();
+    if (replyOpen.has(root.id) || (replyText.get(root.id) ?? "") !== "") openReply(false);
     return node;
   }
 
@@ -757,7 +891,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     );
     const columns = el("div", { class: "pr-files-layout" });
     if (treeShown) columns.append(tree);
-    columns.append(el("div", { class: `pr-files-diffs${wrap && !split ? " wrap-lines" : ""}` }, nodes));
+    // Comment boxes on a file no longer in the diff at all.
+    const gone = [...lineDrafts].filter(([, d]) => !byPath.has(d.path)).map(([key, d]) => orphanComposer(key, d));
+    columns.append(el("div", { class: `pr-files-diffs${wrap && !split ? " wrap-lines" : ""}` }, [...gone, ...nodes]));
     body.append(
       el("div", { class: "pr-files-bar" }, [
         el("div", { class: "tb-group" }, [treeToggle]),
@@ -798,6 +934,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     const anchorOf = (row: Element): Element => row.closest(".split-row") ?? row;
     // A split row shows an unchanged line twice; its threads go under it once.
     const placed = new Set<string>();
+    // Each line's row (or split row), for the comment boxes opened again.
+    const anchors = new Map<string, { anchor: Element; content: string }>();
     for (const row of node.querySelectorAll<HTMLElement>(".diff-line, .split-cell[data-line]")) {
       const line = lineOf(row);
       const target = line && lineTarget(line);
@@ -806,6 +944,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       const key = lineKey(file.path, target.side, target.line);
       if (placed.has(key)) continue;
       placed.add(key);
+      anchors.set(key, { anchor: anchorOf(row), content: line.content });
       // Below the threads the row's other side has put there already.
       let after = anchorOf(row);
       while (after.nextElementSibling?.classList.contains("pr-thread")) after = after.nextElementSibling;
@@ -818,6 +957,16 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     // The review's drafts on this file, under their lines.
     const mine = review().drafts.filter((d) => d.path === file.path && d.line > 0);
     placeDraftCards(node, file, mine.map((d) => ({ d, line: d.line, side: d.side })), (d) => prDraftCard(pr, d, "inline", "ok"));
+    // The comment boxes open before the redraw, under their lines again;
+    // one whose line left the diff at the top of the file.
+    for (const [key, d] of lineDrafts) {
+      if (d.path !== file.path) continue;
+      // The same line number holding other code (a push moved it) is not
+      // the line the comment was for.
+      const at = anchors.get(key);
+      if (at && at.content === d.content) at.anchor.after(lineComposer(pr, file.path, d, false));
+      else (node.querySelector(".file-head") ?? node).after(orphanComposer(key, d));
+    }
     if (file.truncated) {
       node.append(el("div", { class: "diff-truncated", text: "This diff is too long to show in full here; open it on GitHub for the rest." }));
     }
@@ -834,16 +983,54 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       const line = lineOf(row);
       const target = line && lineTarget(line);
       if (!target) return;
-      const where = `${file.path}:${target.line}${target.side === "LEFT" ? " (removed line)" : ""}`;
-      const box = replyBox(`Comment on ${where} (Markdown)`, "Add Comment", async (text) => {
-        const ok = await cb.lineComment(pr, { path: file.path, line: target.line, side: target.side, commit_id: pr.head_oid, body: text });
-        if (ok) await load(true);
-        return ok;
-      }, () => box.remove());
-      box.classList.add("pr-line-composer");
-      anchor.after(box);
+      const d: LineDraft = { path: file.path, side: target.side, line: target.line, content: line.content, text: "" };
+      lineDrafts.set(lineKey(d.path, d.side, d.line), d);
+      anchor.after(lineComposer(pr, file.path, d, true));
     });
     return node;
+  }
+
+  // The comment box under a line, kept in `lineDrafts` until it is posted or
+  // cancelled.
+  function lineComposer(pr: PullRequestDetail, path: string, d: LineDraft, focus: boolean): HTMLElement {
+    const key = lineKey(path, d.side, d.line);
+    const where = `${path}:${d.line}${d.side === "LEFT" ? " (removed line)" : ""}`;
+    const box = replyBox(`Comment on ${where} (Markdown)`, "Add Comment", async (text) => {
+      const ok = await cb.lineComment(pr, { path, line: d.line, side: d.side, commit_id: pr.head_oid, body: text });
+      if (ok) {
+        lineDrafts.delete(key);
+        await load(true);
+      }
+      return ok;
+    }, () => {
+      lineDrafts.delete(key);
+      box.remove();
+    }, focus);
+    box.classList.add("pr-line-composer");
+    const area = box.querySelector("textarea")!;
+    area.value = d.text;
+    area.addEventListener("input", () => (d.text = area.value));
+    return box;
+  }
+
+  // What was typed for a line a push took out of the diff: kept to copy,
+  // until Discard.
+  function orphanComposer(key: string, d: LineDraft): HTMLElement {
+    const area = composerArea({});
+    area.value = d.text;
+    area.addEventListener("input", () => (d.text = area.value));
+    const discard = el("button", { class: "btn small ghost", text: "Discard" });
+    const box = el("div", { class: "pr-composer pr-line-orphan" }, [
+      el("div", { class: "pr-line-orphan-head", text: `Comment on a line no longer in the diff (${d.path}:${d.line}${d.side === "LEFT" ? ", removed line" : ""})` }),
+      area,
+      el("div", { class: "pr-composer-actions" }, [discard]),
+    ]);
+    discard.addEventListener("click", () => {
+      lineDrafts.delete(key);
+      box.remove();
+    });
+    box.addEventListener("click", (e) => e.stopPropagation());
+    return box;
   }
 
   // Run Review Command, with a green dot when commits arrived since the last
@@ -1236,6 +1423,15 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     body.append(list);
   }
 
+  function redraw(): void {
+    if (!detail) return;
+    // A finished review adds the Drafts tab beside the one the user is on.
+    toDraftsIfReady();
+    if (tab === "drafts" && !review().drafts.length) tab = "conversation";
+    if (tab === "drafts" && !files) void showDrafts(detail);
+    else render();
+  }
+
   return {
     show: (n) => {
       if (prunedFor !== cb.repoPath()) {
@@ -1253,11 +1449,15 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         searched = null;
         draft = "";
         filesQuery = "";
+        lineDrafts.clear();
+        signature = null;
+        hideNotice();
         cb.restoreDrafts(n);
         // A review that finished while the user was elsewhere opens on its drafts.
         tab = review().drafts.some(isOpen) ? "drafts" : "conversation";
         draftsWhenReady = tab === "conversation";
       }
+      if (cb.fetchSignature) stopPolling = startPolling("pr-view", PR_VIEW_POLL_MS, poll);
       void load(true);
     },
     reload: () => void load(true),
@@ -1269,14 +1469,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       draftsWhenReady = false;
       if (detail && detail.number === number) render();
     },
-    redraw: () => {
-      if (!detail) return;
-      // A finished review adds the Drafts tab beside the one the user is on.
-      toDraftsIfReady();
-      if (tab === "drafts" && !review().drafts.length) tab = "conversation";
-      if (tab === "drafts" && !files) void showDrafts(detail);
-      else render();
-    },
+    redraw: () => redraw(),
     generateDrafts: () => {
       if (detail) cb.generateDrafts(detail);
     },
@@ -1297,6 +1490,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       replyOpen.clear();
       replyText.clear();
       followupText.clear();
+      lineDrafts.clear();
+      stopPolling?.();
+      stopPolling = null;
+      signature = null;
+      waiting = null;
+      hideNotice();
       prunedFor = null;
       focus = null;
       searched = null;
@@ -1351,7 +1550,7 @@ function smallButton(text: string, onClick: () => void): HTMLElement {
 
 // A comment box with its button (and Cancel when `onCancel`). `post`
 // resolves true once posted, which clears the box.
-function replyBox(placeholder: string, label: string, post: (text: string) => Promise<boolean>, onCancel?: () => void): HTMLElement {
+function replyBox(placeholder: string, label: string, post: (text: string) => Promise<boolean>, onCancel?: () => void, focus = true): HTMLElement {
   const area = composerArea({ placeholder });
   const preview = previewToggle(area);
   const send = el("button", { class: "btn small", text: label });
@@ -1377,7 +1576,8 @@ function replyBox(placeholder: string, label: string, post: (text: string) => Pr
   const box = el("div", { class: "pr-composer" }, [area, actions]);
   // Clicks inside the box aren't clicks on the diff line it sits under.
   box.addEventListener("click", (e) => e.stopPropagation());
-  requestAnimationFrame(() => area.focus());
+  // Not when opened again by a redraw: focus would scroll the view to it.
+  if (focus) requestAnimationFrame(() => area.focus());
   return box;
 }
 

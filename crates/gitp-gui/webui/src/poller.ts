@@ -1,77 +1,103 @@
-// One poller for the views that read again on a timer (the review inbox, the
-// pull request view): each named by a key, at most one timer per key. Nobody
-// looking means nothing to refresh, so a tick is skipped while the window is
-// unfocused or the document hidden, and coming back polls at once. A tick
-// still running when the next is due is not started twice.
+// Polling GitHub (or anything) on a timer, the polite way: one timer per key,
+// nothing while the window is unfocused or hidden, an immediate poll when it
+// comes back, never two ticks of one key at once, and a pause every key
+// honours (GitHub's rate limit, say).
+//
+// The pull request view, the Pull Requests list and the review inbox each
+// register under a key of their own; starting a key again replaces it.
 
 interface Poll {
   intervalMs: number;
   tick: () => Promise<void> | void;
-  timer: ReturnType<typeof setInterval>;
+  timer: ReturnType<typeof setInterval> | null;
   running: boolean;
 }
 
 const polls = new Map<string, Poll>();
-let focused = true;
+// No poll runs before this time (ms since the epoch).
 let pausedUntil = 0;
-let listening = false;
+let focused = typeof document === "undefined" ? true : document.hasFocus();
 
-function looking(): boolean {
-  return focused && !document.hidden;
-}
+const active = () => focused && !document.hidden;
 
-function run(poll: Poll): void {
-  if (poll.running || !looking() || Date.now() < pausedUntil) return;
+async function run(poll: Poll): Promise<void> {
+  if (poll.running || !active() || Date.now() < pausedUntil) return;
   poll.running = true;
-  const done = () => {
-    poll.running = false;
-  };
   try {
-    void Promise.resolve(poll.tick()).then(done, done);
+    await poll.tick();
   } catch {
-    done();
+    // The tick reports its own failures; the next one tries again.
+  } finally {
+    poll.running = false;
   }
 }
 
-// Back in view: every poll at once, its timer started over from now.
+function schedule(poll: Poll): void {
+  if (poll.timer !== null) clearInterval(poll.timer);
+  poll.timer = active() ? setInterval(() => void run(poll), poll.intervalMs) : null;
+}
+
+// The window came back: poll each key now, then on its interval from here.
 function resume(): void {
-  if (!looking()) return;
   for (const poll of polls.values()) {
-    clearInterval(poll.timer);
-    poll.timer = setInterval(() => run(poll), poll.intervalMs);
-    run(poll);
+    schedule(poll);
+    void run(poll);
   }
 }
 
-function listen(): void {
-  if (listening) return;
-  listening = true;
-  window.addEventListener("blur", () => {
-    focused = false;
-  });
-  window.addEventListener("focus", () => {
-    focused = true;
-    resume();
-  });
-  document.addEventListener("visibilitychange", resume);
+function pause(): void {
+  for (const poll of polls.values()) {
+    if (poll.timer !== null) clearInterval(poll.timer);
+    poll.timer = null;
+  }
 }
 
-/// Call `tick` every `intervalMs` while the window is in view, under `key`:
-/// a later start with the same key replaces this one. Returns the stop.
+function changed(update: () => void): void {
+  const was = active();
+  update();
+  const now = active();
+  if (was && !now) pause();
+  else if (!was && now) resume();
+}
+
+if (typeof window !== "undefined") {
+  // The window's own focus and blur, not an element's.
+  window.addEventListener("focus", (e) => {
+    if (!(e.target instanceof Node)) changed(() => (focused = true));
+  });
+  window.addEventListener("blur", (e) => {
+    if (!(e.target instanceof Node)) changed(() => (focused = false));
+  });
+  // `document.hidden` has already changed when this fires.
+  let wasHidden = document.hidden;
+  document.addEventListener("visibilitychange", () => {
+    const hidden = document.hidden;
+    if (hidden === wasHidden) return;
+    wasHidden = hidden;
+    if (!focused) return;
+    if (hidden) pause();
+    else resume();
+  });
+}
+
+// Call `tick` every `intervalMs` under `key`, replacing what that key ran
+// before. The first tick is one interval away (the caller has just loaded).
+// Returns the stop function; a stop for a key started again since does
+// nothing.
 export function startPolling(key: string, intervalMs: number, tick: () => Promise<void> | void): () => void {
-  listen();
   const old = polls.get(key);
-  if (old) clearInterval(old.timer);
-  const poll: Poll = { intervalMs, tick, running: false, timer: setInterval(() => run(poll), intervalMs) };
+  if (old?.timer != null) clearInterval(old.timer);
+  const poll: Poll = { intervalMs, tick, timer: null, running: false };
   polls.set(key, poll);
+  schedule(poll);
   return () => {
-    clearInterval(poll.timer);
-    if (polls.get(key) === poll) polls.delete(key);
+    if (polls.get(key) !== poll) return;
+    if (poll.timer !== null) clearInterval(poll.timer);
+    polls.delete(key);
   };
 }
 
-/// Skip every tick due in the next `ms` (gitp is busy with something of its
-/// own); polling goes on as before after that.
+// Skip every key's ticks for the next `ms` (0 ends a pause).
 export function pausePollingFor(ms: number): void {
-  pausedUntil = Math.max(pausedUntil, Date.now() + ms);
+  pausedUntil = ms > 0 ? Date.now() + ms : 0;
 }
