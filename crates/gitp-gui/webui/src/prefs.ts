@@ -66,6 +66,18 @@ export function savePrFilesTree(on: boolean): void {
   localStorage.setItem(PR_FILES_TREE_KEY, on ? "1" : "0");
 }
 
+// "Collapse comments" in a pull request's Files tab: the threads and draft
+// cards under the code fold to one line each, so the code reads on its own.
+const PR_COLLAPSE_COMMENTS_KEY = "gitp-pr-collapse-comments";
+
+export function loadPrCollapseComments(): boolean {
+  return localStorage.getItem(PR_COLLAPSE_COMMENTS_KEY) === "1";
+}
+
+export function savePrCollapseComments(on: boolean): void {
+  localStorage.setItem(PR_COLLAPSE_COMMENTS_KEY, on ? "1" : "0");
+}
+
 export function loadIgnoreWhitespace(): boolean {
   return localStorage.getItem(DIFF_IGNORE_WS_KEY) === "1";
 }

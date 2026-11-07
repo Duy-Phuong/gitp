@@ -308,3 +308,30 @@ describe("the pull request view polling", () => {
     expect(cb.fetchSignature).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Collapse comments in the Files tab", () => {
+  afterEach(() => localStorage.removeItem("gitp-pr-collapse-comments"));
+
+  it("folds each thread to one line, opens one on a click, and is remembered", async () => {
+    button("Files changed (1)").click();
+    await settle();
+    const diffs = host.querySelector(".pr-files-diffs")!;
+    const thread = () => host.querySelector<HTMLElement>(".pr-thread")!;
+    expect(diffs.classList.contains("comments-collapsed")).toBe(false);
+
+    const box = host.querySelector<HTMLInputElement>(".pr-files-collapse input")!;
+    box.checked = true;
+    box.dispatchEvent(new Event("change"));
+    expect(diffs.classList.contains("comments-collapsed")).toBe(true);
+    expect(thread().querySelector(".pr-comment-fold")?.textContent).toBe("›rev: Why?");
+    expect(localStorage.getItem("gitp-pr-collapse-comments")).toBe("1");
+
+    thread().querySelector<HTMLButtonElement>(".pr-comment-fold")!.click();
+    expect(thread().classList.contains("open")).toBe(true);
+    // A redraw keeps the setting and the opened comment.
+    view.reload();
+    await settle();
+    expect(host.querySelector(".pr-files-diffs")!.classList.contains("comments-collapsed")).toBe(true);
+    expect(thread().classList.contains("open")).toBe(true);
+  });
+});

@@ -6032,6 +6032,59 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   font-size: 12px;
   color: var(--text-dim);
 }
+.pr-files-collapse {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+/* "Collapse comments": each thread and draft card under the code is one line
+   (author: how it starts) until it is clicked open. */
+.pr-comment-fold {
+  display: none;
+}
+.comments-collapsed .pr-comment-fold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.comments-collapsed .pr-comment-fold:hover {
+  color: var(--text);
+}
+.pr-comment-fold-icon {
+  flex: none;
+  transition: transform 0.12s ease;
+}
+.pr-comment-folds.open .pr-comment-fold-icon {
+  transform: rotate(90deg);
+}
+.pr-comment-fold-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.comments-collapsed .pr-comment-folds:not(.open) > :not(.pr-comment-fold) {
+  display: none;
+}
+.comments-collapsed .pr-comment-folds:not(.open) {
+  padding: 3px 10px;
+}
+.comments-collapsed .pr-draft.pr-comment-folds.open > .pr-comment-fold {
+  padding: 6px 10px 0;
+}
 .pr-files-bar .pr-files-hint {
   margin-left: auto;
 }

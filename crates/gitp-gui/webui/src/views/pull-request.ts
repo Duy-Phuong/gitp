@@ -16,7 +16,17 @@ import { fixDisabledReason, fixRunningOn, preparedReply, runningTurns, threadSta
 import { storedThread } from "../thread-search";
 import { composerArea, previewToggle } from "./composer";
 import { iconBtn, renderFile, renderSplitDiff, WRAP_ICON } from "./detail";
-import { loadDiffWrap, loadJiraSite, loadPrDiffSplit, loadPrFilesTree, saveDiffWrap, savePrDiffSplit, savePrFilesTree } from "../prefs";
+import {
+  loadDiffWrap,
+  loadJiraSite,
+  loadPrCollapseComments,
+  loadPrDiffSplit,
+  loadPrFilesTree,
+  saveDiffWrap,
+  savePrCollapseComments,
+  savePrDiffSplit,
+  savePrFilesTree,
+} from "../prefs";
 import { jiraKeyIn, jiraTicketUrl } from "../jira";
 import { renderFileTree } from "./tree";
 import {
@@ -38,6 +48,7 @@ import { fullTime, relativeTime } from "../timeago";
 import { copyText } from "../clipboard";
 import { checkAnchor, withOffDiffDrafts } from "../review-drafts";
 import { draftCard, placeDraftCards, type DraftCardOptions } from "./draft-cards";
+import { draftFoldText, threadFoldText } from "../comment-fold";
 import {
   clearDrafts,
   hasNewCommits,
@@ -206,6 +217,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // The folder tree beside the diffs: shown or not, which folders are folded,
   // and the file last picked in it.
   let treeShown = loadPrFilesTree();
+  // "Collapse comments", and the comments opened one by one while it is on
+  // ("t<root id>" for a thread, "d<id>" for a draft), kept across redraws.
+  let commentsCollapsed = loadPrCollapseComments();
+  const openComments = new Set<string>();
   const treeCollapsed = new Set<string>();
   let treeSelected: string | null = null;
   // The pull request's draft comments, with the verdict and message the
@@ -893,12 +908,31 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     if (treeShown) columns.append(tree);
     // Comment boxes on a file no longer in the diff at all.
     const gone = [...lineDrafts].filter(([, d]) => !byPath.has(d.path)).map(([key, d]) => orphanComposer(key, d));
-    columns.append(el("div", { class: `pr-files-diffs${wrap && !split ? " wrap-lines" : ""}` }, [...gone, ...nodes]));
+    const diffs = el("div", { class: `pr-files-diffs${wrap && !split ? " wrap-lines" : ""}` }, [...gone, ...nodes]);
+    diffs.classList.toggle("comments-collapsed", commentsCollapsed);
+    columns.append(diffs);
+    // Switching it only folds or opens the comments: no redraw, so the scroll
+    // and anything typed stay.
+    const collapseBox = el("input", { type: "checkbox" });
+    collapseBox.checked = commentsCollapsed;
+    collapseBox.addEventListener("change", () => {
+      commentsCollapsed = collapseBox.checked;
+      savePrCollapseComments(commentsCollapsed);
+      openComments.clear();
+      for (const n of diffs.querySelectorAll(".pr-comment-folds.open")) n.classList.remove("open");
+      diffs.classList.toggle("comments-collapsed", commentsCollapsed);
+    });
+    const collapse = el(
+      "label",
+      { class: "pr-files-collapse", title: "Fold each comment and draft under the code to one line; click a line to open it" },
+      [collapseBox, el("span", { text: "Collapse comments" })],
+    );
     body.append(
       el("div", { class: "pr-files-bar" }, [
         el("div", { class: "tb-group" }, [treeToggle]),
         layout,
         el("div", { class: "tb-group" }, [wrapToggle]),
+        collapse,
         search,
         count,
         el("span", { class: "pr-files-hint", text: "Click a line to comment on it." }),
@@ -950,13 +984,19 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       while (after.nextElementSibling?.classList.contains("pr-thread")) after = after.nextElementSibling;
       for (const t of threads.get(key) ?? []) {
         const n = threadNode(pr, t, false);
+        const resolved = pr.review_threads.find((s) => s.comment_ids.includes(t.root.id))?.resolved ?? false;
+        addFold(n, `t${t.root.id}`, threadFoldText(t.root.author, t.root.body, t.replies.length, resolved));
         after.after(n);
         after = n;
       }
     }
     // The review's drafts on this file, under their lines.
     const mine = review().drafts.filter((d) => d.path === file.path && d.line > 0);
-    placeDraftCards(node, file, mine.map((d) => ({ d, line: d.line, side: d.side })), (d) => prDraftCard(pr, d, "inline", "ok"));
+    placeDraftCards(node, file, mine.map((d) => ({ d, line: d.line, side: d.side })), (d) => {
+      const c = prDraftCard(pr, d, "inline", "ok");
+      addFold(c, `d${d.id}`, draftFoldText(d.severity, d.body));
+      return c;
+    });
     // The comment boxes open before the redraw, under their lines again;
     // one whose line left the diff at the top of the file.
     for (const [key, d] of lineDrafts) {
@@ -988,6 +1028,25 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       anchor.after(lineComposer(pr, file.path, d, true));
     });
     return node;
+  }
+
+  // Give a thread or draft card under the code its folded line: shown while
+  // "Collapse comments" is on, where a click opens or folds just this one.
+  function addFold(node: HTMLElement, id: string, text: string): void {
+    node.classList.add("pr-comment-folds");
+    node.classList.toggle("open", openComments.has(id));
+    const fold = el("button", { class: "pr-comment-fold", type: "button", title: "Open or fold this comment" }, [
+      el("span", { class: "pr-comment-fold-icon", text: "›" }),
+      el("span", { class: "pr-comment-fold-text", text }),
+    ]);
+    fold.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = !node.classList.contains("open");
+      node.classList.toggle("open", open);
+      if (open) openComments.add(id);
+      else openComments.delete(id);
+    });
+    node.prepend(fold);
   }
 
   // The comment box under a line, kept in `lineDrafts` until it is posted or
