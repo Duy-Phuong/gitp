@@ -7725,3 +7725,20 @@ mark.find-hit.current {
 .status-claude.hidden {
   display: none;
 }
+/* The pull request view refreshing on its own: what changed, for 10 s or
+   until clicked (views/pull-request.ts). */
+.pr-refresh-notice {
+  padding: 4px 16px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+/* A line comment kept after a push took its line out of the diff. */
+.pr-line-orphan {
+  margin: 6px 12px;
+}
+.pr-line-orphan-head {
+  color: var(--text-dim);
+  font-size: 12px;
+}

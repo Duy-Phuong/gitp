@@ -18,6 +18,7 @@ import {
   createPullRequestOnGitHub,
   fetchPullRequest,
   fetchPullRequestFiles,
+  fetchPullRequestSignature,
   fetchGitHubCommitFiles,
   generateReviewDrafts,
   ghAccount,
@@ -450,6 +451,7 @@ async function mergeNow(pr: PullRequestDetail, method: MergeMethod, deleteBranch
 // What the pull request view does, plugged in by main.ts.
 export const pullRequestCallbacks: PullRequestCallbacks = {
   fetchDetail: fetchPullRequest,
+  fetchSignature: fetchPullRequestSignature,
   fetchFiles: fetchPullRequestFiles,
   fetchCommitFiles: fetchGitHubCommitFiles,
   checkout: (pr) => void checkoutPullRequestAction(pr.number),
