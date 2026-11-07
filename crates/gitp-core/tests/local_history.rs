@@ -197,7 +197,7 @@ fn the_newest_ten_snapshots_outlive_the_age_limit() {
     // Counted by ref: the old snapshots all point at HEAD, so the log shows
     // them as one.
     let mut names: Vec<String> = git
-        .references_glob(&"refs/gitp/history/*")
+        .references_glob("refs/gitp/history/*")
         .unwrap()
         .filter_map(|r| r.ok().and_then(|r| r.name().map(str::to_string)))
         .collect();

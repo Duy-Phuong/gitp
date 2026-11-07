@@ -287,7 +287,7 @@ impl Repo {
                 }
             }
         }
-        hits.sort_by(|a, b| (b.at, b.pr, b.thread).cmp(&(a.at, a.pr, a.thread)));
+        hits.sort_by_key(|h| std::cmp::Reverse((h.at, h.pr, h.thread)));
         let total = hits.len();
         hits.truncate(THREAD_SEARCH_LIMIT);
         Ok(ThreadSearch { hits, total })

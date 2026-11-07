@@ -207,11 +207,14 @@ struct Inner {
     quitting: bool,
 }
 
+/// Finds a Claude session's transcript file by the session id.
+type FindTranscript = Arc<dyn Fn(&str) -> Option<PathBuf> + Send + Sync>;
+
 /// The jobs; cheap to clone, every clone is the same list.
 #[derive(Clone)]
 pub(crate) struct ClaudeJobs {
     inner: Arc<Mutex<Inner>>,
-    find: Arc<dyn Fn(&str) -> Option<PathBuf> + Send + Sync>,
+    find: FindTranscript,
     now: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
 
@@ -438,7 +441,7 @@ impl ClaudeJobs {
             refresh_job(&mut inner, id, &*self.find);
         }
         let mut jobs: Vec<Job> = inner.jobs.clone();
-        jobs.sort_by(|a, b| b.turn_started.cmp(&a.turn_started));
+        jobs.sort_by_key(|j| std::cmp::Reverse(j.turn_started));
         jobs
     }
 
@@ -556,7 +559,7 @@ impl ClaudeJobs {
             .jobs
             .iter()
             .filter(|j| j.state == JobState::Running)
-            .map(|j| display_label(j))
+            .map(display_label)
             .collect()
     }
 

@@ -660,7 +660,10 @@ mod tests {
         (state, code)
     }
 
-    fn capture() -> (Emit, Arc<Mutex<Vec<(String, serde_json::Value)>>>) {
+    /// The events an emit sent, by name, in order.
+    type Seen = Arc<Mutex<Vec<(String, serde_json::Value)>>>;
+
+    fn capture() -> (Emit, Seen) {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let record = seen.clone();
         let emit: Emit = Arc::new(move |name, payload| record.lock().unwrap().push((name.to_string(), payload)));

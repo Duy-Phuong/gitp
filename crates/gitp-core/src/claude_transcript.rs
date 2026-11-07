@@ -549,7 +549,7 @@ mod tests {
             .append(true)
             .open(&path)
             .unwrap();
-        f.write_all(all[cut..].as_bytes()).unwrap();
+        f.write_all(&all.as_bytes()[cut..]).unwrap();
         assert_eq!(t.read_more(&path).unwrap(), 1);
         assert!(matches!(&t.events[4], TranscriptEvent::Text { text, .. } if text == "## Answer"));
     }

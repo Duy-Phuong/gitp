@@ -28,7 +28,7 @@ fn pct(times: &mut [Duration], p: f64) -> Duration {
     times[((times.len() - 1) as f64 * p) as usize]
 }
 
-fn report(what: &str, times: &mut Vec<Duration>) {
+fn report(what: &str, times: &mut [Duration]) {
     if times.is_empty() {
         println!("{what:<34} (no samples)");
         return;

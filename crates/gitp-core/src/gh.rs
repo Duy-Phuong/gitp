@@ -2009,14 +2009,12 @@ pub(crate) fn run_verified_fix<T>(
         }
         Ok((value, after))
     });
-    checked.or_else(|e| {
-        Err(match undo_fix(dir, branch, before) {
-            Ok(()) => e,
-            Err(undo) => Error::Message(format!(
-                "{e}\n\nAnd the undo failed in {}: {undo}",
-                dir.display()
-            )),
-        })
+    checked.map_err(|e| match undo_fix(dir, branch, before) {
+        Ok(()) => e,
+        Err(undo) => Error::Message(format!(
+            "{e}\n\nAnd the undo failed in {}: {undo}",
+            dir.display()
+        )),
     })
 }
 

@@ -397,7 +397,7 @@ impl SymbolIndex {
     /// The `n` names with the most references, most first.
     pub fn top_names(&self, n: usize) -> Vec<String> {
         let mut names: Vec<(&Arc<str>, usize)> = self.refs_by_name.iter().map(|(k, v)| (k, v.len())).collect();
-        names.sort_by(|a, b| b.1.cmp(&a.1));
+        names.sort_by_key(|n| std::cmp::Reverse(n.1));
         names.into_iter().take(n).map(|(k, _)| k.to_string()).collect()
     }
 
