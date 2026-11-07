@@ -7,6 +7,7 @@
 // this module never imports the actions back.
 
 import { refreshUnpushed } from "./unpushed-badge";
+import { noticeBranchForCi } from "./ci-badge";
 import { reviewBadge } from "./pr-reviews";
 import {
   activateRepo,
@@ -889,6 +890,7 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
   renderSidebarNow();
   // Commits on the default branch its remote doesn't have yet.
   void refreshUnpushed();
+  noticeBranchForCi();
   // Refs now known — recompute containment and re-render the open commit + the
   // log so the branch chips appear on every commit.
   ui.detailView?.refresh();

@@ -232,6 +232,7 @@ pub fn run() {
             gh::gh_pull_request,
             gh::gh_pull_request_signature,
             gh::gh_pull_request_viewed,
+            gh::gh_branch_ci,
             gh::gh_set_pull_request_file_viewed,
             gh::gh_pull_request_files,
             gh::gh_commit_files,

@@ -329,7 +329,7 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
           );
         return [
           row("A Claude job finishes or fails", onOff("claude"), "inline", "A review, a fix, a thread turn or a draft that ran in the background."),
-          row("A check fails on my pull request", onOff("checks"), "inline", "Checked every 5 minutes over the repositories in Open Recent and the starred ones."),
+          row("A check fails on my pull request or branch", onOff("checks"), "inline", "Checked every 5 minutes over the repositories in Open Recent and the starred ones, and the CI of the branch checked out."),
           row("A review is asked of me", onOff("reviews"), "inline", "Also from that check. Notifications show only while gitp's window isn't in front."),
         ];
       },

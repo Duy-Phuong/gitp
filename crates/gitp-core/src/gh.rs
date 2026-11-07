@@ -29,6 +29,9 @@ pub use signature::PrSignature;
 mod viewed;
 pub use viewed::PrViewed;
 
+mod ci;
+pub use ci::BranchCi;
+
 use crate::branch_ops::parse_remote_url;
 use crate::claude_transcript::new_session_id;
 use crate::diff::{collect_files, FileDiff, MAX_DIFF_LINES};

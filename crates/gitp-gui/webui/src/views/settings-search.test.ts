@@ -47,7 +47,7 @@ describe("Settings search", () => {
     type("zoom");
     expect(labels()).toEqual(["Zoom"]);
     type("notifications");
-    expect(labels()).toEqual(["A Claude job finishes or fails", "A check fails on my pull request", "A review is asked of me"]);
+    expect(labels()).toEqual(["A Claude job finishes or fails", "A check fails on my pull request or branch", "A review is asked of me"]);
     type("nothing like this");
     expect(document.querySelector(".settings-body")?.textContent).toContain('No setting matches "nothing like this".');
     type("");

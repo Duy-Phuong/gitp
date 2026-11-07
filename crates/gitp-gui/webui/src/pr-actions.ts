@@ -62,6 +62,7 @@ import { pausePollingFor, startPolling } from "./poller";
 import { isRateLimit, listChanged, PR_LIST_POLL_MS, RATE_LIMIT_PAUSE_MS } from "./pr-refresh";
 import { state, ui } from "./app-state";
 import { readPullRequest } from "./read-ahead";
+import { noticeBranchForCi } from "./ci-badge";
 import { storePullRequestList, storedPullRequestList } from "./pr-store";
 import { copyText } from "./clipboard";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
@@ -121,6 +122,7 @@ export async function loadPullRequests(recheckAccount = false): Promise<void> {
   if (stale()) return;
   state.prs.repo = repo;
   state.prs.error = null;
+  noticeBranchForCi();
   if (!repo) {
     pollList(false);
     state.prs.list = null;

@@ -589,6 +589,15 @@ pub(crate) fn gh_pull_request_signature(
     })
 }
 
+/// The CI of `branch`'s newest pushed commit, for the status bar.
+#[tauri::command(async)]
+pub(crate) fn gh_branch_ci(
+    branch: String,
+    state: State<RepoState>,
+) -> Result<gitp_core::BranchCi, String> {
+    with_repo_unlocked(&state, |repo| repo.branch_ci(&Gh::system(), &branch))
+}
+
 /// Which files of the pull request are marked Viewed on GitHub.
 #[tauri::command(async)]
 pub(crate) fn gh_pull_request_viewed(

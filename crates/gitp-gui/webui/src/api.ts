@@ -3,6 +3,7 @@
 // UI is fully explorable without the desktop shell.
 
 import REVIEW_BRIDGE from "./review-bridge.js?raw";
+import type { BranchCi } from "./ci-status";
 import type { QuitCheck, Unpushed } from "./quit-check";
 import type {
   BranchReviewData,
@@ -2475,6 +2476,14 @@ export async function quitNow(): Promise<void> {
 }
 
 // The active repository's default branch, when it has unpushed commits.
+// The CI of `branch`'s newest pushed commit (GitHub Actions).
+export async function branchCi(branch: string): Promise<BranchCi> {
+  if (!isTauri()) {
+    return { state: "success", sha: "abc1234def", url: "https://github.com/example/mideal/actions", workflow: "CI", title: `Last push to ${branch}` };
+  }
+  return invoke<BranchCi>("gh_branch_ci", { branch });
+}
+
 export async function unpushedDefault(): Promise<Unpushed | null> {
   if (!isTauri()) return { branch: "main", ahead: 3 };
   return invoke<Unpushed | null>("unpushed_default", {});

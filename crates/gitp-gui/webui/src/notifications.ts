@@ -70,6 +70,11 @@ export function inboxNotes(
   return { notes, seen: { failing, requested } };
 }
 
+// A CI failure on the branch checked out (ci-badge.ts), under the "checks" switch.
+export function notifyCi(note: Note): void {
+  if (loadNotifyPrefs().checks) send([note]);
+}
+
 function send(notes: Note[]): void {
   if (document.hasFocus()) return;
   for (const n of notes) void notify(n.title, n.body).catch(() => {});
