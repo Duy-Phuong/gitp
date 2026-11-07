@@ -3,7 +3,8 @@
 // Amend + Commit). A stateful controller owns the selection, per-panel collapse
 // state, and the commit fields, reloading from the backend after each mutation.
 
-import { DEFAULT_CONTEXT_LINES } from "../api";
+import { DEFAULT_CONTEXT_LINES, isCancelled } from "../api";
+import { DRAFT_THINKING, needsConfirm, type CommitDraft } from "../claude-drafts";
 import { autoGrowTextarea, clear, copyToClipboard, el } from "../dom";
 import type {
   ChangeKind,
@@ -132,6 +133,10 @@ export interface ChangesCallbacks {
   reportError: (title: string, detail: string) => void;
   // Open the conflict resolver — from a Conflicted row's "Resolve" link.
   openConflicts?: () => void;
+  // Draft with Claude: a message for what is staged (with `amend`, HEAD's
+  // changes plus the staged ones), and the Cancel of the running draft.
+  draftMessage: (amend: boolean) => Promise<CommitDraft>;
+  cancelDraft: () => void;
 }
 
 export interface ChangesHandle {
@@ -161,6 +166,8 @@ export interface ChangesHandle {
   // collapsed folders, the commit message and Amend. Called when the active
   // repo changes, so nothing from the previous one leaks into the next.
   reset: () => void;
+  // Draft the commit message with Claude (Quick Launch), as its button does.
+  draftMessage: () => void;
 }
 
 export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHandle {
@@ -218,6 +225,14 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
   // box. Reloaded per repo by reset(); the token drops a superseded load.
   let template: { subject: string; body: string } | null = null;
   let templateToken = 0;
+  // Draft with Claude: whether a draft runs, the last failure, Claude's last
+  // draft and gitp's own pre-fill (a merge message) — both replaced without
+  // asking — and a token that drops an answer a reset made stale.
+  let drafting = false;
+  let draftError: string | null = null;
+  let lastDraft: CommitDraft | null = null;
+  let gitpPrefill: { subject: string; body: string } | null = null;
+  let draftToken = 0;
   let busy = false;
   let splitView = false;
   // Unchanged lines shown around each change (toolbar: fewer / more / full).
@@ -1268,9 +1283,24 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
       );
     });
 
+    const draftBtn = el("button", {
+      class: "btn ghost commit-draft-btn",
+      type: "button",
+      text: drafting ? "Cancel" : "Draft with Claude",
+      title: drafting ? "Stop the draft" : canDraft() ? "Draft the commit message with Claude" : "Stage something first",
+    });
+    draftBtn.disabled = !drafting && !canDraft();
+    draftBtn.addEventListener("click", () => (drafting ? cb.cancelDraft() : startDraft()));
+
     const toggles = [amendLabel, ...(signLabel ? [signLabel] : []), skipLabel, pushLabel];
-    const controls = el("div", { class: "commit-controls" }, [...toggles, commitBtn]);
+    const controls = el("div", { class: "commit-controls" }, [...toggles, draftBtn, commitBtn]);
     box.append(subjectInput, bodyInput, controls);
+    if (drafting) box.append(el("div", { class: "commit-draft-status", text: DRAFT_THINKING }));
+    else if (draftError !== null) {
+      const retry = el("button", { class: "btn ghost", type: "button", text: "Try again" });
+      retry.addEventListener("click", startDraft);
+      box.append(el("div", { class: "commit-draft-status failed" }, [el("span", { text: draftError }), retry]));
+    }
     return box;
   }
 
@@ -1381,6 +1411,47 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     return amendFiles.find((f) => f.path === path);
   }
 
+  function canDraft(): boolean {
+    return staged.length > 0 || amend;
+  }
+
+  // Run the draft; its answer replaces the message, asking first unless the
+  // box holds nothing the user wrote (empty, the template, gitp's pre-fill or
+  // Claude's last draft). The box stays editable meanwhile.
+  function startDraft(): void {
+    if (drafting) return;
+    if (!canDraft()) {
+      cb.setStatus("Stage something first.");
+      return;
+    }
+    const mine = ++draftToken;
+    drafting = true;
+    draftError = null;
+    render();
+    cb.draftMessage(amend).then(
+      async (draft) => {
+        if (mine !== draftToken) return;
+        drafting = false;
+        const text = (m: { subject: string; body: string } | null) => m && `${m.subject}\n\n${m.body}`;
+        const ask = needsConfirm(text({ subject, body })!, [text(template), text(gitpPrefill), text(lastDraft)]);
+        if (ask) {
+          render();
+          if (!(await cb.confirm("Replace the commit message with Claude's draft?")) || mine !== draftToken) return;
+        }
+        subject = draft.subject;
+        body = draft.body;
+        lastDraft = draft;
+        render();
+      },
+      (err) => {
+        if (mine !== draftToken) return;
+        drafting = false;
+        draftError = isCancelled(err) ? null : String(err);
+        render();
+      },
+    );
+  }
+
   function canCommit(): boolean {
     return subject.trim() !== "" && (staged.length > 0 || amend);
   }
@@ -1389,6 +1460,7 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     if (!messageUntouched()) return; // don't clobber what's already typed
     subject = newSubject;
     body = newBody;
+    gitpPrefill = { subject, body };
     render();
   }
 
@@ -1416,13 +1488,20 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
     amendFiles = [];
     amendPrefill = null;
     skipHooks = false;
+    // A draft for the previous repo: stop it, and drop what it answers.
+    if (drafting) cb.cancelDraft();
+    draftToken++;
+    drafting = false;
+    draftError = null;
+    lastDraft = null;
+    gitpPrefill = null;
     loadSigning();
     loadTemplate();
     render();
   }
 
   render();
-  return { reload, isBusy: () => busy, applyStatus, recheckDiff, prefillMessage, clearPrefill, reset };
+  return { reload, isBusy: () => busy, applyStatus, recheckDiff, prefillMessage, clearPrefill, reset, draftMessage: startDraft };
 }
 
 // A commit.template's text as a subject and body: lines starting with `#` are

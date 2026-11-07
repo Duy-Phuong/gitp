@@ -81,6 +81,7 @@ import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { authorsOf, authorSearchValue, authorTerm, withAuthorTerm } from "./log-columns";
 import { setupBranchHover } from "./branch-hover";
 import { setupChanges } from "./views/changes";
+import { cancelDraft, draftCommitMessage, loadDraftCommand } from "./claude-drafts";
 import { setupConflict } from "./views/conflict";
 import { setupReflog } from "./views/reflog";
 import { setupActivity } from "./views/activity";
@@ -112,6 +113,7 @@ import {
   saveDetailTab,
   savePushAfterCommit,
   updatePullButtonTitle,
+  withClaudeChoice,
 } from "./prefs";
 import { refsAt } from "./commit-refs";
 import { setupConfigTabs } from "./config-panel";
@@ -412,6 +414,7 @@ async function init(): Promise<void> {
     initialTab: loadDetailTab(),
     onTabChange: saveDetailTab,
   });
+  let draftPath = "";
   ui.changesView = setupChanges($("#changes-pane"), {
     fetchStatus: fetchStatusSummary,
     fetchFileDiff,
@@ -471,6 +474,13 @@ async function init(): Promise<void> {
     onActed: () => void refreshUndoLabels(),
     reportError: opFailed,
     openConflicts: () => showView("conflict"),
+    // The draft runs in the repo it started in; Cancel (or a repo switch)
+    // stops it there.
+    draftMessage: (amend) => {
+      draftPath = state.repoPath;
+      return draftCommitMessage(draftPath, withClaudeChoice(loadDraftCommand("commit-message")), amend);
+    },
+    cancelDraft: () => void cancelDraft(draftPath, "commit_message"),
   });
   ui.conflictView = setupConflict($("#conflict-pane"), {
     fetchStatus: conflictStatus,
