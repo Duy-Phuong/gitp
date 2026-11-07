@@ -71,6 +71,71 @@ export function conversationSummary(c: ThreadConversation): string {
   return `Claude · ${n} turn${n === 1 ? "" : "s"} · ${when}`;
 }
 
+// The options of the last Markdown table in `text` with an "Option" column
+// (the Check prompt asks for its options in one): that column's cells,
+// without Markdown marks.
+export function optionsIn(text: string): string[] {
+  const lines = text.split("\n").map((l) => l.trim());
+  const cells = (row: string) => row.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  const plain = (c: string) => c.replace(/\*\*|__|`|\*/g, "").trim();
+  let found: string[] = [];
+  for (let i = 0; i + 1 < lines.length; i++) {
+    if (!lines[i].startsWith("|") || !/^\|[\s:|-]+$/.test(lines[i + 1])) continue;
+    const col = cells(lines[i]).findIndex((h) => /option/i.test(h));
+    const rows: string[] = [];
+    let j = i + 2;
+    for (; j < lines.length && lines[j].startsWith("|"); j++) {
+      const cell = col >= 0 ? plain(cells(lines[j])[col] ?? "") : "";
+      if (cell) rows.push(cell);
+    }
+    if (rows.length) found = rows;
+    i = j - 1;
+  }
+  return found;
+}
+
+// The options Claude gave last in the conversation, if any.
+function latestOptions(c: ThreadConversation): string[] {
+  for (const t of [...c.turns].reverse()) {
+    if (t.role !== "claude") continue;
+    const options = optionsIn(t.text);
+    if (options.length) return options;
+  }
+  return [];
+}
+
+// The follow-up line an option's checkbox puts in the box.
+const chosen = (option: string) => `I choose: ${option}`;
+
+// A checkbox per option above the follow-up box: ticking one adds its line to
+// the box, unticking takes it out; what else is typed stays. Each box shows
+// whether its line is in the text, so a redraw or typing keeps them right.
+function optionPicker(options: string[], area: HTMLTextAreaElement, running: boolean, onDraft?: (text: string) => void): HTMLElement {
+  const row = el("div", { class: "pr-thread-options" }, [el("span", { class: "pr-thread-options-label", text: "Options" })]);
+  const boxes: [HTMLInputElement, string][] = [];
+  const sync = () => {
+    const lines = area.value.split("\n");
+    for (const [box, option] of boxes) box.checked = lines.includes(chosen(option));
+  };
+  for (const option of options) {
+    const box = el("input", { type: "checkbox" });
+    box.disabled = running;
+    box.addEventListener("change", () => {
+      const lines = area.value.split("\n").filter((l) => l !== chosen(option));
+      while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+      if (box.checked) lines.push(chosen(option));
+      area.value = lines.join("\n");
+      onDraft?.(area.value);
+    });
+    boxes.push([box, option]);
+    row.append(el("label", { class: "pr-thread-option", title: option }, [box, el("span", { text: option })]));
+  }
+  area.addEventListener("input", sync);
+  sync();
+  row.addEventListener("click", (e) => e.stopPropagation());
+  return row;
+}
+
 export interface ConversationOptions {
   state: ThreadState;
   // The pull request's head: a turn made against another is marked.
@@ -200,7 +265,9 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
       e.stopPropagation();
       o.onClear();
     });
-    const box = el("div", { class: "pr-composer pr-thread-claude-composer" }, [area, el("div", { class: "pr-composer-actions" }, actions)]);
+    const options = latestOptions(c);
+    const picker = options.length ? [optionPicker(options, area, state.running !== null, o.onDraft)] : [];
+    const box = el("div", { class: "pr-composer pr-thread-claude-composer" }, [...picker, area, el("div", { class: "pr-composer-actions" }, actions)]);
     box.addEventListener("click", (e) => e.stopPropagation());
     body.append(box);
   }

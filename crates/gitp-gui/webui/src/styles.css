@@ -5954,6 +5954,25 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 }
 /* Claude on the thread: its conversation under the comments, a left rule in
    the accent colour, folded to one line until opened. */
+/* The options of Claude's last answer, a checkbox each: ticking one puts
+   "I choose: …" in the follow-up box. */
+.pr-thread-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.pr-thread-options-label {
+  color: var(--text-dim);
+}
+.pr-thread-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
 .pr-thread-claude {
   border-left: 2px solid var(--accent);
   padding-left: 10px;

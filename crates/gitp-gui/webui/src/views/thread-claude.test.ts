@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { expect, it } from "vitest";
-import { conversationNode, conversationSummary, threadBadges, threadClaudeButtons } from "./thread-claude";
+import { describe, expect, it } from "vitest";
+import { conversationNode, conversationSummary, optionsIn, threadBadges, threadClaudeButtons } from "./thread-claude";
 import type { ThreadConversation } from "../types";
 
 it("a resolved thread has no Claude buttons", () => {
@@ -181,4 +181,65 @@ it("a read-only block (a resolved thread) offers only Clear, and no Check again"
   expect(node.querySelectorAll(".pr-thread-claude-turn").length).toBe(3);
   node.querySelector("button")!.click();
   expect(cleared).toBe(1);
+});
+
+const CHECK = [
+  "**Bottom line:** the loop stops one early.",
+  "",
+  "| Option | What changes | Risk |",
+  "|---|---|---|",
+  "| **A. Reviewer's suggestion** | use `<=` | low |",
+  "| B. An alternative | iterate the list | medium |",
+  "| C. No change | nothing | the bug stays |",
+].join("\n");
+
+it("reads the options from the table of Claude's answer", () => {
+  expect(optionsIn(CHECK)).toEqual(["A. Reviewer's suggestion", "B. An alternative", "C. No change"]);
+  expect(optionsIn("| File | Line |\n|---|---|\n| a.ts | 3 |")).toEqual([]);
+  expect(optionsIn("no table here")).toEqual([]);
+});
+
+describe("ticking an option", () => {
+  const withCheck = (): ThreadConversation => ({ ...conv(), turns: [{ kind: "check", role: "claude", at: Date.now(), head: "aaaa", text: CHECK }] });
+  const node = (draft = "") => {
+    const drafts: string[] = [];
+    const n = conversationNode({
+      state: { running: null, error: null, loaded: true, conversation: withCheck() },
+      head: "aaaa",
+      open: true,
+      lastKind: null,
+      draft,
+      onDraft: (t) => drafts.push(t),
+      onFollowup() {},
+      onClear() {},
+      onRetry() {},
+      onCancel() {},
+      onToggle() {},
+    });
+    return { n, drafts, boxes: [...n.querySelectorAll<HTMLInputElement>(".pr-thread-option input")], area: n.querySelector("textarea")! };
+  };
+  const tick = (box: HTMLInputElement) => {
+    box.checked = !box.checked;
+    box.dispatchEvent(new Event("change"));
+  };
+
+  it("fills the follow-up box with it, and unticking takes it out", () => {
+    const { boxes, area, drafts } = node();
+    expect(boxes).toHaveLength(3);
+    tick(boxes[1]);
+    expect(area.value).toBe("I choose: B. An alternative");
+    expect(drafts[drafts.length - 1]).toBe("I choose: B. An alternative");
+    tick(boxes[0]);
+    expect(area.value).toBe("I choose: B. An alternative\nI choose: A. Reviewer's suggestion");
+    tick(boxes[1]);
+    expect(area.value).toBe("I choose: A. Reviewer's suggestion");
+  });
+
+  it("keeps what was typed, and shows the options in the box ticked after a redraw", () => {
+    const { boxes, area } = node("Please also add a test.");
+    tick(boxes[2]);
+    expect(area.value).toBe("Please also add a test.\nI choose: C. No change");
+    const again = node(area.value);
+    expect(again.boxes.map((b) => b.checked)).toEqual([false, false, true]);
+  });
 });
