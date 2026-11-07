@@ -106,7 +106,7 @@ import {
 import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
 import { openReviewViewer } from "./views/review-viewer";
-import { baseBranches, canFixDrafts, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices, reviewThreads, type Thread } from "./pull-requests";
+import { baseBranches, canFixDrafts, defaultMergeMethod, githubRemoteName, listingOf, mergeAdvice, mergeChoices, otherListings, reviewThreads, type Thread } from "./pull-requests";
 import type { AheadCommit, BranchRef, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict, ThreadConversation, TurnKind } from "./types";
 
 // --- The sidebar section ----------------------------------------------------
@@ -132,10 +132,10 @@ export async function loadPullRequests(recheckAccount = false): Promise<void> {
   }
   state.prs.loading = true;
   // The list last seen for this repository shows while it is read again.
-  if (!state.prs.list) state.prs.list = storedPullRequestList(path, filter);
+  if (!state.prs.list) state.prs.list = storedPullRequestList(path, listingOf(filter));
   renderSidebarNow();
   // Asked for while gh's account is checked (the first time only), not after.
-  const listing = listPullRequests(filter === "reviewed" ? "all" : filter);
+  const listing = listPullRequests(listingOf(filter));
   listing.catch(() => {
     // Read below, when gh is signed in.
   });
@@ -149,8 +149,9 @@ export async function loadPullRequests(recheckAccount = false): Promise<void> {
       const [list, saved] = await Promise.all([listing, saving]);
       if (stale()) return;
       state.prs.list = list;
-      storePullRequestList(path, filter, list);
+      storePullRequestList(path, listingOf(filter), list);
       state.prs.reviewFiles = saved;
+      void readOtherListsAhead(path, filter);
       // The open pull request's review page icon follows the list.
       ui.prView?.redraw();
     } catch (err) {
@@ -178,10 +179,10 @@ async function pollPullRequestList(): Promise<void> {
   const stale = () => state.repoPath !== path || state.prs.filter !== filter || state.prs.loading;
   if (!path || !state.prs.repo || state.prs.repoPath !== path || stale()) return;
   try {
-    const list = await listPullRequests(filter === "reviewed" ? "all" : filter);
+    const list = await listPullRequests(listingOf(filter));
     if (stale() || !listChanged(state.prs.list, list)) return;
     state.prs.list = list;
-    storePullRequestList(path, filter, list);
+    storePullRequestList(path, listingOf(filter), list);
     state.prs.error = null;
     renderSidebarNow();
   } catch (err) {
@@ -224,8 +225,29 @@ export function showPullRequestList(): void {
 export function setPrFilter(filter: PrFilter): void {
   if (filter === state.prs.filter) return;
   state.prs.filter = filter;
-  state.prs.list = null;
+  // Its list as last read (or read ahead) shows at once, while it is read again.
+  state.prs.list = state.repoPath ? storedPullRequestList(state.repoPath, listingOf(filter)) : null;
+  renderSidebarNow();
   void loadPullRequests();
+}
+
+// The repositories whose other filters' lists were read ahead this session.
+const listsReadAhead = new Set<string>();
+
+// Read the other filters' lists once per repository, one after another, after
+// its first list: switching filter then shows a list at once, not "Loading…".
+async function readOtherListsAhead(path: string, filter: PrFilter): Promise<void> {
+  if (listsReadAhead.has(path)) return;
+  listsReadAhead.add(path);
+  for (const listing of otherListings(filter)) {
+    if (state.repoPath !== path) return;
+    try {
+      storePullRequestList(path, listing, await listPullRequests(listing));
+    } catch {
+      // Offline or rate-limited: a switch reads its list then.
+      return;
+    }
+  }
 }
 
 // Quick Launch's "Pull Requests: Reviewed" and the like: the section open,

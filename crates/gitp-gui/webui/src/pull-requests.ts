@@ -27,6 +27,19 @@ export const PR_FILTERS: { value: PrFilter; label: string; short: string }[] = [
   { value: "merged", label: "Merged", short: "Merged" },
 ];
 
+// What gh lists for a filter: Reviewed is All narrowed to the pull requests
+// with a saved review, so it reads All's list.
+export type PrListing = Exclude<PrFilter, "reviewed">;
+export function listingOf(filter: PrFilter): PrListing {
+  return filter === "reviewed" ? "all" : filter;
+}
+
+// The listings besides `filter`'s, read ahead so a switch shows at once.
+export function otherListings(filter: PrFilter): PrListing[] {
+  const own = listingOf(filter);
+  return PR_FILTERS.map((f) => listingOf(f.value)).filter((l, i, all) => l !== own && all.indexOf(l) === i);
+}
+
 // The tags that make a pull request stand out in the sidebar and the Pull
 // Requests view: line comments still to answer, and two approvals or more
 // (ready to merge, as most repositories ask for two). `short` is for the

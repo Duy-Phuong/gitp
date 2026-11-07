@@ -22,6 +22,8 @@ import {
   searchFiles,
   threadsByLine,
   threadsPerFile,
+  listingOf,
+  otherListings,
 } from "./pull-requests";
 import type { FileDiff, PrReviewComment, PullRequest, PullRequestDetail } from "./types";
 
@@ -406,5 +408,17 @@ describe("Fix on a pull request's review drafts", () => {
     expect(canFixDrafts(null, "anna")).toBe(false);
     expect(canFixDrafts("", "")).toBe(false);
     expect(canFixDrafts("Phuong", "phuong"), "GitHub logins ignore case").toBe(true);
+  });
+});
+
+describe("the list a filter reads", () => {
+  it("is its own, but Reviewed narrows All's", () => {
+    expect(listingOf("mine")).toBe("mine");
+    expect(listingOf("reviewed")).toBe("all");
+  });
+
+  it("the other listings are read ahead, each once", () => {
+    expect(otherListings("reviewed")).toEqual(["mine", "review_requested", "merged"]);
+    expect(otherListings("merged")).toEqual(["all", "mine", "review_requested"]);
   });
 });
