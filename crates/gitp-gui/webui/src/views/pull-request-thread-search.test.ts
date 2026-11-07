@@ -66,6 +66,7 @@ let cleared: number[];
 function setup() {
   const overrides: Partial<PullRequestCallbacks> = {
     fetchDetail: async () => detail(),
+    fetchFiles: async () => [],
     repoPath: () => "/r",
     savedReview: () => null,
     reviewedHead: () => null,

@@ -335,3 +335,49 @@ describe("Collapse comments in the Files tab", () => {
     expect(thread().classList.contains("open")).toBe(true);
   });
 });
+
+describe("opening a pull request quickly", () => {
+  const tabButton = (label: string) => [...host.querySelectorAll<HTMLButtonElement>(".pr-tab")].find((b) => b.textContent?.startsWith(label))!;
+  const title = () => host.querySelector(".pr-title")?.textContent ?? null;
+
+  beforeEach(() => {
+    cb.fetchDetail.mockImplementation(async (n: number) => ({ ...structuredClone(detail), number: n, title: `PR ${n}` }));
+  });
+
+  it("reads the changed files once the pull request is drawn, so the Files tab needs no wait", async () => {
+    expect(cb.fetchFiles).toHaveBeenCalledTimes(1);
+    tabButton("Files changed").click();
+    expect(host.textContent).not.toContain("Loading the changed files");
+    await settle();
+    expect(cb.fetchFiles).toHaveBeenCalledTimes(1);
+    expect(host.querySelector(".pr-files-diffs")).not.toBeNull();
+  });
+
+  it("draws a pull request opened again at once, from what it showed last, then reads it afresh", async () => {
+    view.show(8);
+    await settle();
+    expect(title()).toBe("PR 8");
+    const reads = cb.fetchDetail.mock.calls.length;
+    view.show(7);
+    expect(title()).toBe("Widgets");
+    expect(host.textContent).not.toContain("Loading pull request");
+    await settle();
+    expect(cb.fetchDetail).toHaveBeenCalledTimes(reads + 1);
+    expect(title()).toBe("PR 7");
+  });
+
+  it("keeps the changed files of a pull request opened again, unless its head moved", async () => {
+    view.show(8);
+    await settle();
+    const reads = cb.fetchFiles.mock.calls.length;
+    view.show(7);
+    await settle();
+    expect(cb.fetchFiles).toHaveBeenCalledTimes(reads);
+    view.show(8);
+    await settle();
+    detail = { ...detail, head_oid: "b2" };
+    view.show(7);
+    await settle();
+    expect(cb.fetchFiles).toHaveBeenCalledTimes(reads + 1);
+  });
+});

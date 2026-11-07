@@ -841,69 +841,35 @@ impl Repo {
     }
 
     /// Pull request `number` with its checks, reviews and conversation: one
-    /// `gh pr view`, and `gh api` for the comments on lines, which it leaves
-    /// out.
+    /// `gh pr view`, `gh api` for the comments on lines, which it leaves out,
+    /// and GraphQL for the threads those comments are in. The three run at
+    /// once: one after another they took three round trips to GitHub.
     pub fn pull_request(&self, gh: &Gh, number: u64) -> Result<PullRequestDetail> {
         let target = self.github_target()?;
+        let place = self.gh_place();
         let repo = target.repo_arg();
         let n = number.to_string();
-        let out = self.gh_call(
-            gh,
-            &target,
-            &["pr", "view", &n, "--repo", &repo, "--json", VIEW_FIELDS],
-            None,
-            TIMEOUT,
-        )?;
-        let raw: RawPrDetail = parse_json(&out.stdout)?;
         let endpoint = format!("repos/{}/pulls/{n}/comments?per_page=100", target.path);
-        let mut args = Vec::new();
-        target.api(&mut args);
-        args.extend(["--paginate", &endpoint]);
-        let out = self.gh_call(gh, &target, &args, None, TIMEOUT)?;
-        let review_comments = parse_review_comments(&out.stdout)?;
-        let review_threads = self.review_threads(gh, &target, number).unwrap_or_default();
+        let mut api_args = Vec::new();
+        target.api(&mut api_args);
+        api_args.extend(["--paginate", &endpoint]);
+        let (view, comments, threads) = thread::scope(|s| {
+            let comments = s.spawn(|| place.call(gh, &target, &api_args));
+            let threads = s.spawn(|| review_threads(&place, gh, &target, number));
+            let view = place.call(gh, &target, &["pr", "view", &n, "--repo", &repo, "--json", VIEW_FIELDS]);
+            (view, comments.join(), threads.join())
+        });
+        let raw: RawPrDetail = parse_json(&view?.stdout)?;
+        let comments = comments.map_err(|_| Error::Message("reading the line comments stopped".into()))??;
+        let review_comments = parse_review_comments(&comments.stdout)?;
+        let review_threads = threads.ok().and_then(|t| t.ok()).unwrap_or_default();
         Ok(raw.into_detail(review_comments, review_threads))
     }
 
-    /// The line-comment threads of pull request `number` with whether each
-    /// is resolved, from GraphQL (REST doesn't say). The first hundred.
-    fn review_threads(
-        &self,
-        gh: &Gh,
-        target: &GitHubRepo,
-        number: u64,
-    ) -> Result<Vec<PrReviewThread>> {
-        let (owner, name) = target
-            .path
-            .split_once('/')
-            .ok_or_else(|| Error::Message(format!("not owner/name: {}", target.path)))?;
-        let query = "query($owner: String!, $name: String!, $number: Int!) { \
-            repository(owner: $owner, name: $name) { pullRequest(number: $number) { \
-            reviewThreads(first: 100) { nodes { id isResolved \
-            comments(first: 100) { nodes { databaseId } } } } } } }";
-        let n = number.to_string();
-        let mut args = Vec::new();
-        target.api(&mut args);
-        let owner_arg = format!("owner={owner}");
-        let name_arg = format!("name={name}");
-        let number_arg = format!("number={n}");
-        let query_arg = format!("query={query}");
-        args.extend(["graphql", "-F", &owner_arg, "-F", &name_arg, "-F", &number_arg, "-f", &query_arg]);
-        let out = self.gh_call(gh, target, &args, None, TIMEOUT)?;
-        let raw: RawThreadsAnswer = parse_json(&out.stdout)?;
-        Ok(raw
-            .data
-            .repository
-            .pull_request
-            .review_threads
-            .nodes
-            .into_iter()
-            .map(|t| PrReviewThread {
-                id: t.id,
-                resolved: t.is_resolved,
-                comment_ids: t.comments.nodes.into_iter().filter_map(|c| c.database_id).collect(),
-            })
-            .collect())
+    /// Where and how [`Repo::gh_call`] runs `gh`, apart from the repository:
+    /// `git2::Repository` can't be shared between threads, this can.
+    fn gh_place(&self) -> GhPlace {
+        GhPlace { dir: self.workdir().to_path_buf(), cancel: self.net.cancel.clone() }
     }
 
     /// Mark the line-comment thread `thread_id` (a `PrReviewThread::id`)
@@ -2199,6 +2165,60 @@ pub(crate) struct ShellOutput {
 
 const LIST_FIELDS: &str = "number,title,author,isDraft,reviewDecision,statusCheckRollup,\
      headRefName,baseRefName,updatedAt,url,labels,latestReviews,mergedAt";
+
+/// What `gh` needs from a [`Repo`] to run for it: its folder, and the flag
+/// that cancels its network commands.
+struct GhPlace {
+    dir: PathBuf,
+    cancel: Option<Arc<AtomicBool>>,
+}
+
+impl GhPlace {
+    fn call(&self, gh: &Gh, target: &GitHubRepo, args: &[&str]) -> Result<Output> {
+        gh.call(Some(&self.dir), args, None, TIMEOUT, self.cancel.as_deref(), Some(&target.repo_arg()))
+    }
+}
+
+/// The line-comment threads of pull request `number` with whether each
+/// is resolved, from GraphQL (REST doesn't say). The first hundred.
+fn review_threads(
+    place: &GhPlace,
+    gh: &Gh,
+    target: &GitHubRepo,
+    number: u64,
+) -> Result<Vec<PrReviewThread>> {
+    let (owner, name) = target
+        .path
+        .split_once('/')
+        .ok_or_else(|| Error::Message(format!("not owner/name: {}", target.path)))?;
+    let query = "query($owner: String!, $name: String!, $number: Int!) { \
+        repository(owner: $owner, name: $name) { pullRequest(number: $number) { \
+        reviewThreads(first: 100) { nodes { id isResolved \
+        comments(first: 100) { nodes { databaseId } } } } } } }";
+    let n = number.to_string();
+    let mut args = Vec::new();
+    target.api(&mut args);
+    let owner_arg = format!("owner={owner}");
+    let name_arg = format!("name={name}");
+    let number_arg = format!("number={n}");
+    let query_arg = format!("query={query}");
+    args.extend(["graphql", "-F", &owner_arg, "-F", &name_arg, "-F", &number_arg, "-f", &query_arg]);
+    let out = place.call(gh, target, &args)?;
+    let raw: RawThreadsAnswer = parse_json(&out.stdout)?;
+    Ok(raw
+        .data
+        .repository
+        .pull_request
+        .review_threads
+        .nodes
+        .into_iter()
+        .map(|t| PrReviewThread {
+            id: t.id,
+            resolved: t.is_resolved,
+            comment_ids: t.comments.nodes.into_iter().filter_map(|c| c.database_id).collect(),
+        })
+        .collect())
+}
 
 const VIEW_FIELDS: &str = "number,title,body,state,isDraft,author,baseRefName,headRefName,\
      headRefOid,labels,url,createdAt,reviewDecision,statusCheckRollup,reviews,comments,commits,\
@@ -3991,6 +4011,44 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
     }
 
     #[test]
+    fn the_detail_reads_its_three_parts_at_once() {
+        // Each call waits until all three have started: one after another,
+        // the first would give up and the detail would fail.
+        let fake = Fake::with_script(
+            r#"#!/bin/sh
+d="$(dirname "$0")"
+touch "$d/started.$1.$2"
+i=0
+while [ "$(ls "$d" | grep -c '^started\.')" -lt 3 ]; do
+  i=$((i+1)); [ $i -gt 200 ] && exit 1
+  sleep 0.05
+done
+cat "$d/out.$1.$2" 2>/dev/null
+"#,
+        );
+        fake.answer(
+            "pr view",
+            r#"{"number":7,"title":"T","state":"OPEN","author":{"login":"octocat"},
+                "baseRefName":"main","headRefName":"topic","url":"https://github.com/octo/hello/pull/7",
+                "reviewDecision":null}"#,
+            "",
+            0,
+        );
+        fake.answer("api --paginate", "[]", "", 0);
+        fake.answer(
+            "api graphql",
+            r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
+                {"id":"PRRT_1","isResolved":false,"comments":{"nodes":[{"databaseId":9}]}}]}}}}}"#,
+            "",
+            0,
+        );
+        let (_dir, repo) = github_repo();
+        let detail = repo.pull_request(&fake.gh(), 7).unwrap();
+        assert_eq!(detail.number, 7);
+        assert_eq!(detail.review_threads.len(), 1);
+    }
+
+    #[test]
     fn the_threads_resolved_state_rides_along_with_the_detail() {
         let fake = Fake::new();
         fake.answer(
@@ -4070,16 +4128,14 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let (_dir, repo) = github_repo();
         let pr = repo.pull_request(&fake.gh(), 7).unwrap();
 
+        // The calls run at once, so in any order.
         let calls = fake.calls();
-        assert_eq!(calls[0][..5], ["pr", "view", "7", "--repo", "octo/hello"]);
-        assert_eq!(
-            calls[1],
-            [
-                "api",
-                "--paginate",
-                "repos/octo/hello/pulls/7/comments?per_page=100"
-            ]
-        );
+        assert!(calls.iter().any(|c| c.starts_with(&["pr".into(), "view".into(), "7".into(), "--repo".into(), "octo/hello".into()])));
+        assert!(calls.contains(&vec![
+            "api".to_string(),
+            "--paginate".to_string(),
+            "repos/octo/hello/pulls/7/comments?per_page=100".to_string(),
+        ]));
         assert_eq!(pr.head_oid, "abc123");
         assert_eq!(
             pr.commits,

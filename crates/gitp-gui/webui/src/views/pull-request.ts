@@ -172,6 +172,9 @@ export interface PullRequestHandle {
 
 type Tab = "conversation" | "commits" | "files" | "checks" | "drafts";
 
+// How many pull requests shown before are kept, to draw again at once.
+const SEEN_MAX = 8;
+
 // A line comment being written in the Files tab: where, the code that was on
 // the line when it was clicked, and the text so far.
 interface LineDraft {
@@ -266,6 +269,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   let waiting: { run: () => void; gen: number } | null = null;
   // The user's own loads in flight: a poll meanwhile would announce them.
   let loads = 0;
+  // Pull requests shown before, newest last: one opened again is drawn at
+  // once from what it showed, then read afresh. For the repository on screen.
+  const seen = new Map<number, { detail: PullRequestDetail; files: FileDiff[] | null }>();
+  // The changed files being read, shared by the read ahead, the Files tab
+  // and the Drafts tab, so each pull request's diff is asked for once.
+  let filesLoading: { number: number; head: string; promise: Promise<FileDiff[]> } | null = null;
 
   const message = (text: string) => {
     clear(host);
@@ -282,11 +291,14 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     try {
       const [d, sig] = await Promise.all([cb.fetchDetail(number), quietSignature(number)]);
       if (mine !== generation) return;
+      // Files kept from before are another head's when it moved.
+      if (detail?.head_oid !== d.head_oid) files = null;
       detail = d;
       signature = sig;
       toDraftsIfReady();
       if (tab === "drafts" && !files) void showDrafts(d);
       else render();
+      if (!files) readAhead(d);
     } catch (err) {
       if (mine !== generation) return;
       message(`Couldn't load pull request #${number}.`);
@@ -294,6 +306,40 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     } finally {
       loads--;
     }
+  }
+
+  // The changed files of `pr`, read once however many ask.
+  function readFiles(pr: PullRequestDetail): Promise<FileDiff[]> {
+    if (filesLoading?.number === pr.number && filesLoading.head === pr.head_oid) return filesLoading.promise;
+    const promise = cb.fetchFiles(pr.number);
+    const loading = { number: pr.number, head: pr.head_oid, promise };
+    filesLoading = loading;
+    const done = () => {
+      if (filesLoading === loading) filesLoading = null;
+    };
+    promise.then(done, done);
+    return promise;
+  }
+
+  // Read the changed files while the user reads the conversation: the Files
+  // tab then opens with no wait.
+  function readAhead(pr: PullRequestDetail): void {
+    readFiles(pr).then(
+      (loaded) => {
+        if (!files && number === pr.number && detail?.head_oid === pr.head_oid) files = loaded;
+      },
+      () => {
+        // The Files tab asks again, and says so when it fails.
+      },
+    );
+  }
+
+  // Keep what the pull request on screen shows, for when it is opened again.
+  function remember(): void {
+    if (number === null || !detail || detail.number !== number) return;
+    seen.delete(number);
+    seen.set(number, { detail, files });
+    while (seen.size > SEEN_MAX) seen.delete(seen.keys().next().value!);
   }
 
   function render(): void {
@@ -788,7 +834,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       body.append(el("div", { class: "pr-empty", text: "Loading the changed files…" }));
       const mine = generation;
       try {
-        const loaded = await cb.fetchFiles(pr.number);
+        const loaded = await readFiles(pr);
         if (mine !== generation || tab !== "files") return;
         files = loaded;
       } catch (err) {
@@ -1211,7 +1257,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   async function showDrafts(pr: PullRequestDetail): Promise<void> {
     if (!files) {
       try {
-        files = await cb.fetchFiles(pr.number);
+        files = await readFiles(pr);
       } catch {
         // Without the diff the anchors go unchecked; GitHub will still refuse a
         // bad one when posting.
@@ -1498,11 +1544,14 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         cb.pruneThreadConversations();
       }
       if (n !== number) {
+        remember();
         treeSelected = null;
         treeCollapsed.clear();
         number = n;
-        detail = null;
-        files = null;
+        const kept = seen.get(n);
+        detail = kept?.detail ?? null;
+        files = kept?.files ?? null;
+        renderedTab = null;
         commitOpen = null;
         commitFiles.clear();
         searched = null;
@@ -1517,6 +1566,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         draftsWhenReady = tab === "conversation";
       }
       if (cb.fetchSignature) stopPolling = startPolling("pr-view", PR_VIEW_POLL_MS, poll);
+      // One opened before shows at once while it is read again.
+      if (detail && renderedTab === null) redraw();
       void load(true);
     },
     reload: () => void load(true),
@@ -1561,6 +1612,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       number = null;
       detail = null;
       files = null;
+      seen.clear();
+      filesLoading = null;
       draft = "";
       renderedTab = null;
       clear(host);
