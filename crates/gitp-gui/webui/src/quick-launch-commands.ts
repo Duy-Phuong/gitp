@@ -108,7 +108,7 @@ import {
   newTagAction,
 } from "./commit-actions";
 import { toggleTerminal } from "./terminal-panel";
-import { addWorktreeAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
+import { addWorktreeAction, cleanUpStorageAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
 import { addSubmoduleAction, syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
 import { finishFlowAction, initGitflowAction, startFlowAction } from "./gitflow-actions";
 import { FLOW_KINDS, flowBranch } from "./gitflow";
@@ -554,6 +554,12 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Add Worktree…", next: () => addWorktreeStage() },
     { kind: "command", label: "Add Remote…", run: addRemoteAction },
     { kind: "command", label: "Prune Worktrees…", run: () => void pruneWorktreesAction() },
+    {
+      kind: "command",
+      label: "Clean Up Storage…",
+      detail: "worktrees, merged branches and build folders, with their size",
+      run: cleanUpStorageAction,
+    },
     { kind: "command", label: "Apply Patch…", run: () => void applyPatchAction() },
     { kind: "command", label: "Stage All Changes", detail: shortcutHint("stageAll"), run: () => void stageAllAction() },
     { kind: "command", label: "Unstage All Changes", detail: shortcutHint("unstageAll"), run: () => void unstageAllAction() },

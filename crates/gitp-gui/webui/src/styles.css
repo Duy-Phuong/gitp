@@ -7917,6 +7917,85 @@ mark.find-hit.current {
   background: var(--del-bg);
 }
 /* The status bar's "● 2 Claude jobs", shown only while jobs run. */
+/* Clean Up Storage (views/storage-dialog.ts). */
+.storage-dialog {
+  width: min(720px, 94vw);
+}
+.storage-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.storage-title {
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.storage-hint,
+.storage-empty {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.storage-list {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.storage-list:has(.storage-empty) {
+  border: none;
+}
+.storage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.storage-row:last-child {
+  border-bottom: none;
+}
+.storage-name {
+  font-family: var(--mono);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.storage-branch {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.storage-why {
+  margin-left: auto;
+  color: var(--mod-fg);
+  white-space: nowrap;
+}
+.storage-why.safe {
+  color: var(--add-fg);
+}
+.storage-size {
+  flex: none;
+  min-width: 64px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+.storage-row > .storage-name + .storage-size {
+  margin-left: auto;
+}
+.storage-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+.storage-actions:empty {
+  display: none;
+}
 .status-unpushed {
   flex: none;
   background: var(--mod-bg);

@@ -37,6 +37,7 @@ mod reviews;
 mod staging;
 mod stash;
 mod state;
+mod storage;
 mod submodules;
 mod tags;
 mod template;
@@ -257,6 +258,9 @@ pub fn run() {
             claude_jobs::claude_jobs_quit,
             quit::quit_now,
             quit::unpushed_default,
+            storage::merged_branches,
+            storage::build_folders,
+            storage::disk_usage,
             gh::gh_thread_turn,
             gh::gh_thread_cancel,
             gh::gh_thread_conversation,

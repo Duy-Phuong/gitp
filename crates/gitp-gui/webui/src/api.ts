@@ -1751,6 +1751,24 @@ export async function addWorktree(path: string, target: WorktreeTarget): Promise
 
 // `git worktree remove`. Without `force`, git refuses a worktree with local
 // changes and says to use --force (see removeWorktreeAction).
+// Clean Up Storage: local branches already merged into the default branch.
+export async function mergedBranches(): Promise<{ base: string; branches: string[] }> {
+  if (!isTauri()) return { base: "origin/main", branches: ["feature/old-login", "fix/typo"] };
+  return invoke<{ base: string; branches: string[] }>("merged_branches", {});
+}
+
+// The `target` and `node_modules` folders under the work tree.
+export async function buildFolders(): Promise<string[]> {
+  if (!isTauri()) return ["/Users/you/Documents/mideal/target", "/Users/you/Documents/mideal/web/node_modules"];
+  return invoke<string[]>("build_folders", {});
+}
+
+// The disk a folder takes, in bytes.
+export async function diskUsage(path: string): Promise<number> {
+  if (!isTauri()) return path.endsWith("target") ? 24 * 1024 ** 3 : 380 * 1024 ** 2;
+  return invoke<number>("disk_usage", { path });
+}
+
 export async function removeWorktree(path: string, force: boolean): Promise<string> {
   if (!isTauri()) {
     // Every mock worktree has "changes", so preview exercises the force path.

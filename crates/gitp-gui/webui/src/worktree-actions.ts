@@ -25,6 +25,7 @@ import { closeRepoTab, loadRepo, loadSidebar } from "./shell";
 import { deleteLocalBranch } from "./ref-actions";
 import { openTerminalAt } from "./terminal-panel";
 import { otherWorktreeWith } from "./branch-worktree";
+import { openStorageDialog } from "./views/storage-dialog";
 import { askChoice } from "./views/choice-dialog";
 import { openFormDialog } from "./views/form-dialog";
 import type { DragRef } from "./ref-drop";
@@ -355,4 +356,18 @@ async function runWorktreeOp(label: string, op: () => Promise<string>, emptyNote
   } catch (err) {
     opFailed(`${label} failed`, err);
   }
+}
+
+// Quick Launch's Clean Up Storage…: worktrees, merged branches and build
+// folders, with what can go safely.
+export function cleanUpStorageAction(): void {
+  if (!state.repoPath) {
+    setStatus("Clean Up Storage: open a repository first.");
+    return;
+  }
+  openStorageDialog(state.repoPath, {
+    changed: () => loadSidebar(),
+    reportDone,
+    reportError: opFailed,
+  });
 }
