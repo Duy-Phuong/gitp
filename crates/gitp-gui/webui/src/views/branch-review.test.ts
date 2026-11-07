@@ -71,12 +71,12 @@ describe("the branch Review panel", () => {
   });
 
   it("turns Fix off with its reason while a fix runs, and runs it otherwise", async () => {
-    let { host, cb } = await setup({ fixing: 9 });
-    let fix = [...host.querySelectorAll("button")].find((b) => b.textContent === "Fix")!;
+    const running = await setup({ fixing: 9 });
+    const fix = [...running.host.querySelectorAll("button")].find((b) => b.textContent === "Fix")!;
     expect(fix.disabled).toBe(true);
     expect(fix.title).toBe("A fix is running on feat");
     vi.resetModules();
-    ({ host, cb } = await setup());
+    const { host, cb } = await setup();
     const fixes = [...host.querySelectorAll("button")].filter((b) => b.textContent === "Fix");
     expect(fixes.map((b) => b.disabled)).toEqual([false, true]);
     fixes[0].click();

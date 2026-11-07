@@ -165,11 +165,11 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
     if (o.draft) area.value = o.draft;
     area.addEventListener("input", () => o.onDraft?.(area.value));
     const send = el("button", { class: "btn small", text: "Send" });
-    const clear = el("button", { class: "btn small ghost", text: "Clear" }) as HTMLButtonElement;
+    const clear = el("button", { class: "btn small ghost", text: "Clear" });
     const actions = [clear, send];
     if (o.fix) {
       const reason = o.fix.disabled;
-      const fix = el("button", { class: "btn small", text: "Fix", title: reason ?? "Make the change for the chosen option in the branch's worktree, commit it, and prepare the reply" }) as HTMLButtonElement;
+      const fix = el("button", { class: "btn small", text: "Fix", title: reason ?? "Make the change for the chosen option in the branch's worktree, commit it, and prepare the reply" });
       fix.disabled = state.running !== null || reason !== null;
       fix.addEventListener("click", (e) => {
         e.stopPropagation();

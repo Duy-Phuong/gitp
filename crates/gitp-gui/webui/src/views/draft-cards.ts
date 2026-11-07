@@ -24,7 +24,7 @@ export interface DraftCardOptions {
 }
 
 function button(text: string, onClick: () => void, cls = "btn small ghost"): HTMLButtonElement {
-  const b = el("button", { class: cls, text }) as HTMLButtonElement;
+  const b = el("button", { class: cls, text });
   b.addEventListener("click", (e) => {
     e.stopPropagation();
     onClick();

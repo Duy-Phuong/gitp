@@ -61,16 +61,16 @@ export function setupBranchReviewView(host: HTMLElement, cb: BranchReviewCallbac
     const view = el("div", { class: "pr-view branch-review" });
     host.append(view);
 
-    const against = el("select", { class: "branch-review-against", "aria-label": "Review against" }) as HTMLSelectElement;
+    const against = el("select", { class: "branch-review-against", "aria-label": "Review against" });
     const bases = cb.bases();
     for (const name of s.base && !bases.includes(s.base) ? [s.base, ...bases] : bases) {
-      const o = el("option", { value: name, text: name }) as HTMLOptionElement;
+      const o = el("option", { value: name, text: name });
       o.selected = name === s.base;
       against.append(o);
     }
     against.addEventListener("change", () => cb.changeBase(b, against.value));
     const button = (text: string, onClick: () => void, title: string) => {
-      const x = el("button", { class: "btn small ghost", text, title }) as HTMLButtonElement;
+      const x = el("button", { class: "btn small ghost", text, title });
       x.addEventListener("click", onClick);
       return x;
     };
@@ -129,7 +129,7 @@ export function setupBranchReviewView(host: HTMLElement, cb: BranchReviewCallbac
       note: where === "list" ? note : null,
       fix: d.path ? { reason: fixDisabledReason(s, d, placed), run: () => cb.fix(s.branch, d) } : null,
       showInDiff: where === "list" && inDiff ? () => showInDiff(d) : null,
-      openCommit: cb.openCommit,
+      openCommit: (sha) => cb.openCommit(sha),
       changed: (redraw) => (redraw ? reviewsChanged() : saveSoon()),
     });
   }

@@ -98,6 +98,8 @@ function mockRun<T>(path: string, kind: DraftRunKind, value: T): Promise<T> {
     mockRuns.set(key, (reason) => {
       clearTimeout(timer);
       mockRuns.delete(key);
+      // A string, as Tauri's own rejections are: isCancelled compares it.
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
       reject(reason);
     });
   });
