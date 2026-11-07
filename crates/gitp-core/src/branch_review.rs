@@ -8,11 +8,16 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::diff::FileDiff;
 use crate::error::{Error, Result};
-use crate::gh::{git_in, parse_pr_diff, review_file_written_since, run_shell, REVIEW_TIMEOUT};
+use crate::gh::{
+    claude_answer, git_in, parse_pr_diff, require_clean, require_contains, review_file_written_since,
+    run_shell, run_verified_fix, FIX_TIMEOUT, REVIEW_TIMEOUT,
+};
+use crate::pr_threads::now_millis;
+use crate::review_store::{DraftStatus, ReviewFix, ReviewKey, StoredReview};
 use crate::repo::Repo;
 
 /// A branch's changes against its base, from their merge base.
@@ -148,6 +153,116 @@ impl Repo {
     }
 }
 
+/// One finding to fix: where it is, what it says, the hunk around it, and
+/// the branch (with its base) whose worktree the fix runs in.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FindingInput {
+    pub path: String,
+    pub line: u32,
+    pub side: String,
+    pub body: String,
+    pub severity: Option<String>,
+    pub diff_hunk: String,
+    pub branch: String,
+    pub base: String,
+    /// A pull request's draft: its number and the head the branch must hold.
+    #[serde(default)]
+    pub pr: Option<u64>,
+    #[serde(default)]
+    pub pr_head: Option<String>,
+}
+
+impl Repo {
+    /// Fix `input` with `fix_command` in the worktree of its branch, with the
+    /// thread fix's rules: the worktree must be clean (and, for a pull
+    /// request's draft, hold its head); afterwards exactly one new commit and
+    /// a clean tree, else everything the run did is undone. The command gets
+    /// the finding as JSON in `GITP_THREAD_FILE`, its body on stdin, and runs
+    /// as a fresh Claude session each time.
+    pub fn fix_finding(&self, input: &FindingInput, fix_command: &str) -> Result<ReviewFix> {
+        let command = fix_command.trim();
+        if command.is_empty() {
+            return Err(Error::Message("Set a fix command in Settings → Git first.".into()));
+        }
+        let branch = input.branch.as_str();
+        let dir = self.branch_worktree(branch)?.ok_or_else(|| {
+            Error::Message(format!("Check the branch out first: {branch} is in no worktree."))
+        })?;
+        require_clean(&dir)?;
+        if let (Some(number), Some(head)) = (input.pr, input.pr_head.as_deref()) {
+            self.ensure_pull_request_head(number, head)?;
+            require_contains(&dir, head)?;
+        }
+        let before = git_in(&dir, &["rev-parse", "HEAD"])?;
+        let finding = serde_json::json!({
+            "kind": "finding",
+            "path": input.path,
+            "line": input.line,
+            "side": input.side,
+            "body": input.body,
+            "severity": input.severity,
+            "diff_hunk": input.diff_hunk,
+            "branch": input.branch,
+            "base": input.base,
+        });
+        let file = std::env::temp_dir().join(format!(
+            "gitp-finding-{}-{}.json",
+            std::process::id(),
+            now_millis()
+        ));
+        std::fs::write(&file, finding.to_string())
+            .map_err(|e| Error::Message(format!("can't write {}: {e}", file.display())))?;
+        let env = [
+            ("GITP_THREAD_FILE", file.to_string_lossy().into_owned()),
+            ("GITP_TURN_KIND", "fix".to_string()),
+            ("GITP_CLAUDE_SESSION", String::new()),
+            ("GITP_FIX_WORKTREE", dir.to_string_lossy().into_owned()),
+            ("GITP_FIX_BRANCH", branch.to_string()),
+            ("GITP_FIX_HEAD_BEFORE", before.clone()),
+            ("GITP_FINDING_PATH", input.path.clone()),
+            ("GITP_FINDING_LINE", input.line.to_string()),
+            ("GITP_BRANCH", branch.to_string()),
+            ("GITP_BASE", input.base.clone()),
+        ];
+        let fixed = run_verified_fix(&dir, branch, &before, || {
+            let out = run_shell(&dir, command, input.body.as_bytes(), &env, FIX_TIMEOUT, &self.net)?;
+            // A JSON answer that reports an error fails the fix.
+            claude_answer(&out.stdout).map(|_| ())
+        });
+        let _ = std::fs::remove_file(&file);
+        let ((), commit) = fixed?;
+        Ok(ReviewFix {
+            commit,
+            worktree: dir.to_string_lossy().into_owned(),
+            at: now_millis(),
+        })
+    }
+
+    /// Fix draft `id` of the review at `key` (see [`Repo::fix_finding`]) and
+    /// mark it fixed. The review is read again after the run, so edits saved
+    /// meanwhile are kept.
+    pub fn fix_review_draft(
+        &self,
+        key: &ReviewKey,
+        id: u64,
+        input: &FindingInput,
+        fix_command: &str,
+    ) -> Result<StoredReview> {
+        let missing = || Error::Message(format!("The review has no draft {id}."));
+        let review = self.stored_review(key)?.ok_or_else(|| Error::Message("There is no saved review to fix.".into()))?;
+        if !review.drafts.iter().any(|d| d.id == id) {
+            return Err(missing());
+        }
+        let fix = self.fix_finding(input, fix_command)?;
+        let mut review = self.stored_review(key)?.unwrap_or(review);
+        let draft = review.drafts.iter_mut().find(|d| d.id == id).ok_or_else(missing)?;
+        draft.status = DraftStatus::Fixed;
+        draft.fix = Some(fix);
+        self.save_stored_review(&review)?;
+        Ok(review)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,5 +390,123 @@ mod tests {
         assert_eq!(moved.len(), 1);
         assert_eq!(moved[0].path, "src/f.rs");
         assert_eq!(repo.diff_between(&"0".repeat(40), "feature").unwrap().map(|f| f.len()), None);
+    }
+
+    const COMMIT_ONCE: &str = r#"echo x > fixed.txt; git add fixed.txt; git -c user.name=T -c user.email=t@example.com commit -qm "fix(review): src/f.rs:2 — x""#;
+
+    fn finding() -> FindingInput {
+        FindingInput {
+            path: "src/f.rs".into(),
+            line: 2,
+            side: "RIGHT".into(),
+            body: "two is wrong".into(),
+            severity: Some("minor".into()),
+            diff_hunk: "@@ -0,0 +1,3 @@\n+one\n+two\n+three".into(),
+            branch: "feature".into(),
+            base: "main".into(),
+            pr: None,
+            pr_head: None,
+        }
+    }
+
+    #[test]
+    fn a_finding_fix_runs_in_the_worktree_with_the_finding() {
+        let (dir, repo, wt, _fork) = branch_repo();
+        let log = dir.path().join("log.txt");
+        let cmd = format!(
+            r#"{{ echo "$PWD|$GITP_TURN_KIND|$GITP_FINDING_PATH:$GITP_FINDING_LINE|$GITP_FIX_BRANCH|$GITP_FIX_HEAD_BEFORE|$GITP_BRANCH|$GITP_BASE|s=$GITP_CLAUDE_SESSION|$GITP_FIX_WORKTREE"; cat "$GITP_THREAD_FILE"; echo; cat; }} > {}; {COMMIT_ONCE}; echo summary"#,
+            log.display()
+        );
+        let before = repo.resolve_commit("feature").unwrap();
+        let fix = repo.fix_finding(&finding(), &cmd).unwrap();
+        let after = repo.resolve_commit("feature").unwrap();
+        assert_eq!(fix.commit, after);
+        assert_eq!(canonical(Path::new(&fix.worktree)), canonical(&wt));
+        let logged = std::fs::read_to_string(&log).unwrap();
+        let mut lines = logged.lines();
+        let env: Vec<_> = lines.next().unwrap().split('|').collect();
+        assert_eq!(canonical(Path::new(env[0])), canonical(&wt));
+        assert_eq!(&env[1..8], ["fix", "src/f.rs:2", "feature", before.as_str(), "feature", "main", "s="]);
+        let json: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+        assert_eq!(json["kind"], "finding");
+        assert_eq!(json["path"], "src/f.rs");
+        assert_eq!(json["line"], 2);
+        assert_eq!(json["diff_hunk"], "@@ -0,0 +1,3 @@\n+one\n+two\n+three");
+        assert_eq!(json["branch"], "feature");
+        assert_eq!(json["base"], "main");
+        assert_eq!(lines.next(), Some("two is wrong"), "the body on stdin");
+    }
+
+    #[test]
+    fn a_finding_fix_that_commits_twice_or_dirties_is_undone() {
+        let (_dir, repo, wt, _fork) = branch_repo();
+        let before = repo.resolve_commit("feature").unwrap();
+        let twice = format!("{COMMIT_ONCE}; echo y > again.txt; git add again.txt; git -c user.name=T -c user.email=t@example.com commit -qm twice");
+        let err = message(repo.fix_finding(&finding(), &twice).unwrap_err());
+        assert!(err.contains("exactly one commit"), "{err}");
+        assert_eq!(repo.resolve_commit("feature").unwrap(), before);
+        assert!(!wt.join("fixed.txt").exists() && !wt.join("again.txt").exists());
+        let dirty = format!("{COMMIT_ONCE}; echo z > dirty.txt");
+        let err = message(repo.fix_finding(&finding(), &dirty).unwrap_err());
+        assert!(err.contains("uncommitted"), "{err}");
+        assert!(!wt.join("dirty.txt").exists());
+        assert_eq!(repo.resolve_commit("feature").unwrap(), before);
+    }
+
+    #[test]
+    fn a_finding_fix_refuses_a_dirty_or_missing_worktree() {
+        let (dir, repo, wt, _fork) = branch_repo();
+        std::fs::write(wt.join("mine.txt"), "wip").unwrap();
+        let err = message(repo.fix_finding(&finding(), "touch ran.txt").unwrap_err());
+        assert!(err.contains("Commit or stash"), "{err}");
+        assert!(!wt.join("ran.txt").exists() && wt.join("mine.txt").exists());
+        git(dir.path(), &["branch", "loose", "main"]);
+        let loose = FindingInput { branch: "loose".into(), ..finding() };
+        let err = message(repo.fix_finding(&loose, "touch ran.txt").unwrap_err());
+        assert!(err.contains("in no worktree"), "{err}");
+    }
+
+    #[test]
+    fn fixing_a_stored_draft_marks_it_fixed_and_keeps_other_edits() {
+        use crate::review_store::{DraftStatus, ReviewKey, StoredDraft, StoredReview};
+        let (dir, repo, _wt, _fork) = branch_repo();
+        let d = |id, body: &str| StoredDraft {
+            id,
+            path: "src/f.rs".into(),
+            line: 2,
+            side: "RIGHT".into(),
+            body: body.into(),
+            severity: None,
+            original: body.into(),
+            status: DraftStatus::Pending,
+            topic: None,
+            fix: None,
+        };
+        let review = StoredReview {
+            version: 1,
+            branch: Some("feature".into()),
+            pr: None,
+            base: "main".into(),
+            head: repo.resolve_commit("feature").unwrap(),
+            drafts: vec![d(1, "one"), d(2, "two")],
+        };
+        let key = ReviewKey::Branch("feature".into());
+        repo.save_stored_review(&review).unwrap();
+        // While the fix runs, the user edits draft 2 (the frontend saves it).
+        let mut edited = review.clone();
+        edited.drafts[1].body = "two, edited".into();
+        let edit = dir.path().join("edited.json");
+        std::fs::write(&edit, serde_json::to_vec(&edited).unwrap()).unwrap();
+        let store = repo.common_dir().join("gitp/branch-reviews/feature.json");
+        let cmd = format!("cp {} {}; {COMMIT_ONCE}", edit.display(), store.display());
+        let out = repo.fix_review_draft(&key, 1, &finding(), &cmd).unwrap();
+        assert_eq!(out.drafts[0].status, DraftStatus::Fixed);
+        assert_eq!(out.drafts[0].fix.as_ref().unwrap().commit, repo.resolve_commit("feature").unwrap());
+        assert_eq!(out.drafts[1].body, "two, edited");
+        assert_eq!(out.drafts[1].status, DraftStatus::Pending);
+        assert_eq!(repo.stored_review(&key).unwrap(), Some(out));
+        let err = message(repo.fix_review_draft(&key, 9, &finding(), "touch ran.txt").unwrap_err());
+        assert!(err.contains("no draft"), "{err}");
+        assert!(!dir.path().join("wt/ran.txt").exists());
     }
 }

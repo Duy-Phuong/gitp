@@ -58,7 +58,7 @@ pub use activity::ActivityEntry;
 pub use bisect::{BisectMark, BisectStatus};
 pub use blame::{BlameCommit, BlameLine, FileBlame};
 pub use branch_ops::{AheadCommit, MergeMode};
-pub use branch_review::{BranchDiff, GeneratedBranchReview};
+pub use branch_review::{BranchDiff, FindingInput, GeneratedBranchReview};
 pub use checkout::StashSwitch;
 pub use claude_transcript::{
     local_day_start, new_session_id, subagent_transcripts, transcript_path, transcript_path_in, Transcript,

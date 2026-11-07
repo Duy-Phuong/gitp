@@ -1705,22 +1705,9 @@ impl Repo {
                 ))
             })?;
         let dir = PathBuf::from(&worktree.path);
-        if !git_in(&dir, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
-            return Err(Error::Message(format!(
-                "Commit or stash the changes in {} first.",
-                dir.display()
-            )));
-        }
+        require_clean(&dir)?;
         self.ensure_pull_request_head(input.number, &input.head)?;
-        if let Err(e) = git_in(&dir, &["merge-base", "--is-ancestor", &input.head, "HEAD"]) {
-            // Exit 1 is "not an ancestor", silently; anything said is a real error.
-            return Err(Error::Message(match e {
-                Error::Message(text) if text.is_empty() => {
-                    "The local branch is behind GitHub: pull it first.".into()
-                }
-                other => format!("couldn't compare the branch with the pull request's head: {other}"),
-            }));
-        }
+        require_contains(&dir, &input.head)?;
         let before = git_in(&dir, &["rev-parse", "HEAD"])?;
         let place = TurnPlace {
             dir: dir.clone(),
@@ -1732,34 +1719,9 @@ impl Repo {
             timeout: FIX_TIMEOUT,
             fix_session: true,
         };
-        let fixed = self
-            .run_turn(gh, input, TurnKind::Fix, &option, fix_command, place)
-            .and_then(|c| {
-                if git_in(&dir, &["rev-parse", "--abbrev-ref", "HEAD"])? != branch {
-                    return Err(Error::Message(format!(
-                        "The fix left the worktree off {branch}."
-                    )));
-                }
-                let after = git_in(&dir, &["rev-parse", "HEAD"])?;
-                // Exactly one new commit whose only parent is where the run
-                // started: not none, not two, not an amend, not a merge.
-                let parents = git_in(&dir, &["rev-list", "--parents", "-n", "1", &after])?;
-                if parents != format!("{after} {before}") {
-                    let made = git_in(&dir, &["rev-list", "--count", &format!("{before}..{after}")])
-                        .unwrap_or_else(|_| "?".into());
-                    return Err(Error::Message(format!(
-                        "The fix must make exactly one commit on top of {}; it made {made}{}.",
-                        &before[..7],
-                        if after == before { " (none)" } else if made == "1" { " (amended or rebased)" } else { "" }
-                    )));
-                }
-                if !git_in(&dir, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
-                    return Err(Error::Message(
-                        "The fix left uncommitted changes behind.".into(),
-                    ));
-                }
-                Ok((c, after))
-            });
+        let fixed = run_verified_fix(&dir, branch, &before, || {
+            self.run_turn(gh, input, TurnKind::Fix, &option, fix_command, place)
+        });
         let (mut c, after) = match fixed {
             Ok(ok) => ok,
             Err(e) => {
@@ -1769,13 +1731,7 @@ impl Repo {
                     saved.turns.retain(|t| t.kind != TurnKind::Fix || t.commit.is_some());
                     let _ = self.save_thread_conversation(&saved);
                 }
-                return Err(match undo_fix(&dir, branch, &before) {
-                    Ok(()) => e,
-                    Err(undo) => Error::Message(format!(
-                        "{e}\n\nAnd the undo failed in {}: {undo}",
-                        dir.display()
-                    )),
-                });
+                return Err(e);
             }
         };
         if let Some(fix) = c.turns.iter_mut().rev().find(|t| t.kind == TurnKind::Fix) {
@@ -1991,6 +1947,77 @@ pub(crate) fn git_in(dir: &Path, args: &[&str]) -> Result<String> {
     }
 }
 
+/// Refuse a worktree with any change, untracked files included (ignored
+/// ones aside): a fix's commit must never sweep up the user's own work.
+pub(crate) fn require_clean(dir: &Path) -> Result<()> {
+    if git_in(dir, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::Message(format!(
+            "Commit or stash the changes in {} first.",
+            dir.display()
+        )))
+    }
+}
+
+/// Refuse a worktree whose HEAD lacks the pull request's `head`.
+pub(crate) fn require_contains(dir: &Path, head: &str) -> Result<()> {
+    match git_in(dir, &["merge-base", "--is-ancestor", head, "HEAD"]) {
+        Ok(_) => Ok(()),
+        // Exit 1 is "not an ancestor", silently; anything said is a real error.
+        Err(Error::Message(text)) if text.is_empty() => Err(Error::Message(
+            "The local branch is behind GitHub: pull it first.".into(),
+        )),
+        Err(other) => Err(Error::Message(format!(
+            "couldn't compare the branch with the pull request's head: {other}"
+        ))),
+    }
+}
+
+/// Run a fix in the worktree `dir` of `branch`, which was clean at `before`,
+/// and check what it left: still on the branch, exactly one new commit whose
+/// only parent is `before`, nothing uncommitted. Any failure — the run's or
+/// a check's — is undone back to `before`. Returns the run's value and the
+/// new commit.
+pub(crate) fn run_verified_fix<T>(
+    dir: &Path,
+    branch: &str,
+    before: &str,
+    run: impl FnOnce() -> Result<T>,
+) -> Result<(T, String)> {
+    let checked = run().and_then(|value| {
+        if git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])? != branch {
+            return Err(Error::Message(format!("The fix left the worktree off {branch}.")));
+        }
+        let after = git_in(dir, &["rev-parse", "HEAD"])?;
+        // Exactly one new commit whose only parent is where the run
+        // started: not none, not two, not an amend, not a merge.
+        let parents = git_in(dir, &["rev-list", "--parents", "-n", "1", &after])?;
+        if parents != format!("{after} {before}") {
+            let made = git_in(dir, &["rev-list", "--count", &format!("{before}..{after}")])
+                .unwrap_or_else(|_| "?".into());
+            return Err(Error::Message(format!(
+                "The fix must make exactly one commit on top of {}; it made {made}{}.",
+                &before[..7],
+                if after == before { " (none)" } else if made == "1" { " (amended or rebased)" } else { "" }
+            )));
+        }
+        if !git_in(dir, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
+            return Err(Error::Message("The fix left uncommitted changes behind.".into()));
+        }
+        Ok((value, after))
+    });
+    checked.or_else(|e| {
+        Err(match undo_fix(dir, branch, before) {
+            Ok(()) => e,
+            Err(undo) => Error::Message(format!(
+                "{e}\n\nAnd the undo failed in {}: {undo}",
+                dir.display()
+            )),
+        })
+    })
+}
+
 /// Put the worktree back where a fix started: on `branch` at `before`, with
 /// nothing untracked. Tried a few times: a test runner or git the run left
 /// behind may still hold the index for a moment after it was stopped.
@@ -2012,7 +2039,7 @@ pub(crate) fn undo_fix(dir: &Path, branch: &str, before: &str) -> Result<()> {
 /// What a thread command printed: the answer, and the session to resume
 /// when it was a `claude -p --output-format json` answer. Such an answer
 /// that reports an error is the error.
-fn claude_answer(stdout: &str) -> Result<(String, Option<String>)> {
+pub(crate) fn claude_answer(stdout: &str) -> Result<(String, Option<String>)> {
     let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout.trim()) else {
         return Ok((stdout.to_string(), None));
     };
