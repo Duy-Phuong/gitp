@@ -132,3 +132,10 @@ export function fixDisabledReason(s: BranchReviewState, d: Draft, placed: Placed
   if (s.data.dirty) return `Commit or stash the changes in ${s.data.worktree} first`;
   return null;
 }
+
+// The Create Pull Request dialog's line about the branch's review: "" when
+// every finding is fixed or discarded.
+export function openFindingsNote(open: number): string {
+  if (open === 0) return "";
+  return open === 1 ? "1 review finding is not fixed or discarded." : `${open} review findings are not fixed or discarded.`;
+}

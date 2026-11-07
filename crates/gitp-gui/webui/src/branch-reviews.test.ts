@@ -120,3 +120,12 @@ describe("branch reviews", () => {
     expect(m.placeDraft(draft({ stale: true, side: "LEFT" }), []).moved).toBe(true);
   });
 });
+
+describe("the Create Pull Request note", () => {
+  it("counts the findings neither fixed nor discarded", async () => {
+    const m = await fresh();
+    expect(m.openFindingsNote(0)).toBe("");
+    expect(m.openFindingsNote(1)).toBe("1 review finding is not fixed or discarded.");
+    expect(m.openFindingsNote(3)).toBe("3 review findings are not fixed or discarded.");
+  });
+});

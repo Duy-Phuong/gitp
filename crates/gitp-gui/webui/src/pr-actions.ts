@@ -70,7 +70,7 @@ import {
   showView,
 } from "./shell";
 import { defaultWorktreePath, worktreeOf } from "./worktree-actions";
-import { hunkAround } from "./branch-reviews";
+import { hunkAround, openFindingsNote } from "./branch-reviews";
 import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
 import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, SKILL_REVIEW_COMMAND, withClaudeChoice } from "./prefs";
 import { finishTurn, lastUserText, preparedReply, runningTurns, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
@@ -335,11 +335,15 @@ export async function createPullRequestDialog(b: BranchRef, remote: string): Pro
     fallback,
   );
   const unpushed = !b.has_upstream || b.ahead > 0;
+  // The branch's own review, if it had one: findings still open are worth a word.
+  await flushSaves();
+  const reviewed = await storedReviewLoad(state.repoPath, { branch: b.name }).catch(() => null);
+  const note = openFindingsNote(reviewed?.drafts.filter((d) => d.status === "pending" || d.status === "approved").length ?? 0);
   setStatus("");
   openFormDialog(
     {
       title: `Create Pull Request from ${b.name}`,
-      sub: unpushed ? `On ${repo}. ${b.name} is pushed to ${remote} first.` : `On ${repo}.`,
+      sub: `${unpushed ? `On ${repo}. ${b.name} is pushed to ${remote} first.` : `On ${repo}.`}${note ? ` ${note}` : ""}`,
       fields: [
         { label: "Into", choices: bases.map((n) => ({ value: n, label: n })), value: fallback },
         { label: "Title", value: draft.title, required: true },
