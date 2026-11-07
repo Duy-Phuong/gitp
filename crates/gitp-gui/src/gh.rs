@@ -549,6 +549,16 @@ pub(crate) fn gh_pull_request(
     gh_pull_request_impl(&state, number)
 }
 
+/// The pull request's signature (gitp-core's `PrSignature`): what the pull
+/// request view polls to know when to read it again.
+#[tauri::command(async)]
+pub(crate) fn gh_pull_request_signature(
+    number: u64,
+    state: State<RepoState>,
+) -> Result<gitp_core::PrSignature, String> {
+    with_repo_unlocked(&state, |repo| repo.pull_request_signature(&Gh::system(), number))
+}
+
 #[tauri::command(async)]
 pub(crate) fn gh_pull_request_files(
     number: u64,

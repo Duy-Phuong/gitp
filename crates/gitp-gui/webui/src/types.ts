@@ -805,6 +805,17 @@ export interface PrCommit {
   committed_at: string;
 }
 
+// What the pull request view polls (gitp-core's PrSignature): a change in any
+// part means the pull request moved on GitHub.
+export interface PrSignature {
+  head: string;
+  updated_at: string;
+  // [thread node id, resolved]
+  threads: [string, boolean][];
+  // [check name, state], by name
+  checks: [string, string][];
+}
+
 export interface PullRequestDetail {
   number: number;
   title: string;
