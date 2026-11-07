@@ -156,6 +156,16 @@ export interface PullRequestHandle {
 
 type Tab = "conversation" | "commits" | "files" | "checks" | "drafts";
 
+// A line comment being written in the Files tab: where, the code that was on
+// the line when it was clicked, and the text so far.
+interface LineDraft {
+  path: string;
+  side: "LEFT" | "RIGHT";
+  line: number;
+  content: string;
+  text: string;
+}
+
 // A page with lines: the saved review page.
 const REVIEW_PAGE_ICON = ["M6 3h9l4 4v14H6z", "M14 3v5h5", "M9 12h7", "M9 16h7"];
 // An open book: the saved review, read inside gitp.
@@ -222,14 +232,16 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // The Files tab's open line comment boxes and what they hold, by lineKey,
   // so a redraw opens them again (or, for a line no longer in the diff,
   // keeps the text in a box at the top of its file).
-  const lineDrafts = new Map<string, { path: string; side: "LEFT" | "RIGHT"; line: number; text: string }>();
+  const lineDrafts = new Map<string, LineDraft>();
   // Refreshing on its own (pr-refresh.ts): the signature last seen, the
   // poll's stop, the notice at the top, and a redraw waiting for a text box
   // to lose focus.
   let signature: PrSignature | null = null;
   let stopPolling: (() => void) | null = null;
   let notice: { text: string; timer: ReturnType<typeof setTimeout> } | null = null;
-  let waiting: (() => void) | null = null;
+  let waiting: { run: () => void; gen: number } | null = null;
+  // The user's own loads in flight: a poll meanwhile would announce them.
+  let loads = 0;
 
   const message = (text: string) => {
     clear(host);
@@ -242,14 +254,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     if (!detail || detail.number !== number) message(`Loading pull request #${number}…`);
     if (!keepFiles) files = null;
     // The user's own reloads set the signature quietly: no notice for them.
-    const quiet = cb.fetchSignature?.(number).catch(() => null);
+    loads++;
     try {
-      const d = await cb.fetchDetail(number);
+      const [d, sig] = await Promise.all([cb.fetchDetail(number), cb.fetchSignature?.(number).catch(() => null) ?? null]);
       if (mine !== generation) return;
       detail = d;
-      void quiet?.then((sig) => {
-        if (mine === generation) signature = sig;
-      });
+      signature = sig;
       toDraftsIfReady();
       if (tab === "drafts" && !files) void showDrafts(d);
       else render();
@@ -257,6 +267,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       if (mine !== generation) return;
       message(`Couldn't load pull request #${number}.`);
       cb.reportError(`Couldn't load pull request #${number}`, err);
+    } finally {
+      loads--;
     }
   }
 
@@ -320,16 +332,17 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   async function poll(): Promise<void> {
     const n = number;
     const mine = generation;
-    if (n === null || !cb.fetchSignature || host.closest(".hidden")) return;
+    const stale = () => mine !== generation || loads > 0;
+    if (n === null || !cb.fetchSignature || host.closest(".hidden") || stale()) return;
     try {
       const now = await cb.fetchSignature(n);
-      if (mine !== generation) return;
+      if (stale()) return;
       if (!signatureChanged(signature, now)) {
         signature = now;
         return;
       }
       const d = await cb.fetchDetail(n);
-      if (mine !== generation) return;
+      if (stale()) return;
       const old = detail;
       signature = now;
       detail = d;
@@ -342,7 +355,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     } catch (err) {
       if (!isRateLimit(err)) return;
       pausePollingFor(RATE_LIMIT_PAUSE_MS);
-      showNotice(RATE_LIMIT_NOTICE);
+      showNotice(RATE_LIMIT_NOTICE, RATE_LIMIT_PAUSE_MS);
     }
   }
 
@@ -363,24 +376,27 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       return;
     }
     const pending = waiting === null;
-    waiting = apply;
+    waiting = { run: apply, gen: generation };
     if (!pending) return;
+    // Dropped when a load (another pull request, a reset, the user's own
+    // reload) came after it.
     const check = () =>
       setTimeout(() => {
-        if (!waiting || busy()) return;
-        const run = waiting;
-        waiting = null;
+        const w = waiting;
+        const current = w !== null && w.gen === generation;
+        if (current && busy()) return;
         host.removeEventListener("focusout", check);
         document.removeEventListener("selectionchange", check);
-        run();
+        waiting = null;
+        if (current) w.run();
       }, 0);
     host.addEventListener("focusout", check);
     document.addEventListener("selectionchange", check);
   }
 
-  function showNotice(text: string): void {
+  function showNotice(text: string, ms = NOTICE_MS): void {
     if (notice) clearTimeout(notice.timer);
-    notice = { text, timer: setTimeout(hideNotice, NOTICE_MS) };
+    notice = { text, timer: setTimeout(hideNotice, ms) };
     drawNotice();
   }
 
@@ -850,7 +866,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     // A split row shows an unchanged line twice; its threads go under it once.
     const placed = new Set<string>();
     // Each line's row (or split row), for the comment boxes opened again.
-    const anchors = new Map<string, Element>();
+    const anchors = new Map<string, { anchor: Element; content: string }>();
     for (const row of node.querySelectorAll<HTMLElement>(".diff-line, .split-cell[data-line]")) {
       const line = lineOf(row);
       const target = line && lineTarget(line);
@@ -859,7 +875,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       const key = lineKey(file.path, target.side, target.line);
       if (placed.has(key)) continue;
       placed.add(key);
-      anchors.set(key, anchorOf(row));
+      anchors.set(key, { anchor: anchorOf(row), content: line.content });
       // Below the threads the row's other side has put there already.
       let after = anchorOf(row);
       while (after.nextElementSibling?.classList.contains("pr-thread")) after = after.nextElementSibling;
@@ -876,8 +892,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     // one whose line left the diff at the top of the file.
     for (const [key, d] of lineDrafts) {
       if (d.path !== file.path) continue;
-      const anchor = anchors.get(key);
-      if (anchor) anchor.after(lineComposer(pr, file.path, d, false));
+      // The same line number holding other code (a push moved it) is not
+      // the line the comment was for.
+      const at = anchors.get(key);
+      if (at && at.content === d.content) at.anchor.after(lineComposer(pr, file.path, d, false));
       else (node.querySelector(".file-head") ?? node).after(orphanComposer(key, d));
     }
     if (file.truncated) {
@@ -896,7 +914,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       const line = lineOf(row);
       const target = line && lineTarget(line);
       if (!target) return;
-      const d = { path: file.path, side: target.side, line: target.line, text: "" };
+      const d: LineDraft = { path: file.path, side: target.side, line: target.line, content: line.content, text: "" };
       lineDrafts.set(lineKey(d.path, d.side, d.line), d);
       anchor.after(lineComposer(pr, file.path, d, true));
     });
@@ -905,7 +923,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
 
   // The comment box under a line, kept in `lineDrafts` until it is posted or
   // cancelled.
-  function lineComposer(pr: PullRequestDetail, path: string, d: { side: "LEFT" | "RIGHT"; line: number; text: string }, focus: boolean): HTMLElement {
+  function lineComposer(pr: PullRequestDetail, path: string, d: LineDraft, focus: boolean): HTMLElement {
     const key = lineKey(path, d.side, d.line);
     const where = `${path}:${d.line}${d.side === "LEFT" ? " (removed line)" : ""}`;
     const box = replyBox(`Comment on ${where} (Markdown)`, "Add Comment", async (text) => {
@@ -928,7 +946,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
 
   // What was typed for a line a push took out of the diff: kept to copy,
   // until Discard.
-  function orphanComposer(key: string, d: { path: string; side: "LEFT" | "RIGHT"; line: number; text: string }): HTMLElement {
+  function orphanComposer(key: string, d: LineDraft): HTMLElement {
     const area = composerArea({});
     area.value = d.text;
     area.addEventListener("input", () => (d.text = area.value));

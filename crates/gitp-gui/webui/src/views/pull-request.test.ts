@@ -243,11 +243,63 @@ describe("the pull request view polling", () => {
     cb.fetchSignature.mockRejectedValue("GitHub's API rate limit was reached. Wait a few minutes, then try again.");
     await poll();
     expect(notice()).toBe(RATE_LIMIT_NOTICE);
+    // It stays while polling is paused, not the usual 10 seconds.
+    await vi.advanceTimersByTimeAsync(11_000);
+    expect(notice()).toBe(RATE_LIMIT_NOTICE);
     const calls = cb.fetchSignature.mock.calls.length;
     await vi.advanceTimersByTimeAsync(9 * 60_000);
     expect(cb.fetchSignature.mock.calls.length).toBe(calls);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(cb.fetchSignature.mock.calls.length).toBe(calls + 1);
+  });
+
+  it("a composer whose line now holds other code after a push is not reopened there", async () => {
+    button("Files changed (1)").click();
+    await settle();
+    host.querySelectorAll<HTMLElement>(".diff-line.pr-commentable")[2].click(); // line 3, "three"
+    await settle();
+    type(host.querySelector<HTMLTextAreaElement>(".pr-line-composer textarea")!, "Name it better");
+    (document.activeElement as HTMLElement | null)?.blur();
+    // A push inserts a line above: line 3 is now other code.
+    signature = { ...signature, head: "b2" };
+    detail = { ...detail, head_oid: "b2", commits: [...detail.commits, { oid: "b2", headline: "two", body: "", authors: [], committed_at: "" }] };
+    files = fileWith([
+      [" ", 1, 1, "one"],
+      ["+", null, 2, "two"],
+      ["+", null, 3, "inserted"],
+      ["+", null, 4, "three"],
+    ]);
+    await poll();
+    await settle();
+    expect(host.querySelector(".pr-line-composer")).toBeNull();
+    expect(host.querySelector<HTMLTextAreaElement>(".pr-line-orphan textarea")?.value).toBe("Name it better");
+  });
+
+  it("a poll during the user's own reload says nothing", async () => {
+    aCommentArrives();
+    let release: () => void = () => undefined;
+    cb.fetchDetail.mockImplementationOnce(() => new Promise((r) => (release = () => r(structuredClone(detail)))));
+    await vi.advanceTimersByTimeAsync(29_000);
+    view.reload(); // the user posted the comment; the reload is slow
+    await vi.advanceTimersByTimeAsync(2_000); // the poll at 30 s lands meanwhile
+    release();
+    await settle();
+    expect(notice()).toBeNull();
+    await poll();
+    expect(notice()).toBeNull();
+    expect(cb.fetchDetail).toHaveBeenCalledTimes(2); // show, reload
+  });
+
+  it("a redraw waiting on one pull request is dropped when another opens", async () => {
+    const area = host.querySelector<HTMLTextAreaElement>(".pr-composer textarea")!;
+    area.focus();
+    aCommentArrives();
+    await poll();
+    view.show(8);
+    area.blur();
+    host.dispatchEvent(new FocusEvent("focusout"));
+    await settle();
+    expect(notice()).toBeNull();
   });
 
   it("stops polling once reset", async () => {
