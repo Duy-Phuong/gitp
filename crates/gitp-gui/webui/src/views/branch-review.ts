@@ -43,11 +43,16 @@ export function setupBranchReviewView(host: HTMLElement, cb: BranchReviewCallbac
   let branch: string | null = null;
   let tab: Tab = "drafts";
   let scrollTo: number | null = null;
+  // The tab drawn last: a redraw of the same one keeps its scroll (an
+  // Approve on the 15th card must not jump to the top); a switch starts at it.
+  let renderedTab: Tab | null = null;
 
   const state = (): BranchReviewState => branchState(cb.repoPath(), branch ?? "");
   const review = (): PrReview => reviewFor(cb.repoPath(), { branch: branch ?? "" });
 
   function render(): void {
+    const scrolled = renderedTab === tab && scrollTo === null ? (host.querySelector<HTMLElement>(".pr-body")?.scrollTop ?? 0) : 0;
+    renderedTab = tab;
     clear(host);
     if (!branch) return;
     const s = state();
@@ -112,6 +117,7 @@ export function setupBranchReviewView(host: HTMLElement, cb: BranchReviewCallbac
     }
     if (tab === "drafts") renderDrafts(body, s, r);
     else renderFiles(body, s, r);
+    if (scrolled) body.scrollTop = scrolled;
   }
 
   function card(d: Draft, s: BranchReviewState, where: "list" | "inline"): HTMLElement {
@@ -177,7 +183,10 @@ export function setupBranchReviewView(host: HTMLElement, cb: BranchReviewCallbac
 
   return {
     show(next: string) {
-      if (branch !== next) tab = "drafts";
+      if (branch !== next) {
+        tab = "drafts";
+        renderedTab = null;
+      }
       branch = next;
       render();
       cb.load(next);

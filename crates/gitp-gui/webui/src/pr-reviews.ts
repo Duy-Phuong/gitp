@@ -27,6 +27,12 @@ export interface Draft extends DraftComment {
   stale?: boolean;
 }
 
+// Whether a pull request's review can go once the approved drafts were
+// posted: nothing open is left, and no fixed mark worth keeping.
+export function nothingLeftAfterPost(drafts: Draft[]): boolean {
+  return !drafts.some((d) => isOpen(d) || d.status === "fixed");
+}
+
 // Still waiting for a decision: neither discarded nor fixed.
 export const isOpen = (d: Draft): boolean => d.status === "pending" || d.status === "approved";
 

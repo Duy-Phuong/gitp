@@ -41,6 +41,7 @@ import {
   clearDrafts,
   hasNewCommits,
   isOpen,
+  nothingLeftAfterPost,
   saveSoon,
   markPosted,
   prReview,
@@ -970,7 +971,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
           const posted = new Set([...postable, ...offDiff].map((d) => d.id));
           r.drafts = r.drafts.filter((d) => !posted.has(d.id));
           r.body = "";
-          if (!r.drafts.some(isOpen)) {
+          if (nothingLeftAfterPost(r.drafts)) {
             clearDrafts(cb.repoPath(), pr.number);
             tab = "conversation";
           }

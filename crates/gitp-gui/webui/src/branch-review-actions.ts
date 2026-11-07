@@ -101,7 +101,7 @@ async function runBranchReview(repo: string, branch: string, skill: boolean): Pr
 // draft marked fixed. The line and hunk sent are the current ones.
 async function fixBranchDraft(repo: string, branch: string, d: Draft): Promise<void> {
   const s = branchState(repo, branch);
-  if (s.fixing !== null || !s.data) return;
+  if (s.fixing !== null || s.running || !s.data) return;
   const at = placeDraft(d, s.data.moves);
   if (at.moved) return;
   const where = `${at.path}:${at.line}`;

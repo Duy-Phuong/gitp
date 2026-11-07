@@ -204,4 +204,17 @@ describe("drafts kept on disk, with a fixed mark", () => {
     await m.flushSaves();
     expect(s.remove).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps a review whose drafts left after posting are fixed ones", async () => {
+    const m = await fresh();
+    const r = m.prReview("/a", 7);
+    m.addDrafts(r, [finding(1), finding(2)]);
+    r.drafts[0].status = "discarded";
+    r.drafts[1].status = "discarded";
+    expect(m.nothingLeftAfterPost(r.drafts)).toBe(true);
+    r.drafts[0].status = "fixed";
+    expect(m.nothingLeftAfterPost(r.drafts), "a fixed mark is kept").toBe(false);
+    r.drafts[0].status = "pending";
+    expect(m.nothingLeftAfterPost(r.drafts)).toBe(false);
+  });
 });

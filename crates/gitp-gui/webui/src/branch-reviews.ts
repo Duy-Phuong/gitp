@@ -128,6 +128,8 @@ export function fixDisabledReason(s: BranchReviewState, d: Draft, placed: Placed
   if (d.status === "discarded") return "Discarded";
   if (placed.moved) return "The line moved since the review: run it again";
   if (s.fixing !== null) return `A fix is running on ${s.branch}`;
+  // The review runs in the same worktree: a fix there would change what it reads.
+  if (s.running) return `A review is running on ${s.branch}`;
   if (!s.data?.worktree) return `Check ${s.branch} out first`;
   if (s.data.dirty) return `Commit or stash the changes in ${s.data.worktree} first`;
   return null;

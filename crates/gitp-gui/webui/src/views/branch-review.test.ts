@@ -111,4 +111,14 @@ describe("the branch Review panel", () => {
     tab(host, "Files").click();
     expect(host.textContent).toContain("Nothing to review: feat has no changes against main.");
   });
+
+  it("keeps its scroll when a card's Approve redraws it, and a tab switch starts at the top", async () => {
+    const { host, view } = await setup();
+    host.querySelector<HTMLElement>(".pr-body")!.scrollTop = 120;
+    [...host.querySelectorAll("button")].find((b) => b.textContent === "Approve")!.click();
+    view.redraw(); // as main.ts does on every review change
+    expect(host.querySelector<HTMLElement>(".pr-body")!.scrollTop).toBe(120);
+    tab(host, "Files").click();
+    expect(host.querySelector<HTMLElement>(".pr-body")!.scrollTop).toBe(0);
+  });
 });
