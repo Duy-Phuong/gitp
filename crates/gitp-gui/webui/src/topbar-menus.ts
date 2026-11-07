@@ -18,6 +18,8 @@ import { setConfigTab } from "./config-panel";
 import { reloadDiffs, showView, startAutoFetch, updateLogView } from "./shell";
 import { createBranchAction, runPullMethod } from "./repo-actions";
 import { checkoutBranchAction } from "./ref-actions";
+import { matchBranches } from "./branch-filter";
+import type { BranchRef } from "./types";
 import { githubAccountForSettings, signInToGitHub, signOutOfGitHub } from "./pr-actions";
 import { closeSettingsDialog, openSettingsDialog } from "./views/settings-dialog";
 
@@ -43,25 +45,70 @@ export function setupBranchMenu(): void {
 
 function buildBranchMenu(menu: HTMLElement, close: () => void): void {
   clear(menu);
-  // The branches scroll on their own: the new-branch row under them stays in
-  // view however many there are.
+  // Typing narrows the branches; the arrows pick one and Enter checks it out.
+  const filter = el("input", {
+    class: "branch-menu-filter",
+    type: "search",
+    placeholder: "Filter branches",
+    spellcheck: "false",
+    "aria-label": "Filter branches",
+  });
+  // The branches scroll on their own: the filter above and the new-branch row
+  // under them stay in view however many there are.
   const list = el("div", { class: "branch-menu-list" });
-  menu.append(list);
+  menu.append(filter, list);
 
-  if (state.refs.branches.length === 0) {
-    list.append(el("div", { class: "menu-item", text: "No branches" }));
-  }
-  for (const b of state.refs.branches) {
-    const item = el("button", {
-      class: `menu-item${b.is_head ? " head" : ""}`,
-      text: b.is_head ? `● ${b.name}` : b.name,
+  const branches = state.refs.branches;
+  let shown: BranchRef[] = branches;
+  // The row the arrows picked, shown once a key moved it or text was typed.
+  let picked = 0;
+  let keyed = false;
+  const paint = () => {
+    clear(list);
+    const names = new Set(matchBranches(branches.map((b) => b.name), filter.value));
+    shown = branches.filter((b) => names.has(b.name));
+    picked = Math.min(picked, Math.max(shown.length - 1, 0));
+    if (branches.length === 0) list.append(el("div", { class: "menu-item", text: "No branches" }));
+    else if (shown.length === 0) {
+      list.append(el("div", { class: "menu-item branch-menu-none", text: `No branch matches "${filter.value.trim()}" · Enter to make it` }));
+    }
+    shown.forEach((b, i) => {
+      const item = el("button", {
+        class: `menu-item${b.is_head ? " head" : ""}${keyed && i === picked ? " picked" : ""}`,
+        text: b.is_head ? `● ${b.name}` : b.name,
+      });
+      item.addEventListener("click", () => {
+        close();
+        void checkoutBranchAction(b);
+      });
+      list.append(item);
     });
-    item.addEventListener("click", () => {
-      close();
-      void checkoutBranchAction(b);
-    });
-    list.append(item);
-  }
+  };
+  paint();
+  filter.addEventListener("input", () => {
+    picked = 0;
+    keyed = filter.value.trim() !== "";
+    paint();
+  });
+  filter.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (keyed) picked = (picked + (e.key === "ArrowDown" ? 1 : -1) + shown.length) % Math.max(shown.length, 1);
+      keyed = true;
+      paint();
+      list.querySelector(".picked")?.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter") {
+      const b = shown[picked];
+      if (keyed && b) {
+        close();
+        void checkoutBranchAction(b);
+      } else if (!shown.length && filter.value.trim()) {
+        // No branch by that name: it goes to the new-branch box, to make it.
+        input.value = filter.value.trim();
+        input.focus();
+      }
+    } else if (e.key === "Escape") close();
+  });
 
   menu.append(el("div", { class: "menu-sep" }));
   const input = el("input", {
@@ -78,9 +125,14 @@ function buildBranchMenu(menu: HTMLElement, close: () => void): void {
   create.addEventListener("click", submit);
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") submit();
+    else if (e.key === "Escape") close();
   });
   menu.append(el("div", { class: "menu-newbranch" }, [input, create]));
-  requestAnimationFrame(() => input.focus());
+  requestAnimationFrame(() => {
+    filter.focus();
+    // The branch checked out, in view in a long list.
+    list.querySelector(".head")?.scrollIntoView({ block: "center" });
+  });
 }
 
 // The Pull caret's dropdown: pick a pull method to run once, or hover a row to
