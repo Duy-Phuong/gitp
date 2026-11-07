@@ -35,6 +35,7 @@ mod log;
 mod merge_preview;
 mod pick_plan;
 mod pr_threads;
+mod review_store;
 mod progress;
 mod rebase;
 mod reflog;
@@ -91,6 +92,7 @@ pub use local_history::{
 pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope, LogWalk};
 pub use merge_preview::MergePreview;
 pub use pick_plan::{PickAction, PickPlanOutcome, PickStep};
+pub use review_store::{DraftStatus, ReviewFix, ReviewKey, StoredDraft, StoredReview};
 pub use pr_threads::{prepared_reply, ThreadConversation, ThreadTurn, TurnKind, TurnRole, THREAD_KEEP};
 pub use progress::{ClaudeRun, ClaudeRunFn, NetworkHooks, Progress, ProgressFn};
 pub use rebase::{RebaseAction, RebaseCommit, RebaseStatus, RebaseStep};
