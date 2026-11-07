@@ -79,6 +79,31 @@ impl Repo {
         })
     }
 
+    /// A review page the command left untracked under the worktree's
+    /// `review/` would make the worktree dirty, and every Fix refuses a
+    /// dirty one (and its undo would delete the page): add `/review/` to the
+    /// repository's own exclude file, which every worktree shares and which
+    /// is never committed.
+    fn keep_review_folder_out(&self, dir: &Path, file: &Path) -> Result<()> {
+        let rel = file.strip_prefix(dir).unwrap_or(file).to_string_lossy().into_owned();
+        let status = git_in(dir, &["status", "--porcelain", "--untracked-files=all", "--", &rel])?;
+        if !status.starts_with("??") {
+            return Ok(());
+        }
+        let info = self.common_dir().join("info");
+        std::fs::create_dir_all(&info).map_err(|e| Error::Message(format!("{}: {e}", info.display())))?;
+        let exclude = info.join("exclude");
+        let mut text = std::fs::read_to_string(&exclude).unwrap_or_default();
+        if text.lines().any(|l| l.trim() == "/review/") {
+            return Ok(());
+        }
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str("# gitp: review pages written by branch reviews\n/review/\n");
+        std::fs::write(&exclude, text).map_err(|e| Error::Message(format!("{}: {e}", exclude.display())))
+    }
+
     /// `git diff from to` as files; `None` when `from` is not in the
     /// repository any more (a reviewed head garbage-collected away).
     pub fn diff_between(&self, from: &str, to: &str) -> Result<Option<Vec<FileDiff>>> {
@@ -144,6 +169,9 @@ impl Repo {
             }
             None => (out.stdout, None),
         };
+        if let Some(f) = &file {
+            self.keep_review_folder_out(&dir, Path::new(f))?;
+        }
         Ok(GeneratedBranchReview {
             text,
             file,
@@ -508,5 +536,20 @@ mod tests {
         let err = message(repo.fix_review_draft(&key, 9, &finding(), "touch ran.txt").unwrap_err());
         assert!(err.contains("no draft"), "{err}");
         assert!(!dir.path().join("wt/ran.txt").exists());
+    }
+
+    #[test]
+    fn a_review_file_left_in_the_worktree_does_not_block_a_fix() {
+        let (dir, repo, wt, _fork) = branch_repo();
+        let cmd = "mkdir -p review/s; printf '### src/f.rs:2\\nfound' > review/s/pr-review-x.md";
+        repo.generate_branch_review("feature", "main", cmd).unwrap();
+        let exclude = std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
+        assert!(exclude.lines().any(|l| l == "/review/"), "{exclude}");
+        repo.fix_finding(&finding(), COMMIT_ONCE).unwrap();
+        assert!(wt.join("review/s/pr-review-x.md").exists(), "the review page stays");
+        // A second review adds no second line.
+        repo.generate_branch_review("feature", "main", cmd).unwrap();
+        let again = std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
+        assert_eq!(again.matches("/review/").count(), 1);
     }
 }
