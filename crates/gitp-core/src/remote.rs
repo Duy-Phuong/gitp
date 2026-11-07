@@ -15,14 +15,16 @@ use crate::git_bin::git_command;
 use crate::repo::Repo;
 
 /// Which strategy `pull` uses to reconcile local and remote history: plain
-/// `git pull` (merges when it can't fast-forward), `--ff-only` (fails instead
-/// of creating a merge commit), or `--rebase` (replays local commits onto the
-/// updated upstream).
+/// `git pull` (as the repo's config says), `--ff-only` (fails instead
+/// of creating a merge commit), `--rebase` (replays local commits onto the
+/// updated upstream), or `--no-rebase` (a merge commit when it can't
+/// fast-forward, whatever the config says).
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub enum PullMode {
     FastForward,
     FastForwardOnly,
     Rebase,
+    Merge,
 }
 
 /// How [`Repo::pull`] integrates what it fetched, decided as `git pull` does.
@@ -39,6 +41,7 @@ impl PullMode {
             PullMode::FastForward => &["pull"],
             PullMode::FastForwardOnly => &["pull", "--ff-only"],
             PullMode::Rebase => &["pull", "--rebase"],
+            PullMode::Merge => &["pull", "--no-rebase"],
         }
     }
 }
@@ -88,6 +91,7 @@ impl Repo {
         let plan = match mode {
             PullMode::FastForwardOnly => Integrate::FastForwardOnly,
             PullMode::Rebase => Integrate::Rebase { merges: false },
+            PullMode::Merge => Integrate::Merge(None),
             PullMode::FastForward => match (rebase_config.as_deref(), ff_config.as_deref()) {
                 (_, Some("only")) => Integrate::FastForwardOnly,
                 (Some("merges" | "m"), _) => Integrate::Rebase { merges: true },

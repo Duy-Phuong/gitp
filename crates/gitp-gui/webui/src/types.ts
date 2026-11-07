@@ -259,7 +259,8 @@ export interface MergePreview {
 export type MergeMode = "Default" | "NoFastForward" | "FastForwardOnly" | "Squash";
 
 // How `pull` reconciles local and remote history (mirrors gitp-core's PullMode).
-export type PullMode = "FastForward" | "FastForwardOnly" | "Rebase";
+// Merge: a merge commit when it can't fast-forward, whatever the config says.
+export type PullMode = "FastForward" | "FastForwardOnly" | "Rebase" | "Merge";
 
 // One of the two dotfiles the Settings "Dotfiles" panel edits (mirrors
 // gitp-gui's DotfileKind). Resolved server-side from $HOME.

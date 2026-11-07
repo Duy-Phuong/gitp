@@ -25,6 +25,7 @@ import {
 import type { PullMode, StashOptions } from "./types";
 import { state, ui } from "./app-state";
 import { opFailed, reportDone, setStatus } from "./report";
+import { DIVERGED_PULL_HELP, isDivergedPull } from "./pull-diverged";
 import { markRemoteFetched } from "./fetch-age";
 import { loadPullDefault, type PullDefault } from "./prefs";
 import { setActionsBusy } from "./toolbar";
@@ -110,7 +111,12 @@ async function pullAction(mode: PullMode): Promise<void> {
     await Promise.all([refreshHistory(), loadSidebar()]);
     reportDone(out || "Pull complete.");
   } catch (err) {
-    await opFailedMaybeConflict("Pull failed", err);
+    if (isDivergedPull(String(err))) {
+      opFailed("Pull stopped: the branch and its remote both have new commits", `${DIVERGED_PULL_HELP}\n\n${String(err)}`, [
+        { label: "Rebase", run: () => void pullAction("Rebase") },
+        { label: "Merge", run: () => void pullAction("Merge") },
+      ]);
+    } else await opFailedMaybeConflict("Pull failed", err);
   } finally {
     setActionsBusy(false);
   }

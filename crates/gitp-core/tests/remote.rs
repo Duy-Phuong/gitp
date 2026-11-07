@@ -109,6 +109,47 @@ fn pull_brings_new_commits_from_the_remote() {
 }
 
 #[test]
+fn pull_merge_joins_a_branch_and_its_remote_that_both_moved() {
+    let remote = TempDir::new().unwrap();
+    git(remote.path(), &["init", "-q", "--bare", "-b", "main"]);
+    let seed = TempDir::new().unwrap();
+    init_repo(seed.path());
+    git(seed.path(), &["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    std::fs::write(seed.path().join("a.txt"), "one\n").unwrap();
+    git(seed.path(), &["add", "."]);
+    git(seed.path(), &["commit", "-q", "-m", "c1"]);
+    git(seed.path(), &["push", "-q", "-u", "origin", "main"]);
+
+    let mine = TempDir::new().unwrap();
+    git(Path::new("."), &["clone", "-q", remote.path().to_str().unwrap(), mine.path().to_str().unwrap()]);
+    git(mine.path(), &["config", "user.name", "Tester"]);
+    git(mine.path(), &["config", "user.email", "t@t.io"]);
+    // Whatever the machine's own git says, this pull is asked to merge.
+    git(mine.path(), &["config", "pull.rebase", "true"]);
+
+    // The remote and this clone each get a commit of their own.
+    std::fs::write(seed.path().join("b.txt"), "theirs\n").unwrap();
+    git(seed.path(), &["add", "."]);
+    git(seed.path(), &["commit", "-q", "-m", "theirs"]);
+    git(seed.path(), &["push", "-q"]);
+    std::fs::write(mine.path().join("c.txt"), "mine\n").unwrap();
+    git(mine.path(), &["add", "."]);
+    git(mine.path(), &["commit", "-q", "-m", "mine"]);
+
+    let repo = Repo::open(mine.path()).unwrap();
+    repo.pull(PullMode::Merge).expect("pull merges");
+
+    let parents = Command::new("git")
+        .current_dir(mine.path())
+        .args(["rev-list", "--parents", "-n", "1", "HEAD"])
+        .output()
+        .unwrap();
+    let parents = String::from_utf8_lossy(&parents.stdout).split_whitespace().count() - 1;
+    assert_eq!(parents, 2, "a merge commit joins the two");
+    assert!(mine.path().join("b.txt").exists() && mine.path().join("c.txt").exists());
+}
+
+#[test]
 fn plain_push_is_rejected_when_the_remote_has_commits_this_branch_lacks() {
     let remote = TempDir::new().unwrap();
     git(remote.path(), &["init", "-q", "--bare", "-b", "main"]);

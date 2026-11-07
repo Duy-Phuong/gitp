@@ -212,7 +212,8 @@ export function saveTerminalFont(f: TerminalFont): void {
 
 // What the plain Pull button runs. "FetchAll" isn't a real pull (no merge) but
 // is offered alongside the pull strategies, GitKraken-style.
-export type PullDefault = "FetchAll" | PullMode;
+// Merge is only offered when a pull stops on diverged branches, not as a default.
+export type PullDefault = "FetchAll" | Exclude<PullMode, "Merge">;
 
 export const PULL_DEFAULTS: PullDefault[] = ["FetchAll", "FastForward", "FastForwardOnly", "Rebase"];
 
