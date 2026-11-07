@@ -210,7 +210,7 @@ function openOnlyCommands(): QuickItem[] {
     { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Workspaces…", detail: "groups of repositories to fetch, pull or open together", run: openWorkspacesAction },
     { kind: "command", label: "Open Review Inbox", detail: "the pull requests that need you, across your repositories", run: openReviewInbox },
-    { kind: "command", label: "Terminal", run: toggleTerminal },
+    { kind: "command", label: "Terminal", detail: shortcutHint("terminal"), run: toggleTerminal },
     { kind: "command", label: "Toggle Theme", detail: "light ↔ your last dark theme", run: toggleTheme },
     { kind: "command", label: "Keyboard Shortcuts", detail: shortcutHint("cheatSheet"), run: openShortcutsDialog },
     { kind: "command", label: "Settings…", detail: shortcutHint("settings"), run: () => openSettings() },
@@ -349,6 +349,7 @@ function repoCommands(): QuickItem[] {
     {
       kind: "command",
       label: "Checkout Branch",
+      detail: shortcutHint("branchMenu"),
       next: () => branchStage("Checkout Branch", (b) => void checkoutBranchAction(b), true),
     },
     {

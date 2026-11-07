@@ -439,16 +439,44 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
   });
 
   const nav = el("nav", { class: "settings-nav" });
+  const tabs = el("div", { class: "settings-tabs" });
   const body = el("div", { class: "settings-body" });
+  let current = 0;
   const show = (i: number) => {
-    for (const [j, b] of [...nav.children].entries()) b.classList.toggle("active", i === j);
+    current = i;
+    search.value = "";
+    for (const [j, b] of [...tabs.children].entries()) b.classList.toggle("active", i === j);
     body.replaceChildren(el("div", { class: "settings-heading", text: sections[i].title }), ...sections[i].render());
   };
   sections.forEach((s, i) => {
     const b = el("button", { class: "settings-nav-item", text: s.title });
     b.addEventListener("click", () => show(i));
-    nav.append(b);
+    tabs.append(b);
   });
+  // Search every tab's rows by their tab, label and hint; clearing it goes
+  // back to the tab that was open.
+  const search = el("input", {
+    class: "settings-search",
+    type: "search",
+    placeholder: "Search settings",
+    "aria-label": "Search settings",
+  });
+  search.addEventListener("input", () => {
+    const q = search.value;
+    if (!q.trim()) {
+      show(current);
+      return;
+    }
+    for (const b of tabs.children) b.classList.remove("active");
+    const found: HTMLElement[] = [];
+    for (const sec of sections) {
+      // A tab's name finds all of its rows ("notifications").
+      const rows = sec.render().filter((r) => matchesSettingsQuery(`${sec.title} ${r.querySelector(".settings-row-text")?.textContent ?? ""}`, q));
+      if (rows.length) found.push(el("div", { class: "settings-heading", text: sec.title }), ...rows);
+    }
+    body.replaceChildren(...(found.length ? found : [el("div", { class: "settings-row-hint", text: `No setting matches "${q.trim()}".` })]));
+  });
+  nav.append(search, tabs);
   show(Math.max(0, sections.findIndex((s) => s.title === initial)));
 
   const done = el("button", { class: "btn", text: "Done" });
@@ -463,7 +491,17 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
     if (e.key === "Escape") closeSettingsDialog();
   };
   document.addEventListener("keydown", onKey, true);
-  requestAnimationFrame(() => (nav.firstElementChild as HTMLElement | null)?.focus());
+  requestAnimationFrame(() => search.focus());
+}
+
+// Whether a setting's words hold every word of the query, in any order.
+export function matchesSettingsQuery(text: string, query: string): boolean {
+  const hay = text.toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((w) => hay.includes(w));
 }
 
 // A label (and optional hint) with its control beside it, or below it when the

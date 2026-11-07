@@ -6200,6 +6200,25 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   gap: 16px;
   margin: 12px 0 14px;
 }
+.settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-search {
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.settings-search:focus {
+  border-color: var(--accent);
+  outline: none;
+}
 .settings-nav {
   flex: 0 0 140px;
   display: flex;
