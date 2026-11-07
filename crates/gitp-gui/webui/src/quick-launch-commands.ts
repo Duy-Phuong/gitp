@@ -109,6 +109,7 @@ import {
 } from "./commit-actions";
 import { toggleTerminal } from "./terminal-panel";
 import { addWorktreeAction, cleanUpStorageAction, defaultWorktreePath, pruneWorktreesAction, worktreeOf } from "./worktree-actions";
+import { myWorkAction, sinceChoices } from "./my-work";
 import { addSubmoduleAction, syncSubmodulesAction, updateSubmodulesAction } from "./submodule-actions";
 import { finishFlowAction, initGitflowAction, startFlowAction } from "./gitflow-actions";
 import { FLOW_KINDS, flowBranch } from "./gitflow";
@@ -557,6 +558,12 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Prune Worktrees…", run: () => void pruneWorktreesAction() },
     {
       kind: "command",
+      label: "What Did I Do… (Claude)",
+      detail: "a stand-up summary of my commits and pull requests",
+      next: () => myWorkStage(),
+    },
+    {
+      kind: "command",
       label: "Clean Up Storage…",
       detail: "worktrees, merged branches and build folders, with their size",
       run: cleanUpStorageAction,
@@ -840,6 +847,14 @@ function addWorktreeStage(): QuickStage {
           })),
       },
     ],
+  };
+}
+
+function myWorkStage(): QuickStage {
+  return {
+    chip: "What Did I Do",
+    placeholder: "since",
+    sections: [{ title: "Since", items: sinceChoices(new Date()).map((c) => ({ kind: "command" as const, label: c.label, detail: c.day, run: () => myWorkAction(c.day, c.label) })) }],
   };
 }
 

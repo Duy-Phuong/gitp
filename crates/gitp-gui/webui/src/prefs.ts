@@ -780,6 +780,9 @@ export const ASK_COMMANDS = {
   release: askCommand(
     "Write release notes from the commits on stdin: group them under Features, Fixes and Other, one plain line each, leave out merges and chores.",
   ),
+  myWork: askCommand(
+    "Write my stand-up update from the work on stdin (my commits by repository, the pull requests I opened or updated, and the ones I reviewed): Done, In progress and Reviews, a few plain bullets each, grouped by ticket (keys such as UBIID-1234) or pull request, merged pull requests under Done. No preamble.",
+  ),
 } as const;
 
 // "Suggest with Claude" in the conflict resolver: the conflicts of one file

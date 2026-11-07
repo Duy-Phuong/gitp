@@ -85,6 +85,7 @@ pub use external_tool::DiffToolTarget;
 pub use file_content::{FileContent, FileSide, PREVIEW_MAX_BYTES};
 pub use file_edit::{TextFile, EDIT_MAX_BYTES};
 pub use filelog::FileCommit;
+pub use gh::my_work_input;
 pub use gh::BranchCi;
 pub use gh::PrSignature;
 pub use gh::PrViewed;

@@ -32,6 +32,9 @@ pub use viewed::PrViewed;
 mod ci;
 pub use ci::BranchCi;
 
+mod my_work;
+pub use my_work::my_work_input;
+
 use crate::branch_ops::parse_remote_url;
 use crate::claude_transcript::new_session_id;
 use crate::diff::{collect_files, FileDiff, MAX_DIFF_LINES};

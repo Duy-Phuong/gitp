@@ -1581,6 +1581,16 @@ export async function claudeAsk(kind: "commit" | "branch" | "release", target: s
   return invoke<string>("claude_ask", { kind, target, command });
 }
 
+// "What did I do": my commits in `repos` and pull requests since `since`
+// (YYYY-MM-DD), summed up by Claude.
+export async function claudeMyWork(since: string, repos: string[], command: string): Promise<string> {
+  if (!isTauri()) {
+    await new Promise((r) => setTimeout(r, 1200));
+    return `## Done\n\n- **UBIID-9538** removed the waiting logic (preview mock, since ${since}, ${repos.length} repositories)\n\n## In progress\n\n- #42 retry the identity check\n\n## Reviews\n\n- Reviewed #41`;
+  }
+  return invoke<string>("claude_my_work", { since, repos, command });
+}
+
 // The commits each side made to the conflicted `path` since the sides split.
 export async function conflictSideCommits(path: string): Promise<SideCommits> {
   if (!isTauri()) return structuredClone(MOCK_SIDE_COMMITS);
