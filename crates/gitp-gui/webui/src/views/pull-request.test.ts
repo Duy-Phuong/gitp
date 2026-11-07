@@ -81,6 +81,7 @@ function callbacks(over: Partial<PullRequestCallbacks>): PullRequestCallbacks {
     // Optional: present only when a test gives them.
     fetchViewed: undefined,
     setViewed: undefined,
+    applySuggestions: undefined,
     ...over,
   };
   return new Proxy(given, { get: (t, k: string) => (k in t ? (t as Record<string, unknown>)[k] : () => undefined) }) as PullRequestCallbacks;
@@ -523,5 +524,46 @@ describe("Viewed in the Files tab", () => {
     await settle();
     expect(file("src/a.ts").classList.contains("viewed")).toBe(true);
     expect(viewedBox("src/a.ts").checked).toBe(true);
+  });
+});
+
+describe("Apply suggestion", () => {
+  let applySuggestions: ReturnType<typeof vi.fn>;
+  const buttons = (text: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.textContent === text);
+
+  beforeEach(async () => {
+    view.reset();
+    host.remove();
+    detail = {
+      ...base(),
+      review_comments: [
+        { ...lineComment, id: 1, body: "Rename it:\n```suggestion\nconst total = 2;\n```" },
+        { ...lineComment, id: 2, line: 5, original_line: 5, body: "And:\n```suggestion\nreturn total;\n```" },
+      ],
+      review_threads: [
+        { id: "T1", resolved: false, comment_ids: [1] },
+        { id: "T2", resolved: false, comment_ids: [2] },
+      ],
+    };
+    applySuggestions = vi.fn(async () => {});
+    host = document.createElement("div");
+    document.body.append(host);
+    view = setupPullRequestView(host, callbacks({ ...(cb as unknown as Partial<PullRequestCallbacks>), applySuggestions }));
+    view.show(7);
+    await settle();
+  });
+
+  it("a comment with a suggestion has Apply suggestion, for that one", () => {
+    expect(buttons("Apply suggestion")).toHaveLength(2);
+    buttons("Apply suggestion")[0].click();
+    expect(applySuggestions).toHaveBeenCalledWith(
+      expect.objectContaining({ number: 7 }),
+      [{ comment_id: 1, author: "rev", path: "src/a.ts", start_line: 2, line: 2, text: "const total = 2;" }],
+    );
+  });
+
+  it("the header applies them all in one commit", () => {
+    buttons("Apply 2 Suggestions")[0].click();
+    expect(applySuggestions.mock.calls[0][1]).toHaveLength(2);
   });
 });

@@ -50,6 +50,7 @@ import {
   reviewWithComments,
   threadConversation,
   threadChoose,
+  applySuggestions,
   threadFix,
   threadTurn,
   markReplyPosted,
@@ -643,6 +644,17 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   },
   threadTurn: (pr, thread, kind, userText) => void runThreadTurn(state.repoPath, pr, thread, kind, userText),
   fixThread: (pr, thread) => void runFix(state.repoPath, pr, thread),
+  applySuggestions: async (pr, suggestions) => {
+    const what = suggestions.length === 1 ? "the suggestion" : `${suggestions.length} suggestions`;
+    setStatus(`Applying ${what} in ${pr.head}'s worktree…`);
+    try {
+      const commit = await applySuggestions(state.repoPath, pr.number, pr.head_oid, pr.head, suggestions);
+      await Promise.all([refreshHistory(), loadSidebar()]);
+      reportDone(`Committed ${what} on ${pr.head} (${commit.slice(0, 7)}); push the branch to share it.`);
+    } catch (err) {
+      opFailed(`Couldn't apply ${what}`, err);
+    }
+  },
   chooseOption: async (pr, thread, text) => {
     const repo = state.repoPath;
     try {

@@ -29,6 +29,7 @@ import {
 } from "../prefs";
 import { storePullRequest, storedPullRequest } from "../pr-store";
 import { whenPointedAt } from "../read-ahead";
+import { prSuggestions, suggestionOf, type Suggestion } from "../suggestions";
 import { jiraKeyIn, jiraTicketUrl } from "../jira";
 import { renderFileTree } from "./tree";
 import {
@@ -133,6 +134,8 @@ export interface PullRequestCallbacks {
   // Fix the thread as the chosen option says, in the branch's worktree,
   // commit, and prepare the reply; drop a prepared reply after a confirm.
   fixThread: (pr: PullRequestDetail, thread: Thread) => void;
+  // Apply review suggestions in the branch's worktree, as one commit.
+  applySuggestions?: (pr: PullRequestDetail, suggestions: Suggestion[]) => Promise<void>;
   // Save the chosen option on the thread, for Fix to take; false when it
   // couldn't (reported).
   chooseOption: (pr: PullRequestDetail, thread: Thread, text: string) => Promise<boolean>;
@@ -543,6 +546,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         ? [button("Reviewing… Cancel", () => cb.cancelReview(pr), "The review command is running in the background; click to stop it")]
         : [generateButton(pr), skillButton(pr), ...pushAndReplyButton(pr)]),
       button("Load Review File…", () => void loadDrafts(pr), "Read a review's findings as draft comments, to approve or discard before posting"),
+      ...applyAllButton(pr, button),
     ]);
     if (pr.state === "OPEN") {
       const merge = button("Merge…", () => cb.merge(pr), `Merge #${pr.number} into ${pr.base} on GitHub`);
@@ -700,7 +704,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     if (resolved) {
       node.append(el("div", { class: "pr-thread-resolved" }, [el("span", { class: "pr-badge", text: "Resolved" }), el("span", { text: `${1 + thread.replies.length} comment${thread.replies.length ? "s" : ""}` })]));
     }
-    for (const c of resolved ? [root] : [root, ...thread.replies]) node.append(card(c.author, c.created_at, "", c.body, [], "pr-thread-comment"));
+    for (const c of resolved ? [root] : [root, ...thread.replies]) {
+      // A reviewer's suggestion: applied in the branch's worktree, one commit.
+      const s = cb.applySuggestions ? suggestionOf(c, resolved) : null;
+      const apply = s ? [smallButton("Apply suggestion", () => void cb.applySuggestions?.(pr, [s]))] : [];
+      node.append(card(c.author, c.created_at, "", c.body, apply, "pr-thread-comment"));
+    }
     // The Reply box, above the actions row (which the Claude buttons share: a
     // box in the row would be squeezed beside them), with what was typed in
     // it kept across redraws.
@@ -1282,6 +1291,13 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     });
     b.addEventListener("click", () => cb.generateDrafts(pr));
     return b;
+  }
+
+  // "Apply N Suggestions": every suggestion of the open threads, one commit.
+  function applyAllButton(pr: PullRequestDetail, button: (text: string, onClick: () => void, title?: string) => HTMLButtonElement): HTMLButtonElement[] {
+    const all = cb.applySuggestions ? prSuggestions(pr) : [];
+    if (all.length < 2) return [];
+    return [button(`Apply ${all.length} Suggestions`, () => void cb.applySuggestions?.(pr, all), "Apply every reviewer's suggestion of the open threads in the branch's worktree, as one commit")];
   }
 
   // Run Review Skill: the /review-pr-phuong skill in one click, whatever the

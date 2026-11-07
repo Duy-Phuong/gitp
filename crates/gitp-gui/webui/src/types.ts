@@ -738,6 +738,9 @@ export interface PrReviewComment {
   // Its line in the current diff; null once outdated.
   line: number | null;
   original_line: number | null;
+  // The first line of a comment on several lines (a multi-line suggestion
+  // covers start_line..line); null on one line.
+  start_line?: number | null;
   side: "LEFT" | "RIGHT";
   created_at: string;
   // The thread's first comment, for a reply.

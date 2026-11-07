@@ -4,6 +4,7 @@
 
 import REVIEW_BRIDGE from "./review-bridge.js?raw";
 import type { BranchCi } from "./ci-status";
+import type { Suggestion } from "./suggestions";
 import type { QuitCheck, Unpushed } from "./quit-check";
 import type {
   BranchReviewData,
@@ -2653,6 +2654,16 @@ export async function clearThreadConversation(path: string, number: number, thre
 
 // Fix the thread as the user's last follow-up chose, in the worktree of the
 // pull request's `branch`: change, test, one commit, then the reply draft.
+// Apply review suggestions in the worktree of the pull request's `branch`, as
+// one commit; the new commit.
+export async function applySuggestions(path: string, number: number, head: string, branch: string, suggestions: Suggestion[]): Promise<string> {
+  if (!isTauri()) {
+    await mockNetworkDelay();
+    return "5a9e57c0de0000000000000000000000000000ab";
+  }
+  return invoke<string>("gh_apply_suggestions", { path, number, head, branch, suggestions });
+}
+
 // Save `text` as the user's chosen option on a thread, unanswered, for Fix.
 export async function threadChoose(path: string, number: number, thread: number, text: string): Promise<ThreadConversation> {
   if (!isTauri()) {
@@ -3742,7 +3753,7 @@ const MOCK_PR_DETAILS = new Map<number, PullRequestDetail>([
         {
           id: 501,
           author: "hubot",
-          body: "Cap this at 30 s?",
+          body: "Cap this at 30 s?\n\n```suggestion\n      if (attempt === 3 || 2 ** attempt * 100 > 30_000) throw err;\n```",
           path: "src/identity/retry.ts",
           line: 6,
           original_line: 6,
