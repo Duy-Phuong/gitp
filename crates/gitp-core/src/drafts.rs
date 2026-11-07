@@ -57,11 +57,7 @@ impl Repo {
             return Err(Error::Message("Stage something first.".into()));
         }
         let subjects = git_in(dir, &["log", "-20", "--format=%s"]).unwrap_or_default();
-        let log = std::env::temp_dir().join(format!(
-            "gitp-log-{}-{}.txt",
-            std::process::id(),
-            now_millis()
-        ));
+        let log = log_file_path();
         std::fs::write(&log, format!("{subjects}\n"))
             .map_err(|e| Error::Message(format!("can't write {}: {e}", log.display())))?;
         let branch = git_in(dir, &["symbolic-ref", "--short", "-q", "HEAD"])
@@ -83,6 +79,18 @@ impl Repo {
         let out = out.map_err(|e| renamed(e, "The commit message command"))?;
         commit_draft_from(&draft_text(&out.stdout)?)
     }
+}
+
+/// A temp file name no other draft uses: the process id and the time are not
+/// enough, since two drafts can start in the same millisecond.
+fn log_file_path() -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "gitp-log-{}-{}-{n}.txt",
+        std::process::id(),
+        now_millis()
+    ))
 }
 
 impl Repo {
@@ -341,6 +349,11 @@ mod tests {
         assert_eq!(lines.next(), Some("one"));
         assert!(seen.contains("+new"), "{seen}");
         assert!(!seen.contains("b.txt"), "only the staged change: {seen}");
+    }
+
+    #[test]
+    fn two_log_files_made_at_once_get_different_names() {
+        assert_ne!(log_file_path(), log_file_path());
     }
 
     #[test]
