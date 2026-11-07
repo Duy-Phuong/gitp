@@ -3003,6 +3003,15 @@ body.ref-dragging * {
   overflow: auto;
   padding: 8px 4px;
   font-family: var(--mono);
+  /* One column as wide as the longest row (at least the panel), so a deep
+     path's full name scrolls sideways instead of ending in "…", and every
+     row's hover and selection span the same width. */
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr);
+  align-content: start;
+}
+.tree-view .tree-name {
+  overflow: visible;
 }
 .tree-row {
   display: flex;
