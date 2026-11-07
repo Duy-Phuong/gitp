@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{parse_json, Gh, RawCheck, RawNodes, TIMEOUT};
+use super::{parse_json, Gh, PullRequestDetail, RawCheck, RawNodes, TIMEOUT};
 use crate::error::{Error, Result};
 use crate::repo::Repo;
 
@@ -33,6 +33,22 @@ const QUERY: &str = "query($owner: String!, $name: String!, $number: Int!) { \
     commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { \
     __typename ... on CheckRun { name status conclusion } \
     ... on StatusContext { context state } } } } } } } } } }";
+
+impl PrSignature {
+    /// The signature of `detail`, read at the same moment: what a poll
+    /// right after would answer, built the same way.
+    pub(crate) fn of(detail: &PullRequestDetail) -> Self {
+        let mut checks: Vec<(String, String)> =
+            detail.checks.iter().map(|c| (c.name.clone(), c.state.clone())).collect();
+        checks.sort();
+        PrSignature {
+            head: detail.head_oid.clone(),
+            updated_at: detail.updated_at.clone(),
+            threads: detail.review_threads.iter().map(|t| (t.id.clone(), t.resolved)).collect(),
+            checks,
+        }
+    }
+}
 
 impl Repo {
     /// Pull request `number`'s signature (see [`PrSignature`]), in one call.
@@ -130,6 +146,47 @@ mod tests {
             {"__typename":"StatusContext","context":"ci/legacy","state":"SUCCESS"},
             {"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"FAILURE"}
         ]}}}}]}}}}}"#;
+
+    #[test]
+    fn the_detail_carries_the_signature_a_poll_would_answer() {
+        // One GraphQL answer serves both the detail's threads query and the
+        // poll's: the same pull request, read twice.
+        let fake = Fake::new();
+        fake.answer("api graphql", &ANSWER.replace(r#""isResolved":false}"#, r#""isResolved":false,"comments":{"nodes":[]}}"#)
+            .replace(r#""isResolved":true}"#, r#""isResolved":true,"comments":{"nodes":[]}}"#), "", 0);
+        fake.answer("api --paginate", "[]", "", 0);
+        fake.answer(
+            "pr view",
+            r#"{"number":12,"title":"T","state":"OPEN","author":{"login":"o"},"baseRefName":"main",
+                "headRefName":"t","headRefOid":"abc123","url":"u","reviewDecision":null,
+                "updatedAt":"2026-11-07T10:00:00Z","statusCheckRollup":[
+                {"__typename":"CheckRun","name":"test","status":"IN_PROGRESS","conclusion":null},
+                {"__typename":"StatusContext","context":"ci/legacy","state":"SUCCESS"},
+                {"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"FAILURE"}]}"#,
+            "",
+            0,
+        );
+        let (_dir, repo) = github_repo();
+        let detail = repo.pull_request(&fake.gh(), 12).unwrap();
+        let polled = repo.pull_request_signature(&fake.gh(), 12).unwrap();
+        assert_eq!(detail.signature, Some(polled));
+    }
+
+    #[test]
+    fn a_detail_without_its_threads_has_no_signature() {
+        let fake = Fake::new();
+        fake.answer("api graphql", "", "HTTP 502", 1);
+        fake.answer("api --paginate", "[]", "", 0);
+        fake.answer(
+            "pr view",
+            r#"{"number":12,"title":"T","state":"OPEN","author":{"login":"o"},"baseRefName":"main",
+                "headRefName":"t","url":"u","reviewDecision":null}"#,
+            "",
+            0,
+        );
+        let (_dir, repo) = github_repo();
+        assert_eq!(repo.pull_request(&fake.gh(), 12).unwrap().signature, None);
+    }
 
     #[test]
     fn signature_is_one_graphql_call_and_reads_head_threads_and_checks() {

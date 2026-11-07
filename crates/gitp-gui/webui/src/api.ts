@@ -1992,23 +1992,24 @@ export async function fetchPullRequest(number: number): Promise<PullRequestDetai
       (merged
         ? { ...mockPrDetail(merged), state: "MERGED", merge_state: "UNKNOWN" }
         : mockPrDetail(MOCK_PULL_REQUESTS.find((p) => p.number === number) ?? MOCK_PULL_REQUESTS[0]));
-    return structuredClone(detail);
+    return structuredClone({ ...detail, signature: mockSignature(detail) });
   }
   return invoke<PullRequestDetail>("gh_pull_request", { number });
 }
 
 // The pull request's signature, one cheap call: polled to know when to read it again.
 export async function fetchPullRequestSignature(number: number): Promise<PrSignature> {
-  if (!isTauri()) {
-    const d = await fetchPullRequest(number);
-    return {
-      head: d.head_oid,
-      updated_at: "",
-      threads: d.review_threads.map((t): [string, boolean] => [t.id, t.resolved]),
-      checks: d.checks.map((c): [string, string] => [c.name, c.state]).sort(),
-    };
-  }
+  if (!isTauri()) return mockSignature(await fetchPullRequest(number));
   return invoke<PrSignature>("gh_pull_request_signature", { number });
+}
+
+function mockSignature(d: PullRequestDetail): PrSignature {
+  return {
+    head: d.head_oid,
+    updated_at: "",
+    threads: d.review_threads.map((t): [string, boolean] => [t.id, t.resolved]),
+    checks: d.checks.map((c): [string, string] => [c.name, c.state]).sort(),
+  };
 }
 
 // The pull request's changed files and their diffs (`gh pr diff`).

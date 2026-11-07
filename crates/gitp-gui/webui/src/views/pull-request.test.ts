@@ -105,7 +105,7 @@ beforeEach(async () => {
   signature = { head: "a1", updated_at: "2026-11-07T10:00:00Z", threads: [["T1", false]], checks: [] };
   files = FILES;
   cb = {
-    fetchDetail: vi.fn(async () => structuredClone(detail)),
+    fetchDetail: vi.fn(async () => structuredClone({ ...detail, signature })),
     fetchSignature: vi.fn(async () => structuredClone(signature)),
     fetchFiles: vi.fn(async () => structuredClone(files)),
   };
@@ -127,7 +127,7 @@ describe("the pull request view polling", () => {
   it("a poll with no change does not redraw", async () => {
     const before = host.querySelector(".pr-view");
     await poll();
-    expect(cb.fetchSignature).toHaveBeenCalledTimes(2); // the load's, then the poll's
+    expect(cb.fetchSignature).toHaveBeenCalledTimes(1); // the poll's: the load's came with the detail
     expect(cb.fetchDetail).toHaveBeenCalledTimes(1);
     expect(host.querySelector(".pr-view")).toBe(before);
     expect(notice()).toBeNull();
@@ -305,7 +305,7 @@ describe("the pull request view polling", () => {
   it("stops polling once reset", async () => {
     view.reset();
     await poll();
-    expect(cb.fetchSignature).toHaveBeenCalledTimes(1);
+    expect(cb.fetchSignature).not.toHaveBeenCalled(); // the load took its signature from the detail
   });
 });
 
@@ -341,7 +341,7 @@ describe("opening a pull request quickly", () => {
   const title = () => host.querySelector(".pr-title")?.textContent ?? null;
 
   beforeEach(() => {
-    cb.fetchDetail.mockImplementation(async (n: number) => ({ ...structuredClone(detail), number: n, title: `PR ${n}` }));
+    cb.fetchDetail.mockImplementation(async (n: number) => ({ ...structuredClone({ ...detail, signature }), number: n, title: `PR ${n}` }));
   });
 
   it("reads the changed files once the pull request is drawn, so the Files tab needs no wait", async () => {

@@ -243,6 +243,12 @@ pub struct PullRequestDetail {
     /// it requires), `BEHIND`, `DIRTY` (conflicts), `DRAFT`, `UNSTABLE`
     /// (failing checks it doesn't require), `HAS_HOOKS` or `UNKNOWN`.
     pub merge_state: String,
+    /// When GitHub last saw anything happen on it.
+    pub updated_at: String,
+    /// What a poll compares against (see [`PrSignature`]), from this same
+    /// read, so the view needs no call of its own to start polling. None when
+    /// the threads couldn't be read: the first poll then sets it.
+    pub signature: Option<PrSignature>,
 }
 
 /// What a review says.
@@ -862,8 +868,11 @@ impl Repo {
         let raw: RawPrDetail = parse_json(&view?.stdout)?;
         let comments = comments.map_err(|_| Error::Message("reading the line comments stopped".into()))??;
         let review_comments = parse_review_comments(&comments.stdout)?;
-        let review_threads = threads.ok().and_then(|t| t.ok()).unwrap_or_default();
-        Ok(raw.into_detail(review_comments, review_threads))
+        let threads = threads.ok().and_then(|t| t.ok());
+        let read_threads = threads.is_some();
+        let mut detail = raw.into_detail(review_comments, threads.unwrap_or_default());
+        detail.signature = read_threads.then(|| PrSignature::of(&detail));
+        Ok(detail)
     }
 
     /// Where and how [`Repo::gh_call`] runs `gh`, apart from the repository:
@@ -2222,7 +2231,7 @@ fn review_threads(
 
 const VIEW_FIELDS: &str = "number,title,body,state,isDraft,author,baseRefName,headRefName,\
      headRefOid,labels,url,createdAt,reviewDecision,statusCheckRollup,reviews,comments,commits,\
-     additions,deletions,changedFiles,mergeable,mergeStateStatus";
+     additions,deletions,changedFiles,mergeable,mergeStateStatus,updatedAt";
 
 const REPO_SETTINGS_FIELDS: &str = "defaultBranchRef,mergeCommitAllowed,squashMergeAllowed,\
      rebaseMergeAllowed,deleteBranchOnMerge";
@@ -2703,6 +2712,8 @@ struct RawPrDetail {
     mergeable: String,
     #[serde(default)]
     merge_state_status: String,
+    #[serde(default)]
+    updated_at: String,
 }
 
 #[derive(Deserialize)]
@@ -2815,6 +2826,8 @@ impl RawPrDetail {
             changed_files: self.changed_files,
             mergeable: self.mergeable,
             merge_state: self.merge_state_status,
+            updated_at: self.updated_at,
+            signature: None,
         }
     }
 }

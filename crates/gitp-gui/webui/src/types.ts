@@ -876,6 +876,11 @@ export interface PullRequestDetail {
   // GitHub's word on merging now: CLEAN, BLOCKED, BEHIND, DIRTY, DRAFT,
   // UNSTABLE, HAS_HOOKS or UNKNOWN.
   merge_state: string;
+  // When GitHub last saw anything happen on it.
+  updated_at?: string;
+  // What a poll compares against, from this same read (null when its threads
+  // couldn't be read: the first poll then sets it).
+  signature?: PrSignature | null;
 }
 
 export type MergeMethod = "merge" | "squash" | "rebase";

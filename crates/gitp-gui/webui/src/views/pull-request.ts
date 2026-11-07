@@ -289,12 +289,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     // The user's own reloads set the signature quietly: no notice for them.
     loads++;
     try {
-      const [d, sig] = await Promise.all([cb.fetchDetail(number), quietSignature(number)]);
+      const d = await cb.fetchDetail(number);
       if (mine !== generation) return;
       // Files kept from before are another head's when it moved.
       if (detail?.head_oid !== d.head_oid) files = null;
       detail = d;
-      signature = sig;
+      signature = d.signature ?? null;
       toDraftsIfReady();
       if (tab === "drafts" && !files) void showDrafts(d);
       else render();
@@ -400,15 +400,6 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   }
 
   // --- Refreshing on its own ------------------------------------------------
-
-  // The signature, or null when there is none to be had.
-  async function quietSignature(n: number): Promise<PrSignature | null> {
-    try {
-      return (await cb.fetchSignature?.(n)) ?? null;
-    } catch {
-      return null;
-    }
-  }
 
   // One poll: the signature, and when it moved, the pull request read again
   // and drawn — once no text box in the view has focus.
