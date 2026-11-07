@@ -2411,6 +2411,12 @@ export async function onQuitCheck(cb: (check: QuitCheck) => void): Promise<void>
   await listen<QuitCheck>("claude-jobs-quit", (event) => cb(event.payload));
 }
 
+// A desktop notification (macOS Notification Center); nothing in a browser.
+export async function notify(title: string, body: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("notify", { title, body });
+}
+
 // Quit after all, from that dialog, with no jobs to stop.
 export async function quitNow(): Promise<void> {
   if (!isTauri()) return;

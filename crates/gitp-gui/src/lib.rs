@@ -317,6 +317,7 @@ pub fn run() {
             staging::add_to_gitignore,
             staging::untrack_files,
             os::reveal_path,
+            os::notify,
             os::reveal_folder,
             workspace::workspace_snapshot,
             os::open_in_editor,

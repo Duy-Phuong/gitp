@@ -17,6 +17,7 @@ import {
   type ClaudeEvent,
   type ClaudeJob,
 } from "./api";
+import { noticeJobs } from "./notifications";
 import { quitQuestion } from "./quit-check";
 import { state } from "./app-state";
 import { jobsSummary, repoName } from "./claude-jobs-model";
@@ -123,6 +124,7 @@ async function tick(): Promise<void> {
   ticking = true;
   try {
     jobs = await claudeJobs();
+    noticeJobs(jobs);
     const running = jobs.filter((j) => j.state === "running").length;
     const badge = $("#claude-badge");
     badge.textContent = String(running);

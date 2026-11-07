@@ -408,3 +408,46 @@ mod tests {
         }
     }
 }
+
+/// An AppleScript string literal of `s`: backslashes and quotes escaped.
+fn applescript_string(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// The script that shows a macOS notification from gitp: `title` as its
+/// subtitle under the app's name, `body` as its text.
+fn notification_script(title: &str, body: &str) -> String {
+    format!(
+        "display notification {} with title \"gitp\" subtitle {}",
+        applescript_string(body),
+        applescript_string(title)
+    )
+}
+
+/// Show a desktop notification (macOS Notification Center, through
+/// `osascript`, so no plugin is needed); a no-op elsewhere.
+#[tauri::command(async)]
+pub(crate) fn notify(title: String, body: String) -> Result<(), String> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(notification_script(&title, &body))
+        .output()
+        .map(|_| ())
+        .map_err(to_message)
+}
+
+#[cfg(test)]
+mod notify_tests {
+    use super::*;
+
+    #[test]
+    fn quotes_and_backslashes_cannot_end_the_script_string() {
+        assert_eq!(
+            notification_script(r#"Job "x" done"#, r"C:\path"),
+            r#"display notification "C:\\path" with title "gitp" subtitle "Job \"x\" done""#
+        );
+    }
+}

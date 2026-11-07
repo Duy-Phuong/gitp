@@ -6,6 +6,7 @@
 // section is one more entry in `sections`. Reuses the `.modal-overlay` /
 // `.modal` shell.
 
+import { loadNotifyPrefs, saveNotifyPrefs, type NotifyPrefs } from "../notifications";
 import { jiraSite } from "../jira";
 import { DEFAULT_DRAFT_COMMANDS, loadDraftCommand, saveDraftCommand, type DraftCommandKind } from "../claude-drafts";
 import { el } from "../dom";
@@ -309,6 +310,29 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
           "In the graph or the sidebar: the commits that aren't on the branch fade.",
         ),
       ],
+    },
+    {
+      title: "Notifications",
+      render: () => {
+        const prefs = loadNotifyPrefs();
+        const onOff = (key: keyof NotifyPrefs) =>
+          segToggle(
+            [
+              { value: true, label: "On" },
+              { value: false, label: "Off" },
+            ],
+            prefs[key],
+            (on) => {
+              prefs[key] = on;
+              saveNotifyPrefs(prefs);
+            },
+          );
+        return [
+          row("A Claude job finishes or fails", onOff("claude"), "inline", "A review, a fix, a thread turn or a draft that ran in the background."),
+          row("A check fails on my pull request", onOff("checks"), "inline", "Checked every 5 minutes over the repositories in Open Recent and the starred ones."),
+          row("A review is asked of me", onOff("reviews"), "inline", "Also from that check. Notifications show only while gitp's window isn't in front."),
+        ];
+      },
     },
     {
       title: "Git",

@@ -122,6 +122,7 @@ import {
 } from "./prefs";
 import { refsAt } from "./commit-refs";
 import { setupUnpushedBadge } from "./unpushed-badge";
+import { setupNotifications } from "./notifications";
 import { rerereEnabled } from "./conflict-help";
 import { setupConfigTabs } from "./config-panel";
 import { setupPaneResizer, setupSidebarResizer, setupTerminalResizer } from "./resizers";
@@ -235,6 +236,7 @@ function wireUi(): void {
   setupTerminalPanel();
   setupClaudeJobs();
   setupUnpushedBadge();
+  setupNotifications();
   $("#terminal-toggle").addEventListener("click", toggleTerminal);
   $("#terminal-close").addEventListener("click", toggleTerminal);
   $("#terminal-clear").addEventListener("click", () => {
