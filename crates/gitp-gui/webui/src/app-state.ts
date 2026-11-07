@@ -16,6 +16,7 @@ import type { LocalHistoryHandle } from "./views/local-history";
 import type { PullRequestHandle } from "./views/pull-request";
 import type { BranchReviewHandle } from "./views/branch-review";
 import type { PullRequestListHandle } from "./views/pr-list";
+import type { ThreadSearchHandle } from "./views/thread-search";
 import type { WelcomeHandle } from "./views/welcome";
 import type { PrSectionState } from "./views/sidebar";
 import type {
@@ -44,6 +45,7 @@ export type View =
   | "localhistory"
   | "pr"
   | "prlist"
+  | "threadsearch"
   | "claude"
   | "code"
   | "branchreview";
@@ -163,6 +165,7 @@ export const ui = {
   prView: null as PullRequestHandle | null,
   branchReviewView: null as BranchReviewHandle | null,
   prListView: null as PullRequestListHandle | null,
+  threadSearchView: null as ThreadSearchHandle | null,
   welcomeView: null as WelcomeHandle | null,
   // The live log's handle, from the most recent renderLog — the log view owns
   // keyboard movement through the rows it has on screen (see LogHandle).

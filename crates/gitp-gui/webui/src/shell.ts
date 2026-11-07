@@ -777,6 +777,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   $("#pr-view").classList.toggle("hidden", view !== "pr");
   $("#branch-review-view").classList.toggle("hidden", view !== "branchreview");
   $("#prlist-view").classList.toggle("hidden", view !== "prlist");
+  $("#thread-search-view").classList.toggle("hidden", view !== "threadsearch");
   $("#claude-view").classList.toggle("hidden", view !== "claude");
   $("#code-view").classList.toggle("hidden", view !== "code");
   // The Reflog lists in the log's place and shares History's detail pane.
@@ -1048,7 +1049,8 @@ export function renderSidebarNow(): void {
       localChanges: state.localChanges,
       repoName: active?.name ?? "",
       // The conflict resolver has no sidebar entry; highlight Local Changes.
-      activeView: state.view === "conflict" ? "changes" : state.view,
+      // The conversation search belongs to the Pull Requests view.
+      activeView: state.view === "conflict" ? "changes" : state.view === "threadsearch" ? "prlist" : state.view,
       filter: state.sbFilter,
       collapsed: state.sbCollapsed,
       branchSelection: state.branchSelection,

@@ -12,6 +12,7 @@ function mount(over: Partial<PullRequestListCallbacks> = {}) {
     setFilter: vi.fn(),
     search: vi.fn(),
     refresh: vi.fn(),
+    searchConversations: vi.fn(),
     signIn: vi.fn(),
     reviewBadge: () => null,
     ...over,

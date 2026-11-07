@@ -114,6 +114,7 @@ import { finishFlowAction, initGitflowAction, startFlowAction } from "./gitflow-
 import { FLOW_KINDS, flowBranch } from "./gitflow";
 import { lfsFetchAction, lfsInstallAction, lfsPullAction, lfsTrackAction, lfsUntrackAction } from "./lfs-actions";
 import { checkoutPullRequestAction, showPrFilter } from "./pr-actions";
+import { showThreadSearch } from "./thread-search-actions";
 import { openBranchReview } from "./branch-review-actions";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { openWorkspacesAction } from "./local-workspace-actions";
@@ -695,6 +696,7 @@ function pullRequestCommands(): QuickItem[] {
       label: "Check Out Pull Request…",
       next: () => pullRequestStage("Check Out", (n) => void checkoutPullRequestAction(n)),
     },
+    { kind: "command", label: "Search Conversations", run: showThreadSearch },
   ];
 }
 

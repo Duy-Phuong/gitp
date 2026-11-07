@@ -98,6 +98,15 @@ pub struct ThreadConversation {
     pub pr: u64,
     pub thread: u64,
     pub path: String,
+    /// The pull request's title, the thread's line and its comments as the
+    /// last turn was given them, for the search; files written before they
+    /// were kept lack them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<ThreadComment>,
     /// The Claude Code session to resume; `None` until a JSON answer gave one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
@@ -106,6 +115,50 @@ pub struct ThreadConversation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fix_session: Option<String>,
     pub turns: Vec<ThreadTurn>,
+}
+
+/// One comment of the thread, as kept in its conversation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadComment {
+    pub author: String,
+    pub body: String,
+}
+
+/// How many hits a search returns at most.
+pub const THREAD_SEARCH_LIMIT: usize = 200;
+
+/// Where the thread's latest reply draft is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReplyState {
+    Ready,
+    Posted,
+}
+
+/// One conversation a search found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ThreadHit {
+    pub pr: u64,
+    pub thread: u64,
+    pub path: String,
+    pub line: Option<u32>,
+    pub title: Option<String>,
+    /// Up to 80 characters either side of the first word's first match, on
+    /// one line; the start of the thread for an empty query.
+    pub snippet: String,
+    /// The snippet is from a reply draft that was dropped.
+    pub dropped: bool,
+    /// The last turn, epoch milliseconds.
+    pub at: u64,
+    pub fixed: bool,
+    pub reply_state: Option<ReplyState>,
+}
+
+/// The first [`THREAD_SEARCH_LIMIT`] hits, newest first, and how many there were.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ThreadSearch {
+    pub hits: Vec<ThreadHit>,
+    pub total: usize,
 }
 
 /// The reply the thread has ready to post: its latest reply draft, unless
@@ -192,6 +245,54 @@ impl Repo {
         }
     }
 
+    /// The conversations every word of `query` (split on whitespace) is
+    /// found in, case-insensitively — in a comment, a turn (dropped drafts
+    /// too), the title, the path or the pull request number — with the last
+    /// turn in `range` (`[from, to)`, epoch milliseconds) and on pull request
+    /// `pr` when given. Damaged files are deleted on the way, as on a load.
+    pub fn search_thread_conversations(
+        &self,
+        query: &str,
+        range: Option<(u64, u64)>,
+        pr: Option<u64>,
+    ) -> Result<ThreadSearch> {
+        let root = self.threads_dir();
+        let folders = match std::fs::read_dir(&root) {
+            Ok(d) => d,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(ThreadSearch { hits: Vec::new(), total: 0 })
+            }
+            Err(e) => return Err(io_err(&root, e)),
+        };
+        let words: Vec<Vec<char>> = query.split_whitespace().map(fold).collect();
+        let mut hits = Vec::new();
+        for folder in folders.flatten() {
+            let folder = folder.path();
+            let number = folder.file_name().and_then(|n| n.to_str()).and_then(|n| n.parse::<u64>().ok());
+            if !folder.is_dir() || number.is_none() || pr.is_some_and(|p| Some(p) != number) {
+                continue;
+            }
+            for entry in std::fs::read_dir(&folder).map_err(|e| io_err(&folder, e))?.flatten() {
+                let file = entry.path();
+                if file.extension().is_none_or(|x| x != "json") {
+                    continue;
+                }
+                let Some(c) = load(&file)? else { continue };
+                let Some(at) = c.turns.last().map(|t| t.at) else { continue };
+                if range.is_some_and(|(from, to)| at < from || at >= to) {
+                    continue;
+                }
+                if let Some((snippet, dropped)) = find_snippet(&c, &words) {
+                    hits.push(hit(&c, at, snippet, dropped));
+                }
+            }
+        }
+        hits.sort_by(|a, b| (b.at, b.pr, b.thread).cmp(&(a.at, a.pr, a.thread)));
+        let total = hits.len();
+        hits.truncate(THREAD_SEARCH_LIMIT);
+        Ok(ThreadSearch { hits, total })
+    }
+
     /// Delete every conversation whose last turn is older than [`THREAD_KEEP`]
     /// before `now_millis`, every damaged one, and the pull request folders
     /// left empty. Returns how many files went.
@@ -227,6 +328,87 @@ impl Repo {
             let _ = std::fs::remove_dir(&folder);
         }
         Ok(deleted)
+    }
+}
+
+/// How many characters a snippet keeps either side of the match.
+const SNIPPET_SIDE: usize = 80;
+
+/// Lowercase, one character for one, so positions match the original's.
+fn fold(s: &str) -> Vec<char> {
+    s.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect()
+}
+
+fn position(hay: &[char], needle: &[char]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return None;
+    }
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// The snippet and whether it came from a dropped draft, when every word is
+/// in some field of `c`; the start of the thread when there are no words.
+fn find_snippet(c: &ThreadConversation, words: &[Vec<char>]) -> Option<(String, bool)> {
+    let number = c.pr.to_string();
+    let mut fields: Vec<(&str, bool)> = c.comments.iter().map(|x| (x.body.as_str(), false)).collect();
+    fields.extend(c.turns.iter().map(|t| (t.text.as_str(), t.dropped)));
+    fields.extend(c.title.as_deref().map(|t| (t, false)));
+    fields.push((c.path.as_str(), false));
+    fields.push((number.as_str(), false));
+    let Some(first) = words.first() else {
+        let (text, dropped) = c
+            .comments
+            .first()
+            .map(|x| (x.body.as_str(), false))
+            .or_else(|| c.turns.last().map(|t| (t.text.as_str(), t.dropped)))?;
+        let chars: Vec<char> = text.chars().collect();
+        return Some((cut(&chars, 0, 2 * SNIPPET_SIDE), dropped));
+    };
+    let folded: Vec<Vec<char>> = fields.iter().map(|(text, _)| fold(text)).collect();
+    if !words.iter().all(|w| folded.iter().any(|f| position(f, w).is_some())) {
+        return None;
+    }
+    let (i, at) = folded.iter().enumerate().find_map(|(i, f)| position(f, first).map(|p| (i, p)))?;
+    let chars: Vec<char> = fields[i].0.chars().collect();
+    let start = at.saturating_sub(SNIPPET_SIDE);
+    Some((cut(&chars, start, at + first.len() + SNIPPET_SIDE), fields[i].1))
+}
+
+/// `chars[start..end]` on one line, with `…` where it was cut.
+fn cut(chars: &[char], start: usize, end: usize) -> String {
+    let end = end.min(chars.len());
+    let text: String = chars[start..end].iter().collect();
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    format!(
+        "{}{text}{}",
+        if start > 0 { "…" } else { "" },
+        if end < chars.len() { "…" } else { "" }
+    )
+}
+
+fn hit(c: &ThreadConversation, at: u64, snippet: String, dropped: bool) -> ThreadHit {
+    let last_draft = c
+        .turns
+        .iter()
+        .rev()
+        .find(|t| t.kind == TurnKind::ReplyDraft && t.role == TurnRole::Claude);
+    ThreadHit {
+        pr: c.pr,
+        thread: c.thread,
+        path: c.path.clone(),
+        line: c.line,
+        title: c.title.clone(),
+        snippet,
+        dropped,
+        at,
+        fixed: c.turns.iter().any(|t| t.kind == TurnKind::Fix && t.commit.is_some()),
+        reply_state: if prepared_reply(c).is_some() {
+            Some(ReplyState::Ready)
+        } else if last_draft.is_some_and(|t| t.posted.is_some()) {
+            Some(ReplyState::Posted)
+        } else {
+            None
+        },
     }
 }
 
@@ -273,6 +455,9 @@ mod tests {
             pr: 3426,
             thread: 1234567890,
             path: "src/retry.ts".into(),
+            title: None,
+            line: None,
+            comments: vec![],
             session: Some("9f3c".into()),
             fix_session: None,
             turns: vec![ThreadTurn {
@@ -317,6 +502,9 @@ mod tests {
             pr,
             thread,
             path: "a".into(),
+            title: None,
+            line: None,
+            comments: vec![],
             session: None,
             fix_session: None,
             turns: vec![turn(1), turn(at)],
@@ -353,6 +541,9 @@ mod tests {
             pr: 1,
             thread: 2,
             path: "a".into(),
+            title: None,
+            line: None,
+            comments: vec![],
             session: None,
             fix_session: None,
             turns: vec![draft("A"), ThreadTurn::user(TurnKind::Followup, "q".into()), draft("B")],
@@ -399,11 +590,189 @@ mod tests {
             pr: 1,
             thread: 1,
             path: "a".into(),
+            title: None,
+            line: None,
+            comments: vec![],
             session: None,
             fix_session: None,
             turns: vec![],
         })
         .unwrap();
         assert_eq!(repo.prune_thread_conversations(u64::MAX).unwrap(), 1);
+    }
+
+    fn stored(pr: u64, thread: u64, at: u64, comment: &str, answer: &str) -> ThreadConversation {
+        ThreadConversation {
+            version: 1,
+            pr,
+            thread,
+            path: "src/retry.ts".into(),
+            title: Some(format!("PR {pr}")),
+            line: Some(12),
+            comments: vec![ThreadComment { author: "anna".into(), body: comment.into() }],
+            session: None,
+            fix_session: None,
+            turns: vec![ThreadTurn {
+                at,
+                ..ThreadTurn::claude(TurnKind::Check, "h".into(), answer.into())
+            }],
+        }
+    }
+
+    fn found(s: &ThreadSearch) -> Vec<(u64, u64)> {
+        s.hits.iter().map(|h| (h.pr, h.thread)).collect()
+    }
+
+    #[test]
+    fn every_token_must_match_somewhere_case_insensitively() {
+        let (_dir, repo) = test_repo();
+        repo.save_thread_conversation(&stored(1, 10, 100, "Retry STOPS early", "the loop ends one try sooner")).unwrap();
+        repo.save_thread_conversation(&stored(2, 20, 200, "naming nit", "rename it")).unwrap();
+        let s = repo.search_thread_conversations("retry LOOP", None, None).unwrap();
+        assert_eq!((found(&s), s.total), (vec![(1, 10)], 1));
+        let s = repo.search_thread_conversations("loop nit", None, None).unwrap();
+        assert_eq!((found(&s), s.total), (vec![], 0));
+    }
+
+    #[test]
+    fn the_pr_number_path_and_title_match_as_words() {
+        let (_dir, repo) = test_repo();
+        let mut c = stored(3426, 10, 100, "a", "b");
+        c.path = "crates/core/src/merge.rs".into();
+        c.title = Some("Faster merges".into());
+        repo.save_thread_conversation(&c).unwrap();
+        repo.save_thread_conversation(&stored(7, 20, 200, "a", "b")).unwrap();
+        for q in ["3426", "merge.rs", "faster"] {
+            assert_eq!(found(&repo.search_thread_conversations(q, None, None).unwrap()), vec![(3426, 10)], "{q}");
+        }
+    }
+
+    #[test]
+    fn range_and_pr_filters() {
+        let (_dir, repo) = test_repo();
+        repo.save_thread_conversation(&stored(1, 10, 100, "x", "y")).unwrap();
+        repo.save_thread_conversation(&stored(1, 11, 200, "x", "y")).unwrap();
+        repo.save_thread_conversation(&stored(2, 20, 300, "x", "y")).unwrap();
+        let s = repo.search_thread_conversations("x", Some((150, 300)), None).unwrap();
+        assert_eq!(found(&s), vec![(1, 11)], "[from, to): 300 is out");
+        let s = repo.search_thread_conversations("x", None, Some(1)).unwrap();
+        assert_eq!(found(&s), vec![(1, 11), (1, 10)]);
+    }
+
+    #[test]
+    fn an_empty_query_with_a_pr_lists_only_that_pr() {
+        let (_dir, repo) = test_repo();
+        repo.save_thread_conversation(&stored(1, 10, 100, "first comment", "y")).unwrap();
+        repo.save_thread_conversation(&stored(2, 20, 300, "root comment", "y")).unwrap();
+        repo.save_thread_conversation(&stored(2, 21, 200, "other", "y")).unwrap();
+        let s = repo.search_thread_conversations("  ", None, Some(2)).unwrap();
+        assert_eq!(found(&s), vec![(2, 20), (2, 21)]);
+        assert_eq!(s.hits[0].snippet, "root comment", "the start of the root comment");
+        assert_eq!(found(&repo.search_thread_conversations("", None, None).unwrap()), vec![(2, 20), (2, 21), (1, 10)]);
+    }
+
+    #[test]
+    fn hits_are_newest_first_and_capped_with_the_total() {
+        let (_dir, repo) = test_repo();
+        for i in 0..205 {
+            repo.save_thread_conversation(&stored(1 + i % 3, i, 1_000 + i, "x", "y")).unwrap();
+        }
+        let s = repo.search_thread_conversations("", None, None).unwrap();
+        assert_eq!((s.hits.len(), s.total), (THREAD_SEARCH_LIMIT, 205));
+        assert_eq!((s.hits[0].at, s.hits[199].at), (1_204, 1_005));
+    }
+
+    #[test]
+    fn the_snippet_is_80_chars_either_side_of_the_first_match() {
+        let (_dir, repo) = test_repo();
+        let long = format!("{}NEEDLE{}", "a".repeat(100), "b".repeat(100));
+        repo.save_thread_conversation(&stored(1, 10, 100, &long, "short answer needle")).unwrap();
+        let s = repo.search_thread_conversations("needle", None, None).unwrap();
+        assert_eq!(s.hits[0].snippet, format!("…{}NEEDLE{}…", "a".repeat(80), "b".repeat(80)));
+        repo.save_thread_conversation(&stored(1, 10, 100, "nothing here", "line one\n\nline   two sooner")).unwrap();
+        let s = repo.search_thread_conversations("SOONER", None, None).unwrap();
+        assert_eq!(s.hits[0].snippet, "line one line two sooner", "the first field it matches, one line");
+    }
+
+    #[test]
+    fn a_snippet_cuts_on_characters_not_bytes() {
+        let (_dir, repo) = test_repo();
+        let text = format!("{}Ünïcode{}", "é".repeat(100), "ø".repeat(100));
+        repo.save_thread_conversation(&stored(1, 10, 100, &text, "y")).unwrap();
+        let s = repo.search_thread_conversations("ünïCODE", None, None).unwrap();
+        assert_eq!(s.hits[0].snippet, format!("…{}Ünïcode{}…", "é".repeat(80), "ø".repeat(80)));
+    }
+
+    #[test]
+    fn a_match_in_a_dropped_draft_is_marked() {
+        let (_dir, repo) = test_repo();
+        let mut c = stored(1, 10, 100, "naming", "nothing to change");
+        c.turns.push(ThreadTurn {
+            dropped: true,
+            ..ThreadTurn::claude(TurnKind::ReplyDraft, "h".into(), "We will rename foo.".into())
+        });
+        repo.save_thread_conversation(&c).unwrap();
+        assert!(repo.search_thread_conversations("rename", None, None).unwrap().hits[0].dropped);
+        assert!(!repo.search_thread_conversations("nothing", None, None).unwrap().hits[0].dropped);
+    }
+
+    #[test]
+    fn hits_carry_the_place_and_the_badges() {
+        let (_dir, repo) = test_repo();
+        let draft = |posted: Option<&str>| ThreadTurn {
+            at: 50,
+            posted: posted.map(String::from),
+            ..ThreadTurn::claude(TurnKind::ReplyDraft, "h".into(), "reply".into())
+        };
+        let mut fixed = stored(1, 10, 100, "x", "y");
+        fixed.turns.insert(0, ThreadTurn {
+            at: 10,
+            commit: Some("c0ffee".into()),
+            ..ThreadTurn::claude(TurnKind::Fix, "h".into(), "fixed".into())
+        });
+        let mut ready = stored(2, 20, 200, "x", "y");
+        ready.turns.insert(0, draft(None));
+        let mut posted = stored(3, 30, 300, "x", "y");
+        posted.turns.insert(0, draft(Some("https://x")));
+        for c in [&fixed, &ready, &posted] {
+            repo.save_thread_conversation(c).unwrap();
+        }
+        let s = repo.search_thread_conversations("", None, None).unwrap();
+        let badges: Vec<_> = s.hits.iter().map(|h| (h.pr, h.fixed, h.reply_state)).collect();
+        assert_eq!(
+            badges,
+            vec![(3, false, Some(ReplyState::Posted)), (2, false, Some(ReplyState::Ready)), (1, true, None)]
+        );
+        let h = &s.hits[2];
+        assert_eq!(
+            (h.thread, h.path.as_str(), h.line, h.title.as_deref(), h.at),
+            (10, "src/retry.ts", Some(12), Some("PR 1"), 100)
+        );
+    }
+
+    #[test]
+    fn an_old_file_without_title_line_comments_loads_and_matches_on_turns() {
+        let (dir, repo) = test_repo();
+        let file = dir.path().join(".git/gitp/pr-threads/5/6.json");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            r#"{"version":1,"pr":5,"thread":6,"path":"a","turns":[{"kind":"check","role":"claude","at":1,"head":"h","text":"an old answer"}]}"#,
+        )
+        .unwrap();
+        let c = repo.thread_conversation(5, 6).unwrap().unwrap();
+        assert_eq!((c.title.clone(), c.line, c.comments.len()), (None, None, 0));
+        let text = serde_json::to_string(&c).unwrap();
+        assert!(!text.contains("title") && !text.contains("comments") && !text.contains("\"line\""), "{text}");
+        let s = repo.search_thread_conversations("OLD", None, None).unwrap();
+        assert_eq!((found(&s), s.hits[0].title.clone(), s.hits[0].line), (vec![(5, 6)], None, None));
+        assert_eq!(s.hits[0].snippet, "an old answer");
+    }
+
+    #[test]
+    fn no_folder_is_no_hits() {
+        let (_dir, repo) = test_repo();
+        let s = repo.search_thread_conversations("x", None, None).unwrap();
+        assert_eq!((s.hits.len(), s.total), (0, 0));
     }
 }
