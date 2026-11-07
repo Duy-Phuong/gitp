@@ -30,3 +30,10 @@ export function jiraSite(text: string): string {
     return t;
   }
 }
+
+/** The ticket branch `name` is for and its page on `site`, or null without either. */
+export function branchTicket(name: string, site: string): { key: string; url: string } | null {
+  const key = jiraKeyIn(name);
+  const url = jiraTicketUrl(site, key);
+  return key && url ? { key, url } : null;
+}

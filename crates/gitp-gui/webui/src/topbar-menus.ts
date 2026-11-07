@@ -7,6 +7,7 @@ import { ensureAvatars } from "./avatar";
 import { opFailed, reportDone } from "./report";
 import {
   applyTheme,
+  loadJiraSite,
   loadPullDefault,
   PULL_DEFAULT_LABEL,
   PULL_DEFAULTS,
@@ -17,8 +18,9 @@ import {
 import { setConfigTab } from "./config-panel";
 import { reloadDiffs, showView, startAutoFetch, updateLogView } from "./shell";
 import { createBranchAction, runPullMethod } from "./repo-actions";
-import { checkoutBranchAction } from "./ref-actions";
-import { matchBranches } from "./branch-filter";
+import { checkoutBranchAction, openTicket } from "./ref-actions";
+import { branchTicket } from "./jira";
+import { matchBranches, recentBranches } from "./branch-filter";
 import type { BranchRef } from "./types";
 import { githubAccountForSettings, signInToGitHub, signOutOfGitHub } from "./pr-actions";
 import { closeSettingsDialog, openSettingsDialog } from "./views/settings-dialog";
@@ -63,16 +65,26 @@ function buildBranchMenu(menu: HTMLElement, close: () => void): void {
   // The row the arrows picked, shown once a key moved it or text was typed.
   let picked = 0;
   let keyed = false;
+  // With nothing typed, the branches checked out last come first, then all.
+  const byName = new Map(branches.map((b) => [b.name, b]));
+  const head = branches.find((b) => b.is_head)?.name ?? null;
+  const recent = recentBranches(state.refs.recent, branches.map((b) => b.name), head).map((n) => byName.get(n)!);
+  const jiraSite = loadJiraSite();
   const paint = () => {
     clear(list);
     const names = new Set(matchBranches(branches.map((b) => b.name), filter.value));
-    shown = branches.filter((b) => names.has(b.name));
+    const typed = filter.value.trim() !== "";
+    const top = typed ? [] : recent;
+    shown = [...top, ...branches.filter((b) => names.has(b.name))];
     picked = Math.min(picked, Math.max(shown.length - 1, 0));
     if (branches.length === 0) list.append(el("div", { class: "menu-item", text: "No branches" }));
     else if (shown.length === 0) {
       list.append(el("div", { class: "menu-item branch-menu-none", text: `No branch matches "${filter.value.trim()}" · Enter to make it` }));
     }
     shown.forEach((b, i) => {
+      if (top.length && (i === 0 || i === top.length)) {
+        list.append(el("div", { class: "branch-menu-group", text: i === 0 ? "Recent" : "All branches" }));
+      }
       const item = el("button", {
         class: `menu-item${b.is_head ? " head" : ""}${keyed && i === picked ? " picked" : ""}`,
         text: b.is_head ? `● ${b.name}` : b.name,
@@ -81,6 +93,17 @@ function buildBranchMenu(menu: HTMLElement, close: () => void): void {
         close();
         void checkoutBranchAction(b);
       });
+      // The ticket the branch is named for, when Settings has a Jira site.
+      const ticket = branchTicket(b.name, jiraSite);
+      if (ticket) {
+        const jira = el("span", { class: "branch-menu-jira", text: "Jira", title: `Open ${ticket.key} in Jira` });
+        jira.addEventListener("click", (e) => {
+          e.stopPropagation();
+          close();
+          openTicket(ticket.url);
+        });
+        item.append(jira);
+      }
       list.append(item);
     });
   };

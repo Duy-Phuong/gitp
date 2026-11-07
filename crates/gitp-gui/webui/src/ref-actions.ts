@@ -36,6 +36,7 @@ import {
   saveStashPatch,
   squashMessage,
   stashAndSwitch,
+  openGithubUrl,
 } from "./api";
 import { releaseNotesAction, summarizeBranchAction } from "./ask-actions";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
@@ -47,7 +48,9 @@ import type { BranchRef, MergeMode, StashRef } from "./types";
 import { state, ui } from "./app-state";
 import { createPullRequestDialog } from "./pr-actions";
 import { openBranchReview } from "./branch-review-actions";
-import { opFailed, reportDone, setStatus } from "./report";
+import { opFailed, readFailed, reportDone, setStatus } from "./report";
+import { branchTicket } from "./jira";
+import { loadJiraSite } from "./prefs";
 import { branchRefName, remoteRefName, tagRefName, withHidden, withSolo } from "./ref-visibility";
 import { copyText } from "./clipboard";
 import {
@@ -237,10 +240,17 @@ function showBranchMenu(b: BranchRef, x: number, y: number, outlook: string | nu
 
   items.push({ separator: true });
   items.push({ label: "Summarize with Claude", run: () => summarizeBranchAction(b.name) });
+  const ticket = branchTicket(b.name, loadJiraSite());
+  if (ticket) items.push({ label: `Open ${ticket.key} in Jira`, run: () => openTicket(ticket.url) });
   items.push({ label: "Show Reflog", run: () => showReflog(`refs/heads/${b.name}`) });
   items.push({ label: "Copy Branch Name", run: () => void copyText(b.name, `Copied ${b.name}`) });
 
   showContextMenu(x, y, items);
+}
+
+// A ticket's page in the browser.
+export function openTicket(url: string): void {
+  openGithubUrl(url).catch((err: unknown) => readFailed("Couldn't open the ticket", err));
 }
 
 // The remotes the branch menu offers to push to (see pushTargets).

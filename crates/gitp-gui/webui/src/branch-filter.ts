@@ -8,3 +8,13 @@ export function matchBranches<T extends string>(names: T[], query: string): T[] 
     return words.every((w) => name.includes(w));
   });
 }
+
+// How many recent branches the Branch menu shows above the rest.
+const RECENT_MAX = 5;
+
+// The branches checked out last (`recent`, newest first), for the top of the
+// Branch menu: not the one checked out now, nor one since deleted.
+export function recentBranches(recent: string[], names: string[], current: string | null): string[] {
+  const have = new Set(names);
+  return recent.filter((n) => n !== current && have.has(n)).slice(0, RECENT_MAX);
+}

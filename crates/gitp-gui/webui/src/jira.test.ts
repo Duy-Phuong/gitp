@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { jiraKeyIn, jiraSite, jiraTicketUrl } from "./jira";
+import { branchTicket, jiraKeyIn, jiraSite, jiraTicketUrl } from "./jira";
 
 describe("jiraKeyIn", () => {
   it("finds the first ticket key across the texts given", () => {
@@ -40,5 +40,19 @@ describe("jiraSite", () => {
     expect(jiraSite("https://mesoneerag.atlassian.net/browse/UBIID-9674")).toBe("https://mesoneerag.atlassian.net");
     expect(jiraSite("mesoneerag.atlassian.net")).toBe("https://mesoneerag.atlassian.net");
     expect(jiraSite("  ")).toBe("");
+  });
+});
+
+describe("branchTicket", () => {
+  it("is the ticket a branch is named for, with its page", () => {
+    expect(branchTicket("feature/UBIID-9538-remove-logic", "https://mesoneer.atlassian.net")).toEqual({
+      key: "UBIID-9538",
+      url: "https://mesoneer.atlassian.net/browse/UBIID-9538",
+    });
+  });
+
+  it("is none without a key in the name or without a Jira site", () => {
+    expect(branchTicket("master", "https://mesoneer.atlassian.net")).toBeNull();
+    expect(branchTicket("feature/UBIID-9538-x", "")).toBeNull();
   });
 });
