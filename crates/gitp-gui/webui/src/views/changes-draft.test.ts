@@ -132,6 +132,21 @@ describe("Draft with Claude in the commit box", () => {
     expect(b.subject().value).toBe("");
   });
 
+  it("drops a draft still running when a commit lands, and cancels it", async () => {
+    const b = await box([file("a.ts")]);
+    b.button().click();
+    b.type("feat: mine");
+    b.stubs.commit = async () => "Committed.";
+    document.querySelector<HTMLButtonElement>(".commit-btn")!.click();
+    await settle();
+    await settle();
+    expect(b.stubs.cancelDraft).toHaveBeenCalledTimes(1);
+    b.runs[0].resolve(DRAFT);
+    await settle();
+    expect(b.subject().value).toBe("");
+    expect(b.button().textContent).toBe("Draft with Claude");
+  });
+
   it("drafts for an amend and asks before replacing HEAD's message", async () => {
     const head = { summary: "old subject", message: "old subject\n\nold body", files: [] } as unknown as CommitDetail;
     const b = await box([], { head, confirm: true });

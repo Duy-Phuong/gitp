@@ -1271,6 +1271,10 @@ export function setupChanges(host: HTMLElement, cb: ChangesCallbacks): ChangesHa
           cb.reportDone(out || "Committed.");
         },
         () => {
+          // A draft still running was for what just got committed.
+          if (drafting) cb.cancelDraft();
+          draftToken++;
+          drafting = false;
           resetMessage();
           amend = false;
           amendFiles = [];

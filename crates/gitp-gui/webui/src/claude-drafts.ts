@@ -44,11 +44,11 @@ export const DEFAULT_DRAFT_COMMANDS: Record<DraftCommandKind, string> = {
       DRAFT_RULES +
       " Print only the message: no heading, no code fence, no explanation.",
   ),
-  // The template's variable is named without $: unset, it would leave a hole.
+  // The template's sentence is there only when the shell has its path.
   "pr-draft": draftCommand(
     "Draft the pull request from $GITP_BRANCH into $GITP_BASE. Its commits and then its diff are on stdin. " +
-      "If the environment variable GITP_PR_TEMPLATE_FILE names a file, it is the repository's pull request " +
-      "template: follow its sections. Write a short title in the style of the commits, and a description in " +
+      "${GITP_PR_TEMPLATE_FILE:+The pull request template of this repository is $GITP_PR_TEMPLATE_FILE: read it and follow its sections. }" +
+      "Write a short title in the style of the commits, and a description in " +
       "GitHub Markdown that says what changed and why, ending with a Checks section: a task list (- [ ] item) " +
       "of what a reviewer should verify. " +
       DRAFT_RULES +

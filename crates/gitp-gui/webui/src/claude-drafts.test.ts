@@ -31,12 +31,13 @@ describe("DEFAULT_DRAFT_COMMANDS", () => {
     expect(DEFAULT_DRAFT_COMMANDS["commit-message"]).toContain("$GITP_LOG_FILE");
   });
 
-  it("asks the pull request for a Checks list and the template, named without $", () => {
+  it("asks the pull request for a Checks list, and names the template only when there is one", () => {
     const pr = DEFAULT_DRAFT_COMMANDS["pr-draft"];
     expect(pr).toContain("Checks");
-    expect(pr).toContain("GITP_PR_TEMPLATE_FILE");
-    expect(pr).not.toContain("$GITP_PR_TEMPLATE_FILE");
     expect(pr).toContain("title and body");
+    // The shell expands this inside the prompt's double quotes: the path when
+    // set, nothing at all when not.
+    expect(pr).toMatch(/\$\{GITP_PR_TEMPLATE_FILE:\+[^}]*\$GITP_PR_TEMPLATE_FILE[^}]*\}/);
   });
 });
 
