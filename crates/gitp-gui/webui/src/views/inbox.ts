@@ -6,7 +6,7 @@
 // come in per repository as each answers; a refresh keeps a repository's
 // rows until its new answer. Reads again every minute while showing.
 
-import { clear, el } from "../dom";
+import { clear, el, refreshButton as refreshBtn } from "../dom";
 import { groupInbox, inboxReasons, type InboxPr, type InboxRepo } from "../inbox";
 import { startPolling } from "../poller";
 import { isoSeconds } from "../pull-requests";
@@ -41,7 +41,7 @@ export function setupInbox(host: HTMLElement, cb: InboxCallbacks): InboxHandle {
   let stopPolling: (() => void) | null = null;
 
   const status = el("span", { class: "inbox-status", "aria-live": "polite" });
-  const refreshButton = el("button", { class: "btn small ghost inbox-refresh", text: "⟳ Refresh", title: "Ask GitHub again" });
+  const refreshButton = refreshBtn("btn small ghost inbox-refresh", "Ask GitHub again");
   refreshButton.addEventListener("click", () => void refresh());
   const close = el("button", { class: "btn ghost inbox-close", type: "button", text: "← Back" });
   close.addEventListener("click", () => cb.close());

@@ -530,6 +530,15 @@ body {
   padding: 3px 8px;
   font-size: 12px;
 }
+.refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.refresh-btn .refresh-icon {
+  width: 15px;
+  height: 15px;
+}
 .btn:hover {
   filter: brightness(1.08);
 }

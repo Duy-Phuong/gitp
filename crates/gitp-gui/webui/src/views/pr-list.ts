@@ -5,7 +5,7 @@
 // sort by any column.
 // A row opens its pull request; its corner arrows, in a tab of its own.
 
-import { clear, el, svg } from "../dom";
+import { clear, el, refreshButton, svg } from "../dom";
 import {
   filterPrList,
   hasPrListFilters,
@@ -77,7 +77,7 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
   // Built once, so typing in the search keeps its cursor while the table
   // below is drawn again.
   const title = el("span", { class: "prl-title-text" });
-  const refresh = el("button", { class: "btn small ghost", text: "⟳ Refresh", title: "Read the pull requests again from GitHub" });
+  const refresh = refreshButton("btn small ghost", "Read the pull requests again from GitHub");
   refresh.addEventListener("click", () => cb.refresh());
   const inbox = cb.inbox
     ? [el("button", { class: "btn small ghost prl-inbox", text: "Inbox", title: "The pull requests that need you, across your repositories" })]

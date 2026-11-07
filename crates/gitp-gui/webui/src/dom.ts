@@ -219,3 +219,11 @@ export const $ = <T extends HTMLElement>(sel: string): T => {
   if (!node) throw new Error(`missing element: ${sel}`);
   return node;
 };
+
+// A "Refresh" button with the circling-arrow icon the pull request view uses:
+// the "⟳" character drew too small to read.
+export function refreshButton(cls: string, title: string): HTMLButtonElement {
+  const icon = svg("svg", { viewBox: "0 0 24 24", class: "tb-icon refresh-icon", "aria-hidden": "true" });
+  icon.append(svg("path", { d: "M20 11a8 8 0 10-.6 4M20 4v5h-5" }));
+  return el("button", { class: `${cls} refresh-btn`, title }, [icon, "Refresh"]);
+}
