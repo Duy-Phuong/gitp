@@ -38,7 +38,7 @@ import {
   renderSidebarNow,
   showView,
 } from "./shell";
-import { dialogList } from "./dialog-list";
+import { askConfirmList } from "./views/choice-dialog";
 
 export async function undoAction(): Promise<void> {
   // The buttons disable on actionsBusy; the shortcut and Quick Launch reach
@@ -250,7 +250,7 @@ export async function createBranchAction(name: string): Promise<void> {
 // The deletion is forced (`git branch -D`), because a branch merged via a
 // squash or rebase merge does not look merged to git and `-d` would refuse it.
 // That is the whole point of the command, and also why it confirms with the
-// list first (the first names and a count of the rest): forced deletion of work that only exists locally is not
+// full list first: forced deletion of work that only exists locally is not
 // recoverable from the branch itself.
 export async function cleanUpAction(): Promise<void> {
   if (!state.repoPath) return;
@@ -264,10 +264,12 @@ export async function cleanUpAction(): Promise<void> {
       setStatus("Nothing to clean up — no branches have a deleted upstream.");
       return;
     }
-    const ok = await confirmDialog(
-      `Delete ${gone.length} local branch${gone.length === 1 ? "" : "es"} whose upstream is gone?\n\n` +
-        `${dialogList(gone)}\n\n` +
-        `This is a forced delete — any commits on them that were never pushed will be lost.`,
+    const ok = await askConfirmList(
+      `Delete ${gone.length} local branch${gone.length === 1 ? "" : "es"} whose upstream is gone?`,
+      "Their remote branches were deleted.",
+      gone,
+      "This is a forced delete — any commits on them that were never pushed will be lost.",
+      "Delete",
     );
     if (!ok) {
       await loadSidebar();

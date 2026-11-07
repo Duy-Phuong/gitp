@@ -1382,6 +1382,33 @@ textarea.rename-input {
 }
 
 /* Error / message dialog -------------------------------------------------- */
+.list-confirm {
+  width: min(560px, 92vw);
+}
+/* The names scroll inside the dialog; the title and the buttons stay put. */
+.list-confirm-names {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 50vh;
+  overflow-y: auto;
+  margin: 0 0 10px;
+  padding: 6px 12px;
+  list-style: none;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.list-confirm-names li {
+  overflow-wrap: anywhere;
+}
+.list-confirm-note {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-bottom: 12px;
+}
 .message-dialog {
   width: min(560px, 92vw);
 }

@@ -12,6 +12,8 @@ export interface ChoiceButton<T> {
   primary?: boolean;
   // Set apart at the far left, like "Don't Save".
   left?: boolean;
+  // Red, for an answer that destroys something.
+  danger?: boolean;
 }
 
 export function askChoice<T>(
@@ -20,6 +22,7 @@ export function askChoice<T>(
   buttons: ChoiceButton<T>[],
   cancel: T,
   cls = "",
+  body: Node[] = [],
 ): Promise<T> {
   return new Promise((resolve) => {
     const overlay = el("div", { class: "modal-overlay" });
@@ -36,7 +39,7 @@ export function askChoice<T>(
     };
     let focus: HTMLElement | null = null;
     const btn = (b: ChoiceButton<T>) => {
-      const node = el("button", { class: b.primary ? "btn" : "btn ghost", text: b.label });
+      const node = el("button", { class: b.danger ? "btn danger-btn" : b.primary ? "btn" : "btn ghost", text: b.label });
       node.addEventListener("click", () => done(b.answer));
       if (b.primary) focus = node;
       return node;
@@ -45,6 +48,7 @@ export function askChoice<T>(
       el("div", { class: `modal ${cls}`.trim() }, [
         el("div", { class: "modal-title", text: title }),
         el("div", { class: "modal-sub", text: sub }),
+        ...body,
         el("div", { class: "modal-actions" }, [
           ...buttons.filter((b) => b.left).map(btn),
           el("span", { class: "spacer" }),
@@ -59,4 +63,30 @@ export function askChoice<T>(
     document.body.append(overlay);
     requestAnimationFrame(() => focus?.focus());
   });
+}
+
+// Confirm an action on a list of names (branches to delete): the names sit in
+// a box that scrolls, so a long list keeps the buttons on screen. A native
+// dialog cannot scroll. Resolves true for the confirm button only.
+export function askConfirmList(
+  title: string,
+  sub: string,
+  names: string[],
+  note: string,
+  confirmLabel: string,
+): Promise<boolean> {
+  return askChoice(
+    title,
+    sub,
+    [
+      { label: "Cancel", answer: false },
+      { label: confirmLabel, answer: true, primary: true, danger: true },
+    ],
+    false,
+    "list-confirm",
+    [
+      el("ul", { class: "list-confirm-names" }, names.map((n) => el("li", { text: n }))),
+      ...(note ? [el("div", { class: "list-confirm-note", text: note })] : []),
+    ],
+  );
 }
