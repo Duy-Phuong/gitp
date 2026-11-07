@@ -1495,7 +1495,7 @@ fn preferred(a: &(PathBuf, SystemTime), b: &(PathBuf, SystemTime)) -> bool {
 }
 
 /// The newest review file under `dir` written at or after `since`.
-fn review_file_written_since(dir: &Path, since: SystemTime) -> Option<PathBuf> {
+pub(crate) fn review_file_written_since(dir: &Path, since: SystemTime) -> Option<PathBuf> {
     let mut best: Option<(PathBuf, SystemTime)> = None;
     for f in review_files_in(dir) {
         if f.1 >= since && best.as_ref().is_none_or(|b| preferred(&f, b)) {
@@ -1994,7 +1994,7 @@ pub(crate) fn git_in(dir: &Path, args: &[&str]) -> Result<String> {
 /// Put the worktree back where a fix started: on `branch` at `before`, with
 /// nothing untracked. Tried a few times: a test runner or git the run left
 /// behind may still hold the index for a moment after it was stopped.
-fn undo_fix(dir: &Path, branch: &str, before: &str) -> Result<()> {
+pub(crate) fn undo_fix(dir: &Path, branch: &str, before: &str) -> Result<()> {
     let mut last = Ok(());
     for _ in 0..20 {
         last = git_in(dir, &["checkout", "-q", "-f", branch])
@@ -2041,7 +2041,7 @@ fn claude_answer(stdout: &str) -> Result<(String, Option<String>)> {
 /// A run that doesn't resume a Claude session (no `GITP_CLAUDE_SESSION` in
 /// `env`) is offered a fresh one in `GITP_CLAUDE_NEW_SESSION`, for
 /// `claude --session-id`; either way the hooks hear which session it is.
-fn run_shell(
+pub(crate) fn run_shell(
     dir: &Path,
     command: &str,
     input: &[u8],
@@ -2138,9 +2138,9 @@ fn run_shell(
     }
 }
 
-struct ShellOutput {
-    stdout: String,
-    stderr: String,
+pub(crate) struct ShellOutput {
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
 }
 
 const LIST_FIELDS: &str = "number,title,author,isDraft,reviewDecision,statusCheckRollup,\
@@ -2425,7 +2425,7 @@ struct RawThreadComment {
 
 /// `gh pr diff`'s unified diff as the same per-file hunks a commit's diff
 /// has, read by libgit2's own patch parser.
-fn parse_pr_diff(bytes: &[u8], enc: TextEncoding) -> Result<Vec<FileDiff>> {
+pub(crate) fn parse_pr_diff(bytes: &[u8], enc: TextEncoding) -> Result<Vec<FileDiff>> {
     if bytes.iter().all(u8::is_ascii_whitespace) {
         return Ok(Vec::new());
     }
