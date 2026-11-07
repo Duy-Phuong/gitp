@@ -369,7 +369,7 @@ describe("opening a pull request quickly", () => {
 
   it("draws a pull request at once after a restart, from what it showed last", async () => {
     view.reset();
-    const again = setupPullRequestView(host, callbacks(cb as unknown as Partial<PullRequestCallbacks>));
+    const again = setupPullRequestView(host, callbacks(cb));
     again.show(7);
     expect(title()).toBe("Widgets");
     expect(host.textContent).not.toContain("Loading pull request");
@@ -391,5 +391,45 @@ describe("opening a pull request quickly", () => {
     view.show(7);
     await settle();
     expect(cb.fetchFiles).toHaveBeenCalledTimes(reads + 1);
+  });
+});
+
+describe("the Files tab of a large pull request", () => {
+  const many = Array.from({ length: 30 }, (_, i) => ({ ...FILES[0], path: `src/f${i}.ts` }));
+  const drawn = () => host.querySelectorAll(".pr-files-diffs [data-path]").length;
+  const filesTab = () => [...host.querySelectorAll<HTMLButtonElement>(".pr-tab")].find((b) => b.textContent?.startsWith("Files"))!;
+
+  beforeEach(async () => {
+    files = many;
+    detail = { ...detail, head_oid: "big" };
+    view.reload();
+    await settle();
+  });
+
+  it("shows the first files at once and draws the rest after", async () => {
+    filesTab().click();
+    expect(drawn()).toBeGreaterThan(0);
+    expect(drawn()).toBeLessThan(30);
+    await settle();
+    expect(drawn()).toBe(30);
+  });
+
+  it("a click in the file tree draws its file at once", () => {
+    filesTab().click();
+    const row = [...host.querySelectorAll<HTMLElement>(".tree-file")].find((r) => r.title === "src/f25.ts")!;
+    row.click();
+    expect(host.querySelector('[data-path="src/f25.ts"]')).not.toBeNull();
+  });
+
+  it("the search counts and hides the files not drawn yet too", async () => {
+    filesTab().click();
+    const search = host.querySelector<HTMLInputElement>(".pr-files-search")!;
+    search.value = "f2";
+    search.dispatchEvent(new Event("input"));
+    expect(host.querySelector(".pr-files-count")?.textContent).toContain("of 30 files");
+    await settle();
+    const shown = [...host.querySelectorAll<HTMLElement>(".pr-files-diffs [data-path]")].filter((n) => !n.hidden);
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.every((n) => n.dataset.path!.includes("f2"))).toBe(true);
   });
 });

@@ -6759,6 +6759,12 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   flex-direction: column;
   gap: 10px;
 }
+/* The browser lays out and paints only the files near the view: with
+   hundreds of files, laying out them all took seconds. Each file's height
+   until then is a guess from its lines (set in pull-request.ts). */
+.pr-files-diffs > [data-path] {
+  content-visibility: auto;
+}
 .pr-tree-comments {
   margin-left: auto;
   padding: 0 5px;

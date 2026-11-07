@@ -227,6 +227,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   const openComments = new Set<string>();
   const treeCollapsed = new Set<string>();
   let treeSelected: string | null = null;
+  // The Files tab drawn last: draws the files up to one, for a jump to it.
+  let drawFile: ((path: string) => void) | null = null;
   // The pull request's draft comments, with the verdict and message the
   // review they'll be posted in will carry. Kept by repo and number outside
   // the view, so they wait while another pull request is open.
@@ -389,7 +391,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     );
     host.append(el("div", { class: "pr-view" }, [header(pr), tabs, body]));
     if (tab === "conversation") renderConversation(body, pr);
-    else if (tab === "files") void renderFiles(body, pr).then(() => restore(body));
+    else if (tab === "files") void renderFiles(body, pr, scrolled).then(() => restore(body));
     else if (tab === "commits") renderCommits(body, pr);
     else if (tab === "drafts") renderDrafts(body, pr);
     else renderChecks(body, pr);
@@ -822,7 +824,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
 
   // --- Files changed --------------------------------------------------------
 
-  async function renderFiles(body: HTMLElement, pr: PullRequestDetail): Promise<void> {
+  // The changed files, the first screenful at once (down to `scrolled`, for a
+  // redraw that keeps its place) and the rest a slice at a time after: a
+  // pull request of hundreds of files took seconds to show anything.
+  async function renderFiles(body: HTMLElement, pr: PullRequestDetail, scrolled = 0): Promise<void> {
     if (!files) {
       body.append(el("div", { class: "pr-empty", text: "Loading the changed files…" }));
       const mine = generation;
@@ -847,11 +852,37 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     const threads = reviewThreads(pr.review_comments);
     const byLine = threadsByLine(threads);
     const counts = threadsPerFile(threads);
-    const nodes = shown.map((file) => {
-      const node = annotatedFile(pr, file, byLine, counts.get(file.path) ?? 0);
-      node.dataset.path = file.path;
-      return node;
-    });
+    const index = new Map(shown.map((f, i) => [f.path, i]));
+    // Each file's diff once drawn; drawn in order, so the first `built`.
+    const nodes: HTMLElement[] = [];
+    // The search's matches, by file: null for a file it hides.
+    let hits: ([number, number][] | null)[] = shown.map(() => []);
+    const marked = (i: number, node: HTMLElement) => {
+      const found = hits[i];
+      node.hidden = found === null;
+      for (const row of node.querySelectorAll(".pr-search-hit")) row.classList.remove("pr-search-hit");
+      for (const [h, k] of found ?? []) {
+        for (const row of node.querySelectorAll(`.hunk[data-hunk="${h}"] [data-line="${k}"]`)) row.classList.add("pr-search-hit");
+      }
+    };
+    const diffs = el("div", { class: "pr-files-diffs" });
+    const buildNext = () => {
+      const i = nodes.length;
+      const node = annotatedFile(pr, shown[i], byLine, counts.get(shown[i].path) ?? 0);
+      node.dataset.path = shown[i].path;
+      // Its height before the browser lays it out (see .pr-files-diffs).
+      const lines = shown[i].hunks.reduce((n, h) => n + h.lines.length + 1, 0);
+      node.style.containIntrinsicSize = `auto ${lines * 14 + 40}px`;
+      nodes.push(node);
+      marked(i, node);
+      diffs.append(node);
+    };
+    // Draw every file up to `path`'s, for a jump to it.
+    const buildTo = (path: string) => {
+      const i = index.get(path);
+      while (i !== undefined && nodes.length <= i) buildNext();
+    };
+    drawFile = buildTo;
 
     // The folder tree: a click scrolls its file's diff into view. Drawn on its
     // own, so picking a file doesn't rebuild the diffs.
@@ -875,12 +906,13 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         onFileClick: (p) => {
           treeSelected = p;
           paintTree();
-          nodes.find((n) => n.dataset.path === p)?.scrollIntoView({ block: "start" });
+          buildTo(p);
+          nodes[index.get(p) ?? -1]?.scrollIntoView({ block: "start" });
         },
       });
       // Files the search hid are dimmed in the tree too.
       for (const row of tree.querySelectorAll<HTMLElement>(".tree-file")) {
-        row.classList.toggle("dim", nodes.find((n) => n.dataset.path === row.title)?.hidden ?? false);
+        row.classList.toggle("dim", hits[index.get(row.title) ?? -1] === null);
       }
     };
 
@@ -894,19 +926,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     search.value = filesQuery;
     // Hide the files that don't match, and mark the lines that do.
     const applySearch = () => {
-      let files = 0;
-      let lines = 0;
-      searchFiles(shown, filesQuery).forEach((hits, i) => {
-        const node = nodes[i];
-        node.hidden = hits === null;
-        for (const row of node.querySelectorAll(".pr-search-hit")) row.classList.remove("pr-search-hit");
-        if (hits === null) return;
-        files++;
-        lines += hits.length;
-        for (const [h, k] of hits) {
-          for (const row of node.querySelectorAll(`.hunk[data-hunk="${h}"] [data-line="${k}"]`)) row.classList.add("pr-search-hit");
-        }
-      });
+      hits = searchFiles(shown, filesQuery);
+      nodes.forEach((node, i) => marked(i, node));
+      const files = hits.filter((h) => h !== null).length;
+      const lines = hits.reduce((n, h) => n + (h?.length ?? 0), 0);
       count.textContent = filesQuery.trim()
         ? `${files} of ${shown.length} file${shown.length === 1 ? "" : "s"} · ${lines} matching line${lines === 1 ? "" : "s"}`
         : "";
@@ -947,7 +970,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     if (treeShown) columns.append(tree);
     // Comment boxes on a file no longer in the diff at all.
     const gone = [...lineDrafts].filter(([, d]) => !byPath.has(d.path)).map(([key, d]) => orphanComposer(key, d));
-    const diffs = el("div", { class: `pr-files-diffs${wrap && !split ? " wrap-lines" : ""}` }, [...gone, ...nodes]);
+    diffs.classList.toggle("wrap-lines", wrap && !split);
+    diffs.append(...gone);
     diffs.classList.toggle("comments-collapsed", commentsCollapsed);
     columns.append(diffs);
     // Switching it only folds or opens the comments: no redraw, so the scroll
@@ -979,6 +1003,17 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       columns,
     );
     applySearch();
+    // Enough to fill the view (or reach where a redraw was scrolled to) now,
+    // the rest in slices that leave the window free to scroll and click.
+    const filled = () => body.scrollHeight >= scrolled + body.clientHeight * 2;
+    while (nodes.length < shown.length && (nodes.length === 0 || !filled())) buildNext();
+    const more = () => {
+      if (!diffs.isConnected || nodes.length >= shown.length) return;
+      const until = performance.now() + 12;
+      while (nodes.length < shown.length && performance.now() < until) buildNext();
+      setTimeout(more, 0);
+    };
+    setTimeout(more, 0);
   }
 
   function setSplit(on: boolean): void {
@@ -1378,6 +1413,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     filesQuery = "";
     render();
     const find = (tries: number) => {
+      // Its file may be among those not drawn yet.
+      if (d.path) drawFile?.(d.path);
       const card = host.querySelector<HTMLElement>(`.pr-draft.inline[data-draft="${d.id}"]`);
       if (card) card.scrollIntoView({ block: "center" });
       else if (tries > 0) setTimeout(() => find(tries - 1), 100);
