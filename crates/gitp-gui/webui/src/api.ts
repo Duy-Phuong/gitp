@@ -1567,6 +1567,17 @@ export async function conflictSides(path: string): Promise<ConflictSides> {
   return invoke<ConflictSides>("conflict_sides", { path });
 }
 
+// Explain a commit, summarize a branch or write a tag's release notes with
+// Claude (`command`, on what claude_ask.rs gathers). A Claude job; its
+// Markdown answer.
+export async function claudeAsk(kind: "commit" | "branch" | "release", target: string, command: string): Promise<string> {
+  if (!isTauri()) {
+    await new Promise((r) => setTimeout(r, 1200));
+    return `## What it does\n\n**${target}** (preview mock): the ${kind} is explained here in Markdown.\n\n- One point\n- Another point\n\n\`\`\`ts\nconst x = 1;\n\`\`\``;
+  }
+  return invoke<string>("claude_ask", { kind, target, command });
+}
+
 // The commits each side made to the conflicted `path` since the sides split.
 export async function conflictSideCommits(path: string): Promise<SideCommits> {
   if (!isTauri()) return structuredClone(MOCK_SIDE_COMMITS);
@@ -2334,7 +2345,7 @@ export async function explainReviewFinding(path: string, number: number, finding
 // --- Claude jobs ----------------------------------------------------------------
 
 // Every Claude Code run gitp starts (see claude_jobs.rs): the last 7 days', newest first.
-export type ClaudeJobKind = "review" | "explain" | "thread" | "resolve";
+export type ClaudeJobKind = "review" | "explain" | "thread" | "resolve" | "ask";
 export type ClaudeJobState = "running" | "done" | "failed" | "stopped" | "interrupted";
 
 export interface ClaudeUsage {

@@ -22,6 +22,7 @@ import {
   saveCommitsPatch,
   stashAndSwitch,
 } from "./api";
+import { explainCommitAction } from "./ask-actions";
 import { $ } from "./dom";
 import { logRowTop, renderLog } from "./views/log";
 import { showCommitMenu } from "./views/commit-menu";
@@ -401,6 +402,7 @@ export function onCommitContextMenu(row: CommitRow, x: number, y: number): void 
   showCommitMenu(x, y, row, {
     currentBranch: state.refs.head ?? "HEAD",
     copySha: () => void copySha(rev),
+    explain: () => explainCommitAction(rev, short),
     compareWithWorkdir: () => void compareWithWorkdirAction(rev, short),
     savePatch: () => void saveCommitsPatchAction([row]),
     checkoutCommit: () => void checkoutCommitAction(rev, short),

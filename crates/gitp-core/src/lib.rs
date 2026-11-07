@@ -4,6 +4,7 @@
 
 mod activity;
 mod bisect;
+mod claude_ask;
 mod blame;
 mod branch_ops;
 mod branch_review;
@@ -72,6 +73,7 @@ pub use compare::{CompareEnd, Comparison, EMPTY_REV, WORKDIR_REV};
 pub use config::{ConfigEntry, ConfigScope};
 pub use conflict_ops::{ConflictCommit, ConflictSides, ConflictStatus, SideCommits};
 pub use storage::{disk_usage, MergedBranches};
+pub use claude_ask::AskKind;
 pub use unpushed::Unpushed;
 pub use create::{clone_repo, init_repo, CloneOptions};
 pub use diff::{

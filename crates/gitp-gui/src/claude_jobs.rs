@@ -57,6 +57,9 @@ pub(crate) enum JobKind {
     /// Suggest resolutions for a conflicted file (no pull request: `pr` 0,
     /// the file's path in `finding`).
     Resolve,
+    /// Explain a commit, summarize a branch or write release notes (`pr` 0,
+    /// `kind:target` in `finding`).
+    Ask,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -334,6 +337,7 @@ impl ClaudeJobs {
                     "Claude is already suggesting a resolution for {}.",
                     new.finding.as_deref().unwrap_or_default()
                 ),
+                JobKind::Ask => format!("Claude is already on {}.", new.label),
             });
         }
         let cancel = Arc::new(AtomicBool::new(false));

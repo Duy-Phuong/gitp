@@ -37,6 +37,7 @@ import {
   squashMessage,
   stashAndSwitch,
 } from "./api";
+import { releaseNotesAction, summarizeBranchAction } from "./ask-actions";
 import { showContextMenu, type MenuItem } from "./views/context-menu";
 import { openDeleteBranchModal, openDeleteTagModal } from "./views/delete-branch";
 import { openRenameBranchModal } from "./views/rename-branch";
@@ -235,6 +236,7 @@ function showBranchMenu(b: BranchRef, x: number, y: number, outlook: string | nu
   if (!b.is_head) items.push({ label: "Delete…", danger: true, run: () => void deleteBranchAction(b) });
 
   items.push({ separator: true });
+  items.push({ label: "Summarize with Claude", run: () => summarizeBranchAction(b.name) });
   items.push({ label: "Show Reflog", run: () => showReflog(`refs/heads/${b.name}`) });
   items.push({ label: "Copy Branch Name", run: () => void copyText(b.name, `Copied ${b.name}`) });
 
@@ -610,6 +612,7 @@ export function onTagMenu(name: string, target: string, x: number, y: number): v
   }
 
   items.push({ separator: true });
+  items.push({ label: "Release Notes with Claude", run: () => releaseNotesAction(name) });
   items.push({ label: "Copy Tag Name", run: () => void copyText(name, `Copied ${name}`) });
 
   showContextMenu(x, y, items);

@@ -99,7 +99,7 @@ export function setupClaudeJobsView(root: HTMLElement, cb: ClaudeJobsCallbacks):
       actions.append(stop);
     }
     // A conflict suggestion belongs to no pull request: nothing to open.
-    if (job.kind !== "resolve") {
+    if (job.kind !== "resolve" && job.kind !== "ask") {
       const open = el(
         "button",
         { class: "btn ghost", type: "button", title: job.repo === openRepo ? "" : `In ${repoName(job.repo)}` },

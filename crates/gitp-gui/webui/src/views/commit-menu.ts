@@ -12,6 +12,8 @@ export interface CommitMenuHandlers {
   // Name of the current branch, for the "Rebase '<branch>' to Here" label.
   currentBranch: string;
   copySha: () => void;
+  // Explain it with Claude, in a dialog.
+  explain: () => void;
   checkoutCommit: () => void;
   compareWithWorkdir: () => void;
   savePatch: () => void;
@@ -143,6 +145,7 @@ function buildRoot(menu: HTMLElement, row: CommitRow, h: CommitMenuHandlers): vo
     item("Mixed (keep changes unstaged)", () => h.reset("Mixed")),
     item("Hard (discard changes)", () => h.reset("Hard"), true),
     sep(),
+    item("Explain with Claude", h.explain),
     item("Copy Commit SHA", h.copySha),
     item("Save as Patch…", h.savePatch),
   );

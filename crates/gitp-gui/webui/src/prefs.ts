@@ -761,6 +761,26 @@ export const EXPLAIN_FINDING_COMMAND =
   `Serve only this line, as the README part 'Lines from the review HTML file' says. Do not arm a watch, ask no questions." ` +
   `--model opus --effort medium --permission-mode dontAsk ${SESSION_ID_ARG} --allowedTools "${[...SKILL_TOOLS, "ToolSearch"].join(" ")}"`;
 
+// "Explain with Claude" on a commit, a branch or a tag: what Claude reads
+// comes on stdin (see claude_ask.rs). It may look at the repository for
+// context but changes nothing.
+const askCommand = (prompt: string) =>
+  `claude -p "${prompt} Read the repository for context when it helps; change nothing and ask no questions. Answer in Markdown." ` +
+  `--model opus --effort medium --permission-mode dontAsk --output-format json ${SESSION_ID_ARG} ` +
+  `--allowedTools "Read Grep Glob Bash(git log *) Bash(git show *) Bash(git diff *) Bash(git blame *)"`;
+
+export const ASK_COMMANDS = {
+  commit: askCommand(
+    "Explain the commit on stdin to a teammate: what it changes, why (from its message and the code), and anything risky or worth testing. Keep it short, with headings.",
+  ),
+  branch: askCommand(
+    "Summarize the branch on stdin for a reviewer: what it does and why, the main changes by area, and what to look at closely. Keep it short, with headings.",
+  ),
+  release: askCommand(
+    "Write release notes from the commits on stdin: group them under Features, Fixes and Other, one plain line each, leave out merges and chores.",
+  ),
+} as const;
+
 // "Suggest with Claude" in the conflict resolver: the conflicts of one file
 // come on stdin (see conflictPrompt in conflict-help.ts), with the answer's
 // JSON format. Claude may read the repository for context but change nothing:

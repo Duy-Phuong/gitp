@@ -9,6 +9,7 @@
 //! with its Tauri command wrappers, which `run` registers.
 
 mod activity;
+mod ask;
 mod askpass;
 mod bisect;
 mod branches;
@@ -261,6 +262,7 @@ pub fn run() {
             storage::merged_branches,
             storage::build_folders,
             storage::disk_usage,
+            ask::claude_ask,
             gh::gh_thread_turn,
             gh::gh_thread_cancel,
             gh::gh_thread_conversation,
