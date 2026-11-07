@@ -30,6 +30,7 @@ mod rebase;
 mod reflog;
 mod remote;
 mod review_page;
+mod reviews;
 mod staging;
 mod stash;
 mod state;
@@ -257,6 +258,15 @@ pub fn run() {
             gh::gh_thread_fix,
             gh::gh_thread_mark_posted,
             gh::gh_thread_drop_reply,
+            reviews::review_default_base,
+            reviews::branch_review_load,
+            reviews::stored_review_load,
+            reviews::stored_review_save,
+            reviews::stored_review_delete,
+            reviews::branch_generate_review,
+            reviews::branch_cancel_review,
+            reviews::review_draft_fix,
+            reviews::review_draft_fix_cancel,
             gh::gh_login_start,
             gh::gh_login_wait,
             gh::gh_login_cancel,

@@ -52,6 +52,8 @@ import {
   markReplyPosted,
   dropReply,
   branchAheadLog,
+  reviewDraftFix,
+  storedReviewLoad,
 } from "./api";
 import { pushAndReplyListing, type ReplyToPost } from "./pr-push-reply";
 import { state, ui } from "./app-state";
@@ -63,10 +65,12 @@ import {
   openPullRequestTab,
   refreshHistory,
   renderSidebarNow,
+  jumpToCommit,
   showPullRequest,
   showView,
 } from "./shell";
-import { defaultWorktreePath } from "./worktree-actions";
+import { defaultWorktreePath, worktreeOf } from "./worktree-actions";
+import { hunkAround, openFindingsNote } from "./branch-reviews";
 import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
 import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, SKILL_REVIEW_COMMAND, withClaudeChoice } from "./prefs";
 import { finishTurn, lastUserText, preparedReply, runningTurns, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
@@ -76,6 +80,11 @@ import { showErrorDialog } from "./views/message-dialog";
 import { toast } from "./views/toast";
 import {
   addDrafts,
+  applyStored,
+  flushSaves,
+  isOpen,
+  mergeDrafts,
+  type Draft,
   prReview,
   rememberedFile,
   reviewedHead,
@@ -87,7 +96,7 @@ import {
 import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
 import { openReviewViewer } from "./views/review-viewer";
-import { baseBranches, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices, reviewThreads, type Thread } from "./pull-requests";
+import { baseBranches, canFixDrafts, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices, reviewThreads, type Thread } from "./pull-requests";
 import type { AheadCommit, BranchRef, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict, ThreadConversation, TurnKind } from "./types";
 
 // --- The sidebar section ----------------------------------------------------
@@ -326,11 +335,15 @@ export async function createPullRequestDialog(b: BranchRef, remote: string): Pro
     fallback,
   );
   const unpushed = !b.has_upstream || b.ahead > 0;
+  // The branch's own review, if it had one: findings still open are worth a word.
+  await flushSaves();
+  const reviewed = await storedReviewLoad(state.repoPath, { branch: b.name }).catch(() => null);
+  const note = openFindingsNote(reviewed?.drafts.filter((d) => d.status === "pending" || d.status === "approved").length ?? 0);
   setStatus("");
   openFormDialog(
     {
       title: `Create Pull Request from ${b.name}`,
-      sub: unpushed ? `On ${repo}. ${b.name} is pushed to ${remote} first.` : `On ${repo}.`,
+      sub: `${unpushed ? `On ${repo}. ${b.name} is pushed to ${remote} first.` : `On ${repo}.`}${note ? ` ${note}` : ""}`,
       fields: [
         { label: "Into", choices: bases.map((n) => ({ value: n, label: n })), value: fallback },
         { label: "Title", value: draft.title, required: true },
@@ -508,9 +521,11 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
         setStatus(`Nothing new in ${path}: its ${all.length} finding${all.length === 1 ? " is" : "s are"} posted on #${pr.number}.`);
         return false;
       }
+      await loadStoredPrReview(repo, pr.number);
       const r = prReview(repo, pr.number);
-      if (saved) r.drafts = [];
-      addDrafts(r, drafts);
+      // The saved review replaces the drafts, keeping what was decided and fixed.
+      if (saved) r.drafts = mergeDrafts(r.drafts, drafts);
+      else addDrafts(r, drafts);
       setReviewFile(repo, pr.number, path);
       reviewsChanged();
       setStatus(`Loaded ${drafts.length} draft comment${drafts.length === 1 ? "" : "s"} from ${path}.`);
@@ -565,6 +580,8 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   cancelThreadTurn: (pr, thread) =>
     void cancelThreadTurn(state.repoPath, pr.number, thread.root.id).catch((err) => opFailed("Couldn't cancel Claude's turn", err)),
   confirm: (message) => confirmDialog(message),
+  draftFix: (pr) => prDraftFix(state.repoPath, pr),
+  openCommit: (sha) => void jumpToCommit(sha, sha.slice(0, 7)),
   loadThreadConversation: (pr, thread) => void loadThreadConversation(state.repoPath, pr.number, thread.root.id),
   clearThreadConversation: async (pr, thread) => {
     const repo = state.repoPath;
@@ -795,6 +812,10 @@ async function runReview(repo: string, number: number, head: string, command = l
     setStatus(`A review of #${number} is already running.`);
     return;
   }
+  if (prFixing.has(`${repo}\n${number}`)) {
+    setStatus(`A fix is running on #${number}: review again once it's done.`);
+    return;
+  }
   r.running = true;
   r.error = null;
   reviewsChanged();
@@ -814,9 +835,10 @@ async function runReview(repo: string, number: number, head: string, command = l
         onDetails: () => showErrorDialog(`Review of #${number}`, clip(out.text)),
       });
     } else {
-      // A new review replaces the last one: it carries over the findings still open.
-      r.drafts = [];
-      addDrafts(r, found);
+      // A new review replaces the last one, merged by place and text: what was
+      // decided or fixed stays (pr-reviews.ts mergeDrafts).
+      await loadStoredPrReview(repo, number);
+      r.drafts = mergeDrafts(r.drafts, found);
       setReviewFile(repo, number, out.file);
       void refreshReviewFiles();
       reportDone(`Review of #${number} ready: ${found.length} draft comment${found.length === 1 ? "" : "s"} to approve or discard.`);
@@ -842,6 +864,11 @@ const clip = (text: string) => (text.trim().length > 600 ? `${text.trim().slice(
 // Read again the drafts of a review made before the app last quit, from the
 // file it was saved to — or, opened from the Reviewed filter, its saved review.
 async function restoreDrafts(repo: string, number: number): Promise<void> {
+  // The drafts kept on disk come first: they carry the decisions and fixes.
+  if (await loadStoredPrReview(repo, number)) {
+    reviewsChanged();
+    return;
+  }
   // Before prReview: the first ask makes the review, and then nothing is remembered.
   const remembered = rememberedFile(repo, number);
   const file =
@@ -931,4 +958,96 @@ export async function githubAccountForSettings(): Promise<GhAccount> {
   state.prs.account = account;
   renderSidebarNow();
   return account;
+}
+
+// --- Review drafts kept on disk, and Fix on your own pull request -------------
+
+// The pull requests whose saved drafts were read (or found missing) this run.
+const storedLoaded = new Set<string>();
+
+// Read pull request `number`'s drafts from disk once, before anything could
+// save over them; true when they were loaded now.
+async function loadStoredPrReview(repo: string, number: number): Promise<boolean> {
+  const key = `${repo}\n${number}`;
+  if (storedLoaded.has(key)) return false;
+  storedLoaded.add(key);
+  try {
+    const stored = await storedReviewLoad(repo, { pr: number });
+    // Not prReview before this: asking makes the review, and then the review
+    // file remembered from an earlier run is no longer offered.
+    if (!stored || prReview(repo, number).drafts.length) return false;
+    applyStored(repo, { pr: number }, stored);
+    return true;
+  } catch (err) {
+    readFailed("Couldn't read the saved review drafts", err);
+    return false;
+  }
+}
+
+// The fix running on each pull request (`repo\nnumber` → draft id).
+const prFixing = new Map<string, number>();
+
+// Fix on the drafts of a pull request the signed-in user wrote; null on
+// anyone else's (the author fixes).
+function prDraftFix(repo: string, pr: PullRequestDetail): { reason: (d: Draft) => string | null; run: (d: Draft) => void } | null {
+  if (!canFixDrafts(state.prs.account?.login, pr.author)) return null;
+  return {
+    reason: (d) => {
+      if (!isOpen(d)) return d.status === "fixed" ? "Fixed already" : "Discarded";
+      if (prFixing.has(`${repo}\n${pr.number}`)) return `A fix is running on ${pr.head}`;
+      if (prReview(repo, pr.number).running) return "A review is running on this pull request";
+      if (!worktreeOf(pr.head)) return `Check ${pr.head} out first`;
+      return null;
+    },
+    run: (d) => void fixPrDraft(repo, pr, d),
+  };
+}
+
+// Fix draft `d` of `pr` in the worktree of its branch, in the background:
+// one commit there, the draft marked fixed; the commit goes out with Push and
+// reply all.
+async function fixPrDraft(repo: string, pr: PullRequestDetail, d: Draft): Promise<void> {
+  const key = `${repo}\n${pr.number}`;
+  if (prFixing.has(key)) return;
+  const where = `${d.path}:${d.line}`;
+  prFixing.set(key, d.id);
+  reviewsChanged();
+  setStatus(`Fixing ${where} of #${pr.number} in ${pr.head}'s worktree in the background — keep working; the draft shows when it's done.`);
+  try {
+    await loadStoredPrReview(repo, pr.number);
+    await flushSaves();
+    const files = await fetchPullRequestFiles(pr.number).catch(() => []);
+    const stored = await reviewDraftFix(
+      repo,
+      { pr: pr.number },
+      d.id,
+      {
+        path: d.path,
+        line: d.line,
+        side: d.side,
+        body: d.body,
+        severity: d.severity,
+        diff_hunk: hunkAround(files, d.path, d.line, d.side),
+        branch: pr.head,
+        base: pr.base,
+        pr: pr.number,
+        pr_head: pr.head_oid,
+      },
+      withClaudeChoice(loadThreadCommand("fix")),
+    );
+    applyStored(repo, { pr: pr.number }, stored);
+    const commit = stored.drafts.find((x) => x.id === d.id)?.fix?.commit.slice(0, 7);
+    reportDone(`Fixed ${where} of #${pr.number}${commit ? ` in ${commit}` : ""}; push it with Push and reply all.`);
+    void loadSidebar();
+  } catch (err) {
+    if (isCancelled(err)) setStatus(`Fix of ${where} of #${pr.number} cancelled; the worktree is back where it was.`);
+    else {
+      const title = `Couldn't fix ${where} of #${pr.number}`;
+      setStatus(`${title}: ${String(err)}`);
+      toast(title, { kind: "error", onDetails: () => showErrorDialog(title, String(err)) });
+    }
+  } finally {
+    prFixing.delete(key);
+    reviewsChanged();
+  }
 }

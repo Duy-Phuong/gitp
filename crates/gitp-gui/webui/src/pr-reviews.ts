@@ -11,16 +11,30 @@
 // last reviewed, so new commits since can be pointed out.
 
 import type { DraftComment } from "./review-drafts";
-import type { ReviewVerdict } from "./types";
+import type { ReviewFix, ReviewKey, ReviewVerdict, StoredReview } from "./types";
 import { runningTurns } from "./pr-threads";
 
-// A loaded finding and what the user decided about it.
+// A loaded finding and what the user decided about it — or that a fix
+// answered it, with the commit (kept on disk, see setReviewSaver).
 export interface Draft extends DraftComment {
   id: number;
-  status: "pending" | "approved" | "discarded";
+  status: "pending" | "approved" | "discarded" | "fixed";
   // The text as the review wrote it, before any edit: what marks it posted.
   original: string;
+  fix?: ReviewFix | null;
+  // Kept (fixed or discarded) from a run before the last, which didn't find
+  // it again: its line belongs to an older head, so it counts as moved.
+  stale?: boolean;
 }
+
+// Whether a pull request's review can go once the approved drafts were
+// posted: nothing open is left, and no fixed mark worth keeping.
+export function nothingLeftAfterPost(drafts: Draft[]): boolean {
+  return !drafts.some((d) => isOpen(d) || d.status === "fixed");
+}
+
+// Still waiting for a decision: neither discarded nor fixed.
+export const isOpen = (d: Draft): boolean => d.status === "pending" || d.status === "approved";
 
 export interface PrReview {
   // The review command is running for it.
@@ -33,6 +47,9 @@ export interface PrReview {
   body: string;
   // The review page the drafts came from, when they came from a file.
   file: string | null;
+  // The commit reviewed and, for a branch, the base it was reviewed against.
+  head?: string;
+  base?: string;
 }
 
 const FILES_KEY = "gitp-pr-review-files";
@@ -70,7 +87,24 @@ export function rememberedFile(repo: string, number: number): string | null {
 
 // The pull request's review, made empty the first time it is asked for.
 export function prReview(repo: string, number: number): PrReview {
-  const key = keyOf(repo, number);
+  return reviewAt(keyOf(repo, number));
+}
+
+// The review of a pull request or, kept in the same map, of a local branch.
+export function reviewFor(repo: string, key: ReviewKey): PrReview {
+  return reviewAt(mapKey(repo, key));
+}
+
+const mapKey = (repo: string, key: ReviewKey) => ("branch" in key ? `${repo}\nbranch:${key.branch}` : keyOf(repo, key.pr));
+
+// The repo and review key a map key stands for.
+function parseKey(k: string): [string, ReviewKey] {
+  const at = k.lastIndexOf("\n");
+  const rest = k.slice(at + 1);
+  return [k.slice(0, at), rest.startsWith("branch:") ? { branch: rest.slice(7) } : { pr: Number(rest) }];
+}
+
+function reviewAt(key: string): PrReview {
   let r = reviews.get(key);
   if (!r) {
     r = { running: false, error: null, drafts: [], verdict: "comment", body: "", file: null };
@@ -176,7 +210,7 @@ export function reviewBadge(repo: string, number: number): { text: string; kind:
   // A Claude turn on one of its threads (pr-threads.ts) counts the same.
   if (runningTurns(repo, number) > 0) return { text: "thinking…", kind: "running" };
   if (r?.error) return { text: "review failed", kind: "failed" };
-  const pending = r ? r.drafts.filter((d) => d.status !== "discarded").length : 0;
+  const pending = r ? r.drafts.filter(isOpen).length : 0;
   if (pending) return { text: `${pending} draft${pending === 1 ? "" : "s"}`, kind: "ready" };
   if (!r && loadFiles()[keyOf(repo, number)]) return { text: "drafts", kind: "ready" };
   return null;
@@ -187,5 +221,135 @@ export function onReviewsChange(listener: () => void): void {
 }
 
 export function reviewsChanged(): void {
+  saveSoon();
   for (const l of listeners) l();
+}
+
+// --- Merging a new run, and keeping drafts on disk ------------------------------
+
+// What a draft is known by across runs of the review: its file and the first
+// 80 characters of the text the review wrote.
+export function fingerprintOf(d: { path: string; body: string; original?: string }): string {
+  return `${d.path}\n${(d.original ?? d.body).trim().slice(0, 80)}`;
+}
+
+// The drafts after a new run found `found`: a draft found again keeps its
+// status, edit and fix (and takes the new run's line); a new one is added
+// pending; an open one not found again goes; fixed and discarded ones stay.
+export function mergeDrafts(existing: Draft[], found: DraftComment[]): Draft[] {
+  const byPrint = new Map<string, DraftComment[]>();
+  for (const f of found) byPrint.set(fingerprintOf(f), [...(byPrint.get(fingerprintOf(f)) ?? []), f]);
+  const out: Draft[] = [];
+  for (const d of existing) {
+    const again = byPrint.get(fingerprintOf(d))?.shift();
+    if (again) out.push({ ...d, path: again.path, line: again.line, side: again.side, stale: false });
+    else if (!isOpen(d)) out.push({ ...d, stale: true });
+  }
+  const fresh = [...byPrint.values()].flat();
+  const keep = new Set(fresh);
+  const next = existing.length ? Math.max(...existing.map((d) => d.id)) + 1 : 1;
+  out.push(
+    ...found
+      .filter((f) => keep.has(f))
+      .map((d, i) => ({ ...d, id: next + i, status: "pending" as const, original: d.body })),
+  );
+  return out;
+}
+
+// The review in the shape kept on disk.
+export function toStored(r: PrReview, key: ReviewKey): StoredReview {
+  return {
+    version: 1,
+    ...("branch" in key ? { branch: key.branch } : { pr: key.pr }),
+    base: r.base ?? "",
+    head: r.head ?? "",
+    drafts: r.drafts.map((d) => ({
+      id: d.id,
+      path: d.path,
+      line: d.line,
+      side: d.side,
+      body: d.body,
+      severity: d.severity,
+      original: d.original,
+      status: d.status,
+      ...(d.topic ? { topic: d.topic } : {}),
+      ...(d.fix ? { fix: d.fix } : {}),
+      ...(d.stale ? { stale: true } : {}),
+    })),
+  };
+}
+
+// Load `s`, read from disk, into the review at `key`: it replaces the drafts,
+// and counts as saved.
+export function applyStored(repo: string, key: ReviewKey, s: StoredReview): PrReview {
+  const r = reviewFor(repo, key);
+  r.drafts = s.drafts.map((d) => ({
+    id: d.id,
+    path: d.path,
+    line: d.line,
+    side: d.side,
+    body: d.body,
+    severity: d.severity,
+    original: d.original,
+    status: d.status,
+    ...(d.topic ? { topic: d.topic } : {}),
+    fix: d.fix ?? null,
+    ...(d.stale ? { stale: true } : {}),
+  }));
+  r.head = s.head || undefined;
+  r.base = s.base || undefined;
+  savedAs.set(mapKey(repo, key), JSON.stringify(toStored(r, key)));
+  return r;
+}
+
+export interface ReviewSaver {
+  save(repo: string, review: StoredReview): Promise<void>;
+  remove(repo: string, key: ReviewKey): Promise<void>;
+}
+
+let saver: ReviewSaver | null = null;
+// What each review was last saved as, by map key.
+const savedAs = new Map<string, string>();
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Where the reviews are kept (the stored_review_* commands); none in tests
+// that don't ask.
+export function setReviewSaver(s: ReviewSaver | null): void {
+  saver = s;
+}
+
+// Save every review that changed, after a short pause: typing in a draft
+// calls this on every key.
+export function saveSoon(): void {
+  if (!saver) return;
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => void flushSaves(), 400);
+}
+
+// Save now every review that changed since it was last saved, and remove the
+// file of one left with no drafts. A failed save is tried again next time.
+export async function flushSaves(): Promise<void> {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+  if (!saver) return;
+  const s = saver;
+  for (const [k, r] of reviews) {
+    const [repo, key] = parseKey(k);
+    if (r.drafts.length === 0) {
+      if (savedAs.has(k)) {
+        savedAs.delete(k);
+        await s.remove(repo, key).catch(() => undefined);
+      }
+      continue;
+    }
+    const stored = toStored(r, key);
+    const text = JSON.stringify(stored);
+    if (savedAs.get(k) === text) continue;
+    try {
+      await s.save(repo, stored);
+      savedAs.set(k, text);
+    } catch {
+      // Kept unsaved: the next change tries again.
+    }
+  }
 }

@@ -224,6 +224,7 @@ fn gh_generate_review_impl(
         pr: number,
         thread: None,
         finding: None,
+        branch: None,
         command: command.clone(),
         stdin_bytes: 0,
     })?;
@@ -287,6 +288,7 @@ fn thread_job(
         pr: input.number,
         thread: Some(root.id),
         finding: None,
+        branch: None,
         command: command.to_string(),
         stdin_bytes,
     })
@@ -308,10 +310,28 @@ fn finish_turn(run: Running, path: &str, out: &Result<ThreadConversation, String
     run.finish(answer, &sessions);
 }
 
-/// The fixes running, by repository path and pull request: one at a time
-/// per pull request, since they share the branch's worktree.
+/// The fixes running, by repository path and branch: one at a time per
+/// branch, since they share its worktree — a thread's fix, a pull request
+/// draft's and a branch review draft's alike.
 #[derive(Default)]
-pub(crate) struct FixJobs(Mutex<HashMap<(String, u64), ()>>);
+pub(crate) struct FixJobs(Mutex<HashMap<(String, String), ()>>);
+
+impl FixJobs {
+    /// Take the branch's fix lock, or say a fix holds it.
+    pub(crate) fn hold(&self, path: &str, branch: &str) -> Result<(), String> {
+        let mut running = self.0.lock().unwrap();
+        let key = (path.to_string(), branch.to_string());
+        if running.contains_key(&key) {
+            return Err(format!("A fix is already running on {branch}."));
+        }
+        running.insert(key, ());
+        Ok(())
+    }
+
+    pub(crate) fn release(&self, path: &str, branch: &str) {
+        self.0.lock().unwrap().remove(&(path.to_string(), branch.to_string()));
+    }
+}
 
 /// Fix the thread of `input` as the user chose, in the worktree of the pull
 /// request's `branch`: the thread lock as a turn, plus the pull request's
@@ -326,14 +346,7 @@ fn gh_thread_fix_impl(
     reply_command: String,
 ) -> Result<ThreadConversation, String> {
     let job = thread_job(&path, &input, TurnKind::Fix, &fix_command, 0)?;
-    let pr_key = (path.clone(), input.number);
-    {
-        let mut running = fixes.0.lock().unwrap();
-        if running.contains_key(&pr_key) {
-            return Err(format!("A fix is already running on #{}.", input.number));
-        }
-        running.insert(pr_key.clone(), ());
-    }
+    fixes.hold(&path, &branch)?;
     let out = jobs.begin(job).and_then(|run| {
         let out = Repo::open(&path).map_err(to_message).and_then(|mut repo| {
             repo.set_network_hooks(run.hooks());
@@ -343,7 +356,7 @@ fn gh_thread_fix_impl(
         finish_turn(run, &path, &out);
         out
     });
-    fixes.0.lock().unwrap().remove(&pr_key);
+    fixes.release(&path, &branch);
     out
 }
 
@@ -379,7 +392,8 @@ fn gh_thread_prune_impl(path: String) -> Result<usize, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-    repo.prune_thread_conversations(now).map_err(to_message)
+    let threads = repo.prune_thread_conversations(now).map_err(to_message)?;
+    Ok(threads + repo.prune_stored_reviews(now).map_err(to_message)?)
 }
 
 /// How big a review file may be: a review is text, and this is far past any.
@@ -436,6 +450,7 @@ fn explain_review_finding_impl(
         pr: number,
         thread: None,
         finding: Some(finding.clone()),
+        branch: None,
         command: command.clone(),
         stdin_bytes: 0,
     })?;
@@ -880,11 +895,11 @@ mod tests {
             author: "octocat".into(),
             comments,
         };
-        fixes.0.lock().unwrap().insert(("/nowhere".into(), 7), ());
+        fixes.hold("/nowhere", "b").unwrap();
         let err = gh_thread_fix_impl(&jobs, &fixes, "/nowhere".into(), input(vec![comment.clone()]), "b".into(), "true".into(), "true".into())
             .unwrap_err();
-        assert!(err.contains("already running on #7"), "{err}");
-        fixes.0.lock().unwrap().clear();
+        assert!(err.contains("already running on b"), "{err}");
+        fixes.release("/nowhere", "b");
         // No comments: refused before any lock is taken.
         assert!(gh_thread_fix_impl(&jobs, &fixes, "/nowhere".into(), input(vec![]), "b".into(), "true".into(), "true".into()).is_err());
         assert!(fixes.0.lock().unwrap().is_empty() && jobs.running().is_empty());

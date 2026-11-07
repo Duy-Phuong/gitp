@@ -1,6 +1,7 @@
 import { setupClaudeJobs } from "./claude-jobs";
 import "./styles.css";
-import { onReviewsChange } from "./pr-reviews";
+import { onReviewsChange, setReviewSaver } from "./pr-reviews";
+import { storedReviewDelete, storedReviewSave } from "./api";
 import { onThreadsChange } from "./pr-threads";
 import {
   abortConflict,
@@ -88,6 +89,8 @@ import { setupConflict } from "./views/conflict";
 import { setupReflog } from "./views/reflog";
 import { setupActivity } from "./views/activity";
 import { setupPullRequestView } from "./views/pull-request";
+import { setupBranchReviewView } from "./views/branch-review";
+import { branchReviewCallbacks } from "./branch-review-actions";
 import { copyText } from "./clipboard";
 import { state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus, watchNetwork, watchPending } from "./report";
@@ -546,6 +549,7 @@ async function init(): Promise<void> {
     reportError: readFailed,
   });
   ui.prView = setupPullRequestView($("#pr-view"), pullRequestCallbacks);
+  ui.branchReviewView = setupBranchReviewView($("#branch-review-view"), branchReviewCallbacks);
   ui.prListView = setupPullRequestListView($("#prlist-view"), {
     open: showPullRequest,
     openInTab: (pr) => openPullRequestTab(pr.number, pr.title),
@@ -556,11 +560,14 @@ async function init(): Promise<void> {
     signIn: () => void signInToGitHub(),
     reviewBadge: (pr) => reviewBadge(state.repoPath, pr.number),
   });
+  // Review drafts are kept on disk (a branch's and a pull request's).
+  setReviewSaver({ save: storedReviewSave, remove: storedReviewDelete });
   // A review running in the background moved on: its badge and, when its pull
   // request is the one open, the view.
   onReviewsChange(() => {
     renderSidebarNow();
     ui.prView?.redraw();
+    if (state.view === "branchreview") ui.branchReviewView?.redraw();
   });
   // So did a Claude turn on one of its threads.
   onThreadsChange(() => {

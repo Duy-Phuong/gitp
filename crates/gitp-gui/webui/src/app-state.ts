@@ -14,6 +14,7 @@ import type { ActivityHandle } from "./views/activity";
 import type { CodeViewHandle } from "./views/code/index";
 import type { LocalHistoryHandle } from "./views/local-history";
 import type { PullRequestHandle } from "./views/pull-request";
+import type { BranchReviewHandle } from "./views/branch-review";
 import type { PullRequestListHandle } from "./views/pr-list";
 import type { WelcomeHandle } from "./views/welcome";
 import type { PrSectionState } from "./views/sidebar";
@@ -44,7 +45,8 @@ export type View =
   | "pr"
   | "prlist"
   | "claude"
-  | "code";
+  | "code"
+  | "branchreview";
 
 export const EMPTY_REFS: Refs = { head: null, branches: [], remotes: [], tags: [], stashes: [], recent: [] };
 
@@ -159,6 +161,7 @@ export const ui = {
   localHistoryView: null as LocalHistoryHandle | null,
   codeView: null as CodeViewHandle | null,
   prView: null as PullRequestHandle | null,
+  branchReviewView: null as BranchReviewHandle | null,
   prListView: null as PullRequestListHandle | null,
   welcomeView: null as WelcomeHandle | null,
   // The live log's handle, from the most recent renderLog — the log view owns

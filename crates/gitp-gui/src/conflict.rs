@@ -81,6 +81,7 @@ fn suggest_conflict_resolution_impl(
         pr: 0,
         thread: None,
         finding: Some(path),
+        branch: None,
         command: command.clone(),
         stdin_bytes: input.len(),
     })?;

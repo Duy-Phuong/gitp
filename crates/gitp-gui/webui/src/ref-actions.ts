@@ -45,6 +45,7 @@ import { openStashApplyModal } from "./views/stash-apply";
 import type { BranchRef, MergeMode, StashRef } from "./types";
 import { state, ui } from "./app-state";
 import { createPullRequestDialog } from "./pr-actions";
+import { openBranchReview } from "./branch-review-actions";
 import { opFailed, reportDone, setStatus } from "./report";
 import { branchRefName, remoteRefName, tagRefName, withHidden, withSolo } from "./ref-visibility";
 import { copyText } from "./clipboard";
@@ -205,6 +206,13 @@ function showBranchMenu(b: BranchRef, x: number, y: number, outlook: string | nu
     });
   }
   items.push({ label: `Create Pull Request on ${branchPushTargets(b)[0]}`, run: () => void createPullRequestAction(b) });
+  // Review before the pull request: on the branch's diff against its base, in
+  // the worktree that has it (one is needed for the review and its fixes).
+  items.push({ label: "Open Review Panel", run: () => openBranchReview(b.name) });
+  if (worktreeOf(b.name)) {
+    items.push({ label: "Run Review Skill", run: () => openBranchReview(b.name, "skill") });
+    items.push({ label: "Run Review Command", run: () => openBranchReview(b.name, "command") });
+  }
 
   items.push({ separator: true });
   items.push({

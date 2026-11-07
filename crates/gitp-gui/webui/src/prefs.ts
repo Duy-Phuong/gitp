@@ -733,6 +733,14 @@ export const SKILL_REVIEW_COMMAND =
   `(the sprint folder no-sprint when Jira has no sprint). Write the review Markdown under review/, not in TMPDIR." ` +
   `--model opus --effort medium --permission-mode dontAsk ${SESSION_ID_ARG} --allowedTools "${SKILL_TOOLS.join(" ")}"`;
 
+// Run Review Skill on a local branch (no pull request yet): the skill's
+// branch form, against the base the panel's Against names, in the branch's
+// worktree; not board mode, which is for pull requests.
+export const BRANCH_SKILL_REVIEW_COMMAND =
+  `claude -p "/review-pr-phuong $GITP_BRANCH against $GITP_BASE, with md, no questions: where you would ask, take the default ` +
+  `(the sprint folder no-sprint when Jira has no sprint). Write the review Markdown under review/, not in TMPDIR." ` +
+  `--model opus --effort medium --permission-mode dontAsk ${SESSION_ID_ARG} --allowedTools "${SKILL_TOOLS.join(" ")}"`;
+
 // "Explain more" on a finding of a saved review: the review board's own
 // request, served by its skill, which adds the explanation to the board and to
 // the review file. The slug and the finding come in the environment.
@@ -824,13 +832,18 @@ export const DEFAULT_THREAD_COMMANDS: Record<TurnKind, string> = {
       "explanation. " +
       THREAD_RULES,
   ),
+  // One Fix command for both: a thread (its conversation ends with the
+  // option the user chose) and a review finding on a branch or on your own
+  // pull request (JSON with "kind": "finding"; the finding's text on stdin).
   fix: threadCommand(
-    "Read the review thread in $GITP_THREAD_FILE on pull request $GITP_PR_URL; the conversation in it ends " +
-      "with the option the user chose, which is also on stdin. You are in the worktree of the pull request's " +
-      "branch; the tree is clean. Make the smallest change that answers the comment, matching the style " +
-      "around it. Add or update a test and run the project's test command for it. Then commit exactly once " +
-      "on the current branch, with 'fix(review): <path>:<line> — <one line>' as the subject and a body that " +
-      "names the reviewer's point and what changed. Do not push, do not post, do not touch other branches. " +
+    "Read $GITP_THREAD_FILE: a review thread on a pull request, or a review finding on a branch " +
+      "(JSON with kind finding: path, line, side, body, severity, diff_hunk, branch, base). For a thread the " +
+      "conversation in it ends with the option the user chose; for a finding, do what it asks. Either way " +
+      "that text is also on stdin. You are in the worktree of the branch; the tree is clean. Make the " +
+      "smallest change that answers it, matching the style around it. Add or update a test and run the " +
+      "project's test command for it. Then commit exactly once on the current branch, with " +
+      "'fix(review): <path>:<line> — <what>' as the subject and a body that names the point and what " +
+      "changed. Do not push, do not post, do not touch other branches. " +
       "Print a short summary in Markdown: the files changed, the test, the commit id.",
     FIX_TOOLS,
   ),
