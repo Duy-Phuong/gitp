@@ -172,6 +172,10 @@ npm --prefix crates/gitp-gui/webui run lint       # ESLint, the same rules as CI
 CI also runs `cargo fmt --all --check` and
 `cargo clippy --workspace --all-targets -- -D warnings`.
 
+`scripts/ci-local.sh` runs every step of CI's check job in its order, with CI's
+git setting (a repository a test makes starts on `main`), so a red build shows
+before a push.
+
 **Large-repository timings** are opt-in. Generate a test repository (100k
 commits, hundreds of branches and tags) in an empty folder:
 
