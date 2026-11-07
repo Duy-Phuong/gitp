@@ -10,12 +10,14 @@ import {
   claudeJobs,
   confirmDialog,
   isTauri,
-  onQuitWithClaudeJobs,
+  onQuitCheck,
+  quitNow,
   stopClaudeJob,
   stopClaudeJobsAndQuit,
   type ClaudeEvent,
   type ClaudeJob,
 } from "./api";
+import { quitQuestion } from "./quit-check";
 import { state } from "./app-state";
 import { jobsSummary, repoName } from "./claude-jobs-model";
 import { $ } from "./dom";
@@ -71,11 +73,11 @@ export function setupClaudeJobs(): void {
     showClaudeJobsPage();
   });
 
-  void onQuitWithClaudeJobs(async (labels) => {
-    const which = labels.length <= 3 ? `\n\n${labels.map((l) => `• ${l}`).join("\n")}` : "";
-    const n = labels.length;
-    const message = `${n} Claude job${n === 1 ? " is" : "s are"} running. Stop ${n === 1 ? "it" : "them"} and quit?${which}`;
-    if (await askStopAndQuit(message)) await stopClaudeJobsAndQuit();
+  void onQuitCheck(async (check) => {
+    const { message, ok } = quitQuestion(check);
+    if (!(await askStopAndQuit(message, ok))) return;
+    if (check.jobs.length) await stopClaudeJobsAndQuit();
+    else await quitNow();
   });
 
   void tick();
@@ -92,11 +94,11 @@ export function toggleClaudePanel(): void {
   void tick();
 }
 
-// "Stop and quit" or Cancel, in the native dialog when there is one.
-async function askStopAndQuit(message: string): Promise<boolean> {
+// "Stop and quit" (or "Quit") or Cancel, in the native dialog when there is one.
+async function askStopAndQuit(message: string, okLabel: string): Promise<boolean> {
   if (!isTauri()) return confirmDialog(message);
   const { ask } = await import("@tauri-apps/plugin-dialog");
-  return ask(message, { title: "gitp", kind: "warning", okLabel: "Stop and quit", cancelLabel: "Cancel" });
+  return ask(message, { title: "gitp", kind: "warning", okLabel, cancelLabel: "Cancel" });
 }
 
 // The pull request (and thread) the job belongs to, in its repository.

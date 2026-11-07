@@ -3,6 +3,7 @@
 // UI is fully explorable without the desktop shell.
 
 import REVIEW_BRIDGE from "./review-bridge.js?raw";
+import type { QuitCheck, Unpushed } from "./quit-check";
 import type {
   BranchReviewData,
   FindingInput,
@@ -2402,11 +2403,24 @@ export async function stopClaudeJobsAndQuit(): Promise<void> {
   return invoke<void>("claude_jobs_quit", {});
 }
 
-// A quit or a window close held back because Claude jobs run: their labels.
-export async function onQuitWithClaudeJobs(cb: (labels: string[]) => void): Promise<void> {
+// A quit or a window close held back: the Claude jobs running and the open
+// repositories with unpushed commits on their default branch (quit.rs).
+export async function onQuitCheck(cb: (check: QuitCheck) => void): Promise<void> {
   if (!isTauri()) return;
   const { listen } = await import("@tauri-apps/api/event");
-  await listen<string[]>("claude-jobs-quit", (event) => cb(event.payload));
+  await listen<QuitCheck>("claude-jobs-quit", (event) => cb(event.payload));
+}
+
+// Quit after all, from that dialog, with no jobs to stop.
+export async function quitNow(): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("quit_now", {});
+}
+
+// The active repository's default branch, when it has unpushed commits.
+export async function unpushedDefault(): Promise<Unpushed | null> {
+  if (!isTauri()) return { branch: "main", ahead: 3 };
+  return invoke<Unpushed | null>("unpushed_default", {});
 }
 
 // The preview's jobs: a skill review that grows a step every couple of

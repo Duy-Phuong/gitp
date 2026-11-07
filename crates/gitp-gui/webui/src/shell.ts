@@ -6,6 +6,7 @@
 // double-click) does is plugged in by main.ts through setRefActions, so that
 // this module never imports the actions back.
 
+import { refreshUnpushed } from "./unpushed-badge";
 import { reviewBadge } from "./pr-reviews";
 import {
   activateRepo,
@@ -884,6 +885,8 @@ export async function loadSidebar(opts: { abortIfBusy?: boolean } = {}): Promise
     readFailed("Failed to load refs", err);
   }
   renderSidebarNow();
+  // Commits on the default branch its remote doesn't have yet.
+  void refreshUnpushed();
   // Refs now known — recompute containment and re-render the open commit + the
   // log so the branch chips appear on every commit.
   ui.detailView?.refresh();

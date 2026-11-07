@@ -28,6 +28,7 @@ mod lfs;
 mod local_history;
 mod local_workspaces;
 mod os;
+mod quit;
 mod rebase;
 mod reflog;
 mod remote;
@@ -254,6 +255,8 @@ pub fn run() {
             claude_jobs::claude_job_full,
             claude_jobs::claude_job_stop,
             claude_jobs::claude_jobs_quit,
+            quit::quit_now,
+            quit::unpushed_default,
             gh::gh_thread_turn,
             gh::gh_thread_cancel,
             gh::gh_thread_conversation,
@@ -422,23 +425,19 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building gitp")
         .run(|app, event| {
-            if let tauri::RunEvent::ExitRequested { api, .. } = event {
-                if ask_before_quit(app) {
+            // An exit gitp asked for itself (`app.exit`, after the dialog)
+            // carries a code and is not asked about again.
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+                if code.is_none() && ask_before_quit(app) {
                     api.prevent_exit();
                 }
             }
         });
 }
 
-/// Whether Claude jobs run, so a quit waits: then the frontend is asked to
-/// show the dialog with their labels.
+/// Whether a quit waits on Claude jobs or unpushed work (see quit.rs).
 fn ask_before_quit(app: &tauri::AppHandle) -> bool {
-    let running = app.state::<claude_jobs::ClaudeJobs>().running();
-    if running.is_empty() {
-        return false;
-    }
-    let _ = app.emit(claude_jobs::QUIT_EVENT, running);
-    true
+    quit::ask_before_quit(app)
 }
 
 #[cfg(test)]

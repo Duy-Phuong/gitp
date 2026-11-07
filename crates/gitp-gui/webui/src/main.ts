@@ -121,6 +121,7 @@ import {
   withClaudeChoice,
 } from "./prefs";
 import { refsAt } from "./commit-refs";
+import { setupUnpushedBadge } from "./unpushed-badge";
 import { rerereEnabled } from "./conflict-help";
 import { setupConfigTabs } from "./config-panel";
 import { setupPaneResizer, setupSidebarResizer, setupTerminalResizer } from "./resizers";
@@ -233,6 +234,7 @@ function wireUi(): void {
   $("#quick-launch-btn").addEventListener("click", openQuickLaunch);
   setupTerminalPanel();
   setupClaudeJobs();
+  setupUnpushedBadge();
   $("#terminal-toggle").addEventListener("click", toggleTerminal);
   $("#terminal-close").addEventListener("click", toggleTerminal);
   $("#terminal-clear").addEventListener("click", () => {
