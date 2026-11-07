@@ -43,9 +43,13 @@ export function setupBranchMenu(): void {
 
 function buildBranchMenu(menu: HTMLElement, close: () => void): void {
   clear(menu);
+  // The branches scroll on their own: the new-branch row under them stays in
+  // view however many there are.
+  const list = el("div", { class: "branch-menu-list" });
+  menu.append(list);
 
   if (state.refs.branches.length === 0) {
-    menu.append(el("div", { class: "menu-item", text: "No branches" }));
+    list.append(el("div", { class: "menu-item", text: "No branches" }));
   }
   for (const b of state.refs.branches) {
     const item = el("button", {
@@ -56,7 +60,7 @@ function buildBranchMenu(menu: HTMLElement, close: () => void): void {
       close();
       void checkoutBranchAction(b);
     });
-    menu.append(item);
+    list.append(item);
   }
 
   menu.append(el("div", { class: "menu-sep" }));

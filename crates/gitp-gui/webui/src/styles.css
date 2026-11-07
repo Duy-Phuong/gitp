@@ -430,7 +430,20 @@ body {
   min-width: 260px;
   max-width: min(620px, 88vw);
   max-height: 60vh;
+  /* The list scrolls, not the whole menu (see .branch-menu-list). */
+  overflow: hidden;
+}
+.branch-menu-list {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+#branch-menu > .menu-sep,
+#branch-menu > .menu-newbranch {
+  flex: none;
 }
 /* Pull-method menu: each row picks a method to run now; hovering a non-default
    row reveals "Set as default" to change what the plain Pull button runs. */
