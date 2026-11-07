@@ -200,11 +200,16 @@ impl Repo {
                 self.run_git(&["commit", "--amend", "--no-verify", "-m", message])?;
             }
             PickAction::Squash => {
-                let message = format!(
-                    "{}\n\n{}",
-                    self.run_git(&["log", "-1", "--format=%B", "HEAD~1"])?,
-                    self.run_git(&["log", "-1", "--format=%B", "HEAD"])?
-                );
+                // The group's own message on its last squash, else both
+                // commits' messages.
+                let message = match step.message.as_deref().filter(|m| !m.trim().is_empty()) {
+                    Some(m) => m.to_string(),
+                    None => format!(
+                        "{}\n\n{}",
+                        self.run_git(&["log", "-1", "--format=%B", "HEAD~1"])?,
+                        self.run_git(&["log", "-1", "--format=%B", "HEAD"])?
+                    ),
+                };
                 self.run_git(&["reset", "--soft", "HEAD~1"])?;
                 self.run_git(&["commit", "--amend", "--no-verify", "-m", &message])?;
             }
