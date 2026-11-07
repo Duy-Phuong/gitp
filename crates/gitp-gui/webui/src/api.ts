@@ -1136,6 +1136,7 @@ export async function fetchRebaseTodo(onto: string): Promise<RebaseCommit[]> {
       { sha: "1".repeat(40), short_sha: "1111111", subject: "feat: add widget" },
       { sha: "2".repeat(40), short_sha: "2222222", subject: "fix: typo in widget" },
       { sha: "3".repeat(40), short_sha: "3333333", subject: "refactor: tidy widget" },
+      { sha: "4".repeat(40), short_sha: "4444444", subject: "fixup! feat: add widget" },
     ];
   }
   return invoke<RebaseCommit[]>("get_rebase_todo", { onto });

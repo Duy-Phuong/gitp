@@ -50,7 +50,9 @@ pub enum RebaseAction {
     Drop,
 }
 
-/// One planned step: a commit sha, its action, and (for reword) the new message.
+/// One planned step: a commit sha, its action, and the new message — for a
+/// reword, or on the last squash/fixup of a group to replace the combined
+/// message git would make.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RebaseStep {
     pub sha: String,
@@ -155,8 +157,24 @@ impl Repo {
                 RebaseAction::Drop => todo.push_str(&format!("drop {}\n", step.sha)),
                 RebaseAction::Pick => todo.push_str(&format!("pick {}\n", step.sha)),
                 RebaseAction::Edit => todo.push_str(&format!("edit {}\n", step.sha)),
-                RebaseAction::Squash => todo.push_str(&format!("squash {}\n", step.sha)),
-                RebaseAction::Fixup => todo.push_str(&format!("fixup {}\n", step.sha)),
+                RebaseAction::Squash | RebaseAction::Fixup => {
+                    let verb = if matches!(step.action, RebaseAction::Squash) {
+                        "squash"
+                    } else {
+                        "fixup"
+                    };
+                    todo.push_str(&format!("{verb} {}\n", step.sha));
+                    // The group's own message, written over the combined one.
+                    if let Some(message) = step.message.as_deref().filter(|m| !m.trim().is_empty())
+                    {
+                        let msg_file = dir.join(format!("msg{i}.txt"));
+                        std::fs::write(&msg_file, message).map_err(io_err)?;
+                        todo.push_str(&format!(
+                            "exec git commit --amend -F {}\n",
+                            shell_quote(&msg_file.to_string_lossy())
+                        ));
+                    }
+                }
                 RebaseAction::Reword => {
                     todo.push_str(&format!("pick {}\n", step.sha));
                     let msg_file = dir.join(format!("msg{i}.txt"));
