@@ -62,7 +62,7 @@ export function setupWelcome(host: HTMLElement, cb: WelcomeCallbacks): WelcomeHa
       panel.append(el("div", { class: "welcome-empty", text: "Repositories you open show up here." }));
     }
 
-    panel.append(el("div", { class: "welcome-tips", text: "⌘K Quick Launch · ⌘/ Keyboard shortcuts" }));
+    panel.append(el("div", { class: "welcome-tips", text: "⌘P Quick Launch · ⌘/ Keyboard shortcuts" }));
     host.append(panel);
   };
 

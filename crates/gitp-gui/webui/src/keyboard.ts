@@ -26,7 +26,7 @@ import { openShortcutsDialog } from "./views/shortcuts-dialog";
 // --- Keyboard navigation in the commit log --------------------------------
 //
 // Walking history is the main thing a git client is for, and it was click-only:
-// the only global keys were Cmd+Z/Y and Cmd+K. The log view owns the moving
+// the only global keys were Cmd+Z/Y and Cmd+P. The log view owns the moving
 // (see LogHandle — it knows which rows are on screen, which are the search
 // results while a search is active); this decides when a key means navigation
 // and what to do with the row it lands on.
@@ -34,7 +34,7 @@ import { openShortcutsDialog } from "./views/shortcuts-dialog";
 // Whether a bare navigation key belongs to the log right now.
 function logNavAllowed(e: KeyboardEvent): boolean {
   if (state.view !== "history") return false;
-  // Modifiers belong to other shortcuts (Cmd+Z, Cmd+K); Shift is left alone for
+  // Modifiers belong to other shortcuts (Cmd+Z, Cmd+P); Shift is left alone for
   // a future range-extend.
   if (e.metaKey || e.ctrlKey || e.altKey) return false;
   // Anything layered over the log owns its own arrows: modals (including the
@@ -114,13 +114,13 @@ function focusDetailPane(): void {
   target.focus();
 }
 
-// Cmd/Ctrl+K opens Quick Launch. Deliberately live while typing in an input
+// Cmd/Ctrl+P opens Quick Launch (Shift added is Push, so not with Shift). Deliberately live while typing in an input
 // too — the point of a palette is that it's always one keystroke away — but
 // not inside the embedded terminal or the conflict editor, where the key
 // belongs to what's focused, and not over a dialog: the Stash and Init / Clone
 // dialogs take any Enter as theirs, so the palette's Enter would run both.
 export function opensQuickLaunch(e: KeyboardEvent): boolean {
-  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return false;
+  if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "p") return false;
   // `e.target` is only an Element when something focusable has focus; with
   // focus on the document itself there is nothing to defer to.
   const t = e.target instanceof HTMLElement ? e.target : null;
@@ -249,7 +249,7 @@ export function setupShortcuts(): void {
     openQuickLaunch();
   });
   // Cmd/Ctrl+1…9 switch to favorite #1–9 (the order Quick Launch lists them),
-  // opening it as a tab if it isn't one. Live while typing, like Cmd+K — a
+  // opening it as a tab if it isn't one. Live while typing, like Cmd+P — a
   // digit with Cmd or Ctrl held types nothing — but not in the terminal, and
   // not while a dialog owns the keyboard.
   document.addEventListener("keydown", (e) => {
@@ -279,7 +279,7 @@ export function setupShortcuts(): void {
     cycleRepoTab((ctrlTab ? !e.shiftKey : e.code === "BracketRight") ? 1 : -1);
   });
   // Cmd/Ctrl + = / − / 0 zoom the whole window in, out, or back to 100%,
-  // through the preset levels. Live while typing, like Cmd+K, but not in the
+  // through the preset levels. Live while typing, like Cmd+P, but not in the
   // terminal, where Ctrl+- is the shell's.
   document.addEventListener("keydown", (e) => {
     if (!(e.metaKey || e.ctrlKey) || e.altKey) return;

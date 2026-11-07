@@ -1,4 +1,4 @@
-// What Quick Launch (Cmd/Ctrl+K) offers: the commands, and the pickers for their
+// What Quick Launch (Cmd/Ctrl+P) offers: the commands, and the pickers for their
 // targets. The palette itself is views/quick-launch.ts.
 
 import {

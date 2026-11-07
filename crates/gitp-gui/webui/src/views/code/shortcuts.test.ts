@@ -7,7 +7,9 @@ const ev = (key: string, mods: Partial<{ meta: boolean; ctrl: boolean; alt: bool
 
 describe("codeActionFor", () => {
   it("maps each binding on a Mac", () => {
-    expect(codeActionFor(ev("p", { meta: true }), true)).toBe("quickOpen");
+    expect(codeActionFor(ev("o", { meta: true }), true)).toBe("quickOpen");
+    // Cmd+P is Quick Launch everywhere, the Code tab included.
+    expect(codeActionFor(ev("p", { meta: true }), true)).toBeNull();
     expect(codeActionFor(ev("f", { meta: true }), true)).toBe("find");
     expect(codeActionFor(ev("f", { meta: true, shift: true }), true)).toBe("findInFiles");
     expect(codeActionFor(ev("F12"), true)).toBe("goToDefinition");
@@ -20,10 +22,10 @@ describe("codeActionFor", () => {
   });
 
   it("uses Ctrl instead of Cmd elsewhere", () => {
-    expect(codeActionFor(ev("p", { ctrl: true }), false)).toBe("quickOpen");
-    expect(codeActionFor(ev("p", { meta: true }), false)).toBeNull();
+    expect(codeActionFor(ev("o", { ctrl: true }), false)).toBe("quickOpen");
+    expect(codeActionFor(ev("o", { meta: true }), false)).toBeNull();
     expect(codeActionFor(ev("ArrowLeft", { ctrl: true, alt: true }), false)).toBe("back");
-    expect(codeActionFor(ev("P", { ctrl: true, shift: true }), false)).toBeNull();
+    expect(codeActionFor(ev("O", { ctrl: true, shift: true }), false)).toBeNull();
   });
 
   it("ignores unrelated keys", () => {

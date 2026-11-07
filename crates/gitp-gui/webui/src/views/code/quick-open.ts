@@ -1,4 +1,4 @@
-// Quick open (Cmd/Ctrl+P): a file by fuzzy name, in Quick Launch's clothes.
+// Quick open (Cmd/Ctrl+O in the Code tab): a file by fuzzy name, in Quick Launch's clothes.
 // Enter opens; Cmd/Ctrl+Enter opens and reveals it in the explorer. With no
 // query, the recently opened files come first, newest first. Gitignored
 // files are listed too, greyed, after the tracked ones on a tie.

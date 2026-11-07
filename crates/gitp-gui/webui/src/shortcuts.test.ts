@@ -69,7 +69,7 @@ describe("the pack", () => {
 
   it("stays clear of the keys bound elsewhere", () => {
     // Undo / Redo, Quick Launch, favorites, zoom, and the clipboard.
-    const reserved = ["⌘Z", "⌘⇧Z", "⌘Y", "⌘K", "⌘C", "⌘V", "⌘X", "⌘A", "⌘W", "⌘Q", "⌘=", "⌘-", "⌘0"];
+    const reserved = ["⌘Z", "⌘⇧Z", "⌘Y", "⌘P", "⌘C", "⌘V", "⌘X", "⌘A", "⌘W", "⌘Q", "⌘=", "⌘-", "⌘0"];
     for (const def of Object.values(SHORTCUTS)) {
       expect(reserved).not.toContain(formatKeys(def.keys, true));
     }

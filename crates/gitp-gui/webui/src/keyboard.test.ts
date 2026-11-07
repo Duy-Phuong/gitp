@@ -28,8 +28,8 @@ function withPage(dialogOpen: boolean, open: string[] = dialogOpen ? [".modal-ov
   });
 }
 
-const cmdK = (target: unknown = new FakeElement()) =>
-  ({ metaKey: true, ctrlKey: false, key: "k", target }) as unknown as KeyboardEvent;
+const cmdP = (target: unknown = new FakeElement()) =>
+  ({ metaKey: true, ctrlKey: false, shiftKey: false, altKey: false, key: "p", target }) as unknown as KeyboardEvent;
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -38,23 +38,29 @@ afterEach(() => {
 describe("opensQuickLaunch", () => {
   it("opens the palette from anywhere, even while typing in a field", () => {
     withPage(false);
-    expect(opensQuickLaunch(cmdK())).toBe(true);
-    expect(opensQuickLaunch(cmdK(null))).toBe(true);
+    expect(opensQuickLaunch(cmdP())).toBe(true);
+    expect(opensQuickLaunch(cmdP(null))).toBe(true);
   });
 
   it("leaves the key to the embedded terminal", () => {
     withPage(false);
-    expect(opensQuickLaunch(cmdK(new FakeElement(true)))).toBe(false);
+    expect(opensQuickLaunch(cmdP(new FakeElement(true)))).toBe(false);
   });
 
   it("doesn't open over a dialog, whose Enter would then run too", () => {
     withPage(true);
-    expect(opensQuickLaunch(cmdK())).toBe(false);
+    expect(opensQuickLaunch(cmdP())).toBe(false);
   });
 
   it("ignores other keys", () => {
     withPage(false);
-    expect(opensQuickLaunch({ ...cmdK(), key: "j" })).toBe(false);
+    expect(opensQuickLaunch({ ...cmdP(), key: "j" })).toBe(false);
+  });
+
+  it("leaves Shift+Cmd+P to Push, and Cmd+K does nothing now", () => {
+    withPage(false);
+    expect(opensQuickLaunch({ ...cmdP(), shiftKey: true, key: "P" })).toBe(false);
+    expect(opensQuickLaunch({ ...cmdP(), key: "k" })).toBe(false);
   });
 });
 

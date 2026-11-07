@@ -212,7 +212,7 @@ export async function openFileEditor(path: string, deps: FileEditorDeps): Promis
       e.preventDefault();
       e.stopPropagation();
       void requestClose();
-    } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
       // Not Quick Launch: it could switch the repository under the open file,
       // and Save would then write into the other one.
       e.stopPropagation();

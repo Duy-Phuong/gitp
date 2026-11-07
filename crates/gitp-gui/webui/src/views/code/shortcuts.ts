@@ -11,7 +11,7 @@ export function codeActionFor(e: KeyboardEvent, isMac = IS_MAC): CodeAction | nu
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (mod && e.altKey && !e.shiftKey && key === "ArrowLeft") return "back";
   if (mod && e.altKey && !e.shiftKey && key === "ArrowRight") return "forward";
-  if (mod && !e.altKey && !e.shiftKey && key === "p") return "quickOpen";
+  if (mod && !e.altKey && !e.shiftKey && key === "o") return "quickOpen";
   if (mod && !e.altKey && !e.shiftKey && key === "f") return "find";
   if (mod && !e.altKey && e.shiftKey && key === "f") return "findInFiles";
   if (mod && !e.altKey && e.shiftKey && key === "w") return "closeTab";

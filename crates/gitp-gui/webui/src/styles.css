@@ -4166,7 +4166,7 @@ body.path-dragging * {
 /* Keyboard focus -----------------------------------------------------------
    There was no focus indicator anywhere: several inputs set `outline: none`
    with nothing in its place, and buttons relied on the browser default, which
-   is invisible against a dark surface. In an app driven by ⌘K and arrow keys,
+   is invisible against a dark surface. In an app driven by ⌘P and arrow keys,
    not being able to see what is focused is the single biggest usability gap.
    `:focus-visible` (not `:focus`) so a mouse click doesn't leave a ring behind. */
 button:focus-visible,

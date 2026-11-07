@@ -241,7 +241,7 @@ describe("setupCodeView", () => {
     await view.openFile({ path: "a.ts", line: 0, col: 0 });
     await view.openFile({ path: "b.ts", line: 0, col: 0 });
     await view.openFile({ path: "c.ts", line: 0, col: 0 });
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "p", metaKey: IS_MAC, ctrlKey: !IS_MAC, bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "o", metaKey: IS_MAC, ctrlKey: !IS_MAC, bubbles: true }));
     // Earlier tests' views listen too; this view's overlay is the last one.
     const overlay = [...document.querySelectorAll<HTMLElement>(".ql-overlay")].pop()!;
     const rows = [...overlay.querySelectorAll<HTMLElement>(".ql-row")].map((r) => r.dataset.path);

@@ -77,7 +77,7 @@ export interface BuiltIn {
 }
 
 export const BUILT_IN: BuiltIn[] = [
-  { label: "Quick Launch", group: "App", mac: "⌘K", other: "Ctrl+K" },
+  { label: "Quick Launch", group: "App", mac: "⌘P", other: "Ctrl+P" },
   { label: "Undo", group: "App", mac: "⌘Z", other: "Ctrl+Z" },
   { label: "Redo", group: "App", mac: "⌘⇧Z", other: "Ctrl+Shift+Z" },
   { label: "Zoom in / out / reset", group: "App", mac: "⌘= / ⌘− / ⌘0", other: "Ctrl+= / Ctrl+− / Ctrl+0" },
@@ -89,7 +89,7 @@ export const BUILT_IN: BuiltIn[] = [
   { label: "First / last loaded commit", group: "Commit log", mac: "Home End", other: "Home End" },
   { label: "Focus the diff", group: "Commit log", mac: "↩", other: "Enter" },
   { label: "Leave a comparison", group: "Commit log", mac: "Esc", other: "Esc" },
-  { label: "Quick open file", group: "Code", mac: "⌘P", other: "Ctrl+P" },
+  { label: "Quick open file (instead of Open repository, in this tab)", group: "Code", mac: "⌘O in the Code tab", other: "Ctrl+O in the Code tab" },
   { label: "Find in the diff (instead of Search commits, in this tab)", group: "Branches and changes", mac: "⌘F in the Changes tab", other: "Ctrl+F in the Changes tab" },
   { label: "Find in the pull request: diff, comments, threads", group: "Views", mac: "⌘F in the Pull Request tab", other: "Ctrl+F in the Pull Request tab" },
   { label: "Find / replace in the file (instead of Search commits, in this tab)", group: "Code", mac: "⌘F in the Code tab", other: "Ctrl+F in the Code tab" },
