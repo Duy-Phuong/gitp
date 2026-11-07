@@ -4,7 +4,7 @@
 // Rendered as a pure function of state + callbacks; main.ts owns the state
 // (filter text, which sections/folders are collapsed) and re-renders on change.
 
-import { chevronIcon, clear, el, githubIcon, svg } from "../dom";
+import { chevronIcon, clear, el, githubIcon, refreshIcon, svg } from "../dom";
 import { PR_FILTERS, prAttentionTags, prMatches, prNumberQuery, reviewDecisionLabel } from "../pull-requests";
 import { branchRefName, refShown, remoteRefName, tagRefName, type RefFilter } from "../ref-visibility";
 import { refDragHandle, refDropZone } from "./ref-drag";
@@ -581,7 +581,7 @@ function buildPullRequests(
     who.append(githubIcon(), document.createTextNode(account.signed_in ? (account.login ?? "") : "Not signed in"));
     row.append(who);
   }
-  const refresh = el("button", { class: "sb-section-add", text: "⟳", title: `Refresh pull requests of ${p.repo}` });
+  const refresh = el("button", { class: "sb-section-add sb-refresh", title: `Refresh pull requests of ${p.repo}`, "aria-label": "Refresh" }, [refreshIcon()]);
   refresh.addEventListener("click", (e) => {
     e.stopPropagation(); // not a collapse toggle
     cb.onPrRefresh();

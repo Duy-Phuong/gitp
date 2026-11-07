@@ -1214,7 +1214,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       class: "btn small ghost",
       text: "Push and reply all",
       title: `${ahead ? `Push ${pr.head} (${ahead} ahead)` : "Nothing to push"}; ${ready ? `post ${ready} ${ready === 1 ? "reply" : "replies"} Claude has ready` : "no reply ready"} — after one confirm that lists both`,
-    }) as HTMLButtonElement;
+    });
     b.disabled = runningTurns(cb.repoPath(), pr.number) > 0 || cb.pushReplyInFlight(pr);
     if (cb.pushReplyInFlight(pr)) b.textContent = "Pushing and replying…";
     b.addEventListener("click", () => void pushAndReplyAll(pr));

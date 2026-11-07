@@ -54,7 +54,7 @@ const fileWith = (lines: [string, number | null, number | null, string][]): File
     old_path: null,
     status: "Modified",
     hunks: [{ header: "@@ -1 +1,3 @@", lines: lines.map(([origin, old_lineno, new_lineno, content]) => ({ origin, old_lineno, new_lineno, content })) }],
-  } as FileDiff,
+  },
 ];
 
 const FILES = fileWith([
@@ -112,7 +112,7 @@ beforeEach(async () => {
   };
   host = document.createElement("div");
   document.body.append(host);
-  view = setupPullRequestView(host, callbacks(cb as unknown as Partial<PullRequestCallbacks>));
+  view = setupPullRequestView(host, callbacks(cb));
   view.show(7);
   await settle();
 });

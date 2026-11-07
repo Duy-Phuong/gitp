@@ -442,8 +442,26 @@ body {
   gap: 1px;
 }
 #branch-menu > .menu-sep,
-#branch-menu > .menu-newbranch {
+#branch-menu > .menu-newbranch,
+#branch-menu > .branch-menu-filter {
   flex: none;
+}
+.branch-menu-filter {
+  margin: 2px 2px 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.menu-item.picked {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.branch-menu-none {
+  color: var(--text-dim);
+  cursor: default;
 }
 /* Pull-method menu: each row picks a method to run now; hovering a non-default
    row reveals "Set as default" to change what the plain Pull button runs. */
@@ -2024,6 +2042,15 @@ body.tab-dragging * {
 .sb-section-add:hover {
   background: var(--bg-elev-2);
   color: var(--text);
+}
+.sb-refresh {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 5px;
+}
+.sb-refresh .refresh-icon {
+  width: 14px;
+  height: 14px;
 }
 .sb-folder {
   display: flex;
