@@ -34,6 +34,21 @@ export function saveNotifyPrefs(prefs: NotifyPrefs): void {
 export interface Note {
   title: string;
   body: string;
+  // What a click on it opens (see noteTarget): "job:<id>", "pr:<number>:<repo
+  // path>" or "url:<https link>".
+  target?: string;
+}
+
+export type NoteTarget = { kind: "job"; id: number } | { kind: "pr"; number: number; path: string } | { kind: "url"; url: string };
+
+// A clicked notification's target, or null for one gitp didn't make.
+export function noteTarget(target: string): NoteTarget | null {
+  const job = /^job:(\d+)$/.exec(target);
+  if (job) return { kind: "job", id: Number(job[1]) };
+  const pr = /^pr:(\d+):(.+)$/.exec(target);
+  if (pr) return { kind: "pr", number: Number(pr[1]), path: pr[2] };
+  if (target.startsWith("url:https://")) return { kind: "url", url: target.slice(4) };
+  return null;
 }
 
 // The jobs that stopped running since the last look: done or failed. A
@@ -42,9 +57,10 @@ export function jobNotes(before: Map<number, ClaudeJob["state"]>, jobs: ClaudeJo
   const notes: Note[] = [];
   for (const j of jobs) {
     if (before.get(j.id) !== "running") continue;
-    if (j.state === "done") notes.push({ title: "Claude job finished", body: j.label });
+    const target = `job:${j.id}`;
+    if (j.state === "done") notes.push({ title: "Claude job finished", body: j.label, target });
     else if (j.state === "failed" || j.state === "interrupted") {
-      notes.push({ title: "Claude job failed", body: j.error ? `${j.label}: ${j.error}` : j.label });
+      notes.push({ title: "Claude job failed", body: j.error ? `${j.label}: ${j.error}` : j.label, target });
     }
   }
   return notes;
@@ -64,8 +80,9 @@ export function inboxNotes(
   const notes: Note[] = [];
   for (const p of prs) {
     const k = prKey(p);
-    if (failing.has(k) && !seen.failing.has(k)) notes.push({ title: "A check failed", body: `${k} ${p.title}` });
-    if (requested.has(k) && !seen.requested.has(k)) notes.push({ title: "Review requested", body: `${k} ${p.title} by ${p.author}` });
+    const target = `pr:${p.number}:${p.path}`;
+    if (failing.has(k) && !seen.failing.has(k)) notes.push({ title: "A check failed", body: `${k} ${p.title}`, target });
+    if (requested.has(k) && !seen.requested.has(k)) notes.push({ title: "Review requested", body: `${k} ${p.title} by ${p.author}`, target });
   }
   return { notes, seen: { failing, requested } };
 }
@@ -77,7 +94,7 @@ export function notifyCi(note: Note): void {
 
 function send(notes: Note[]): void {
   if (document.hasFocus()) return;
-  for (const n of notes) void notify(n.title, n.body).catch(() => {});
+  for (const n of notes) void notify(n.title, n.body, n.target ?? null).catch(() => {});
 }
 
 // --- Claude jobs: fed by the jobs poll (claude-jobs.ts) ---------------------

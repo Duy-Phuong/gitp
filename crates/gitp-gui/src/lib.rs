@@ -91,6 +91,7 @@ pub fn run() {
     tauri::async_runtime::set(runtime.handle().clone());
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(RepoState::default())
         .manage(TerminalState::default())
         .manage(local_workspaces::WorkspaceOps::default())
@@ -100,6 +101,7 @@ pub fn run() {
         .manage(drafts::DraftRuns::default())
         .register_asynchronous_uri_scheme_protocol(review_page::SCHEME, review_page::serve)
         .setup(|app| {
+            os::on_notification_click(app.handle());
             // Repository watchers push changes on disk to the frontend (see
             // `watch`); they need the app handle to emit, which exists only now.
             let handle = app.handle().clone();

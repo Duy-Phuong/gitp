@@ -1,4 +1,4 @@
-import { setupClaudeJobs } from "./claude-jobs";
+import { setupClaudeJobs, showClaudeJobsPage } from "./claude-jobs";
 import "./styles.css";
 import { onReviewsChange, setReviewSaver } from "./pr-reviews";
 import { storedReviewDelete, storedReviewSave } from "./api";
@@ -46,6 +46,7 @@ import {
   restoreFromSnapshot,
   revealPath,
   saveFilesPatch,
+  onNotificationClick,
   openGithubUrl,
   setLocalHistoryEnabled,
   snapshotNow,
@@ -123,7 +124,7 @@ import {
 import { refsAt } from "./commit-refs";
 import { setupUnpushedBadge } from "./unpushed-badge";
 import { setupCiBadge } from "./ci-badge";
-import { setupNotifications } from "./notifications";
+import { noteTarget, setupNotifications } from "./notifications";
 import { rerereEnabled } from "./conflict-help";
 import { setupConfigTabs } from "./config-panel";
 import { setupPaneResizer, setupSidebarResizer, setupTerminalResizer } from "./resizers";
@@ -602,6 +603,18 @@ async function init(): Promise<void> {
   setupReviewInbox($("#inbox-view"), async (path, number) => {
     if (path !== state.repoPath) await openRecentRepo(path);
     if (path === state.repoPath) showPullRequest(number);
+  });
+  // A click on one of gitp's notifications: the Claude jobs, the pull
+  // request (its repository opened as Open Recent does), or the CI run.
+  void onNotificationClick((raw) => {
+    const target = noteTarget(raw);
+    if (target?.kind === "job") showClaudeJobsPage();
+    else if (target?.kind === "pr") {
+      void (async () => {
+        if (target.path !== state.repoPath) await openRecentRepo(target.path);
+        if (target.path === state.repoPath) showPullRequest(target.number);
+      })();
+    } else if (target?.kind === "url") void openGithubUrl(target.url).catch(() => {});
   });
   ui.welcomeView = setupWelcome($("#welcome-view"), {
     open: (path) => void openRecentRepo(path),

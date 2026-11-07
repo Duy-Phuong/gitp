@@ -16,7 +16,7 @@ describe("the CI badge", () => {
 
 describe("the CI notification", () => {
   it("tells a failure once per commit", () => {
-    expect(ciNote(ci("running"), ci("failure"), "main")).toEqual({ title: "CI failed on main", body: "CI · fix: things (abc1234)" });
+    expect(ciNote(ci("running"), ci("failure"), "main")).toEqual({ title: "CI failed on main", body: "CI · fix: things (abc1234)", target: "url:u" });
     expect(ciNote(ci("failure"), ci("failure"), "main")).toBeNull();
     expect(ciNote(ci("failure", "old0000"), ci("failure"), "main")).not.toBeNull();
   });

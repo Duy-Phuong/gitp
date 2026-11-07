@@ -424,11 +424,28 @@ fn notification_script(title: &str, body: &str) -> String {
     )
 }
 
-/// Show a desktop notification (macOS Notification Center, through
-/// `osascript`, so no plugin is needed); a no-op elsewhere.
+/// The event a click on one of gitp's notifications sends the frontend, with
+/// the notification's target (see `notify`).
+pub(crate) const NOTIFICATION_CLICK: &str = "notification-click";
+
+/// Show a desktop notification from gitp. `target` says what a click on it
+/// opens; the click brings gitp to the front and sends it to the frontend as
+/// NOTIFICATION_CLICK (see `on_notification_click`). Where the notification
+/// plugin can't show one, macOS falls back to `osascript` (a notification
+/// with no click); elsewhere nothing.
 #[tauri::command(async)]
-pub(crate) fn notify(title: String, body: String) -> Result<(), String> {
-    if !cfg!(target_os = "macos") {
+pub(crate) fn notify(
+    app: tauri::AppHandle,
+    title: String,
+    body: String,
+    target: Option<String>,
+) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    let mut n = app.notification().builder().title(&title).body(&body);
+    if let Some(target) = target {
+        n = n.extra("target", target);
+    }
+    if n.show().is_ok() || !cfg!(target_os = "macos") {
         return Ok(());
     }
     std::process::Command::new("osascript")
@@ -437,6 +454,30 @@ pub(crate) fn notify(title: String, body: String) -> Result<(), String> {
         .output()
         .map(|_| ())
         .map_err(to_message)
+}
+
+/// Report clicks on gitp's notifications: gitp comes to the front, and the
+/// frontend gets the clicked one's target.
+pub(crate) fn on_notification_click(app: &tauri::AppHandle) {
+    use tauri::{Emitter, Manager};
+    use tauri_plugin_notification::NotificationExt;
+    let handle = app.clone();
+    let _ = app.notification().on_action(move |action| {
+        let Some(target) = action
+            .notification()
+            .and_then(|n| n.extra().get("target"))
+            .and_then(|t| t.as_str())
+            .map(str::to_string)
+        else {
+            return;
+        };
+        if let Some(window) = handle.webview_windows().values().next() {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        let _ = handle.emit(NOTIFICATION_CLICK, target);
+    });
 }
 
 #[cfg(test)]

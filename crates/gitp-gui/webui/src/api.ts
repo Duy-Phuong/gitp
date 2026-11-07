@@ -2465,9 +2465,17 @@ export async function onQuitCheck(cb: (check: QuitCheck) => void): Promise<void>
 }
 
 // A desktop notification (macOS Notification Center); nothing in a browser.
-export async function notify(title: string, body: string): Promise<void> {
+// `target`: what a click on it opens (notifications.ts' noteTarget).
+export async function notify(title: string, body: string, target: string | null = null): Promise<void> {
   if (!isTauri()) return;
-  return invoke<void>("notify", { title, body });
+  return invoke<void>("notify", { title, body, target });
+}
+
+// A click on one of gitp's notifications, with its target.
+export async function onNotificationClick(cb: (target: string) => void): Promise<void> {
+  if (!isTauri()) return;
+  const { listen } = await import("@tauri-apps/api/event");
+  await listen<string>("notification-click", (event) => cb(event.payload));
 }
 
 // Quit after all, from that dialog, with no jobs to stop.

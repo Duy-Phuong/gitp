@@ -26,8 +26,8 @@ export function ciTitle(ci: BranchCi, branch: string): string {
 
 // A notification when the CI is newly failed: not again for the same commit,
 // and not on the first look (it may have failed long ago).
-export function ciNote(before: BranchCi | null, now: BranchCi, branch: string): { title: string; body: string } | null {
+export function ciNote(before: BranchCi | null, now: BranchCi, branch: string): { title: string; body: string; target: string } | null {
   if (!before || now.state !== "failure") return null;
   if (before.state === "failure" && before.sha === now.sha) return null;
-  return { title: `CI failed on ${branch}`, body: which(now) };
+  return { title: `CI failed on ${branch}`, body: which(now), target: `url:${now.url}` };
 }
