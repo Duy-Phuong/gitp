@@ -6839,6 +6839,23 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .pr-files-diffs > [data-path] {
   content-visibility: auto;
 }
+/* A file marked Viewed folds to its header, as on GitHub. */
+.pr-files-diffs > [data-path].viewed > :not(.file-head) {
+  display: none;
+}
+.pr-file-viewed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.pr-files-viewed-count {
+  font-size: 12px;
+  color: var(--text-dim);
+}
 .pr-tree-comments {
   margin-left: auto;
   padding: 0 5px;

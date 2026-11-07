@@ -836,6 +836,13 @@ export interface PrCommit {
   committed_at: string;
 }
 
+// The files of a pull request marked Viewed on GitHub (gitp-core's PrViewed):
+// the pull request's node id, which a mark names, and the paths.
+export interface PrViewed {
+  id: string;
+  viewed: string[];
+}
+
 // What the pull request view polls (gitp-core's PrSignature): a change in any
 // part means the pull request moved on GitHub.
 export interface PrSignature {

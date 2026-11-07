@@ -104,6 +104,7 @@ import type {
   ReviewFile,
   ReviewVerdict,
   FileBlame,
+  PrViewed,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -2010,6 +2011,26 @@ function mockSignature(d: PullRequestDetail): PrSignature {
     threads: d.review_threads.map((t): [string, boolean] => [t.id, t.resolved]),
     checks: d.checks.map((c): [string, string] => [c.name, c.state]).sort(),
   };
+}
+
+// The files of pull request `number` marked Viewed on GitHub.
+const MOCK_VIEWED = new Map<number, Set<string>>();
+export async function fetchPullRequestViewed(number: number): Promise<PrViewed> {
+  if (!isTauri()) return { id: `PR_${number}`, viewed: [...(MOCK_VIEWED.get(number) ?? [])] };
+  return invoke<PrViewed>("gh_pull_request_viewed", { number });
+}
+
+// Mark a file of a pull request (by its node id) Viewed on GitHub, or not.
+export async function setPullRequestFileViewed(prId: string, path: string, viewed: boolean): Promise<void> {
+  if (!isTauri()) {
+    const n = Number(prId.replace("PR_", ""));
+    const set = MOCK_VIEWED.get(n) ?? new Set<string>();
+    if (viewed) set.add(path);
+    else set.delete(path);
+    MOCK_VIEWED.set(n, set);
+    return;
+  }
+  await invoke("gh_set_pull_request_file_viewed", { prId, path, viewed });
 }
 
 // The pull request's changed files and their diffs (`gh pr diff`).

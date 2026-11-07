@@ -78,9 +78,12 @@ function callbacks(over: Partial<PullRequestCallbacks>): PullRequestCallbacks {
     savedReview: () => null,
     pushReplyInFlight: () => false,
     draftFix: () => null,
+    // Optional: present only when a test gives them.
+    fetchViewed: undefined,
+    setViewed: undefined,
     ...over,
   };
-  return new Proxy(given, { get: (t, k: string) => (t as Record<string, unknown>)[k] ?? (() => undefined) }) as PullRequestCallbacks;
+  return new Proxy(given, { get: (t, k: string) => (k in t ? (t as Record<string, unknown>)[k] : () => undefined) }) as PullRequestCallbacks;
 }
 
 const settle = () => vi.advanceTimersByTimeAsync(10);
@@ -472,5 +475,53 @@ describe("the Commits tab", () => {
     host.querySelectorAll<HTMLElement>(".pr-commit")[2].click();
     await settle();
     expect(fetchCommitFiles.mock.calls.filter((c) => c[0] === "c3")).toHaveLength(1);
+  });
+});
+
+describe("Viewed in the Files tab", () => {
+  let fetchViewed: ReturnType<typeof vi.fn>;
+  let setViewed: ReturnType<typeof vi.fn>;
+  const filesTab = () => [...host.querySelectorAll<HTMLButtonElement>(".pr-tab")].find((b) => b.textContent?.startsWith("Files"))!;
+  const file = (path: string) => host.querySelector<HTMLElement>(`.pr-files-diffs [data-path="${path}"]`)!;
+  const viewedBox = (path: string) => file(path).querySelector<HTMLInputElement>(".pr-file-viewed input")!;
+  const tick = (box: HTMLInputElement) => {
+    box.checked = !box.checked;
+    box.dispatchEvent(new Event("change"));
+  };
+
+  beforeEach(async () => {
+    view.reset();
+    host.remove();
+    files = [...FILES, { ...FILES[0], path: "src/b.ts" }];
+    fetchViewed = vi.fn(async () => ({ id: "PR_7", viewed: ["src/a.ts"] }));
+    setViewed = vi.fn(async () => {});
+    host = document.createElement("div");
+    document.body.append(host);
+    view = setupPullRequestView(host, callbacks({ ...(cb as unknown as Partial<PullRequestCallbacks>), fetchViewed, setViewed }));
+    view.show(7);
+    await settle();
+    filesTab().click();
+    await settle();
+  });
+
+  it("folds the files GitHub has marked Viewed, and counts them", () => {
+    expect(fetchViewed).toHaveBeenCalledWith(7);
+    expect(file("src/a.ts").classList.contains("viewed")).toBe(true);
+    expect(viewedBox("src/a.ts").checked).toBe(true);
+    expect(file("src/b.ts").classList.contains("viewed")).toBe(false);
+    expect(host.querySelector(".pr-files-viewed-count")?.textContent).toBe("1 of 2 viewed");
+  });
+
+  it("a tick marks it on GitHub and folds it; a failure puts it back", async () => {
+    tick(viewedBox("src/b.ts"));
+    expect(file("src/b.ts").classList.contains("viewed")).toBe(true);
+    expect(setViewed).toHaveBeenCalledWith("PR_7", "src/b.ts", true);
+    expect(host.querySelector(".pr-files-viewed-count")?.textContent).toBe("2 of 2 viewed");
+    setViewed.mockRejectedValueOnce(new Error("offline"));
+    tick(viewedBox("src/a.ts"));
+    expect(file("src/a.ts").classList.contains("viewed")).toBe(false);
+    await settle();
+    expect(file("src/a.ts").classList.contains("viewed")).toBe(true);
+    expect(viewedBox("src/a.ts").checked).toBe(true);
   });
 });

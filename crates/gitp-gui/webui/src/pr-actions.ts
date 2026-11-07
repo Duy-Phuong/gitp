@@ -17,6 +17,8 @@ import {
   confirmDialog,
   createPullRequestOnGitHub,
   fetchPullRequestFiles,
+  fetchPullRequestViewed,
+  setPullRequestFileViewed,
   fetchPullRequestSignature,
   fetchGitHubCommitFiles,
   generateReviewDrafts,
@@ -502,6 +504,8 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   fetchDetail: readPullRequest,
   fetchSignature: fetchPullRequestSignature,
   fetchFiles: fetchPullRequestFiles,
+  fetchViewed: fetchPullRequestViewed,
+  setViewed: setPullRequestFileViewed,
   fetchCommitFiles: fetchGitHubCommitFiles,
   checkout: (pr) => void checkoutPullRequestAction(pr.number),
   checkoutInWorktree: (pr, x, y) =>

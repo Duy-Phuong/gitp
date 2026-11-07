@@ -573,6 +573,28 @@ pub(crate) fn gh_pull_request_signature(
     with_repo_unlocked(&state, |repo| repo.pull_request_signature(&Gh::system(), number))
 }
 
+/// Which files of the pull request are marked Viewed on GitHub.
+#[tauri::command(async)]
+pub(crate) fn gh_pull_request_viewed(
+    number: u64,
+    state: State<RepoState>,
+) -> Result<gitp_core::PrViewed, String> {
+    with_repo_unlocked(&state, |repo| repo.pull_request_viewed(&Gh::system(), number))
+}
+
+/// Mark a file of the pull request (by its node id) Viewed on GitHub, or not.
+#[tauri::command(async)]
+pub(crate) fn gh_set_pull_request_file_viewed(
+    pr_id: String,
+    path: String,
+    viewed: bool,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    with_repo_unlocked(&state, |repo| {
+        repo.set_pull_request_file_viewed(&Gh::system(), &pr_id, &path, viewed)
+    })
+}
+
 #[tauri::command(async)]
 pub(crate) fn gh_pull_request_files(
     number: u64,

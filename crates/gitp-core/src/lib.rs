@@ -93,6 +93,7 @@ pub use gh::{
 };
 pub use gh::{inbox_repo, inbox_sources, InboxPr, InboxRepo};
 pub use gh::PrSignature;
+pub use gh::PrViewed;
 pub use gitflow::{FlowKind, GitFlowConfig};
 pub use hooks::{Hook, HookState, Hooks, HOOK_NAMES};
 pub use identity::{global_identity, restore_local_identity, set_global_identity, Identity};

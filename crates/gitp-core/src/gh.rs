@@ -26,6 +26,9 @@ use serde::{Deserialize, Serialize};
 mod signature;
 pub use signature::PrSignature;
 
+mod viewed;
+pub use viewed::PrViewed;
+
 use crate::branch_ops::parse_remote_url;
 use crate::diff::{collect_files, FileDiff, MAX_DIFF_LINES};
 use crate::encoding::TextEncoding;
@@ -2900,12 +2903,17 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             Self::with_script(FAKE_GH)
         }
 
-        fn with_script(script: &str) -> Self {
+        pub(super) fn with_script(script: &str) -> Self {
             let bin = tempfile::tempdir().unwrap();
             let gh = bin.path().join("gh");
             fs::write(&gh, script).unwrap();
             fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
             Self { bin }
+        }
+
+        /// Write `name` beside the fake, for a script of its own to read.
+        pub(super) fn write(&self, name: &str, text: &str) {
+            fs::write(self.bin.path().join(name), text).unwrap();
         }
 
         /// What `gh <command>` (its first two arguments) answers.

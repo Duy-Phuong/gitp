@@ -64,7 +64,7 @@ import {
   type Draft,
   type PrReview,
 } from "../pr-reviews";
-import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PrSignature, PullRequestDetail, ReviewVerdict, TurnKind } from "../types";
+import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PrSignature, PrViewed, PullRequestDetail, ReviewVerdict, TurnKind } from "../types";
 import { pausePollingFor, startPolling } from "../poller";
 import { isRateLimit, NOTICE_MS, PR_VIEW_POLL_MS, RATE_LIMIT_NOTICE, RATE_LIMIT_PAUSE_MS, refreshNotice, signatureChanged } from "../pr-refresh";
 
@@ -74,6 +74,10 @@ export interface PullRequestCallbacks {
   // without it.
   fetchSignature?: (number: number) => Promise<PrSignature>;
   fetchFiles: (number: number) => Promise<FileDiff[]>;
+  // The files marked Viewed on GitHub, and marking one (by the pull
+  // request's node id); without them the Files tab has no Viewed boxes.
+  fetchViewed?: (number: number) => Promise<PrViewed>;
+  setViewed?: (prId: string, path: string, viewed: boolean) => Promise<void>;
   // A commit's changed files, from GitHub.
   fetchCommitFiles: (oid: string) => Promise<FileDiff[]>;
   checkout: (pr: PullRequestDetail) => void;
@@ -231,6 +235,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   const openComments = new Set<string>();
   const treeCollapsed = new Set<string>();
   let treeSelected: string | null = null;
+  // The Files tab's Viewed marks on GitHub, read once per pull request and
+  // head (a push takes the marks off the files it changed); null until read.
+  let viewed: { number: number; id: string; paths: Set<string> } | null = null;
+  let viewedReading: number | null = null;
   // The Files tab drawn last: draws the files up to one, for a jump to it.
   let drawFile: ((path: string) => void) | null = null;
   // The pull request's draft comments, with the verdict and message the
@@ -298,8 +306,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     try {
       const d = await cb.fetchDetail(number);
       if (mine !== generation) return;
-      // Files kept from before are another head's when it moved.
-      if (detail?.head_oid !== d.head_oid) files = null;
+      // Files kept from before are another head's when it moved, and so
+      // are the Viewed marks GitHub took off the files it changed.
+      if (detail?.head_oid !== d.head_oid) {
+        files = null;
+        viewed = null;
+      }
       detail = d;
       signature = d.signature ?? null;
       storePullRequest(cb.repoPath(), d);
@@ -428,7 +440,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       const old = detail;
       signature = now;
       detail = d;
-      if (old && old.head_oid !== d.head_oid) files = null;
+      if (old && old.head_oid !== d.head_oid) {
+        files = null;
+        viewed = null;
+      }
       const text = old ? refreshNotice(old, d) : "Updated";
       whenIdle(() => {
         redraw();
@@ -874,9 +889,11 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       const i = nodes.length;
       const node = annotatedFile(pr, shown[i], byLine, counts.get(shown[i].path) ?? 0);
       node.dataset.path = shown[i].path;
-      // Its height before the browser lays it out (see .pr-files-diffs).
+      // Its height before the browser lays it out, as a guess from its lines.
       const lines = shown[i].hunks.reduce((n, h) => n + h.lines.length + 1, 0);
-      node.style.containIntrinsicSize = `auto ${lines * 14 + 40}px`;
+      node.dataset.size = String(lines * 14 + 40);
+      if (cb.fetchViewed) node.querySelector(".file-head")?.append(viewedBox(shown[i].path));
+      paintViewedFile(node);
       nodes.push(node);
       marked(i, node);
       diffs.append(node);
@@ -1002,11 +1019,13 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         collapse,
         search,
         count,
+        el("span", { class: "pr-files-viewed-count" }),
         el("span", { class: "pr-files-hint", text: "Click a line to comment on it." }),
       ]),
       columns,
     );
     applySearch();
+    readViewed(pr);
     // Enough to fill the view (or reach where a redraw was scrolled to) now,
     // the rest in slices that leave the window free to scroll and click.
     const filled = () => body.scrollHeight >= scrolled + body.clientHeight * 2;
@@ -1018,6 +1037,78 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       setTimeout(more, 0);
     };
     setTimeout(more, 0);
+  }
+
+  // --- Viewed ---------------------------------------------------------------
+
+  // Read which files are marked Viewed on GitHub, once per pull request.
+  function readViewed(pr: PullRequestDetail): void {
+    if (!cb.fetchViewed || viewed?.number === pr.number || viewedReading === pr.number) return paintViewedCount();
+    viewedReading = pr.number;
+    cb.fetchViewed(pr.number).then(
+      (v) => {
+        viewedReading = null;
+        if (number !== pr.number) return;
+        viewed = { number: pr.number, id: v.id, paths: new Set(v.viewed) };
+        paintViewed();
+      },
+      () => {
+        // The boxes stay off: GitHub couldn't say.
+        viewedReading = null;
+      },
+    );
+  }
+
+  // A file's "Viewed" box: ticked, it folds the file and marks it on GitHub.
+  function viewedBox(path: string): HTMLElement {
+    const box = el("input", { type: "checkbox" });
+    box.disabled = true;
+    box.addEventListener("change", () => void markViewed(path, box.checked));
+    const label = el("label", { class: "pr-file-viewed", title: "Viewed: fold this file, and mark it so on GitHub" }, [box, el("span", { text: "Viewed" })]);
+    label.addEventListener("click", (e) => e.stopPropagation());
+    return label;
+  }
+
+  async function markViewed(path: string, on: boolean): Promise<void> {
+    const v = viewed;
+    if (!v || v.number !== number) return;
+    const set = (to: boolean) => {
+      if (to) v.paths.add(path);
+      else v.paths.delete(path);
+      paintViewed();
+    };
+    set(on);
+    try {
+      await cb.setViewed?.(v.id, path, on);
+    } catch (err) {
+      set(!on);
+      cb.reportError(`Couldn't mark ${path} as ${on ? "viewed" : "not viewed"} on GitHub`, err);
+    }
+  }
+
+  // One file of the Files tab, folded or not as its mark says.
+  function paintViewedFile(node: HTMLElement): void {
+    const v = viewed && viewed.number === number ? viewed : null;
+    const on = !!v && v.paths.has(node.dataset.path ?? "");
+    node.classList.toggle("viewed", on);
+    // Its height until the browser lays it out (see .pr-files-diffs).
+    node.style.containIntrinsicSize = `auto ${on ? 40 : Number(node.dataset.size ?? 40)}px`;
+    const box = node.querySelector<HTMLInputElement>(".pr-file-viewed input");
+    if (box) {
+      box.checked = on;
+      box.disabled = !v;
+    }
+  }
+
+  function paintViewedCount(): void {
+    const count = host.querySelector(".pr-files-viewed-count");
+    const v = viewed && viewed.number === number ? viewed : null;
+    if (count) count.textContent = v && files ? `${files.filter((f) => v.paths.has(f.path)).length} of ${files.length} viewed` : "";
+  }
+
+  function paintViewed(): void {
+    for (const node of host.querySelectorAll<HTMLElement>(".pr-files-diffs > [data-path]")) paintViewedFile(node);
+    paintViewedCount();
   }
 
   function setSplit(on: boolean): void {
@@ -1619,6 +1710,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         commitOpen = null;
         commitFiles.clear();
         commitReads.clear();
+        viewed = null;
         searched = null;
         draft = "";
         filesQuery = "";
@@ -1679,6 +1771,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       files = null;
       seen.clear();
       filesLoading = null;
+      viewed = null;
       draft = "";
       renderedTab = null;
       clear(host);
