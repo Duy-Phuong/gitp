@@ -11,7 +11,7 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # One universal binary covers Apple silicon and Intel Macs.
       - uses: dtolnay/rust-toolchain@stable
@@ -20,9 +20,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: crates/gitp-gui/webui/package-lock.json
 
