@@ -84,6 +84,7 @@ export { MERGE_MODES };
 import { finishFlowItem, gitflowMenuItem } from "./gitflow-actions";
 import { addRemoteAction } from "./remote-actions";
 import { askSwitchWithChanges, reportStashSwitch } from "./stash-switch";
+import { dialogList } from "./dialog-list";
 
 // Double-click a branch: check it out, then reload history + sidebar from the new
 // HEAD. With uncommitted changes, asks first: Stash & Switch, or carry them.
@@ -370,7 +371,7 @@ async function deleteSelectedBranchesAction(names: string[]): Promise<void> {
     return;
   }
   const ok = await confirmDialog(
-    `Delete ${targets.length} branch${targets.length === 1 ? "" : "es"} locally?\n\n${targets.join("\n")}`,
+    `Delete ${targets.length} branch${targets.length === 1 ? "" : "es"} locally?\n\n${dialogList(targets)}`,
   );
   if (!ok) {
     setStatus("Delete cancelled.");
