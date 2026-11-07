@@ -7,6 +7,7 @@
 // `.modal` shell.
 
 import { jiraSite } from "../jira";
+import { DEFAULT_DRAFT_COMMANDS, loadDraftCommand, saveDraftCommand, type DraftCommandKind } from "../claude-drafts";
 import { el } from "../dom";
 import {
   applyZoom,
@@ -363,7 +364,7 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
           "Claude model",
           claudeChoiceSelect("model"),
           "inline",
-          "Every Claude run gitp starts uses this model and effort: reviews, Explain more, and Check, Explain simply, Reply with Claude, a follow-up and Fix on a thread. gitp sets them in each command below as it runs it, in its --model and --effort.",
+          "Every Claude run gitp starts uses this model and effort: reviews, Explain more, Check, Explain simply, Reply with Claude, a follow-up and Fix on a thread, and the commit message and pull request drafts. gitp sets them in each command below as it runs it, in its --model and --effort.",
         ),
         row("Claude effort", claudeChoiceSelect("effort"), "inline"),
         row(
@@ -386,6 +387,18 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
           threadCommandField("fix"),
           "block",
           "Fix on a thread runs this in the worktree of the pull request's branch, with the chosen option on stdin: it may edit, run the tests and commit exactly once; gitp undoes the run when it fails. GITP_FIX_WORKTREE, GITP_FIX_BRANCH and GITP_FIX_HEAD_BEFORE are set too.",
+        ),
+        row(
+          "Commit message command",
+          draftCommandField("commit-message"),
+          "block",
+          "Draft with Claude in the commit box runs this with the staged diff on stdin (with Amend: the last commit's diff plus the staged one). GITP_BRANCH is set, and GITP_LOG_FILE names a file with the branch's last 20 subjects. Its first line is the subject, the rest the description. Blank restores the default.",
+        ),
+        row(
+          "Pull request draft command",
+          draftCommandField("pr-draft"),
+          "block",
+          "Draft with Claude in Create Pull Request runs this with the branch's commits and then its diff against Into on stdin. GITP_BRANCH, GITP_BASE and, when the repository has a pull request template, GITP_PR_TEMPLATE_FILE are set. It prints JSON with a title and a body, or plain text whose first line is the title. Blank restores the default.",
         ),
         row("Git configuration", linkButton("Open Git Config", () => actions.openConfig("git"))),
         row("Dotfiles", linkButton("Open Dotfiles", () => actions.openConfig("dotfiles"))),
@@ -738,17 +751,27 @@ function reviewCommandField(): HTMLElement {
 // DEFAULT_THREAD_COMMANDS); blank restores the default, and Reset to default
 // shows while the line is a custom one.
 function threadCommandField(kind: TurnKind): HTMLElement {
+  return commandField(() => loadThreadCommand(kind), (c) => saveThreadCommand(kind, c), DEFAULT_THREAD_COMMANDS[kind]);
+}
+
+// The shell line of a draft with Claude (see claude-drafts.ts), like a
+// thread command.
+function draftCommandField(kind: DraftCommandKind): HTMLElement {
+  return commandField(() => loadDraftCommand(kind), (c) => saveDraftCommand(kind, c), DEFAULT_DRAFT_COMMANDS[kind]);
+}
+
+function commandField(load: () => string, save: (command: string) => void, fallback: string): HTMLElement {
   const area = el("textarea", { class: "settings-select settings-command", spellcheck: "false", rows: 3 });
   const reset = linkButton("Reset to default", () => {
-    saveThreadCommand(kind, "");
+    save("");
     show();
   });
   const show = () => {
-    area.value = loadThreadCommand(kind);
-    reset.hidden = area.value === DEFAULT_THREAD_COMMANDS[kind];
+    area.value = load();
+    reset.hidden = area.value === fallback;
   };
   area.addEventListener("change", () => {
-    saveThreadCommand(kind, area.value);
+    save(area.value);
     show();
   });
   show();

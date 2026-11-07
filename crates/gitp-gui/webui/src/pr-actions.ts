@@ -72,6 +72,8 @@ import {
 import { defaultWorktreePath, worktreeOf } from "./worktree-actions";
 import { hunkAround, openFindingsNote } from "./branch-reviews";
 import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
+import { cancelDraft, draftPullRequest, loadDraftCommand } from "./claude-drafts";
+import { prDraftAction } from "./pr-draft-action";
 import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, SKILL_REVIEW_COMMAND, withClaudeChoice } from "./prefs";
 import { finishTurn, lastUserText, preparedReply, runningTurns, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
 import { showContextMenu, showPrompt } from "./views/context-menu";
@@ -340,6 +342,14 @@ export async function createPullRequestDialog(b: BranchRef, remote: string): Pro
   const reviewed = await storedReviewLoad(state.repoPath, { branch: b.name }).catch(() => null);
   const note = openFindingsNote(reviewed?.drafts.filter((d) => d.status === "pending" || d.status === "approved").length ?? 0);
   setStatus("");
+  const path = state.repoPath;
+  const claude = prDraftAction({
+    prefilled: draft,
+    fields: { base: 0, title: 1, body: 2 },
+    draft: (base) => draftPullRequest(path, b.name, base, withClaudeChoice(loadDraftCommand("pr-draft"))),
+    cancel: () => void cancelDraft(path, "pull_request"),
+    confirm: confirmDialog,
+  });
   openFormDialog(
     {
       title: `Create Pull Request from ${b.name}`,
@@ -347,7 +357,7 @@ export async function createPullRequestDialog(b: BranchRef, remote: string): Pro
       fields: [
         { label: "Into", choices: bases.map((n) => ({ value: n, label: n })), value: fallback },
         { label: "Title", value: draft.title, required: true },
-        { label: "Description", value: draft.body, multiline: true, placeholder: "Markdown" },
+        { label: "Description", value: draft.body, multiline: true, placeholder: "Markdown", action: claude.action },
         {
           label: "As",
           choices: [
@@ -357,6 +367,7 @@ export async function createPullRequestDialog(b: BranchRef, remote: string): Pro
         },
       ],
       submitLabel: "Create Pull Request",
+      onClose: claude.close,
     },
     ([base, title, body, kind]) => void createPullRequestNow(b, remote, base, title, body, kind === "draft", unpushed),
   );

@@ -410,6 +410,15 @@ function repoCommands(): QuickItem[] {
       next: () => fileStage("File History", "history"),
     },
     { kind: "command", label: "Local Changes", detail: shortcutHint("changes"), run: () => showView("changes") },
+    {
+      kind: "command",
+      label: "Draft Commit Message with Claude",
+      detail: "from what is staged",
+      run: () => {
+        showView("changes");
+        ui.changesView?.draftMessage();
+      },
+    },
     { kind: "command", label: "Log (All Commits)", detail: shortcutHint("history"), run: () => showView("history") },
     {
       kind: "command",
