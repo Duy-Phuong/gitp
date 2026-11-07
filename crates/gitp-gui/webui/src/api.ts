@@ -4,6 +4,11 @@
 
 import REVIEW_BRIDGE from "./review-bridge.js?raw";
 import type {
+  BranchReviewData,
+  FindingInput,
+  GeneratedBranchReview,
+  ReviewKey,
+  StoredReview,
   ActivityEntry,
   AheadCommit,
   ThreadConversation,
@@ -2290,6 +2295,8 @@ export interface ClaudeJob {
   pr: number;
   thread: number | null;
   finding: string | null;
+  // The local branch of a branch review or a draft's fix.
+  branch?: string | null;
   state: ClaudeJobState;
   // Ms since the Unix epoch.
   started: number;
@@ -3804,4 +3811,84 @@ export async function onCodeFilesChanged(cb: (ev: CodeFilesChanged) => void): Pr
   if (!isTauri()) return;
   const { listen } = await import("@tauri-apps/api/event");
   await listen<CodeFilesChanged>("code-files-changed", (event) => cb(event.payload));
+}
+
+// --- Branch reviews and review drafts on disk (reviews.rs) ---------------------
+
+// The mock's saved reviews, by key, for vite dev.
+const mockStored = new Map<string, StoredReview>();
+const mockKey = (k: ReviewKey) => ("branch" in k ? `b:${k.branch}` : `p:${k.pr}`);
+const MOCK_BRANCH_HEAD = "f00dfeed0123456789abcdef0123456789abcdef";
+
+export async function reviewDefaultBase(path: string): Promise<string> {
+  if (!isTauri()) return "origin/main";
+  return invoke<string>("review_default_base", { path });
+}
+
+export async function branchReviewLoad(path: string, branch: string, base: string | null): Promise<BranchReviewData> {
+  if (!isTauri()) {
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      review: structuredClone(mockStored.get(mockKey({ branch })) ?? null),
+      head: MOCK_BRANCH_HEAD,
+      base: base ?? "origin/main",
+      files: structuredClone(MOCK_PR_FILES),
+      moves: [],
+      worktree: `/Users/you/src/${branch.replace(/\//g, "-")}`,
+      dirty: false,
+    };
+  }
+  return invoke<BranchReviewData>("branch_review_load", { path, branch, base });
+}
+
+export async function storedReviewLoad(path: string, key: ReviewKey): Promise<StoredReview | null> {
+  if (!isTauri()) return structuredClone(mockStored.get(mockKey(key)) ?? null);
+  return invoke<StoredReview | null>("stored_review_load", { path, key });
+}
+
+export async function storedReviewSave(path: string, review: StoredReview): Promise<void> {
+  if (!isTauri()) {
+    mockStored.set(mockKey(review.branch ? { branch: review.branch } : { pr: review.pr ?? 0 }), structuredClone(review));
+    return;
+  }
+  return invoke<void>("stored_review_save", { path, review });
+}
+
+export async function storedReviewDelete(path: string, key: ReviewKey): Promise<void> {
+  if (!isTauri()) {
+    mockStored.delete(mockKey(key));
+    return;
+  }
+  return invoke<void>("stored_review_delete", { path, key });
+}
+
+export async function branchGenerateReview(path: string, branch: string, base: string, command: string, label?: string): Promise<GeneratedBranchReview> {
+  if (!isTauri()) {
+    await new Promise((r) => setTimeout(r, 3000));
+    return { text: MOCK_REVIEW_FILE, file: null, head: MOCK_BRANCH_HEAD, base };
+  }
+  return invoke<GeneratedBranchReview>("branch_generate_review", { path, branch, base, command, label: label ?? null });
+}
+
+export async function branchCancelReview(path: string, branch: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("branch_cancel_review", { path, branch });
+}
+
+export async function reviewDraftFix(path: string, key: ReviewKey, id: number, input: FindingInput, fixCommand: string): Promise<StoredReview> {
+  if (!isTauri()) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const r = mockStored.get(mockKey(key));
+    const d = r?.drafts.find((x) => x.id === id);
+    if (!r || !d) throw new Error(`The review has no draft ${id}.`);
+    d.status = "fixed";
+    d.fix = { commit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", worktree: `/Users/you/src/${input.branch}`, at: Date.now() };
+    return structuredClone(r);
+  }
+  return invoke<StoredReview>("review_draft_fix", { path, key, id, input, fixCommand });
+}
+
+export async function reviewDraftFixCancel(path: string, branch: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("review_draft_fix_cancel", { path, branch });
 }

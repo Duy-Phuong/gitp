@@ -773,6 +773,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   $("#activity-view").classList.toggle("hidden", view !== "activity");
   $("#localhistory-view").classList.toggle("hidden", view !== "localhistory");
   $("#pr-view").classList.toggle("hidden", view !== "pr");
+  $("#branch-review-view").classList.toggle("hidden", view !== "branchreview");
   $("#prlist-view").classList.toggle("hidden", view !== "prlist");
   $("#claude-view").classList.toggle("hidden", view !== "claude");
   $("#code-view").classList.toggle("hidden", view !== "code");
@@ -1123,6 +1124,12 @@ export function searchPullRequests(text: string): void {
     state.prs.query = text;
     renderSidebarNow();
   }, 120);
+}
+
+// The Review panel of local branch `branch` (branch-review-actions.ts).
+export function showBranchReview(branch: string): void {
+  ui.branchReviewView?.show(branch);
+  showView("branchreview");
 }
 
 // Open pull request `number` in the pull request view.

@@ -6,6 +6,7 @@ mod activity;
 mod bisect;
 mod blame;
 mod branch_ops;
+mod branch_review;
 mod checkout;
 mod claude_transcript;
 mod commit_ops;
@@ -35,6 +36,7 @@ mod log;
 mod merge_preview;
 mod pick_plan;
 mod pr_threads;
+mod review_store;
 mod progress;
 mod rebase;
 mod reflog;
@@ -56,6 +58,7 @@ pub use activity::ActivityEntry;
 pub use bisect::{BisectMark, BisectStatus};
 pub use blame::{BlameCommit, BlameLine, FileBlame};
 pub use branch_ops::{AheadCommit, MergeMode};
+pub use branch_review::{BranchDiff, FindingInput, GeneratedBranchReview};
 pub use checkout::StashSwitch;
 pub use claude_transcript::{
     local_day_start, new_session_id, subagent_transcripts, transcript_path, transcript_path_in, Transcript,
@@ -91,6 +94,7 @@ pub use local_history::{
 pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope, LogWalk};
 pub use merge_preview::MergePreview;
 pub use pick_plan::{PickAction, PickPlanOutcome, PickStep};
+pub use review_store::{DraftStatus, ReviewFix, ReviewKey, StoredDraft, StoredReview};
 pub use pr_threads::{prepared_reply, ThreadConversation, ThreadTurn, TurnKind, TurnRole, THREAD_KEEP};
 pub use progress::{ClaudeRun, ClaudeRunFn, NetworkHooks, Progress, ProgressFn};
 pub use rebase::{RebaseAction, RebaseCommit, RebaseStatus, RebaseStep};

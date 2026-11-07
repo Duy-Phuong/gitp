@@ -397,3 +397,14 @@ describe("the tags that make a pull request stand out in the lists", () => {
     ]);
   });
 });
+
+describe("Fix on a pull request's review drafts", () => {
+  it("is offered only on a pull request the signed-in user wrote", async () => {
+    const { canFixDrafts } = await import("./pull-requests");
+    expect(canFixDrafts("phuong", "phuong")).toBe(true);
+    expect(canFixDrafts("phuong", "anna")).toBe(false);
+    expect(canFixDrafts(null, "anna")).toBe(false);
+    expect(canFixDrafts("", "")).toBe(false);
+    expect(canFixDrafts("Phuong", "phuong"), "GitHub logins ignore case").toBe(true);
+  });
+});

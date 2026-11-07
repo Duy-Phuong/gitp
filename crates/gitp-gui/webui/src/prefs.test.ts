@@ -13,6 +13,7 @@ import {
   saveClaudeChoice,
   withClaudeChoice,
   SKILL_REVIEW_COMMAND,
+  BRANCH_SKILL_REVIEW_COMMAND,
   DEFAULT_THREAD_COMMANDS,
   FIX_TOOLS,
   loadThreadCommand,
@@ -137,6 +138,27 @@ describe("the review skill command", () => {
     expect(prompt).toBeGreaterThan(0);
     expect(prompt).toBeLessThan(SKILL_REVIEW_COMMAND.indexOf("--allowedTools"));
     expect(SKILL_REVIEW_COMMAND.trimEnd().endsWith('"'), "nothing after the tool list").toBe(true);
+  });
+});
+
+describe("the branch review skill command", () => {
+  it("reviews $GITP_BRANCH against $GITP_BASE with the skill's branch form, not board mode", () => {
+    const c = BRANCH_SKILL_REVIEW_COMMAND;
+    expect(c).toContain('claude -p "/review-pr-phuong $GITP_BRANCH against $GITP_BASE');
+    expect(c).not.toContain("board mode");
+    expect(c).not.toContain("$GITP_PR_URL");
+    expect(c.indexOf("$GITP_BRANCH")).toBeLessThan(c.indexOf("--allowedTools"));
+    expect(c).toContain(SESSION_ID_ARG);
+    expect(withClaudeChoice(c, { model: "haiku", effort: "low" })).toContain("--model haiku --effort low");
+  });
+});
+
+describe("the fix command", () => {
+  it("is neutral: a thread on a pull request or a finding on a branch", () => {
+    const c = DEFAULT_THREAD_COMMANDS.fix;
+    expect(c).toContain('claude -p "Read $GITP_THREAD_FILE: a review thread on a pull request, or a review finding on a branch');
+    expect(c).toContain("fix(review): <path>:<line> — <what>");
+    expect(c).not.toContain("$GITP_PR_URL");
   });
 });
 

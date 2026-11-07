@@ -1017,3 +1017,74 @@ export interface BlameCommit {
   summary: string;
   body: string;
 }
+
+// --- Review drafts kept on disk (a branch's or a pull request's) ---------------
+
+// The commit a fix made for a draft, where, and when (ms).
+export interface ReviewFix {
+  commit: string;
+  worktree: string;
+  at: number;
+}
+
+export type DraftStatus = "pending" | "approved" | "discarded" | "fixed";
+
+export interface StoredDraft {
+  id: number;
+  path: string;
+  line: number;
+  side: "LEFT" | "RIGHT";
+  body: string;
+  severity: string | null;
+  original: string;
+  status: DraftStatus;
+  topic?: string | null;
+  fix?: ReviewFix | null;
+  stale?: boolean;
+}
+
+export interface StoredReview {
+  version: number;
+  branch?: string | null;
+  pr?: number | null;
+  base: string;
+  head: string;
+  drafts: StoredDraft[];
+}
+
+export type ReviewKey = { branch: string } | { pr: number };
+
+// The branch Review panel's data (see reviews.rs): the saved review, the
+// branch's diff against `base`, how files moved since the reviewed head
+// (null: that head is gone, every line moved), and the worktree.
+export interface BranchReviewData {
+  review: StoredReview | null;
+  head: string;
+  base: string;
+  files: FileDiff[];
+  moves: FileDiff[] | null;
+  worktree: string | null;
+  dirty: boolean;
+}
+
+export interface GeneratedBranchReview {
+  text: string;
+  file: string | null;
+  head: string;
+  base: string;
+}
+
+// One draft to fix, with the hunk around it; `pr` and `pr_head` for a pull
+// request's draft, whose branch must hold that head.
+export interface FindingInput {
+  path: string;
+  line: number;
+  side: "LEFT" | "RIGHT";
+  body: string;
+  severity: string | null;
+  diff_hunk: string;
+  branch: string;
+  base: string;
+  pr?: number | null;
+  pr_head?: string | null;
+}

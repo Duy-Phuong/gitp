@@ -20,7 +20,7 @@ import { state } from "./app-state";
 import { jobsSummary, repoName } from "./claude-jobs-model";
 import { $ } from "./dom";
 import { setStatus } from "./report";
-import { showPullRequest, showView, switchRepo } from "./shell";
+import { showBranchReview, showPullRequest, showView, switchRepo } from "./shell";
 import { setupClaudeJobsView, type ClaudeJobsView } from "./views/claude-jobs";
 
 const POLL_MS = 1500;
@@ -109,7 +109,9 @@ async function openJobPlace(job: ClaudeJob): Promise<void> {
     await switchRepo(job.repo);
   }
   $("#claude-panel").classList.add("hidden");
-  showPullRequest(job.pr);
+  // A branch's review or a fix of one of its drafts: its Review panel.
+  if (job.branch && !job.pr) showBranchReview(job.branch);
+  else showPullRequest(job.pr);
 }
 
 let ticking = false;

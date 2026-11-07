@@ -322,3 +322,9 @@ export function baseBranches(remoteBranches: string[], remote: string, defaultBr
   const names = remoteBranches.filter((n) => n.startsWith(prefix)).map((n) => n.slice(prefix.length));
   return [defaultBranch, ...names.filter((n) => n !== "HEAD" && n !== defaultBranch).sort()];
 }
+
+// Whether the signed-in user (`login`) may Fix the review drafts of a pull
+// request by `author`: only their own; on someone else's the author fixes.
+export function canFixDrafts(login: string | null | undefined, author: string): boolean {
+  return !!login && login.toLowerCase() === author.toLowerCase();
+}

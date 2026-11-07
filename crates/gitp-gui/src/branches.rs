@@ -225,6 +225,11 @@ fn delete_branches_recorded(
                 if !out.is_empty() {
                     outputs.push(out);
                 }
+                // Its review drafts go with it; a file that won't go is no
+                // reason to report the delete as failed.
+                let _ = session
+                    .repo
+                    .delete_stored_review(&gitp_core::ReviewKey::Branch(name.clone()));
                 deleted.push(DeletedBranch {
                     name: name.clone(),
                     oid,
@@ -508,6 +513,28 @@ mod tests {
     use crate::undo::{undo_impl, undo_state_impl};
     use crate::workspace::open_repo_impl;
     use std::process::Command;
+
+    #[test]
+    fn deleting_a_branch_deletes_its_review() {
+        let dir = tempfile::tempdir().unwrap();
+        make_repo(dir.path(), &["c1"]);
+        git(dir.path(), &["branch", "feat/gone"]);
+        let state = RepoState::default();
+        open_repo_impl(&state, dir.path().to_str().unwrap().to_string()).expect("open");
+        let repo = gitp_core::Repo::open(dir.path()).unwrap();
+        let key = gitp_core::ReviewKey::Branch("feat/gone".into());
+        repo.save_stored_review(&gitp_core::StoredReview {
+            version: 1,
+            branch: Some("feat/gone".into()),
+            pr: None,
+            base: String::new(),
+            head: String::new(),
+            drafts: vec![],
+        })
+        .unwrap();
+        delete_branches_impl(&state, vec!["feat/gone".into()], true).expect("delete");
+        assert_eq!(repo.stored_review(&key).unwrap(), None);
+    }
 
     // --- undoing a bulk delete ---------------------------------------------
     //
