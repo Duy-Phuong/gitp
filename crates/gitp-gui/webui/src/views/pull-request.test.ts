@@ -433,3 +433,44 @@ describe("the Files tab of a large pull request", () => {
     expect(shown.every((n) => n.dataset.path!.includes("f2"))).toBe(true);
   });
 });
+
+describe("the Commits tab", () => {
+  const commit = (oid: string) => ({ oid, headline: `c ${oid}`, body: "", authors: [], committed_at: "2026-11-07T08:00:00Z" });
+  let fetchCommitFiles: ReturnType<typeof vi.fn>;
+  const commitsTab = () => [...host.querySelectorAll<HTMLButtonElement>(".pr-tab")].find((b) => b.textContent?.startsWith("Commits"))!;
+  const button = (text: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === text)!;
+
+  beforeEach(async () => {
+    view.reset();
+    host.remove();
+    detail = { ...detail, commits: [commit("c1"), commit("c2"), commit("c3")] };
+    fetchCommitFiles = vi.fn(async () => structuredClone(FILES));
+    host = document.createElement("div");
+    document.body.append(host);
+    view = setupPullRequestView(host, callbacks({ ...(cb as unknown as Partial<PullRequestCallbacks>), fetchCommitFiles }));
+    view.show(7);
+    await settle();
+  });
+
+  it("reads the commits next to the one open, so Next shows at once", async () => {
+    commitsTab().click();
+    host.querySelectorAll<HTMLElement>(".pr-commit")[1].click();
+    await settle();
+    expect(fetchCommitFiles.mock.calls).toEqual([["c2"], ["c3"], ["c1"]]);
+    button("Next ›").click();
+    expect(host.textContent).not.toContain("Loading the changed files");
+    expect(host.querySelector(".pr-files-diffs .file-head")).not.toBeNull();
+    await settle();
+    expect(fetchCommitFiles).toHaveBeenCalledTimes(3);
+  });
+
+  it("starts reading a commit when the pointer rests on it in the list", async () => {
+    commitsTab().click();
+    host.querySelectorAll<HTMLElement>(".pr-commit")[2].dispatchEvent(new Event("mouseenter"));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(fetchCommitFiles).toHaveBeenCalledWith("c3");
+    host.querySelectorAll<HTMLElement>(".pr-commit")[2].click();
+    await settle();
+    expect(fetchCommitFiles.mock.calls.filter((c) => c[0] === "c3")).toHaveLength(1);
+  });
+});

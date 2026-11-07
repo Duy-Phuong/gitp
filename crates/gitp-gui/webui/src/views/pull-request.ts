@@ -28,6 +28,7 @@ import {
   savePrFilesTree,
 } from "../prefs";
 import { storePullRequest, storedPullRequest } from "../pr-store";
+import { whenPointedAt } from "../read-ahead";
 import { jiraKeyIn, jiraTicketUrl } from "../jira";
 import { renderFileTree } from "./tree";
 import {
@@ -210,6 +211,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // the files of each commit read so far.
   let commitOpen: string | null = null;
   const commitFiles = new Map<string, FileDiff[]>();
+  // Those being read: the one opened, its neighbours read ahead, and one
+  // the pointer rests on in the list.
+  const commitReads = new Map<string, Promise<FileDiff[]>>();
   // Drops an answer for a pull request that is no longer the one on screen.
   let generation = 0;
   // The comment box at the bottom of the conversation, kept across re-renders
@@ -1456,6 +1460,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         commitOpen = c.oid;
         render();
       });
+      whenPointedAt(row, () => void readCommitFiles(c.oid).catch(() => {}));
       list.append(row);
     }
     body.append(list);
@@ -1522,14 +1527,23 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         files.append(node);
       }
     };
+    // Then the commits before and after it, so Previous and Next show at once.
+    const readNeighbours = () => {
+      for (const to of [at + 1, at - 1]) if (pr.commits[to]) readCommitFiles(pr.commits[to].oid).catch(() => {});
+    };
     const known = commitFiles.get(c.oid);
-    if (known) return show(known);
+    if (known) {
+      show(known);
+      readNeighbours();
+      return;
+    }
     files.append(el("div", { class: "pr-empty", text: "Loading the changed files…" }));
     const mine = generation;
-    cb.fetchCommitFiles(c.oid).then(
+    readCommitFiles(c.oid).then(
       (list) => {
-        commitFiles.set(c.oid, list);
-        if (mine === generation && tab === "commits" && commitOpen === c.oid) show(list);
+        if (mine !== generation) return;
+        if (tab === "commits" && commitOpen === c.oid) show(list);
+        readNeighbours();
       },
       (err: unknown) => {
         if (mine !== generation || commitOpen !== c.oid) return;
@@ -1538,6 +1552,26 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         cb.reportError(`Couldn't load the files of ${c.oid.slice(0, 7)}`, err);
       },
     );
+  }
+
+  // Commit `oid`'s changed files, read from GitHub once however many ask.
+  function readCommitFiles(oid: string): Promise<FileDiff[]> {
+    const known = commitFiles.get(oid);
+    if (known) return Promise.resolve(known);
+    let read = commitReads.get(oid);
+    if (!read) {
+      read = cb.fetchCommitFiles(oid);
+      commitReads.set(oid, read);
+      read.then(
+        (list) => {
+          // A commit's files never change: kept even when another load began.
+          commitFiles.set(oid, list);
+          commitReads.delete(oid);
+        },
+        () => commitReads.delete(oid),
+      );
+    }
+    return read;
   }
 
   function renderChecks(body: HTMLElement, pr: PullRequestDetail): void {
@@ -1584,6 +1618,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         renderedTab = null;
         commitOpen = null;
         commitFiles.clear();
+        commitReads.clear();
         searched = null;
         draft = "";
         filesQuery = "";

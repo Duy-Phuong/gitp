@@ -60,6 +60,7 @@ import { pausePollingFor, startPolling } from "./poller";
 import { isRateLimit, listChanged, PR_LIST_POLL_MS, RATE_LIMIT_PAUSE_MS } from "./pr-refresh";
 import { state, ui } from "./app-state";
 import { readPullRequest } from "./read-ahead";
+import { storePullRequestList, storedPullRequestList } from "./pr-store";
 import { copyText } from "./clipboard";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import {
@@ -125,18 +126,25 @@ export async function loadPullRequests(recheckAccount = false): Promise<void> {
     return;
   }
   state.prs.loading = true;
+  // The list last seen for this repository shows while it is read again.
+  if (!state.prs.list) state.prs.list = storedPullRequestList(path, filter);
   renderSidebarNow();
+  // Asked for while gh's account is checked (the first time only), not after.
+  const listing = listPullRequests(filter === "reviewed" ? "all" : filter);
+  listing.catch(() => {
+    // Read below, when gh is signed in.
+  });
+  const saving = reviewFiles().catch(() => []);
   if (!state.prs.account || recheckAccount) state.prs.account = await accountOrError();
   if (stale()) return;
   const account = state.prs.account;
-  if (account.installed && account.signed_in) {
+  if (!account.installed || !account.signed_in) state.prs.list = null;
+  else {
     try {
-      const [list, saved] = await Promise.all([
-        listPullRequests(filter === "reviewed" ? "all" : filter),
-        reviewFiles().catch(() => []),
-      ]);
+      const [list, saved] = await Promise.all([listing, saving]);
       if (stale()) return;
       state.prs.list = list;
+      storePullRequestList(path, filter, list);
       state.prs.reviewFiles = saved;
       // The open pull request's review page icon follows the list.
       ui.prView?.redraw();
@@ -168,6 +176,7 @@ async function pollPullRequestList(): Promise<void> {
     const list = await listPullRequests(filter === "reviewed" ? "all" : filter);
     if (stale() || !listChanged(state.prs.list, list)) return;
     state.prs.list = list;
+    storePullRequestList(path, filter, list);
     state.prs.error = null;
     renderSidebarNow();
   } catch (err) {

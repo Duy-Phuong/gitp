@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { storePullRequest, storedPullRequest } from "./pr-store";
-import type { PullRequestDetail } from "./types";
+import { storePullRequest, storePullRequestList, storedPullRequest, storedPullRequestList } from "./pr-store";
+import type { PullRequest, PullRequestDetail } from "./types";
 
 const pr = (number: number, body = ""): PullRequestDetail => ({ number, title: `PR ${number}`, body }) as PullRequestDetail;
 
@@ -44,5 +44,23 @@ describe("pull requests kept across restarts", () => {
     expect(storedPullRequest("/a", 3)).toBeNull();
     storePullRequest("/a", pr(4));
     expect(storedPullRequest("/a", 4)?.number).toBe(4);
+  });
+});
+
+describe("pull request lists kept across restarts", () => {
+  const row = (number: number) => ({ number, title: `PR ${number}` }) as PullRequest;
+
+  it("gives back a repository's last list under the same filter", () => {
+    storePullRequestList("/a", "all", [row(1), row(2)]);
+    storePullRequestList("/a", "mine", [row(3)]);
+    expect(storedPullRequestList("/a", "all")?.map((p) => p.number)).toEqual([1, 2]);
+    expect(storedPullRequestList("/a", "mine")?.map((p) => p.number)).toEqual([3]);
+    expect(storedPullRequestList("/b", "all")).toBeNull();
+  });
+
+  it("keeps the twenty lists stored last", () => {
+    for (let n = 1; n <= 21; n++) storePullRequestList(`/r${n}`, "all", [row(n)]);
+    expect(storedPullRequestList("/r1", "all")).toBeNull();
+    expect(storedPullRequestList("/r21", "all")?.[0].number).toBe(21);
   });
 });
