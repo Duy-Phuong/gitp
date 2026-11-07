@@ -85,6 +85,8 @@ import { setupConflict } from "./views/conflict";
 import { setupReflog } from "./views/reflog";
 import { setupActivity } from "./views/activity";
 import { setupPullRequestView } from "./views/pull-request";
+import { setupBranchReviewView } from "./views/branch-review";
+import { branchReviewCallbacks } from "./branch-review-actions";
 import { copyText } from "./clipboard";
 import { state, ui, type View } from "./app-state";
 import { opFailed, readFailed, reportDone, setStatus, watchNetwork, watchPending } from "./report";
@@ -530,6 +532,7 @@ async function init(): Promise<void> {
     reportError: readFailed,
   });
   ui.prView = setupPullRequestView($("#pr-view"), pullRequestCallbacks);
+  ui.branchReviewView = setupBranchReviewView($("#branch-review-view"), branchReviewCallbacks);
   ui.prListView = setupPullRequestListView($("#prlist-view"), {
     open: showPullRequest,
     openInTab: (pr) => openPullRequestTab(pr.number, pr.title),
@@ -547,6 +550,7 @@ async function init(): Promise<void> {
   onReviewsChange(() => {
     renderSidebarNow();
     ui.prView?.redraw();
+    if (state.view === "branchreview") ui.branchReviewView?.redraw();
   });
   // So did a Claude turn on one of its threads.
   onThreadsChange(() => {

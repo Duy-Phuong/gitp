@@ -114,6 +114,7 @@ import { finishFlowAction, initGitflowAction, startFlowAction } from "./gitflow-
 import { FLOW_KINDS, flowBranch } from "./gitflow";
 import { lfsFetchAction, lfsInstallAction, lfsPullAction, lfsTrackAction, lfsUntrackAction } from "./lfs-actions";
 import { checkoutPullRequestAction, showPrFilter } from "./pr-actions";
+import { openBranchReview } from "./branch-review-actions";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { openWorkspacesAction } from "./local-workspace-actions";
 import { addRemoteAction } from "./remote-actions";
@@ -361,6 +362,16 @@ function repoCommands(): QuickItem[] {
       kind: "command",
       label: "Create Pull Request…",
       next: () => branchStage("Create Pull Request", (b) => void createPullRequestAction(b)),
+    },
+    {
+      kind: "command",
+      label: "Review Branch: Run Review Skill…",
+      next: () => branchStage("Run Review Skill on", (b) => openBranchReview(b.name, "skill")),
+    },
+    {
+      kind: "command",
+      label: "Review Branch: Open Review Panel…",
+      next: () => branchStage("Open the Review panel of", (b) => openBranchReview(b.name)),
     },
     {
       kind: "command",

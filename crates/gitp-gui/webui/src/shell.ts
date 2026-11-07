@@ -773,6 +773,7 @@ export function showView(view: View, opts: { refreshHistory?: boolean } = {}): v
   $("#activity-view").classList.toggle("hidden", view !== "activity");
   $("#localhistory-view").classList.toggle("hidden", view !== "localhistory");
   $("#pr-view").classList.toggle("hidden", view !== "pr");
+  $("#branch-review-view").classList.toggle("hidden", view !== "branchreview");
   $("#prlist-view").classList.toggle("hidden", view !== "prlist");
   $("#claude-view").classList.toggle("hidden", view !== "claude");
   $("#code-view").classList.toggle("hidden", view !== "code");
@@ -1126,6 +1127,12 @@ export function searchPullRequests(text: string): void {
 }
 
 // Open pull request `number` in the pull request view.
+// The Review panel of local branch `branch` (branch-review-actions.ts).
+export function showBranchReview(branch: string): void {
+  ui.branchReviewView?.show(branch);
+  showView("branchreview");
+}
+
 export function showPullRequest(number: number): void {
   prTabOpen = null;
   state.prs.open = number;

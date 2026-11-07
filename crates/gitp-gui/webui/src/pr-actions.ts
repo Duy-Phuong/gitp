@@ -96,7 +96,7 @@ import {
 import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
 import { openReviewViewer } from "./views/review-viewer";
-import { baseBranches, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices, reviewThreads, type Thread } from "./pull-requests";
+import { baseBranches, canFixDrafts, defaultMergeMethod, githubRemoteName, mergeAdvice, mergeChoices, reviewThreads, type Thread } from "./pull-requests";
 import type { AheadCommit, BranchRef, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict, ThreadConversation, TurnKind } from "./types";
 
 // --- The sidebar section ----------------------------------------------------
@@ -990,8 +990,7 @@ const prFixing = new Map<string, number>();
 // Fix on the drafts of a pull request the signed-in user wrote; null on
 // anyone else's (the author fixes).
 function prDraftFix(repo: string, pr: PullRequestDetail): { reason: (d: Draft) => string | null; run: (d: Draft) => void } | null {
-  const login = state.prs.account?.login;
-  if (!login || login !== pr.author) return null;
+  if (!canFixDrafts(state.prs.account?.login, pr.author)) return null;
   return {
     reason: (d) => {
       if (!isOpen(d)) return d.status === "fixed" ? "Fixed already" : "Discarded";
