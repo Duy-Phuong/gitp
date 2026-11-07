@@ -6250,6 +6250,15 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   flex-direction: column;
   gap: 8px;
 }
+/* A segmented switch keeps its full width: shrunk beside a long hint, its
+   overflow: hidden cut off the last option ("Avatars | In…"). The text wraps
+   instead. */
+.settings-row.inline > .seg-toggle {
+  flex: none;
+}
+.settings-row.inline .seg {
+  white-space: nowrap;
+}
 .settings-row-label {
   font-size: 13px;
 }
