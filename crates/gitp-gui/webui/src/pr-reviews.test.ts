@@ -88,3 +88,116 @@ describe("posted drafts and the reviewed head", () => {
     expect(m.hasNewCommits(null, "1234567890abcd"), "never reviewed").toBe(false);
   });
 });
+
+describe("drafts kept on disk, with a fixed mark", () => {
+  const saver = () => {
+    const saved = new Map<string, unknown>();
+    const removed: unknown[] = [];
+    return {
+      saved,
+      removed,
+      save: vi.fn(async (repo: string, r: { branch?: string | null; pr?: number | null }) => void saved.set(`${repo}:${r.branch ?? r.pr}`, structuredClone(r))),
+      remove: vi.fn(async (_repo: string, key: unknown) => void removed.push(key)),
+    };
+  };
+
+  it("merges a new run by place and text: kept drafts keep their status and fix, open ones that went are dropped", async () => {
+    const m = await fresh();
+    const r = m.reviewFor("/a", { branch: "feat/x" });
+    m.addDrafts(r, [finding(1), finding(2), finding(3), finding(4)]);
+    r.drafts[0].status = "approved";
+    r.drafts[1].status = "fixed";
+    r.drafts[1].fix = { commit: "c".repeat(40), worktree: "/w", at: 1 };
+    r.drafts[2].status = "discarded";
+    // Draft 4 is pending and no longer found; 1 is found again at line 9.
+    const merged = m.mergeDrafts(r.drafts, [{ ...finding(1), line: 9 }, finding(5)]);
+    expect(merged.map((d) => [d.id, d.line, d.status, d.fix?.commit.slice(0, 1) ?? null])).toEqual([
+      [1, 9, "approved", null],
+      [2, 2, "fixed", "c"],
+      [3, 3, "discarded", null],
+      [5, 5, "pending", null],
+    ]);
+  });
+
+  it("knows a draft by its path and the first 80 characters of what the review wrote", async () => {
+    const m = await fresh();
+    const long = "x".repeat(80);
+    expect(m.fingerprintOf({ path: "a", body: `${long}one` })).toBe(m.fingerprintOf({ path: "a", body: `  ${long}two` }));
+    expect(m.fingerprintOf({ path: "a", body: "edited", original: "same" })).toBe(m.fingerprintOf({ path: "a", body: "same" }));
+    expect(m.fingerprintOf({ path: "b", body: "same" })).not.toBe(m.fingerprintOf({ path: "a", body: "same" }));
+  });
+
+  it("saves a fixed draft and reads it back after a restart", async () => {
+    vi.useFakeTimers();
+    try {
+      let m = await fresh();
+      const s = saver();
+      m.setReviewSaver(s);
+      const r = m.prReview("/a", 7);
+      m.addDrafts(r, [finding(1)]);
+      r.drafts[0].status = "fixed";
+      r.drafts[0].fix = { commit: "d".repeat(40), worktree: "/w", at: 2 };
+      r.head = "h1";
+      m.reviewsChanged();
+      await vi.advanceTimersByTimeAsync(500);
+      const stored = s.saved.get("/a:7") as import("./types").StoredReview;
+      expect(stored).toMatchObject({ version: 1, pr: 7, head: "h1", drafts: [{ id: 1, status: "fixed", original: "fix 1" }] });
+      m = await fresh();
+      m.applyStored("/a", { pr: 7 }, stored);
+      const back = m.prReview("/a", 7);
+      expect(back.drafts[0].status).toBe("fixed");
+      expect(back.drafts[0].fix?.commit).toBe("d".repeat(40));
+      expect(back.head).toBe("h1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("saves typing after a pause without telling the listeners, and only what changed", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = await fresh();
+      const s = saver();
+      m.setReviewSaver(s);
+      const heard = vi.fn();
+      m.onReviewsChange(heard);
+      const r = m.reviewFor("/a", { branch: "b" });
+      m.addDrafts(r, [finding(1)]);
+      r.drafts[0].body = "typed";
+      m.saveSoon();
+      expect(s.save).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(s.save).toHaveBeenCalledTimes(1);
+      expect(heard).not.toHaveBeenCalled();
+      await m.flushSaves();
+      expect(s.save, "nothing new to save").toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves fixed and discarded drafts out of the badge", async () => {
+    const m = await fresh();
+    const r = m.prReview("/a", 7);
+    m.addDrafts(r, [finding(1), finding(2), finding(3)]);
+    r.drafts[0].status = "fixed";
+    r.drafts[1].status = "discarded";
+    expect(m.reviewBadge("/a", 7)).toEqual({ text: "1 draft", kind: "ready" });
+    expect(r.drafts.filter(m.isOpen).map((d) => d.id)).toEqual([3]);
+  });
+
+  it("removes the saved file once the drafts are cleared", async () => {
+    const m = await fresh();
+    const s = saver();
+    m.setReviewSaver(s);
+    m.addDrafts(m.prReview("/a", 7), [finding(1)]);
+    await m.flushSaves();
+    m.clearDrafts("/a", 7);
+    await m.flushSaves();
+    expect(s.remove).toHaveBeenCalledWith("/a", { pr: 7 });
+    // A review never saved is never removed.
+    m.prReview("/a", 8);
+    await m.flushSaves();
+    expect(s.remove).toHaveBeenCalledTimes(1);
+  });
+});
