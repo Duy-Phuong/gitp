@@ -23,6 +23,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
+mod signature;
+pub use signature::PrSignature;
+
 use crate::branch_ops::parse_remote_url;
 use crate::diff::{collect_files, FileDiff, MAX_DIFF_LINES};
 use crate::encoding::TextEncoding;
@@ -2833,12 +2836,12 @@ cat "$d/err.$1.$2" >&2 2>/dev/null
 exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
 "#;
 
-    struct Fake {
+    pub(super) struct Fake {
         bin: tempfile::TempDir,
     }
 
     impl Fake {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             Self::with_script(FAKE_GH)
         }
 
@@ -2851,7 +2854,7 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         }
 
         /// What `gh <command>` (its first two arguments) answers.
-        fn answer(&self, command: &str, stdout: &str, stderr: &str, code: i32) -> &Self {
+        pub(super) fn answer(&self, command: &str, stdout: &str, stderr: &str, code: i32) -> &Self {
             let key = command.replace(' ', ".");
             let dir = self.bin.path();
             fs::write(dir.join(format!("out.{key}")), stdout).unwrap();
@@ -2861,14 +2864,14 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         }
 
         /// The fake first on PATH, then the real PATH for sh, git and sleep.
-        fn gh(&self) -> Gh {
+        pub(super) fn gh(&self) -> Gh {
             let real = std::env::var_os("PATH").unwrap_or_default();
             let dirs =
                 std::iter::once(self.bin.path().to_path_buf()).chain(std::env::split_paths(&real));
             Gh::with_search_path(std::env::join_paths(dirs).unwrap())
         }
 
-        fn calls(&self) -> Vec<Vec<String>> {
+        pub(super) fn calls(&self) -> Vec<Vec<String>> {
             fs::read_to_string(self.bin.path().join("argv"))
                 .unwrap_or_default()
                 .lines()
@@ -2897,11 +2900,11 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         (dir, repo)
     }
 
-    fn github_repo() -> (tempfile::TempDir, Repo) {
+    pub(super) fn github_repo() -> (tempfile::TempDir, Repo) {
         repo_with(&[("origin", "git@github.com:octo/hello.git")])
     }
 
-    fn message(err: Error) -> String {
+    pub(super) fn message(err: Error) -> String {
         match err {
             Error::Message(m) => m,
             other => panic!("expected a message, got {other:?}"),
