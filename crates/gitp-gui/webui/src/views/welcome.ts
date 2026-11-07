@@ -12,6 +12,8 @@ export interface WelcomeCallbacks {
   clone: () => void;
   init: () => void;
   workspaces: () => void;
+  // The review inbox, across the recent and favorite repositories.
+  inbox?: () => void;
   favorites: () => string[];
   recent: () => string[];
 }
@@ -50,6 +52,7 @@ export function setupWelcome(host: HTMLElement, cb: WelcomeCallbacks): WelcomeHa
         action("Clone…", "a remote repository", cb.clone),
         action("Init…", "a new repository", cb.init),
         action("Workspaces…", "groups of repositories", cb.workspaces),
+        ...(cb.inbox ? [action("Review Inbox", "pull requests that need you", cb.inbox)] : []),
       ]),
     ]);
 

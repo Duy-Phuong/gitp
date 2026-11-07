@@ -34,19 +34,19 @@ function readyToMerge(pr: InboxPr): boolean {
   return pr.review_decision === "APPROVED" && pr.merge_state === "CLEAN";
 }
 
-// Why it needs the user, in a few words each; empty when it waits on others.
+// Why it needs the user, in a few words each, as the row's tags. Unresolved
+// threads have a column of their own, so they aren't one.
 export function inboxReasons(pr: InboxPr): string[] {
   const reasons: string[] = [];
   if (pr.review_requested) reasons.push("review requested");
   if (!pr.mine) return reasons;
   if (pr.checks === "failure") reasons.push("checks failed");
-  if ((pr.unresolved ?? 0) > 0) reasons.push(`${pr.unresolved} unresolved`);
   if (readyToMerge(pr)) reasons.push("ready to merge");
   return reasons;
 }
 
 export function needsYou(pr: InboxPr): boolean {
-  return inboxReasons(pr).length > 0;
+  return inboxReasons(pr).length > 0 || (pr.mine && (pr.unresolved ?? 0) > 0);
 }
 
 // Failed check first, then review requested, then the most unresolved

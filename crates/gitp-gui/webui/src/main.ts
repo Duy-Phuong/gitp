@@ -173,6 +173,7 @@ import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-pan
 import { setupExternalChangeRefresh } from "./external-refresh";
 import { browseAndOpen, createBranchPrompt, openCheckoutBranchPicker, openQuickLaunch, openRecentPicker, openRecentRepo } from "./quick-launch-commands";
 import { setupWelcome } from "./views/welcome";
+import { openReviewInbox, setupReviewInbox } from "./inbox-actions";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { openWorkspacesAction } from "./local-workspace-actions";
 import { openInDiffTool, openInMergeTool } from "./external-tools";
@@ -557,6 +558,7 @@ async function init(): Promise<void> {
     setFilter: setPrFilter,
     search: searchPullRequests,
     refresh: refreshPullRequests,
+    inbox: openReviewInbox,
     signIn: () => void signInToGitHub(),
     reviewBadge: (pr) => reviewBadge(state.repoPath, pr.number),
   });
@@ -574,12 +576,19 @@ async function init(): Promise<void> {
     renderSidebarNow();
     ui.prView?.redraw();
   });
+  // A row of the review inbox: its repository (opened or switched to as Open
+  // Recent does), then the pull request.
+  setupReviewInbox($("#inbox-view"), async (path, number) => {
+    if (path !== state.repoPath) await openRecentRepo(path);
+    if (path === state.repoPath) showPullRequest(number);
+  });
   ui.welcomeView = setupWelcome($("#welcome-view"), {
     open: (path) => void openRecentRepo(path),
     browse: () => void browseAndOpen(),
     clone: cloneRepoAction,
     init: initRepoAction,
     workspaces: openWorkspacesAction,
+    inbox: openReviewInbox,
     favorites: loadFavoriteRepos,
     recent: loadRecentRepos,
   });

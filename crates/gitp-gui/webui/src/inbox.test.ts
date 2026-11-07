@@ -41,9 +41,10 @@ describe("which pull requests need you", () => {
     expect(needsYou(pr({ merge_state: "CLEAN" }))).toBe(false);
     expect(needsYou(pr({ checks: "pending", unresolved: null }))).toBe(false);
   });
-  it("says why", () => {
+  it("says why, leaving the threads to their own column", () => {
     expect(inboxReasons(pr({ mine: false, review_requested: true }))).toEqual(["review requested"]);
-    expect(inboxReasons(pr({ checks: "failure", unresolved: 3 }))).toEqual(["checks failed", "3 unresolved"]);
+    expect(inboxReasons(pr({ checks: "failure", unresolved: 3 }))).toEqual(["checks failed"]);
+    expect(inboxReasons(pr({ unresolved: 3 }))).toEqual([]);
     expect(inboxReasons(pr({ review_decision: "APPROVED", merge_state: "CLEAN" }))).toEqual(["ready to merge"]);
     expect(inboxReasons(pr({}))).toEqual([]);
   });
