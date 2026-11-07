@@ -398,7 +398,7 @@ exit "$(cat "$d/code.$k" 2>/dev/null || echo 0)"
     }
 
     fn conversation(thread: u64, turns: Vec<ThreadTurn>) -> ThreadConversation {
-        ThreadConversation { version: 1, pr: 12, thread, path: "a.rs".into(), session: None, fix_session: None, turns }
+        ThreadConversation { version: 1, pr: 12, thread, path: "a.rs".into(), title: None, line: None, comments: Vec::new(), session: None, fix_session: None, turns }
     }
 
     #[test]
