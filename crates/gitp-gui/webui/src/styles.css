@@ -7741,4 +7741,35 @@ mark.find-hit.current {
 .pr-line-orphan-head {
   color: var(--text-dim);
   font-size: 12px;
+
+/* Draft with Claude: beside Commit in the commit box, and beside a field's
+   label in a form dialog, with a line for "thinking…" or the failure. */
+.commit-draft-btn {
+  margin-left: auto;
+}
+.commit-draft-btn + .commit-btn {
+  margin-left: 0;
+}
+.commit-draft-status,
+.form-field-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 6px;
+}
+.form-field-status[hidden] {
+  display: none;
+}
+.commit-draft-status.failed span,
+.form-field-error {
+  color: var(--danger, #ff7b72);
+  white-space: pre-wrap;
+}
+.rename-label .form-field-action {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  padding: 2px 6px;
 }
