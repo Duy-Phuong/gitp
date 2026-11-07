@@ -72,6 +72,7 @@ import { cancelComparison, compareSelectedCommits, showComparison } from "./comp
 import { tabCycler } from "./tab-order";
 import { applyProfileIdentityHere } from "./profile-menu";
 import { hideReviewInbox } from "./inbox-actions";
+import { readPullRequestAhead, whenPointedAt } from "./read-ahead";
 
 // What a ref or commit row does when it's right-clicked (or, for a branch,
 // double-clicked) — set once by main.ts at startup; see the module comment.
@@ -293,6 +294,7 @@ function pullRequestTab(pr: { number: number; title: string }): HTMLElement {
     title: `#${pr.number} ${pr.title}`,
   }, [el("span", { class: "pr-tab-number", text: `#${pr.number}` }), el("span", { class: "pr-tab-title", text: pr.title })]);
   tab.addEventListener("click", () => openPullRequestTab(pr.number, pr.title));
+  whenPointedAt(tab, () => readPullRequestAhead(pr.number));
   const close = el("span", { class: "repo-tab-close", title: "Close" }, ["×"]);
   close.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1111,6 +1113,7 @@ export function renderSidebarNow(): void {
       onSectionMenu: (key, x, y) => refActions.onSectionMenu(key, x, y),
       onAddSubmodule: () => refActions.onAddSubmodule(),
       onPrOpen: (pr) => showPullRequest(pr.number),
+      onPrPoint: (pr) => readPullRequestAhead(pr.number),
       onPrMenu: (pr, x, y) => refActions.onPrMenu(pr, x, y),
       prReviewBadge: (pr) => reviewBadge(state.repoPath, pr.number),
       onPrFilter: (filter) => refActions.onPrFilter(filter),

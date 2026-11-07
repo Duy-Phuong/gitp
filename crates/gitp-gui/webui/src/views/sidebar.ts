@@ -9,6 +9,7 @@ import { PR_FILTERS, prAttentionTags, prMatches, prNumberQuery, reviewDecisionLa
 import { branchRefName, refShown, remoteRefName, tagRefName, type RefFilter } from "../ref-visibility";
 import { refDragHandle, refDropZone } from "./ref-drag";
 import type { DragRef } from "../ref-drop";
+import { whenPointedAt } from "../read-ahead";
 import type {
   BranchRef,
   GhAccount,
@@ -130,6 +131,8 @@ export interface SidebarCallbacks {
   onAddSubmodule: () => void;
   // Click a pull request: open it in the pull request view.
   onPrOpen: (pr: PullRequest) => void;
+  // The pointer rests on a pull request: start reading it.
+  onPrPoint?: (pr: PullRequest) => void;
   // Right-click a pull request: check out, open on GitHub, copy.
   onPrMenu: (pr: PullRequest, x: number, y: number) => void;
   // Its review in the background, as a badge: running, failed, or drafts ready.
@@ -673,6 +676,7 @@ function prLeaf(pr: PullRequest, open: boolean, cb: SidebarCallbacks): HTMLEleme
   }
   row.append(el("span", { class: "sb-ab", text: pr.author }));
   row.addEventListener("click", () => cb.onPrOpen(pr));
+  whenPointedAt(row, () => cb.onPrPoint?.(pr));
   row.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     cb.onPrMenu(pr, e.clientX, e.clientY);

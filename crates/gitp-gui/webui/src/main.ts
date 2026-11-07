@@ -170,6 +170,7 @@ import {
   signInToGitHub,
 } from "./pr-actions";
 import { setupPullRequestListView } from "./views/pr-list";
+import { readPullRequestAhead } from "./read-ahead";
 import { setupThreadSearchView } from "./views/thread-search";
 import { showThreadSearch, threadSearchCallbacks } from "./thread-search-actions";
 import { reviewBadge } from "./pr-reviews";
@@ -568,6 +569,7 @@ async function init(): Promise<void> {
   ui.branchReviewView = setupBranchReviewView($("#branch-review-view"), branchReviewCallbacks);
   ui.prListView = setupPullRequestListView($("#prlist-view"), {
     open: showPullRequest,
+    point: readPullRequestAhead,
     openInTab: (pr) => openPullRequestTab(pr.number, pr.title),
     menu: onPrMenu,
     setFilter: setPrFilter,

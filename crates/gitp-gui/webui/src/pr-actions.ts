@@ -16,7 +16,6 @@ import {
   clearThreadConversation,
   confirmDialog,
   createPullRequestOnGitHub,
-  fetchPullRequest,
   fetchPullRequestFiles,
   fetchPullRequestSignature,
   fetchGitHubCommitFiles,
@@ -60,6 +59,7 @@ import { pushAndReplyListing, type ReplyToPost } from "./pr-push-reply";
 import { pausePollingFor, startPolling } from "./poller";
 import { isRateLimit, listChanged, PR_LIST_POLL_MS, RATE_LIMIT_PAUSE_MS } from "./pr-refresh";
 import { state, ui } from "./app-state";
+import { readPullRequest } from "./read-ahead";
 import { copyText } from "./clipboard";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
 import {
@@ -490,7 +490,7 @@ async function mergeNow(pr: PullRequestDetail, method: MergeMethod, deleteBranch
 
 // What the pull request view does, plugged in by main.ts.
 export const pullRequestCallbacks: PullRequestCallbacks = {
-  fetchDetail: fetchPullRequest,
+  fetchDetail: readPullRequest,
   fetchSignature: fetchPullRequestSignature,
   fetchFiles: fetchPullRequestFiles,
   fetchCommitFiles: fetchGitHubCommitFiles,

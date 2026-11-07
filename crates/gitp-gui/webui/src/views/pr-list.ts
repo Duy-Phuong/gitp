@@ -25,9 +25,12 @@ import { relativeTime } from "../timeago";
 import type { PrFilter, PullRequest } from "../types";
 import { labelChip } from "./pull-request";
 import type { PrSectionState } from "./sidebar";
+import { whenPointedAt } from "../read-ahead";
 
 export interface PullRequestListCallbacks {
   open: (number: number) => void;
+  // The pointer rests on a row: start reading that pull request.
+  point?: (number: number) => void;
   openInTab: (pr: PullRequest) => void;
   menu: (pr: PullRequest, x: number, y: number) => void;
   setFilter: (filter: PrFilter) => void;
@@ -321,6 +324,7 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
       el("td", { class: "prl-actions" }, [inTab]),
     ]);
     tr.addEventListener("click", () => cb.open(pr.number));
+    whenPointedAt(tr, () => cb.point?.(pr.number));
     tr.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       cb.menu(pr, e.clientX, e.clientY);
