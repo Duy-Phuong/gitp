@@ -276,6 +276,7 @@ pub fn run() {
             gh::gh_thread_mark_posted,
             gh::gh_thread_drop_reply,
             gh::gh_thread_choose,
+            gh::gh_apply_suggestions,
             reviews::review_default_base,
             reviews::branch_review_load,
             reviews::stored_review_load,

@@ -184,6 +184,9 @@ pub struct PrReviewComment {
     pub line: Option<u32>,
     /// The line it was written on.
     pub original_line: Option<u32>,
+    /// The first line of a comment on several lines (a multi-line
+    /// suggestion's range is `start_line..=line`); none on one line.
+    pub start_line: Option<u32>,
     /// `RIGHT` for a line of the new file, `LEFT` for one of the old.
     pub side: String,
     pub created_at: String,
@@ -2922,6 +2925,8 @@ struct RawReviewComment {
     path: String,
     line: Option<u32>,
     original_line: Option<u32>,
+    #[serde(default)]
+    start_line: Option<u32>,
     side: Option<String>,
     #[serde(default)]
     created_at: String,
@@ -2941,6 +2946,7 @@ impl From<RawReviewComment> for PrReviewComment {
             path: r.path,
             line: r.line,
             original_line: r.original_line,
+            start_line: r.start_line,
             side: r.side.unwrap_or_else(|| "RIGHT".into()),
             created_at: r.created_at,
             in_reply_to: r.in_reply_to_id,
@@ -3411,6 +3417,7 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             path: "src/retry.ts".into(),
             line: Some(12),
             original_line: Some(12),
+            start_line: None,
             side: "RIGHT".into(),
             created_at: "2026-11-04T09:00:00Z".into(),
             in_reply_to,

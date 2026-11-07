@@ -835,6 +835,21 @@ pub(crate) fn gh_thread_drop_reply(path: String, number: u64, thread: u64) -> Re
     gh_thread_drop_reply_impl(path, number, thread)
 }
 
+/// Apply review suggestions in the worktree of the pull request's `branch`,
+/// as one commit (see `Repo::apply_suggestions`); the new commit.
+#[tauri::command(async)]
+pub(crate) fn gh_apply_suggestions(
+    path: String,
+    number: u64,
+    head: String,
+    branch: String,
+    suggestions: Vec<gitp_core::Suggestion>,
+) -> Result<String, String> {
+    let repo = Repo::open(&path).map_err(to_message)?;
+    repo.apply_suggestions(number, &head, &branch, &suggestions)
+        .map_err(to_message)
+}
+
 /// Record the user's chosen option on a thread, unanswered, for Fix to take.
 #[tauri::command(async)]
 pub(crate) fn gh_thread_choose(
@@ -958,6 +973,7 @@ mod tests {
                 path: "a".into(),
                 line: Some(1),
                 original_line: Some(1),
+                start_line: None,
                 side: "RIGHT".into(),
                 created_at: String::new(),
                 in_reply_to: None,
@@ -1062,6 +1078,7 @@ mod tests {
             path: "a".into(),
             line: Some(1),
             original_line: Some(1),
+            start_line: None,
             side: "RIGHT".into(),
             created_at: String::new(),
             in_reply_to: None,
