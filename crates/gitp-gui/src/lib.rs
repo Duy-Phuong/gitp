@@ -18,6 +18,7 @@ mod commits;
 mod compare;
 mod config;
 mod conflict;
+mod drafts;
 mod editor;
 mod gh;
 mod gitflow;
@@ -93,6 +94,7 @@ pub fn run() {
         .manage(gh::GhLoginState::default())
         .manage(claude_jobs::ClaudeJobs::default())
         .manage(gh::FixJobs::default())
+        .manage(drafts::DraftRuns::default())
         .register_asynchronous_uri_scheme_protocol(review_page::SCHEME, review_page::serve)
         .setup(|app| {
             // Repository watchers push changes on disk to the frontend (see
@@ -266,6 +268,9 @@ pub fn run() {
             reviews::stored_review_delete,
             reviews::branch_generate_review,
             reviews::branch_cancel_review,
+            drafts::draft_commit_message,
+            drafts::draft_pull_request,
+            drafts::draft_cancel,
             reviews::review_draft_fix,
             reviews::review_draft_fix_cancel,
             gh::gh_login_start,

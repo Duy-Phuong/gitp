@@ -43,7 +43,7 @@ pub struct GeneratedBranchReview {
 }
 
 /// `git <args>` in `dir`, its stdout as it came (a diff keeps its last newline).
-fn git_raw(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
+pub(crate) fn git_raw(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let out = crate::git_bin::git_command()
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -57,7 +57,7 @@ fn git_raw(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
     }
 }
 
-const DIFF: [&str; 5] = ["-c", "core.quotepath=false", "diff", "--no-color", "--no-ext-diff"];
+pub(crate) const DIFF: [&str; 5] = ["-c", "core.quotepath=false", "diff", "--no-color", "--no-ext-diff"];
 
 impl Repo {
     /// `branch` against `base`: what the branch adds since they forked.
