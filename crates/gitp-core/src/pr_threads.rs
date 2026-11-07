@@ -214,6 +214,28 @@ impl Repo {
         std::fs::rename(&tmp, &file).map_err(|e| io_err(&file, e))
     }
 
+    /// Record `text` as the user's choice on the thread: a follow-up that
+    /// Claude does not answer, which Fix then takes as the option (see
+    /// `Repo::fix_thread`). The thread must have a conversation already.
+    pub fn record_thread_choice(
+        &self,
+        number: u64,
+        thread: u64,
+        text: &str,
+    ) -> Result<ThreadConversation> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(Error::Message("Choose an option first.".into()));
+        }
+        let mut c = self.thread_conversation(number, thread)?.ok_or_else(|| {
+            Error::Message("The thread has no conversation yet: Check it first.".into())
+        })?;
+        c.turns
+            .push(ThreadTurn::user(TurnKind::Followup, text.to_string()));
+        self.save_thread_conversation(&c)?;
+        Ok(c)
+    }
+
     /// The latest reply draft was posted at `url`.
     pub fn mark_reply_posted(&self, number: u64, thread: u64, url: &str) -> Result<()> {
         self.change_prepared_reply(number, thread, |t| t.posted = Some(url.to_string()))
@@ -488,6 +510,43 @@ mod tests {
             .unwrap();
         let repo = Repo::open(dir.path()).unwrap();
         (dir, repo)
+    }
+
+    #[test]
+    fn a_choice_is_kept_as_the_users_turn_for_fix_to_take() {
+        let (_dir, repo) = test_repo();
+        assert!(
+            repo.record_thread_choice(7, 1, "I choose: A").is_err(),
+            "no conversation yet"
+        );
+        let c = ThreadConversation {
+            version: 1,
+            pr: 7,
+            thread: 1,
+            path: "a.rs".into(),
+            title: None,
+            line: None,
+            comments: vec![],
+            session: None,
+            fix_session: None,
+            turns: vec![ThreadTurn::claude(
+                TurnKind::Check,
+                "a1".into(),
+                "| Option |".into(),
+            )],
+        };
+        repo.save_thread_conversation(&c).unwrap();
+        assert!(
+            repo.record_thread_choice(7, 1, "  ").is_err(),
+            "nothing chosen"
+        );
+        let saved = repo.record_thread_choice(7, 1, " I choose: A ").unwrap();
+        let last = saved.turns.last().unwrap();
+        assert_eq!(
+            (last.role, last.kind, last.text.as_str()),
+            (TurnRole::User, TurnKind::Followup, "I choose: A")
+        );
+        assert_eq!(repo.thread_conversation(7, 1).unwrap().unwrap(), saved);
     }
 
     #[test]

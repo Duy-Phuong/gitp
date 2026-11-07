@@ -116,8 +116,10 @@ export function fixRunningOn(repo: string, number: number): number | null {
 // Why Fix is off on a thread, or null when it is on: no option chosen, or a
 // fix running at `elsewhere` (path:line) on the pull request. The checks on
 // the worktree itself (checked out, clean, up to date) are core's, on click.
+export const NO_OPTION_CHOSEN = "Send the option you want as a follow-up first";
+
 export function fixDisabledReason(c: ThreadConversation | null, elsewhere: string | null): string | null {
-  if (!hasChosenOption(c)) return "Send the option you want as a follow-up first";
+  if (!hasChosenOption(c)) return NO_OPTION_CHOSEN;
   if (elsewhere) return `A fix is running on ${elsewhere}`;
   return null;
 }

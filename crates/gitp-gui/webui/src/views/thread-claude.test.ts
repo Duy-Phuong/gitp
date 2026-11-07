@@ -201,8 +201,10 @@ it("reads the options from the table of Claude's answer", () => {
 
 describe("ticking an option", () => {
   const withCheck = (): ThreadConversation => ({ ...conv(), turns: [{ kind: "check", role: "claude", at: Date.now(), head: "aaaa", text: CHECK }] });
-  const node = (draft = "") => {
+  let chosen: string[] = [];
+  const node = (draft = "", fixDisabled: string | null = "Send the option you want as a follow-up first") => {
     const drafts: string[] = [];
+    chosen = [];
     const n = conversationNode({
       state: { running: null, error: null, loaded: true, conversation: withCheck() },
       head: "aaaa",
@@ -210,6 +212,8 @@ describe("ticking an option", () => {
       lastKind: null,
       draft,
       onDraft: (t) => drafts.push(t),
+      fix: { disabled: fixDisabled },
+      onChooseFix: (t) => chosen.push(t),
       onFollowup() {},
       onClear() {},
       onRetry() {},
@@ -241,5 +245,24 @@ describe("ticking an option", () => {
     expect(area.value).toBe("Please also add a test.\nI choose: C. No change");
     const again = node(area.value);
     expect(again.boxes.map((b) => b.checked)).toEqual([false, false, true]);
+  });
+
+  it("Fix with this saves the ticked option and starts the fix, in one click", () => {
+    const { n, boxes, area } = node();
+    const fixWith = [...n.querySelectorAll("button")].find((b) => b.textContent === "Fix with this")!;
+    expect(fixWith.disabled).toBe(true);
+    tick(boxes[1]);
+    expect(fixWith.disabled).toBe(false);
+    fixWith.click();
+    expect(chosen).toEqual(["I choose: B. An alternative"]);
+    expect(area.value).toBe("");
+  });
+
+  it("Fix with this is off while a fix runs elsewhere on the pull request", () => {
+    const { n, boxes } = node("", "A fix is running on a.ts:3");
+    tick(boxes[0]);
+    const fixWith = [...n.querySelectorAll("button")].find((b) => b.textContent === "Fix with this")!;
+    expect(fixWith.disabled).toBe(true);
+    expect(fixWith.title).toBe("A fix is running on a.ts:3");
   });
 });

@@ -835,6 +835,19 @@ pub(crate) fn gh_thread_drop_reply(path: String, number: u64, thread: u64) -> Re
     gh_thread_drop_reply_impl(path, number, thread)
 }
 
+/// Record the user's chosen option on a thread, unanswered, for Fix to take.
+#[tauri::command(async)]
+pub(crate) fn gh_thread_choose(
+    path: String,
+    number: u64,
+    thread: u64,
+    text: String,
+) -> Result<ThreadConversation, String> {
+    let repo = Repo::open(&path).map_err(to_message)?;
+    repo.record_thread_choice(number, thread, &text)
+        .map_err(to_message)
+}
+
 #[tauri::command(async)]
 pub(crate) fn read_review_file(path: String) -> Result<String, String> {
     read_review_file_impl(path)

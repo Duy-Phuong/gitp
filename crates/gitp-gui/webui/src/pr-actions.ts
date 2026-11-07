@@ -49,6 +49,7 @@ import {
   reviewPullRequest,
   reviewWithComments,
   threadConversation,
+  threadChoose,
   threadFix,
   threadTurn,
   markReplyPosted,
@@ -620,6 +621,16 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   },
   threadTurn: (pr, thread, kind, userText) => void runThreadTurn(state.repoPath, pr, thread, kind, userText),
   fixThread: (pr, thread) => void runFix(state.repoPath, pr, thread),
+  chooseOption: async (pr, thread, text) => {
+    const repo = state.repoPath;
+    try {
+      setConversation(repo, pr.number, thread.root.id, await threadChoose(repo, pr.number, thread.root.id, text));
+      return true;
+    } catch (err) {
+      opFailed("Couldn't save the option", err);
+      return false;
+    }
+  },
   pushAndReplyAll: (pr, edited) => pushAndReplyAll(state.repoPath, pr, edited),
   dropReply: async (pr, thread) => {
     const repo = state.repoPath;

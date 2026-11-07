@@ -2653,6 +2653,17 @@ export async function clearThreadConversation(path: string, number: number, thre
 
 // Fix the thread as the user's last follow-up chose, in the worktree of the
 // pull request's `branch`: change, test, one commit, then the reply draft.
+// Save `text` as the user's chosen option on a thread, unanswered, for Fix.
+export async function threadChoose(path: string, number: number, thread: number, text: string): Promise<ThreadConversation> {
+  if (!isTauri()) {
+    const c = mockThreads.get(`${number}\n${thread}`);
+    if (!c) throw new Error("The thread has no conversation yet: Check it first.");
+    c.turns.push({ kind: "followup", role: "user", at: Date.now(), text });
+    return structuredClone(c);
+  }
+  return invoke<ThreadConversation>("gh_thread_choose", { path, number, thread, text });
+}
+
 export async function threadFix(path: string, input: ThreadInput, branch: string, fixCommand: string, replyCommand: string): Promise<ThreadConversation> {
   if (!isTauri()) {
     await new Promise((r) => setTimeout(r, 2000));

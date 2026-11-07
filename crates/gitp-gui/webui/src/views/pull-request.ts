@@ -133,6 +133,9 @@ export interface PullRequestCallbacks {
   // Fix the thread as the chosen option says, in the branch's worktree,
   // commit, and prepare the reply; drop a prepared reply after a confirm.
   fixThread: (pr: PullRequestDetail, thread: Thread) => void;
+  // Save the chosen option on the thread, for Fix to take; false when it
+  // couldn't (reported).
+  chooseOption: (pr: PullRequestDetail, thread: Thread, text: string) => Promise<boolean>;
   // True once dropped.
   dropReply: (pr: PullRequestDetail, thread: Thread) => Promise<boolean>;
   // Pushes the branch and posts every reply Claude has ready, after one
@@ -771,6 +774,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
             onFollowup: (text) => turn("followup", text),
             fix: { disabled: fixDisabledReason(ts.conversation, fixElsewhere(pr, root.id)) },
             onFix: fix,
+            onChooseFix: (text) =>
+              void cb.chooseOption(pr, thread, text).then((saved) => {
+                if (saved) fix();
+              }),
             onDrop: () => void dropReply(),
             onClear: () =>
               void cb.clearThreadConversation(pr, thread).then((cleared) => {

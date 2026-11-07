@@ -9,7 +9,7 @@ import { el } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
 import { composerArea } from "./composer";
 import { relativeTime, fullTime } from "../timeago";
-import { lastFix, preparedReply, type ThreadState } from "../pr-threads";
+import { lastFix, NO_OPTION_CHOSEN, preparedReply, type ThreadState } from "../pr-threads";
 import type { ThreadConversation, ThreadTurn, TurnKind } from "../types";
 
 // What a button starts: a follow-up has its own composer.
@@ -110,12 +110,26 @@ const chosen = (option: string) => `I choose: ${option}`;
 // A checkbox per option above the follow-up box: ticking one adds its line to
 // the box, unticking takes it out; what else is typed stays. Each box shows
 // whether its line is in the text, so a redraw or typing keeps them right.
-function optionPicker(options: string[], area: HTMLTextAreaElement, running: boolean, onDraft?: (text: string) => void): HTMLElement {
+// "Fix with this" beside them, when Fix is offered: saves what the box holds
+// as the user's choice and starts the fix, with no follow-up to wait for. Off
+// with nothing ticked, or for `blocked` (a fix running elsewhere).
+function optionPicker(
+  options: string[],
+  area: HTMLTextAreaElement,
+  running: boolean,
+  onDraft?: (text: string) => void,
+  fixWith?: { blocked: string | null; run: (text: string) => void },
+): HTMLElement {
   const row = el("div", { class: "pr-thread-options" }, [el("span", { class: "pr-thread-options-label", text: "Options" })]);
   const boxes: [HTMLInputElement, string][] = [];
+  const fixButton = fixWith ? el("button", { class: "btn small", text: "Fix with this" }) : null;
   const sync = () => {
     const lines = area.value.split("\n");
     for (const [box, option] of boxes) box.checked = lines.includes(chosen(option));
+    if (fixButton && fixWith) {
+      fixButton.disabled = running || fixWith.blocked !== null || !boxes.some(([b]) => b.checked);
+      fixButton.title = fixWith.blocked ?? "Make the change for the ticked option now: no follow-up to wait for";
+    }
   };
   for (const option of options) {
     const box = el("input", { type: "checkbox" });
@@ -126,9 +140,21 @@ function optionPicker(options: string[], area: HTMLTextAreaElement, running: boo
       if (box.checked) lines.push(chosen(option));
       area.value = lines.join("\n");
       onDraft?.(area.value);
+      sync();
     });
     boxes.push([box, option]);
     row.append(el("label", { class: "pr-thread-option", title: option }, [box, el("span", { text: option })]));
+  }
+  if (fixButton && fixWith) {
+    fixButton.addEventListener("click", () => {
+      const text = area.value.trim();
+      if (!text) return;
+      area.value = "";
+      onDraft?.("");
+      sync();
+      fixWith.run(text);
+    });
+    row.append(fixButton);
   }
   area.addEventListener("input", sync);
   sync();
@@ -150,6 +176,8 @@ export interface ConversationOptions {
   // Fix, when the view offers it: off with the reason as the button's title.
   fix?: { disabled: string | null };
   onFix?: () => void;
+  // Save the chosen option (what the follow-up box holds) and start Fix.
+  onChooseFix?: (text: string) => void;
   // Drop the prepared reply.
   onDrop?: () => void;
   // A resolved thread's block: the turns and Clear, nothing that starts one.
@@ -266,7 +294,10 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
       o.onClear();
     });
     const options = latestOptions(c);
-    const picker = options.length ? [optionPicker(options, area, state.running !== null, o.onDraft)] : [];
+    // Fix with this ignores "no option chosen": it chooses one.
+    const fixWith =
+      o.fix && o.onChooseFix ? { blocked: o.fix.disabled === NO_OPTION_CHOSEN ? null : o.fix.disabled, run: o.onChooseFix } : undefined;
+    const picker = options.length ? [optionPicker(options, area, state.running !== null, o.onDraft, fixWith)] : [];
     const box = el("div", { class: "pr-composer pr-thread-claude-composer" }, [...picker, area, el("div", { class: "pr-composer-actions" }, actions)]);
     box.addEventListener("click", (e) => e.stopPropagation());
     body.append(box);
