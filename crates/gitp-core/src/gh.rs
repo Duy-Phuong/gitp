@@ -34,6 +34,9 @@ use crate::progress::{kill, ClaudeRun, NetworkHooks};
 use crate::repo::Repo;
 use crate::worktree_ops::WorktreeTarget;
 
+mod inbox;
+pub use inbox::{inbox_repo, inbox_sources, InboxPr, InboxRepo};
+
 /// The host gitp signs in to.
 const GITHUB_HOST: &str = "github.com";
 
