@@ -18,6 +18,7 @@ import {
   createPullRequestOnGitHub,
   fetchPullRequest,
   fetchPullRequestFiles,
+  fetchPullRequestSignature,
   fetchGitHubCommitFiles,
   generateReviewDrafts,
   ghAccount,
@@ -56,6 +57,8 @@ import {
   storedReviewLoad,
 } from "./api";
 import { pushAndReplyListing, type ReplyToPost } from "./pr-push-reply";
+import { pausePollingFor, startPolling } from "./poller";
+import { isRateLimit, listChanged, PR_LIST_POLL_MS, RATE_LIMIT_PAUSE_MS } from "./pr-refresh";
 import { state, ui } from "./app-state";
 import { copyText } from "./clipboard";
 import { opFailed, readFailed, reportDone, setStatus } from "./report";
@@ -116,6 +119,7 @@ export async function loadPullRequests(recheckAccount = false): Promise<void> {
   state.prs.repo = repo;
   state.prs.error = null;
   if (!repo) {
+    pollList(false);
     state.prs.list = null;
     renderSidebarNow();
     return;
@@ -143,6 +147,32 @@ export async function loadPullRequests(recheckAccount = false): Promise<void> {
   }
   state.prs.loading = false;
   renderSidebarNow();
+  pollList(account.installed && account.signed_in);
+}
+
+// The list refreshing on its own, every 60 s while a signed-in GitHub repo is
+// open: read again quietly, drawn only when a row changed.
+let stopListPoll: (() => void) | null = null;
+
+function pollList(on: boolean): void {
+  stopListPoll?.();
+  stopListPoll = on ? startPolling("pr-list", PR_LIST_POLL_MS, pollPullRequestList) : null;
+}
+
+async function pollPullRequestList(): Promise<void> {
+  const path = state.repoPath;
+  const filter = state.prs.filter;
+  const stale = () => state.repoPath !== path || state.prs.filter !== filter || state.prs.loading;
+  if (!path || !state.prs.repo || state.prs.repoPath !== path || stale()) return;
+  try {
+    const list = await listPullRequests(filter === "reviewed" ? "all" : filter);
+    if (stale() || !listChanged(state.prs.list, list)) return;
+    state.prs.list = list;
+    state.prs.error = null;
+    renderSidebarNow();
+  } catch (err) {
+    if (isRateLimit(err)) pausePollingFor(RATE_LIMIT_PAUSE_MS);
+  }
 }
 
 // Read again which pull requests have a saved review: one just finished.
@@ -461,6 +491,7 @@ async function mergeNow(pr: PullRequestDetail, method: MergeMethod, deleteBranch
 // What the pull request view does, plugged in by main.ts.
 export const pullRequestCallbacks: PullRequestCallbacks = {
   fetchDetail: fetchPullRequest,
+  fetchSignature: fetchPullRequestSignature,
   fetchFiles: fetchPullRequestFiles,
   fetchCommitFiles: fetchGitHubCommitFiles,
   checkout: (pr) => void checkoutPullRequestAction(pr.number),
