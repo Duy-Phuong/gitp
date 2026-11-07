@@ -18,24 +18,34 @@ struct InboxEvent {
 
 /// The inbox of `paths`: those that can't be asked are emitted at once, then
 /// each GitHub repository (once, through its first path) on a thread of its
-/// own, emitted as it answers. Returns when all have.
-pub(crate) fn inbox_impl(gh: &Gh, paths: &[String], emit: impl Fn(InboxRepo) + Send + Sync) {
-    let (sources, errors) = inbox_sources(paths);
-    for error in errors {
-        emit(error);
+/// own, emitted as it answers. Returns them all once all have: an event can
+/// reach the webview after the call's answer, so the answer has them too.
+pub(crate) fn inbox_impl(gh: &Gh, paths: &[String], emit: impl Fn(InboxRepo) + Send + Sync) -> Vec<InboxRepo> {
+    let (sources, mut results) = inbox_sources(paths);
+    for error in &results {
+        emit(error.clone());
     }
     let emit = &emit;
     std::thread::scope(|scope| {
-        for (path, _) in &sources {
-            scope.spawn(move || emit(inbox_repo(gh, path)));
-        }
+        let threads: Vec<_> = sources
+            .iter()
+            .map(|(path, _)| {
+                scope.spawn(move || {
+                    let result = inbox_repo(gh, path);
+                    emit(result.clone());
+                    result
+                })
+            })
+            .collect();
+        results.extend(threads.into_iter().filter_map(|t| t.join().ok()));
     });
+    results
 }
 
 /// Read the inbox of `paths` (Open Recent and starred, in that order);
-/// returns once every repository has answered.
+/// returns them all once every repository has answered.
 #[tauri::command]
-pub(crate) async fn inbox(paths: Vec<String>, id: u32, app: AppHandle) -> Result<(), String> {
+pub(crate) async fn inbox(paths: Vec<String>, id: u32, app: AppHandle) -> Result<Vec<InboxRepo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         inbox_impl(&Gh::system(), &paths, |result| {
             let _ = app.emit(INBOX_EVENT, InboxEvent { id, result });
@@ -71,8 +81,9 @@ mod tests {
         let empty = tempfile::tempdir().unwrap();
         let gh = Gh::with_search_path(empty.path());
         let got = Mutex::new(Vec::new());
-        inbox_impl(&gh, &[a.clone(), b, lab.clone()], |r| got.lock().unwrap().push(r));
+        let mut returned = inbox_impl(&gh, &[a.clone(), b, lab.clone()], |r| got.lock().unwrap().push(r));
         let mut got = got.into_inner().unwrap();
+        returned.sort_by(|x, y| x.path.cmp(&y.path));
         got.sort_by(|x, y| x.path.cmp(&y.path));
         let rows: Vec<_> = got.iter().map(|r| (r.path.clone(), r.error.clone())).collect();
         assert_eq!(
@@ -82,5 +93,6 @@ mod tests {
                 (lab, Some("no GitHub remote".to_string())),
             ]
         );
+        assert_eq!(returned, got, "every result is returned too: an event may land after the call");
     }
 }
