@@ -90,8 +90,4 @@ Atomic write (.tmp + rename), damaged file deleted, pruned with the thread conve
 - **Approve on a branch (my call):** a label only. Nothing carries into the PR's drafts.
 - **"Opened again" (answered):** view only. A fixed card shows the commit; Fix is not offered again. Discard is allowed on a fixed finding and keeps the fix record.
 - **Base (my call):** the remote-tracking ref `origin/<default>` when it exists, else the local branch; the default branch name comes from `origin/HEAD` without a network call, falling back to `main` then `master`.
-- **Fix on pull request drafts:** see the open question below.
-
-## Open question for Phuong
-
-Should Fix also appear on the drafts of a pull request you authored (the review run from the PR view), or only on a branch review? On a PR it needs the per-PR fix lock and a fixed status in the PR drafts store.
+- **Fix on pull request drafts (Phuong: both):** Fix also appears on the review drafts of a pull request Phuong authored (login equals the PR author), never on someone else's PR. The PR draft store gains the `fixed` status and `fix` record, persisted in `<common_dir>/gitp/pr-reviews/<number>.json` with the same shape as the branch file so a fixed mark survives a restart. The fix runs in the worktree that has the PR branch with the thread-fix lock (`FixJobs`, one per PR), and the commit goes out with Push and reply all. The "Fix when on a branch" line in the cards section reads "Fix on a branch or on your own PR".
