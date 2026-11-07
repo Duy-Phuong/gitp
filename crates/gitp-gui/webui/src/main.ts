@@ -168,6 +168,8 @@ import {
   signInToGitHub,
 } from "./pr-actions";
 import { setupPullRequestListView } from "./views/pr-list";
+import { setupThreadSearchView } from "./views/thread-search";
+import { showThreadSearch, threadSearchCallbacks } from "./thread-search-actions";
 import { reviewBadge } from "./pr-reviews";
 import { createFileAction, editFileAction } from "./editor-actions";
 import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
@@ -568,7 +570,9 @@ async function init(): Promise<void> {
     refresh: refreshPullRequests,
     signIn: () => void signInToGitHub(),
     reviewBadge: (pr) => reviewBadge(state.repoPath, pr.number),
+    searchConversations: showThreadSearch,
   });
+  ui.threadSearchView = setupThreadSearchView($("#thread-search-view"), threadSearchCallbacks);
   // Review drafts are kept on disk (a branch's and a pull request's).
   setReviewSaver({ save: storedReviewSave, remove: storedReviewDelete });
   // A review running in the background moved on: its badge and, when its pull

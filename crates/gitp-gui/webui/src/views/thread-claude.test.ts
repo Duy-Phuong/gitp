@@ -160,3 +160,25 @@ it("badges say what the thread has ready", () => {
   expect(threadBadges(c)).toEqual(["fixed"]);
   expect(threadBadges(null)).toEqual([]);
 });
+
+it("a read-only block (a resolved thread) offers only Clear, and no Check again", () => {
+  let cleared = 0;
+  const node = conversationNode({
+    state: { running: null, error: null, loaded: true, conversation: conv() },
+    head: "bbbb",
+    open: true,
+    lastKind: null,
+    readOnly: true,
+    fix: { disabled: null },
+    onFollowup() {},
+    onClear: () => cleared++,
+    onRetry() {},
+    onCancel() {},
+    onToggle() {},
+  });
+  expect([...node.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Clear"]);
+  expect(node.querySelector("textarea")).toBeNull();
+  expect(node.querySelectorAll(".pr-thread-claude-turn").length).toBe(3);
+  node.querySelector("button")!.click();
+  expect(cleared).toBe(1);
+});

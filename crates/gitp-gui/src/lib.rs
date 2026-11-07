@@ -257,6 +257,7 @@ pub fn run() {
             gh::gh_thread_conversation,
             gh::gh_thread_clear,
             gh::gh_thread_prune,
+            gh::gh_thread_search,
             gh::gh_thread_fix,
             gh::gh_thread_mark_posted,
             gh::gh_thread_drop_reply,

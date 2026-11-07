@@ -28,7 +28,7 @@ use crate::diff::{collect_files, FileDiff, MAX_DIFF_LINES};
 use crate::encoding::TextEncoding;
 use crate::error::{Error, Result};
 use crate::git_bin::spawn_path;
-use crate::pr_threads::{now_millis, ThreadConversation, ThreadTurn, TurnKind, TurnRole};
+use crate::pr_threads::{now_millis, ThreadComment, ThreadConversation, ThreadTurn, TurnKind, TurnRole};
 use crate::claude_transcript::new_session_id;
 use crate::progress::{kill, ClaudeRun, NetworkHooks};
 use crate::repo::Repo;
@@ -1639,6 +1639,9 @@ pub struct ThreadInput {
     pub head: String,
     /// The pull request's author login.
     pub author: String,
+    /// The pull request's title, kept in the conversation for the search.
+    #[serde(default)]
+    pub title: Option<String>,
     /// The thread's comments, root first.
     pub comments: Vec<PrReviewComment>,
 }
@@ -1775,10 +1778,23 @@ impl Repo {
                 pr: number,
                 thread: root.id,
                 path: root.path.clone(),
+                title: None,
+                line: None,
+                comments: Vec::new(),
                 session: None,
                 fix_session: None,
                 turns: Vec::new(),
             });
+        // The thread as it is now, for the search: edits and new replies too.
+        if input.title.is_some() {
+            conversation.title = input.title.clone();
+        }
+        conversation.line = root.line.or(root.original_line);
+        conversation.comments = input
+            .comments
+            .iter()
+            .map(|c| ThreadComment { author: c.author.clone(), body: c.body.clone() })
+            .collect();
         if kind == TurnKind::Followup {
             conversation
                 .turns
@@ -3252,8 +3268,31 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             number: 7,
             head: repo.resolve_commit("HEAD").unwrap(),
             author: "octocat".into(),
+            title: Some("Retry fix".into()),
             comments: vec![comment(500, None, "stops early?"), comment(501, Some(500), "yes?")],
         }
+    }
+
+    #[test]
+    fn a_turn_stores_the_title_line_and_comments() {
+        let fake = Fake::new();
+        let (_dir, repo) = github_repo();
+        let input = thread_input(&repo);
+        let c = repo.thread_claude_turn(&fake.gh(), &input, TurnKind::Check, "", "echo ok").unwrap();
+        let said = |c: &ThreadConversation| {
+            c.comments.iter().map(|x| format!("{}: {}", x.author, x.body)).collect::<Vec<_>>()
+        };
+        assert_eq!((c.title.as_deref(), c.line), (Some("Retry fix"), Some(12)));
+        assert_eq!(said(&c), ["anna: stops early?", "anna: yes?"]);
+        // A later turn takes the thread as it is now; an unknown title keeps the stored one.
+        let mut later = input.clone();
+        later.title = None;
+        later.comments[1].body = "yes, edited".into();
+        later.comments.push(PrReviewComment { id: 502, body: "and?".into(), ..later.comments[1].clone() });
+        let c = repo.thread_claude_turn(&fake.gh(), &later, TurnKind::Explain, "", "echo ok").unwrap();
+        assert_eq!(c.title.as_deref(), Some("Retry fix"));
+        assert_eq!(said(&c), ["anna: stops early?", "anna: yes, edited", "anna: and?"]);
+        assert_eq!(repo.thread_conversation(7, 500).unwrap(), Some(c));
     }
 
     #[test]
@@ -3469,6 +3508,9 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             pr: 7,
             thread: 500,
             path: "src/retry.ts".into(),
+            title: None,
+            line: None,
+            comments: vec![],
             session: Some("main-s".into()),
             fix_session: None,
             turns: vec![

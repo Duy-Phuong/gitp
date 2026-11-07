@@ -87,6 +87,8 @@ export interface ConversationOptions {
   onFix?: () => void;
   // Drop the prepared reply.
   onDrop?: () => void;
+  // A resolved thread's block: the turns and Clear, nothing that starts one.
+  readOnly?: boolean;
   onClear: () => void;
   onRetry: (kind: TurnKind) => void;
   onCancel: () => void;
@@ -115,7 +117,7 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
     for (const t of c.turns) body.append(turnNode(t, head));
     // The pull request moved on since the last Check: offer another.
     const stale = c.turns.some((t) => t.role === "claude" && t.kind === "check" && t.head && !sameCommit(t.head, head));
-    if (stale && !state.running) {
+    if (stale && !state.running && !o.readOnly) {
       const again = el("button", { class: "btn small ghost", text: "Check again" });
       again.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -151,7 +153,14 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
     }
     body.append(line);
   }
-  if (open && c) {
+  if (open && c && o.readOnly) {
+    const clear = el("button", { class: "btn small ghost", text: "Clear" });
+    clear.addEventListener("click", (e) => {
+      e.stopPropagation();
+      o.onClear();
+    });
+    body.append(el("div", { class: "pr-composer-actions" }, [clear]));
+  } else if (open && c) {
     const area = composerArea({ placeholder: "Ask a follow-up…" });
     if (o.draft) area.value = o.draft;
     area.addEventListener("input", () => o.onDraft?.(area.value));
