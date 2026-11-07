@@ -356,13 +356,18 @@ mod tests {
         let (_dir, repo) = test_repo();
         let git = git2::Repository::open(repo.workdir()).unwrap();
         let head = git.head().unwrap().target().unwrap();
-        // Only the initial branch: neither main nor master → master is HEAD's
-        // name in a default init, so name the cases explicitly.
-        let current = git.head().unwrap().shorthand().unwrap().to_string();
-        if current != "master" {
-            git.branch("master", &git.find_commit(head).unwrap(), true)
-                .unwrap();
+        let commit = git.find_commit(head).unwrap();
+        // The init's own branch is main or master, as the machine's
+        // init.defaultBranch says (CI's is main): start from a branch named
+        // neither, then name the cases explicitly.
+        git.branch("work", &commit, true).unwrap();
+        git.set_head("refs/heads/work").unwrap();
+        for name in ["main", "master"] {
+            if let Ok(mut b) = git.find_branch(name, git2::BranchType::Local) {
+                b.delete().unwrap();
+            }
         }
+        git.branch("master", &commit, true).unwrap();
         assert_eq!(repo.default_review_base().unwrap(), "master");
         git.branch("main", &git.find_commit(head).unwrap(), true)
             .unwrap();
