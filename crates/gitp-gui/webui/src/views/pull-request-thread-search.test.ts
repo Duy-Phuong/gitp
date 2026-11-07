@@ -91,7 +91,7 @@ beforeEach(() => {
   cleared = [];
   setConversation("/r", 7, 500, conv(500, "src/open.ts"));
   setConversation("/r", 7, 600, conv(600, "src/resolved.ts"));
-  setConversation("/r", 7, 900, conv(900, "src/gone.ts"));
+  setConversation("/r", 7, 900, { ...conv(900, "src/gone.ts"), comments: [{ author: "bob", body: "the loop stops early" }, { author: "anna", body: "fixed?" }] });
 });
 
 it("a resolved thread shows its stored conversation collapsed and read-only", async () => {
@@ -129,6 +129,8 @@ it("a thread gone from GitHub shows a note and its stored conversation on top, w
   expect(gone.textContent).toContain("thread no longer on GitHub");
   expect(gone.textContent).toContain("src/gone.ts:3");
   expect(gone.textContent).toContain("answer on 900");
+  const said = [...gone.querySelectorAll(".pr-thread-comment")].map((c) => [c.querySelector(".pr-card-author")?.textContent, c.querySelector(".github-markdown")?.textContent?.trim()]);
+  expect(said).toEqual([["bob", "the loop stops early"], ["anna", "fixed?"]]);
   const clear = [...gone.querySelectorAll("button")].find((b) => b.textContent === "Clear")!;
   clear.click();
   await settle();

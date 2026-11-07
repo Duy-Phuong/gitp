@@ -419,7 +419,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   }
 
   // The stored conversation of a thread the search opened that GitHub no
-  // longer has: read-only, with Clear.
+  // longer has: its stored comments, then Claude's turns read-only, with Clear.
   function goneThreadNode(pr: PullRequestDetail, id: number): HTMLElement {
     const c = threadState(cb.repoPath(), pr.number, id).conversation;
     const node = el("div", { class: "pr-thread pr-thread-gone", "data-thread": id }, [
@@ -428,6 +428,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         el("span", { class: "pr-badge", text: "thread no longer on GitHub" }),
       ]),
     ]);
+    // The thread's comments as the last turn had them: the only copy left.
+    for (const x of c?.comments ?? []) node.append(card(x.author, "", "", x.body, [], "pr-thread-comment"));
     if (c) node.append(storedBlock(pr, storedThread(c), () => (searched = null)));
     return node;
   }
