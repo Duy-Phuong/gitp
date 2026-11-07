@@ -515,6 +515,7 @@ mod tests {
             status: DraftStatus::Pending,
             topic: None,
             fix: None,
+            stale: false,
         };
         let review = StoredReview {
             version: 1,

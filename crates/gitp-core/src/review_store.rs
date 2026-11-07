@@ -54,6 +54,10 @@ pub struct StoredDraft {
     pub topic: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fix: Option<ReviewFix>,
+    /// Kept from a run before the last, which didn't find it again: its
+    /// line belongs to an older head.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
 }
 
 /// A review's drafts: of a branch (`branch`) or a pull request (`pr`).
@@ -233,6 +237,7 @@ mod tests {
             status,
             topic: None,
             fix: None,
+            stale: false,
         }
     }
 

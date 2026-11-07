@@ -22,6 +22,9 @@ export interface Draft extends DraftComment {
   // The text as the review wrote it, before any edit: what marks it posted.
   original: string;
   fix?: ReviewFix | null;
+  // Kept (fixed or discarded) from a run before the last, which didn't find
+  // it again: its line belongs to an older head, so it counts as moved.
+  stale?: boolean;
 }
 
 // Still waiting for a decision: neither discarded nor fixed.
@@ -233,8 +236,8 @@ export function mergeDrafts(existing: Draft[], found: DraftComment[]): Draft[] {
   const out: Draft[] = [];
   for (const d of existing) {
     const again = byPrint.get(fingerprintOf(d))?.shift();
-    if (again) out.push({ ...d, path: again.path, line: again.line, side: again.side });
-    else if (!isOpen(d)) out.push(d);
+    if (again) out.push({ ...d, path: again.path, line: again.line, side: again.side, stale: false });
+    else if (!isOpen(d)) out.push({ ...d, stale: true });
   }
   const fresh = [...byPrint.values()].flat();
   const keep = new Set(fresh);
@@ -265,6 +268,7 @@ export function toStored(r: PrReview, key: ReviewKey): StoredReview {
       status: d.status,
       ...(d.topic ? { topic: d.topic } : {}),
       ...(d.fix ? { fix: d.fix } : {}),
+      ...(d.stale ? { stale: true } : {}),
     })),
   };
 }
@@ -284,6 +288,7 @@ export function applyStored(repo: string, key: ReviewKey, s: StoredReview): PrRe
     status: d.status,
     ...(d.topic ? { topic: d.topic } : {}),
     fix: d.fix ?? null,
+    ...(d.stale ? { stale: true } : {}),
   }));
   r.head = s.head || undefined;
   r.base = s.base || undefined;

@@ -253,6 +253,7 @@ mod tests {
                 status: DraftStatus::Pending,
                 topic: None,
                 fix: None,
+                stale: false,
             }],
         }
     }

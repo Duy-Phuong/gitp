@@ -1040,6 +1040,7 @@ export interface StoredDraft {
   status: DraftStatus;
   topic?: string | null;
   fix?: ReviewFix | null;
+  stale?: boolean;
 }
 
 export interface StoredReview {

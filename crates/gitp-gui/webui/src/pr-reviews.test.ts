@@ -117,6 +117,10 @@ describe("drafts kept on disk, with a fixed mark", () => {
       [3, 3, "discarded", null],
       [5, 5, "pending", null],
     ]);
+    expect(merged.map((d) => d.stale ?? false), "kept from an older run without its finding").toEqual([false, true, true, false]);
+    // Found again later: its anchor is current again, and a fixed one keeps its fix.
+    const again = m.mergeDrafts(merged, [finding(2)]);
+    expect(again.find((d) => d.id === 2)).toMatchObject({ status: "fixed", stale: false, fix: { commit: "c".repeat(40) } });
   });
 
   it("knows a draft by its path and the first 80 characters of what the review wrote", async () => {

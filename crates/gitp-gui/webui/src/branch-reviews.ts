@@ -81,14 +81,15 @@ export function remapLine(line: number, file: FileDiff | undefined): number | nu
     const r = hunkRange(h.header);
     if (!r) continue;
     // A pure insertion (oc 0) sits after old line os.
-    if (r.oc === 0 ? line <= r.os : line < r.os) break;
+    if (r.oc === 0 ? line <= r.os : line < r.os) return line + delta;
     if (r.oc > 0 && line < r.os + r.oc) {
       const at = h.lines.find((l) => l.old_lineno === line);
       return at && at.origin === " " ? at.new_lineno : null;
     }
     delta += r.nc - r.oc;
   }
-  return line + delta;
+  // Past the hunks of a diff cut at its line cap: the shift is unknown.
+  return file.truncated ? null : line + delta;
 }
 
 export interface Placed {
@@ -103,6 +104,8 @@ export interface Placed {
 // line (LEFT) is in the base, which the branch moving doesn't change.
 export function placeDraft(d: Draft, moves: FileDiff[] | null): Placed {
   const same: Placed = { path: d.path, line: d.line, side: d.side, moved: false };
+  // Kept from a run older than the reviewed head: its line is from then.
+  if (d.stale && d.path) return { ...same, moved: true };
   if (d.side === "LEFT" || !d.path) return same;
   if (moves === null) return { ...same, moved: true };
   const file = moves.find((f) => (f.old_path ?? f.path) === d.path);

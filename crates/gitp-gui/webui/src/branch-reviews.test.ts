@@ -106,4 +106,17 @@ describe("branch reviews", () => {
     expect(m.loadReviewBase("/r", "other")).toBeNull();
     expect(m.loadReviewBase("/s", "feat")).toBeNull();
   });
+
+  it("moves a line past the end of a diff that was cut short", async () => {
+    const m = await fresh();
+    const cut: FileDiff = { ...moved, truncated: true };
+    expect(m.remapLine(10, cut), "the rest of the change is unknown").toBeNull();
+    expect(m.remapLine(1, cut), "before the kept hunks").toBe(1);
+  });
+
+  it("moves a draft a later run no longer found, even once restored", async () => {
+    const m = await fresh();
+    expect(m.placeDraft(draft({ stale: true }), []).moved).toBe(true);
+    expect(m.placeDraft(draft({ stale: true, side: "LEFT" }), []).moved).toBe(true);
+  });
 });
