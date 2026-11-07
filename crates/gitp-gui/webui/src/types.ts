@@ -778,6 +778,11 @@ export interface ThreadConversation {
   pr: number;
   thread: number;
   path: string;
+  // The pull request's title, the thread's line and its comments as the last
+  // turn was given them, for the search; older files lack them.
+  title?: string;
+  line?: number;
+  comments?: { author: string; body: string }[];
   // The Claude Code session to resume, once a JSON answer gave one; the
   // fixes, made in the branch's worktree, have their own.
   session?: string;
@@ -791,8 +796,33 @@ export interface ThreadInput {
   head: string;
   // The pull request's author login.
   author: string;
+  // The pull request's title, kept for the search.
+  title?: string;
   // Root first.
   comments: PrReviewComment[];
+}
+
+// A stored conversation a search found.
+export interface ThreadHit {
+  pr: number;
+  thread: number;
+  path: string;
+  line: number | null;
+  title: string | null;
+  // Around the first word's first match, on one line.
+  snippet: string;
+  // The snippet is from a reply draft that was dropped.
+  dropped: boolean;
+  // The last turn, epoch milliseconds.
+  at: number;
+  fixed: boolean;
+  reply_state: "ready" | "posted" | null;
+}
+
+// The first 200 hits, newest first, and how many there were.
+export interface ThreadSearch {
+  hits: ThreadHit[];
+  total: number;
 }
 
 // A commit of a pull request, oldest first as GitHub lists them.

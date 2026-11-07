@@ -664,7 +664,7 @@ async function runThreadTurn(repo: string, pr: PullRequestDetail, thread: Thread
   const text = kind === "reply-draft" ? lastUserText(threadState(repo, number, id).conversation) : userText;
   setStatus(`Asking Claude about ${where} of #${number} in the background — keep working; the thread shows when it answers.`);
   try {
-    const input = { number, head: pr.head_oid, author: pr.author, comments: [thread.root, ...thread.replies] };
+    const input = { number, head: pr.head_oid, author: pr.author, title: pr.title, comments: [thread.root, ...thread.replies] };
     const conversation = await threadTurn(repo, input, kind, text, withClaudeChoice(loadThreadCommand(kind)));
     finishTurn(repo, number, id, conversation);
     setStatus(`Claude answered on ${where} of #${number}.`);
@@ -694,7 +694,7 @@ async function runFix(repo: string, pr: PullRequestDetail, thread: Thread): Prom
   if (!startTurn(repo, number, id, "fix")) return;
   setStatus(`Fixing ${where} of #${number} in ${pr.head}'s worktree in the background — keep working; the thread shows when it's done.`);
   try {
-    const input = { number, head: pr.head_oid, author: pr.author, comments: [thread.root, ...thread.replies] };
+    const input = { number, head: pr.head_oid, author: pr.author, title: pr.title, comments: [thread.root, ...thread.replies] };
     const conversation = await threadFix(repo, input, pr.head, withClaudeChoice(loadThreadCommand("fix")), withClaudeChoice(loadThreadCommand("reply-draft")));
     finishTurn(repo, number, id, conversation);
     const commit = [...conversation.turns].reverse().find((t) => t.kind === "fix" && t.commit)?.commit?.slice(0, 7);

@@ -5275,6 +5275,72 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   min-height: 0;
   overflow: auto;
 }
+/* The conversation search (views/thread-search.ts): the Pull Requests
+   view's head, and one row per stored conversation. */
+.ts-month {
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 4px 6px;
+  font-size: 12px;
+}
+.ts-status {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.ts-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.ts-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.ts-row:hover,
+.ts-row:focus-visible {
+  background: var(--bg-elev-2);
+  outline: none;
+}
+.ts-row-top,
+.ts-row-place,
+.ts-row-dropped {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ts-pr {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.ts-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ts-date {
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.ts-place {
+  font-size: 12px;
+}
+.ts-snippet {
+  color: var(--text-dim);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.ts-snippet b {
+  color: var(--text);
+}
 .prl-note {
   padding: 16px;
   color: var(--text-dim);

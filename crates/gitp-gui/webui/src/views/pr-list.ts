@@ -36,6 +36,8 @@ export interface PullRequestListCallbacks {
   signIn: () => void;
   // The saved review's badge, as the sidebar shows it.
   reviewBadge: (pr: PullRequest) => { kind: string; text: string } | null;
+  // The search over the stored Claude thread conversations.
+  searchConversations: () => void;
 }
 
 export interface PullRequestListHandle {
@@ -72,6 +74,8 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
   const title = el("span", { class: "prl-title-text" });
   const refresh = el("button", { class: "btn small ghost", text: "⟳ Refresh", title: "Read the pull requests again from GitHub" });
   refresh.addEventListener("click", () => cb.refresh());
+  const searchConversations = el("button", { class: "btn small ghost", text: "Search conversations", title: "Search the Claude conversations kept on the threads" });
+  searchConversations.addEventListener("click", () => cb.searchConversations());
   const segs = el("div", { class: "seg-toggle", role: "group" });
   const search = el("input", {
     class: "prl-search",
@@ -86,7 +90,7 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
   const body = el("div", { class: "prl-body" });
   host.append(
     el("div", { class: "prl-head" }, [
-      el("div", { class: "prl-head-row" }, [title, el("span", { class: "spacer" }), refresh]),
+      el("div", { class: "prl-head-row" }, [title, el("span", { class: "spacer" }), searchConversations, refresh]),
       el("div", { class: "prl-head-row" }, [segs, search]),
       el("div", { class: "prl-head-row" }, [pickers, el("span", { class: "spacer" }), count]),
     ]),

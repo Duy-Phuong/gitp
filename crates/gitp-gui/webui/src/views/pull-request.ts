@@ -13,6 +13,7 @@ import { clear, el, svg } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
 import { conversationNode, threadBadges, threadClaudeButtons } from "./thread-claude";
 import { fixDisabledReason, fixRunningOn, preparedReply, runningTurns, threadState } from "../pr-threads";
+import { storedThread } from "../thread-search";
 import { composerArea, previewToggle } from "./composer";
 import { iconBtn, renderFile, renderSplitDiff, WRAP_ICON } from "./detail";
 import { loadDiffWrap, loadJiraSite, loadPrDiffSplit, loadPrFilesTree, saveDiffWrap, savePrDiffSplit, savePrFilesTree } from "../prefs";
@@ -148,6 +149,10 @@ export interface PullRequestHandle {
   loadReviewFile: () => void;
   // Read it again from GitHub — after a review posted from the menu, say.
   reload: () => void;
+  // The conversation search opened thread `thread` (a root comment id) of the
+  // pull request just shown: its block open, scrolled to — or, gone from
+  // GitHub, its stored conversation on top of the Conversation tab.
+  focusThread: (thread: number) => void;
   // Draw it again from what it holds: a review in the background moved on.
   redraw: () => void;
   // Forget it: the repo it belongs to is no longer the active one.
@@ -223,6 +228,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // only a draft newer than that lands in the Reply box.
   const pendingReplyDraft = new Map<number, number>();
   let prunedFor: string | null = null;
+  // The thread the conversation search opened: scrolled to once drawn; and
+  // kept while the pull request is on screen, for one gone from GitHub.
+  let focus: number | null = null;
+  let searched: number | null = null;
   // What is typed in a thread's Reply box and follow-up box, by root comment
   // id, and which Reply boxes are open: a redraw (a turn ending on any
   // thread) keeps them, as `draft` keeps the bottom composer.
@@ -256,7 +265,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     // The user's own reloads set the signature quietly: no notice for them.
     loads++;
     try {
-      const [d, sig] = await Promise.all([cb.fetchDetail(number), cb.fetchSignature?.(number).catch(() => null) ?? null]);
+      const [d, sig] = await Promise.all([cb.fetchDetail(number), quietSignature(number)]);
       if (mine !== generation) return;
       detail = d;
       signature = sig;
@@ -322,10 +331,23 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     else if (tab === "drafts") renderDrafts(body, pr);
     else renderChecks(body, pr);
     restore(body);
+    if (focus !== null && tab === "conversation") {
+      body.querySelector<HTMLElement>(`[data-thread="${focus}"]`)?.scrollIntoView({ block: "start" });
+      focus = null;
+    }
     drawNotice();
   }
 
   // --- Refreshing on its own ------------------------------------------------
+
+  // The signature, or null when there is none to be had.
+  async function quietSignature(n: number): Promise<PrSignature | null> {
+    try {
+      return (await cb.fetchSignature?.(n)) ?? null;
+    } catch {
+      return null;
+    }
+  }
 
   // One poll: the signature, and when it moved, the pull request read again
   // and drawn — once no text box in the view has focus.
@@ -336,7 +358,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     if (n === null || !cb.fetchSignature || host.closest(".hidden") || stale()) return;
     try {
       const now = await cb.fetchSignature(n);
-      if (stale()) return;
+      if (stale() || !now) return;
       if (!signatureChanged(signature, now)) {
         signature = now;
         return;
@@ -489,6 +511,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       area.setSelectionRange(area.value.length, area.value.length);
     };
 
+    if (searched !== null && !pr.review_comments.some((c) => c.id === searched)) body.append(goneThreadNode(pr, searched));
     body.append(card(pr.author, pr.created_at, "opened this pull request", pr.body, [], "pr-description"));
     for (const item of prTimeline(pr)) {
       if (item.kind === "comment") {
@@ -528,12 +551,55 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     return root ? `${root.path}:${root.line ?? root.original_line ?? "?"}` : "another thread";
   }
 
+  // The stored conversation of a thread the search opened that GitHub no
+  // longer has: its stored comments, then Claude's turns read-only, with Clear.
+  function goneThreadNode(pr: PullRequestDetail, id: number): HTMLElement {
+    const c = threadState(cb.repoPath(), pr.number, id).conversation;
+    const node = el("div", { class: "pr-thread pr-thread-gone", "data-thread": id }, [
+      el("div", { class: "pr-thread-head" }, [
+        ...(c ? [el("code", { text: c.line ? `${c.path}:${c.line}` : c.path })] : []),
+        el("span", { class: "pr-badge", text: "thread no longer on GitHub" }),
+      ]),
+    ]);
+    // The thread's comments as the last turn had them: the only copy left.
+    for (const x of c?.comments ?? []) node.append(card(x.author, "", "", x.body, [], "pr-thread-comment"));
+    if (c) node.append(storedBlock(pr, storedThread(c), () => (searched = null)));
+    return node;
+  }
+
+  // A thread's stored conversation, read-only: a resolved thread's, or one
+  // gone from GitHub. Collapsed unless the search opened it.
+  function storedBlock(pr: PullRequestDetail, thread: Thread, onCleared: () => void = () => {}): HTMLElement {
+    const id = thread.root.id;
+    const ts = threadState(cb.repoPath(), pr.number, id);
+    return conversationNode({
+      state: { ...ts, running: null, error: null },
+      head: pr.head_oid,
+      open: openBlocks.has(id),
+      lastKind: null,
+      readOnly: true,
+      onFollowup() {},
+      onRetry() {},
+      onCancel() {},
+      onClear: () =>
+        void cb.clearThreadConversation(pr, thread).then((cleared) => {
+          if (!cleared) return;
+          openBlocks.delete(id);
+          onCleared();
+        }),
+      onToggle: () => {
+        if (!openBlocks.delete(id)) openBlocks.add(id);
+        render();
+      },
+    });
+  }
+
   // A line-comment thread: where it is, the code it is on, its comments, and
   // a Reply box behind a button. `withCode`: the conversation shows the lines
   // it was made on; the Files tab shows it under them already.
   function threadNode(pr: PullRequestDetail, thread: Thread, withCode: boolean): HTMLElement {
     const { root } = thread;
-    const node = el("div", { class: "pr-thread" });
+    const node = el("div", { class: "pr-thread", "data-thread": root.id });
     if (withCode) {
       const where = el("div", { class: "pr-thread-head" }, [el("code", { text: `${root.path}:${root.line ?? root.original_line ?? "?"}` })]);
       if (root.line === null) where.append(el("span", { class: "pr-badge", text: "outdated" }));
@@ -591,7 +657,10 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     // Claude on the thread: its conversation block, and the buttons that
     // start a turn — not on a resolved thread, as on GitHub nothing happens
     // there any more.
-    if (!resolved) {
+    if (resolved) {
+      cb.loadThreadConversation(pr, thread);
+      if (threadState(cb.repoPath(), pr.number, root.id).conversation) node.append(storedBlock(pr, thread));
+    } else {
       cb.loadThreadConversation(pr, thread);
       const ts = threadState(cb.repoPath(), pr.number, root.id);
       const turn = (kind: TurnKind, text = "") => {
@@ -1377,6 +1446,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         files = null;
         commitOpen = null;
         commitFiles.clear();
+        searched = null;
         draft = "";
         filesQuery = "";
         lineDrafts.clear();
@@ -1391,6 +1461,14 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       void load(true);
     },
     reload: () => void load(true),
+    focusThread: (thread) => {
+      focus = thread;
+      searched = thread;
+      openBlocks.add(thread);
+      tab = "conversation";
+      draftsWhenReady = false;
+      if (detail && detail.number === number) render();
+    },
     redraw: () => redraw(),
     generateDrafts: () => {
       if (detail) cb.generateDrafts(detail);
@@ -1419,6 +1497,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       waiting = null;
       hideNotice();
       prunedFor = null;
+      focus = null;
+      searched = null;
       number = null;
       detail = null;
       files = null;

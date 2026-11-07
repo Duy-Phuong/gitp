@@ -15,7 +15,7 @@ use gitp_core::{
     CommitPullRequest, FileDiff, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings,
     LineComment, MergeMethod, NewPullRequest, PrDraft, PrFilter, PrReviewComment,
     PullRequest, PullRequestDetail, Repo, ReviewFile, ReviewVerdict, ThreadConversation,
-    ThreadInput, TurnKind, Undoable, LOGIN_TIMEOUT,
+    ThreadInput, ThreadSearch, TurnKind, Undoable, LOGIN_TIMEOUT,
 };
 use serde::Serialize;
 use tauri::State;
@@ -385,6 +385,20 @@ fn gh_thread_clear_impl(path: String, number: u64, thread: u64) -> Result<(), St
         .map_err(to_message)
 }
 
+/// Search the repository's conversations: last turn in `[from, to)` epoch
+/// milliseconds (either end open when missing), on pull request `pr` when given.
+fn gh_thread_search_impl(
+    path: String,
+    query: String,
+    from: Option<u64>,
+    to: Option<u64>,
+    pr: Option<u64>,
+) -> Result<ThreadSearch, String> {
+    let repo = Repo::open(&path).map_err(to_message)?;
+    let range = (from.is_some() || to.is_some()).then(|| (from.unwrap_or(0), to.unwrap_or(u64::MAX)));
+    repo.search_thread_conversations(&query, range, pr).map_err(to_message)
+}
+
 /// Delete the conversations older than two months; how many went.
 fn gh_thread_prune_impl(path: String) -> Result<usize, String> {
     let repo = Repo::open(&path).map_err(to_message)?;
@@ -723,6 +737,17 @@ pub(crate) fn gh_thread_prune(path: String) -> Result<usize, String> {
 }
 
 #[tauri::command(async)]
+pub(crate) fn gh_thread_search(
+    path: String,
+    query: String,
+    from: Option<u64>,
+    to: Option<u64>,
+    pr: Option<u64>,
+) -> Result<ThreadSearch, String> {
+    gh_thread_search_impl(path, query, from, to, pr)
+}
+
+#[tauri::command(async)]
 pub(crate) fn gh_thread_fix(
     path: String,
     input: ThreadInput,
@@ -843,6 +868,7 @@ mod tests {
             number: n,
             head: head.clone(),
             author: "octocat".into(),
+            title: Some("Retry fix".into()),
             comments: vec![PrReviewComment {
                 id: 500,
                 author: "anna".into(),
@@ -872,6 +898,11 @@ mod tests {
         assert_eq!(jobs.running(), ["Check · a:1 · #7"], "the turn on #8 is released");
         held.finish(Ok(String::new()), &[]);
         assert_eq!(gh_thread_conversation_impl(path.clone(), 8, 500).unwrap(), Some(c));
+        let found = gh_thread_search_impl(path.clone(), "retry HI".into(), None, None, None).unwrap();
+        assert_eq!((found.total, found.hits[0].pr, found.hits[0].title.as_deref()), (1, 8, Some("Retry fix")));
+        assert_eq!(gh_thread_search_impl(path.clone(), "hi".into(), None, None, Some(7)).unwrap().total, 0);
+        assert_eq!(gh_thread_search_impl(path.clone(), "hi".into(), Some(0), Some(1), None).unwrap().total, 0);
+        assert_eq!(gh_thread_search_impl(path.clone(), "hi".into(), Some(0), None, None).unwrap().total, 1, "from alone");
         gh_thread_clear_impl(path.clone(), 8, 500).unwrap();
         assert_eq!(gh_thread_conversation_impl(path.clone(), 8, 500).unwrap(), None);
         assert_eq!(gh_thread_prune_impl(path.clone()).unwrap(), 0);
@@ -903,6 +934,7 @@ mod tests {
             number: 7,
             head: "0".repeat(40),
             author: "octocat".into(),
+            title: None,
             comments,
         };
         fixes.hold("/nowhere", "b").unwrap();

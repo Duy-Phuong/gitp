@@ -12,6 +12,7 @@ import type {
   ActivityEntry,
   AheadCommit,
   ThreadConversation,
+  ThreadSearch,
   ThreadInput,
   TurnKind,
   GitHubRepoSettings,
@@ -2536,7 +2537,9 @@ export async function threadTurn(path: string, input: ThreadInput, kind: TurnKin
     if (/\bfail\b/i.test(userText)) throw new Error("The thread command failed (exit code 1).\n\nNo model today.");
     const root = input.comments[0];
     const key = `${input.number}\n${root.id}`;
-    const c = mockThreads.get(key) ?? { version: 1, pr: input.number, thread: root.id, path: root.path, turns: [] };
+    const c: ThreadConversation = mockThreads.get(key) ?? { version: 1, pr: input.number, thread: root.id, path: root.path, turns: [] };
+    c.title = input.title ?? c.title;
+    c.line = root.line ?? root.original_line ?? undefined;
     if (kind === "followup") c.turns.push({ kind, role: "user", at: Date.now(), text: userText });
     c.turns.push({ kind, role: "claude", at: Date.now(), head: input.head, text: MOCK_TURN_TEXT[kind] });
     mockThreads.set(key, c);
@@ -2605,6 +2608,23 @@ export async function dropReply(path: string, number: number, thread: number): P
     return;
   }
   return invoke<void>("gh_thread_drop_reply", { path, number, thread });
+}
+
+// The stored conversations every word of `query` is in, with the last turn
+// in `range` (epoch milliseconds, [from, to)) and on pull request `pr` when
+// given: the first 200, newest first, and how many there were.
+export async function searchThreadConversations(path: string, query: string, range: [number, number] | null, pr: number | null): Promise<ThreadSearch> {
+  if (!isTauri()) {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const hits = [...mockThreads.values()]
+      .filter((c) => c.turns.length && (pr === null || c.pr === pr))
+      .map((c) => ({ c, at: c.turns[c.turns.length - 1].at, text: [c.path, String(c.pr), ...c.turns.map((t) => t.text)].join("\n").toLowerCase() }))
+      .filter(({ at, text }) => (!range || (at >= range[0] && at < range[1])) && words.every((w) => text.includes(w)))
+      .sort((a, b) => b.at - a.at)
+      .map(({ c, at }) => ({ pr: c.pr, thread: c.thread, path: c.path, line: c.line ?? null, title: c.title ?? null, snippet: c.turns[0].text.slice(0, 160), dropped: false, at, fixed: false, reply_state: null }));
+    return { hits: hits.slice(0, 200), total: hits.length };
+  }
+  return invoke<ThreadSearch>("gh_thread_search", { path, query, from: range?.[0] ?? null, to: range?.[1] ?? null, pr });
 }
 
 // Delete the conversations older than two months; how many went.
