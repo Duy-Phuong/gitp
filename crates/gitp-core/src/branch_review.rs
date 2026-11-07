@@ -117,6 +117,12 @@ impl Repo {
         Ok(Some(parse_pr_diff(&bytes, self.text_encoding())?))
     }
 
+    /// Whether the worktree at `dir` has changes a fix would refuse
+    /// (untracked files included, ignored ones aside).
+    pub fn worktree_dirty(dir: &Path) -> Result<bool> {
+        Ok(require_clean(dir).is_err())
+    }
+
     /// The folder of the worktree that has `branch` checked out, if any.
     pub fn branch_worktree(&self, branch: &str) -> Result<Option<PathBuf>> {
         Ok(self

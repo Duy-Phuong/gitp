@@ -88,6 +88,9 @@ pub(crate) struct Job {
     pub thread: Option<u64>,
     /// The finding of an Explain more.
     pub finding: Option<String>,
+    /// The local branch of a branch review or of a draft's fix.
+    #[serde(default)]
+    pub branch: Option<String>,
     pub state: JobState,
     /// Ms since the Unix epoch.
     pub started: u64,
@@ -118,6 +121,7 @@ pub(crate) struct NewJob {
     pub pr: u64,
     pub thread: Option<u64>,
     pub finding: Option<String>,
+    pub branch: Option<String>,
     pub command: String,
     pub stdin_bytes: usize,
 }
@@ -305,6 +309,7 @@ impl ClaudeJobs {
                 && j.pr == new.pr
                 && j.thread == new.thread
                 && j.finding == new.finding
+                && j.branch == new.branch
         };
         if inner
             .jobs
@@ -312,7 +317,10 @@ impl ClaudeJobs {
             .any(|j| j.state == JobState::Running && same(j))
         {
             return Err(match new.kind {
-                JobKind::Review => format!("A review of #{} is already running.", new.pr),
+                JobKind::Review => match &new.branch {
+                    Some(b) => format!("A review of {b} is already running."),
+                    None => format!("A review of #{} is already running.", new.pr),
+                },
                 JobKind::Thread => "A turn on this thread is already running.".into(),
                 JobKind::Explain => format!(
                     "Finding {} of #{} is already being explained.",
@@ -353,6 +361,7 @@ impl ClaudeJobs {
                     pr: new.pr,
                     thread: new.thread,
                     finding: new.finding,
+                    branch: new.branch,
                     state: JobState::Running,
                     started: now,
                     ended: None,
@@ -499,6 +508,26 @@ impl ClaudeJobs {
                     && j.repo == repo
                     && j.pr == pr
                     && j.thread == thread
+            })
+            .map(|j| j.id);
+        if let Some(id) = id {
+            self.stop(id);
+        }
+    }
+
+    /// Stop the running job of `kind` on local branch `branch`, if any.
+    pub fn stop_branch(&self, kind: JobKind, repo: &str, branch: &str) {
+        let id = self
+            .inner
+            .lock()
+            .unwrap()
+            .jobs
+            .iter()
+            .find(|j| {
+                j.state == JobState::Running
+                    && j.kind == kind
+                    && j.repo == repo
+                    && j.branch.as_deref() == Some(branch)
             })
             .map(|j| j.id);
         if let Some(id) = id {
@@ -749,6 +778,7 @@ mod tests {
             pr,
             thread: None,
             finding: None,
+            branch: None,
             command: "claude -p review".into(),
             stdin_bytes: 1234,
         }
