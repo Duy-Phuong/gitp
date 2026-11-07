@@ -99,6 +99,7 @@ function aCommentArrives(): void {
 }
 
 beforeEach(async () => {
+  localStorage.clear();
   vi.useFakeTimers();
   window.dispatchEvent(new Event("focus"));
   detail = base();
@@ -364,6 +365,17 @@ describe("opening a pull request quickly", () => {
     await settle();
     expect(cb.fetchDetail).toHaveBeenCalledTimes(reads + 1);
     expect(title()).toBe("PR 7");
+  });
+
+  it("draws a pull request at once after a restart, from what it showed last", async () => {
+    view.reset();
+    const again = setupPullRequestView(host, callbacks(cb as unknown as Partial<PullRequestCallbacks>));
+    again.show(7);
+    expect(title()).toBe("Widgets");
+    expect(host.textContent).not.toContain("Loading pull request");
+    await settle();
+    expect(title()).toBe("PR 7");
+    again.reset();
   });
 
   it("keeps the changed files of a pull request opened again, unless its head moved", async () => {

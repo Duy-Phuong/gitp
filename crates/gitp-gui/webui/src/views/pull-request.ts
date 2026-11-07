@@ -27,6 +27,7 @@ import {
   savePrDiffSplit,
   savePrFilesTree,
 } from "../prefs";
+import { storePullRequest, storedPullRequest } from "../pr-store";
 import { jiraKeyIn, jiraTicketUrl } from "../jira";
 import { renderFileTree } from "./tree";
 import {
@@ -295,6 +296,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       if (detail?.head_oid !== d.head_oid) files = null;
       detail = d;
       signature = d.signature ?? null;
+      storePullRequest(cb.repoPath(), d);
       toDraftsIfReady();
       if (tab === "drafts" && !files) void showDrafts(d);
       else render();
@@ -1540,7 +1542,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         treeCollapsed.clear();
         number = n;
         const kept = seen.get(n);
-        detail = kept?.detail ?? null;
+        detail = kept?.detail ?? storedPullRequest(cb.repoPath(), n);
         files = kept?.files ?? null;
         renderedTab = null;
         commitOpen = null;
