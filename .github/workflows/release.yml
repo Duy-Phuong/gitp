@@ -43,6 +43,6 @@ jobs:
           ditto -c -k --keepParent "$bundle/macos/gitp.app" "dist/gitp_${GITHUB_REF_NAME#v}_universal.app.zip"
           ls -l dist
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
