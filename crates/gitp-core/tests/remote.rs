@@ -114,14 +114,25 @@ fn pull_merge_joins_a_branch_and_its_remote_that_both_moved() {
     git(remote.path(), &["init", "-q", "--bare", "-b", "main"]);
     let seed = TempDir::new().unwrap();
     init_repo(seed.path());
-    git(seed.path(), &["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    git(
+        seed.path(),
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
     std::fs::write(seed.path().join("a.txt"), "one\n").unwrap();
     git(seed.path(), &["add", "."]);
     git(seed.path(), &["commit", "-q", "-m", "c1"]);
     git(seed.path(), &["push", "-q", "-u", "origin", "main"]);
 
     let mine = TempDir::new().unwrap();
-    git(Path::new("."), &["clone", "-q", remote.path().to_str().unwrap(), mine.path().to_str().unwrap()]);
+    git(
+        Path::new("."),
+        &[
+            "clone",
+            "-q",
+            remote.path().to_str().unwrap(),
+            mine.path().to_str().unwrap(),
+        ],
+    );
     git(mine.path(), &["config", "user.name", "Tester"]);
     git(mine.path(), &["config", "user.email", "t@t.io"]);
     // Whatever the machine's own git says, this pull is asked to merge.
@@ -144,7 +155,10 @@ fn pull_merge_joins_a_branch_and_its_remote_that_both_moved() {
         .args(["rev-list", "--parents", "-n", "1", "HEAD"])
         .output()
         .unwrap();
-    let parents = String::from_utf8_lossy(&parents.stdout).split_whitespace().count() - 1;
+    let parents = String::from_utf8_lossy(&parents.stdout)
+        .split_whitespace()
+        .count()
+        - 1;
     assert_eq!(parents, 2, "a merge commit joins the two");
     assert!(mine.path().join("b.txt").exists() && mine.path().join("c.txt").exists());
 }

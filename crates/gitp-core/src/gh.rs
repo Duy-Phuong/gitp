@@ -30,12 +30,14 @@ mod viewed;
 pub use viewed::PrViewed;
 
 use crate::branch_ops::parse_remote_url;
+use crate::claude_transcript::new_session_id;
 use crate::diff::{collect_files, FileDiff, MAX_DIFF_LINES};
 use crate::encoding::TextEncoding;
 use crate::error::{Error, Result};
 use crate::git_bin::spawn_path;
-use crate::pr_threads::{now_millis, ThreadComment, ThreadConversation, ThreadTurn, TurnKind, TurnRole};
-use crate::claude_transcript::new_session_id;
+use crate::pr_threads::{
+    now_millis, ThreadComment, ThreadConversation, ThreadTurn, TurnKind, TurnRole,
+};
 use crate::progress::{kill, ClaudeRun, NetworkHooks};
 use crate::repo::Repo;
 use crate::worktree_ops::WorktreeTarget;
@@ -833,7 +835,9 @@ impl Repo {
         let owner_arg = format!("owner={owner}");
         let name_arg = format!("name={name}");
         let query_arg = format!("query={query}");
-        args.extend(["graphql", "-F", &owner_arg, "-F", &name_arg, "-f", &query_arg]);
+        args.extend([
+            "graphql", "-F", &owner_arg, "-F", &name_arg, "-f", &query_arg,
+        ]);
         let out = self.gh_call(gh, target, &args, None, TIMEOUT)?;
         let raw: RawOpenThreadsAnswer = parse_json(&out.stdout)?;
         Ok(raw
@@ -843,7 +847,12 @@ impl Repo {
             .nodes
             .into_iter()
             .map(|pr| {
-                let open = pr.review_threads.nodes.iter().filter(|t| !t.is_resolved).count();
+                let open = pr
+                    .review_threads
+                    .nodes
+                    .iter()
+                    .filter(|t| !t.is_resolved)
+                    .count();
                 (pr.number, open as u32)
             })
             .collect())
@@ -865,11 +874,16 @@ impl Repo {
         let (view, comments, threads) = thread::scope(|s| {
             let comments = s.spawn(|| place.call(gh, &target, &api_args));
             let threads = s.spawn(|| review_threads(&place, gh, &target, number));
-            let view = place.call(gh, &target, &["pr", "view", &n, "--repo", &repo, "--json", VIEW_FIELDS]);
+            let view = place.call(
+                gh,
+                &target,
+                &["pr", "view", &n, "--repo", &repo, "--json", VIEW_FIELDS],
+            );
             (view, comments.join(), threads.join())
         });
         let raw: RawPrDetail = parse_json(&view?.stdout)?;
-        let comments = comments.map_err(|_| Error::Message("reading the line comments stopped".into()))??;
+        let comments =
+            comments.map_err(|_| Error::Message("reading the line comments stopped".into()))??;
         let review_comments = parse_review_comments(&comments.stdout)?;
         let threads = threads.ok().and_then(|t| t.ok());
         let read_threads = threads.is_some();
@@ -881,14 +895,21 @@ impl Repo {
     /// Where and how [`Repo::gh_call`] runs `gh`, apart from the repository:
     /// `git2::Repository` can't be shared between threads, this can.
     fn gh_place(&self) -> GhPlace {
-        GhPlace { dir: self.workdir().to_path_buf(), cancel: self.net.cancel.clone() }
+        GhPlace {
+            dir: self.workdir().to_path_buf(),
+            cancel: self.net.cancel.clone(),
+        }
     }
 
     /// Mark the line-comment thread `thread_id` (a `PrReviewThread::id`)
     /// resolved, or open again with `resolve` false.
     pub fn resolve_review_thread(&self, gh: &Gh, thread_id: &str, resolve: bool) -> Result<()> {
         let target = self.github_target()?;
-        let mutation = if resolve { "resolveReviewThread" } else { "unresolveReviewThread" };
+        let mutation = if resolve {
+            "resolveReviewThread"
+        } else {
+            "unresolveReviewThread"
+        };
         let query = format!(
             "query=mutation($id: ID!) {{ {mutation}(input: {{threadId: $id}}) {{ thread {{ isResolved }} }} }}"
         );
@@ -1686,7 +1707,9 @@ impl Repo {
             .and_then(|c| c.turns.iter().rev().find(|t| t.role == TurnRole::User))
             .map(|t| t.text.clone())
             .filter(|t| !t.trim().is_empty())
-            .ok_or_else(|| Error::Message("Send the option you want as a follow-up first.".into()))?;
+            .ok_or_else(|| {
+                Error::Message("Send the option you want as a follow-up first.".into())
+            })?;
         let worktree = self
             .worktrees()?
             .into_iter()
@@ -1720,7 +1743,9 @@ impl Repo {
                 // The failed turn, if it was saved, goes; a bookkeeping
                 // error here must not hide the real one.
                 if let Ok(Some(mut saved)) = self.thread_conversation(input.number, root.id) {
-                    saved.turns.retain(|t| t.kind != TurnKind::Fix || t.commit.is_some());
+                    saved
+                        .turns
+                        .retain(|t| t.kind != TurnKind::Fix || t.commit.is_some());
                     let _ = self.save_thread_conversation(&saved);
                 }
                 return Err(e);
@@ -1732,7 +1757,14 @@ impl Repo {
             fix.worktree = Some(dir.to_string_lossy().into_owned());
         }
         self.save_thread_conversation(&c)?;
-        self.run_turn(gh, input, TurnKind::ReplyDraft, &option, reply_command, TurnPlace::main(self))
+        self.run_turn(
+            gh,
+            input,
+            TurnKind::ReplyDraft,
+            &option,
+            reply_command,
+            TurnPlace::main(self),
+        )
     }
 
     fn run_turn(
@@ -1777,7 +1809,10 @@ impl Repo {
         conversation.comments = input
             .comments
             .iter()
-            .map(|c| ThreadComment { author: c.author.clone(), body: c.body.clone() })
+            .map(|c| ThreadComment {
+                author: c.author.clone(),
+                body: c.body.clone(),
+            })
             .collect();
         if kind == TurnKind::Followup {
             conversation
@@ -1948,7 +1983,11 @@ pub(crate) fn git_in(dir: &Path, args: &[&str]) -> Result<String> {
         Ok(stdout)
     } else {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        Err(Error::Message(if stderr.is_empty() { stdout } else { stderr }))
+        Err(Error::Message(if stderr.is_empty() {
+            stdout
+        } else {
+            stderr
+        }))
     }
 }
 
@@ -1992,7 +2031,9 @@ pub(crate) fn run_verified_fix<T>(
 ) -> Result<(T, String)> {
     let checked = run().and_then(|value| {
         if git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])? != branch {
-            return Err(Error::Message(format!("The fix left the worktree off {branch}.")));
+            return Err(Error::Message(format!(
+                "The fix left the worktree off {branch}."
+            )));
         }
         let after = git_in(dir, &["rev-parse", "HEAD"])?;
         // Exactly one new commit whose only parent is where the run
@@ -2004,11 +2045,19 @@ pub(crate) fn run_verified_fix<T>(
             return Err(Error::Message(format!(
                 "The fix must make exactly one commit on top of {}; it made {made}{}.",
                 &before[..7],
-                if after == before { " (none)" } else if made == "1" { " (amended or rebased)" } else { "" }
+                if after == before {
+                    " (none)"
+                } else if made == "1" {
+                    " (amended or rebased)"
+                } else {
+                    ""
+                }
             )));
         }
         if !git_in(dir, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
-            return Err(Error::Message("The fix left uncommitted changes behind.".into()));
+            return Err(Error::Message(
+                "The fix left uncommitted changes behind.".into(),
+            ));
         }
         Ok((value, after))
     });
@@ -2101,7 +2150,11 @@ pub(crate) fn run_shell(
     };
     cmd.env(
         "GITP_CLAUDE_NEW_SESSION",
-        if run.resumed { "" } else { run.session.as_str() },
+        if run.resumed {
+            ""
+        } else {
+            run.session.as_str()
+        },
     );
     if let Some(tell) = &hooks.on_claude_run {
         tell(&run);
@@ -2185,7 +2238,14 @@ struct GhPlace {
 
 impl GhPlace {
     fn call(&self, gh: &Gh, target: &GitHubRepo, args: &[&str]) -> Result<Output> {
-        gh.call(Some(&self.dir), args, None, TIMEOUT, self.cancel.as_deref(), Some(&target.repo_arg()))
+        gh.call(
+            Some(&self.dir),
+            args,
+            None,
+            TIMEOUT,
+            self.cancel.as_deref(),
+            Some(&target.repo_arg()),
+        )
     }
 }
 
@@ -2212,7 +2272,17 @@ fn review_threads(
     let name_arg = format!("name={name}");
     let number_arg = format!("number={n}");
     let query_arg = format!("query={query}");
-    args.extend(["graphql", "-F", &owner_arg, "-F", &name_arg, "-F", &number_arg, "-f", &query_arg]);
+    args.extend([
+        "graphql",
+        "-F",
+        &owner_arg,
+        "-F",
+        &name_arg,
+        "-F",
+        &number_arg,
+        "-f",
+        &query_arg,
+    ]);
     let out = place.call(gh, target, &args)?;
     let raw: RawThreadsAnswer = parse_json(&out.stdout)?;
     Ok(raw
@@ -2225,7 +2295,12 @@ fn review_threads(
         .map(|t| PrReviewThread {
             id: t.id,
             resolved: t.is_resolved,
-            comment_ids: t.comments.nodes.into_iter().filter_map(|c| c.database_id).collect(),
+            comment_ids: t
+                .comments
+                .nodes
+                .into_iter()
+                .filter_map(|c| c.database_id)
+                .collect(),
         })
         .collect())
 }
@@ -3041,7 +3116,11 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             }]
         );
         assert_eq!((prs[0].approvals, prs[0].unresolved_threads), (2, Some(1)));
-        assert_eq!((prs[1].approvals, prs[1].unresolved_threads), (0, None), "not in GraphQL's answer");
+        assert_eq!(
+            (prs[1].approvals, prs[1].unresolved_threads),
+            (0, None),
+            "not in GraphQL's answer"
+        );
         assert_eq!(prs[1].author, "ghost");
         assert!(prs[1].is_draft);
         assert_eq!(prs[1].review_decision, None);
@@ -3251,7 +3330,14 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let parent = upstream.head().unwrap().peel_to_commit().unwrap();
         let sig = git2::Signature::now("T", "t@example.com").unwrap();
         let id = upstream
-            .commit(Some("refs/pull/7/head"), &sig, &sig, "the pr", &parent.tree().unwrap(), &[&parent])
+            .commit(
+                Some("refs/pull/7/head"),
+                &sig,
+                &sig,
+                "the pr",
+                &parent.tree().unwrap(),
+                &[&parent],
+            )
             .unwrap();
         let head = upstream.find_commit(id).unwrap();
         let (dir, repo) = repo_with(&[("origin", upstream_dir.path().to_str().unwrap())]);
@@ -3280,19 +3366,38 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let root = upstream.head().unwrap().peel_to_commit().unwrap();
         let sig = git2::Signature::now("T", "t@example.com").unwrap();
         let first = upstream
-            .commit(Some("refs/pull/7/head"), &sig, &sig, "before rebase", &root.tree().unwrap(), &[&root])
+            .commit(
+                Some("refs/pull/7/head"),
+                &sig,
+                &sig,
+                "before rebase",
+                &root.tree().unwrap(),
+                &[&root],
+            )
             .unwrap();
         let (_dir, repo) = repo_with(&[("origin", upstream_dir.path().to_str().unwrap())]);
-        repo.ensure_pull_request_head(7, &first.to_string()).unwrap();
+        repo.ensure_pull_request_head(7, &first.to_string())
+            .unwrap();
         // The author rebases: the new head is not a descendant of the old one.
         let rebased = upstream
-            .commit(None, &sig, &sig, "after rebase", &root.tree().unwrap(), &[&root])
+            .commit(
+                None,
+                &sig,
+                &sig,
+                "after rebase",
+                &root.tree().unwrap(),
+                &[&root],
+            )
             .unwrap();
         upstream
             .reference("refs/pull/7/head", rebased, true, "force")
             .unwrap();
-        repo.ensure_pull_request_head(7, &rebased.to_string()).unwrap();
-        assert_eq!(repo.resolve_commit("refs/gitp/pr/7/head").unwrap(), rebased.to_string());
+        repo.ensure_pull_request_head(7, &rebased.to_string())
+            .unwrap();
+        assert_eq!(
+            repo.resolve_commit("refs/gitp/pr/7/head").unwrap(),
+            rebased.to_string()
+        );
     }
 
     fn thread_input(repo: &Repo) -> ThreadInput {
@@ -3314,7 +3419,10 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             head: repo.resolve_commit("HEAD").unwrap(),
             author: "octocat".into(),
             title: Some("Retry fix".into()),
-            comments: vec![comment(500, None, "stops early?"), comment(501, Some(500), "yes?")],
+            comments: vec![
+                comment(500, None, "stops early?"),
+                comment(501, Some(500), "yes?"),
+            ],
         }
     }
 
@@ -3323,9 +3431,14 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let fake = Fake::new();
         let (_dir, repo) = github_repo();
         let input = thread_input(&repo);
-        let c = repo.thread_claude_turn(&fake.gh(), &input, TurnKind::Check, "", "echo ok").unwrap();
+        let c = repo
+            .thread_claude_turn(&fake.gh(), &input, TurnKind::Check, "", "echo ok")
+            .unwrap();
         let said = |c: &ThreadConversation| {
-            c.comments.iter().map(|x| format!("{}: {}", x.author, x.body)).collect::<Vec<_>>()
+            c.comments
+                .iter()
+                .map(|x| format!("{}: {}", x.author, x.body))
+                .collect::<Vec<_>>()
         };
         assert_eq!((c.title.as_deref(), c.line), (Some("Retry fix"), Some(12)));
         assert_eq!(said(&c), ["anna: stops early?", "anna: yes?"]);
@@ -3333,17 +3446,31 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let mut later = input.clone();
         later.title = None;
         later.comments[1].body = "yes, edited".into();
-        later.comments.push(PrReviewComment { id: 502, body: "and?".into(), ..later.comments[1].clone() });
-        let c = repo.thread_claude_turn(&fake.gh(), &later, TurnKind::Explain, "", "echo ok").unwrap();
+        later.comments.push(PrReviewComment {
+            id: 502,
+            body: "and?".into(),
+            ..later.comments[1].clone()
+        });
+        let c = repo
+            .thread_claude_turn(&fake.gh(), &later, TurnKind::Explain, "", "echo ok")
+            .unwrap();
         assert_eq!(c.title.as_deref(), Some("Retry fix"));
-        assert_eq!(said(&c), ["anna: stops early?", "anna: yes, edited", "anna: and?"]);
+        assert_eq!(
+            said(&c),
+            ["anna: stops early?", "anna: yes, edited", "anna: and?"]
+        );
         assert_eq!(repo.thread_conversation(7, 500).unwrap(), Some(c));
     }
 
     #[test]
     fn a_thread_turn_gets_the_thread_in_its_environment_and_file_and_is_saved() {
         let fake = Fake::new();
-        fake.answer("auth status", "Logged in to github.com account me (keyring)\n", "", 0);
+        fake.answer(
+            "auth status",
+            "Logged in to github.com account me (keyring)\n",
+            "",
+            0,
+        );
         let (_dir, repo) = github_repo();
         let input = thread_input(&repo);
         let cmd = "printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|' \"$GITP_PR_NUMBER\" \"$GITP_PR_URL\" \"$GITP_PR_HEAD\" \
@@ -3366,7 +3493,11 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let json: serde_json::Value = serde_json::from_str(&t.text[prefix.len()..]).unwrap();
         assert_eq!(json["comments"][1]["body"], "yes?");
         assert_eq!(json["path"], "src/retry.ts");
-        assert_eq!(json["turns"].as_array().unwrap().len(), 0, "the first turn sees no history");
+        assert_eq!(
+            json["turns"].as_array().unwrap().len(),
+            0,
+            "the first turn sees no history"
+        );
         assert_eq!(c.session, None, "plain text gives no session");
         assert_eq!(repo.thread_conversation(7, 500).unwrap(), Some(c));
     }
@@ -3396,7 +3527,10 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             .thread_claude_turn(&fake.gh(), &input, TurnKind::Followup, "why?", cmd)
             .unwrap();
         let second = runs.lock().unwrap()[1].clone();
-        assert_eq!((second.resumed, second.session.as_str()), (true, first.session.as_str()));
+        assert_eq!(
+            (second.resumed, second.session.as_str()),
+            (true, first.session.as_str())
+        );
         assert_eq!(c.turns.last().unwrap().text, "[]", "no new id on a resume");
     }
 
@@ -3419,7 +3553,12 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             .unwrap();
         assert_eq!(c.turns.len(), 3);
         assert_eq!(
-            (c.turns[1].role, c.turns[1].kind, c.turns[1].text.as_str(), c.turns[1].head.as_deref()),
+            (
+                c.turns[1].role,
+                c.turns[1].kind,
+                c.turns[1].text.as_str(),
+                c.turns[1].head.as_deref()
+            ),
             (TurnRole::User, TurnKind::Followup, "why?", None)
         );
         assert_eq!(c.turns[2].text, "s-1 / why? / followup");
@@ -3476,9 +3615,15 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             .thread_claude_turn(&fake.gh(), &input, TurnKind::Followup, "why?", "echo hi")
             .unwrap_err();
         let text = message(err);
-        assert!(!text.contains("printed nothing"), "the command never ran: {text}");
+        assert!(
+            !text.contains("printed nothing"),
+            "the command never ran: {text}"
+        );
         let c = repo.thread_conversation(7, 500).unwrap().unwrap();
-        assert_eq!((c.turns.len(), c.turns[0].role, c.turns[0].text.as_str()), (1, TurnRole::User, "why?"));
+        assert_eq!(
+            (c.turns.len(), c.turns[0].role, c.turns[0].text.as_str()),
+            (1, TurnRole::User, "why?")
+        );
     }
 
     #[test]
@@ -3539,7 +3684,11 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
                 .env("GIT_COMMITTER_EMAIL", "t@example.com")
                 .output()
                 .unwrap();
-            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         };
         git(&["branch", "feature"]);
         git(&["worktree", "add", "-q", "wt", "feature"]);
@@ -3587,19 +3736,49 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert_eq!((fix.kind, fix.role), (TurnKind::Fix, TurnRole::Claude));
         assert_eq!(fix.commit.as_deref(), Some(after.as_str()));
         assert_eq!(fix.head.as_deref(), Some(after.as_str()));
-        assert_eq!(fix.worktree.as_deref().map(canonical_str), Some(canonical_str(wt.to_str().unwrap())));
-        assert!(fix.text.contains(&format!("before={before}")), "{}", fix.text);
-        assert!(fix.text.contains(&canonical_str(wt.to_str().unwrap())), "{}", fix.text);
-        assert!(fix.text.contains("session=") && !fix.text.contains("session=main-s"), "the fix never resumes the main session: {}", fix.text);
-        assert_eq!((reply.kind, reply.role), (TurnKind::ReplyDraft, TurnRole::Claude));
-        assert!(reply.text.contains(&canonical_str(dir.path().to_str().unwrap())), "{}", reply.text);
+        assert_eq!(
+            fix.worktree.as_deref().map(canonical_str),
+            Some(canonical_str(wt.to_str().unwrap()))
+        );
+        assert!(
+            fix.text.contains(&format!("before={before}")),
+            "{}",
+            fix.text
+        );
+        assert!(
+            fix.text.contains(&canonical_str(wt.to_str().unwrap())),
+            "{}",
+            fix.text
+        );
+        assert!(
+            fix.text.contains("session=") && !fix.text.contains("session=main-s"),
+            "the fix never resumes the main session: {}",
+            fix.text
+        );
+        assert_eq!(
+            (reply.kind, reply.role),
+            (TurnKind::ReplyDraft, TurnRole::Claude)
+        );
+        assert!(
+            reply
+                .text
+                .contains(&canonical_str(dir.path().to_str().unwrap())),
+            "{}",
+            reply.text
+        );
         assert!(reply.text.contains("session=main-s"), "{}", reply.text);
-        assert_eq!((c.fix_session.as_deref(), c.session.as_deref()), (Some("fs"), Some("rs")));
+        assert_eq!(
+            (c.fix_session.as_deref(), c.session.as_deref()),
+            (Some("fs"), Some("rs"))
+        );
         assert!(wt.join("fixed.txt").exists());
     }
 
     fn canonical_str(p: &str) -> String {
-        std::fs::canonicalize(p).unwrap().to_string_lossy().into_owned()
+        std::fs::canonicalize(p)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
     }
 
     #[test]
@@ -3609,25 +3788,42 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let input = thread_input(&repo);
         let before = repo.resolve_commit("feature").unwrap();
         let twice = format!("{COMMIT_ONCE}; echo y > again.txt; git add again.txt; git -c user.name=T -c user.email=t@example.com commit -qm twice");
-        let err = repo.fix_thread(&fake.gh(), &input, "feature", &twice, REPLY).unwrap_err();
+        let err = repo
+            .fix_thread(&fake.gh(), &input, "feature", &twice, REPLY)
+            .unwrap_err();
         assert!(message(err).contains("one commit"));
         assert_eq!(repo.resolve_commit("feature").unwrap(), before);
         assert!(!wt.join("fixed.txt").exists() && !wt.join("again.txt").exists());
 
         let err = repo
-            .fix_thread(&fake.gh(), &input, "feature", "echo z > dirty.txt; echo done", REPLY)
+            .fix_thread(
+                &fake.gh(),
+                &input,
+                "feature",
+                "echo z > dirty.txt; echo done",
+                REPLY,
+            )
             .unwrap_err();
         assert!(message(err).contains("one commit"), "no commit at all");
         assert!(!wt.join("dirty.txt").exists());
 
         let err = repo
-            .fix_thread(&fake.gh(), &input, "feature", "echo w > half.txt; exit 3", REPLY)
+            .fix_thread(
+                &fake.gh(),
+                &input,
+                "feature",
+                "echo w > half.txt; exit 3",
+                REPLY,
+            )
             .unwrap_err();
         assert!(message(err).contains("exit code 3"));
         assert!(!wt.join("half.txt").exists());
         assert_eq!(repo.resolve_commit("feature").unwrap(), before);
         let c = repo.thread_conversation(7, 500).unwrap().unwrap();
-        assert!(c.turns.iter().all(|t| t.kind != TurnKind::Fix), "no fix turn kept");
+        assert!(
+            c.turns.iter().all(|t| t.kind != TurnKind::Fix),
+            "no fix turn kept"
+        );
     }
 
     #[test]
@@ -3638,18 +3834,34 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let before = repo.resolve_commit("feature").unwrap();
         // An amend: one commit ahead of nothing, the old one gone.
         let amend = r#"echo amended; echo a > a.txt; git add a.txt; git -c user.name=T -c user.email=t@example.com commit -q --amend --no-edit"#;
-        let err = message(repo.fix_thread(&fake.gh(), &input, "feature", amend, REPLY).unwrap_err());
+        let err = message(
+            repo.fix_thread(&fake.gh(), &input, "feature", amend, REPLY)
+                .unwrap_err(),
+        );
         assert!(err.contains("one commit"), "{err}");
         assert_eq!(repo.resolve_commit("feature").unwrap(), before);
         assert!(!wt.join("a.txt").exists());
         // A commit on another branch: that branch is left alone, the
         // worktree goes back to feature at before.
         let elsewhere = format!("git checkout -q -b other; {COMMIT_ONCE}");
-        let err = message(repo.fix_thread(&fake.gh(), &input, "feature", &elsewhere, REPLY).unwrap_err());
-        assert!(err.contains("off feature") || err.contains("one commit"), "{err}");
-        assert_eq!(git_in(&wt, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap(), "feature");
+        let err = message(
+            repo.fix_thread(&fake.gh(), &input, "feature", &elsewhere, REPLY)
+                .unwrap_err(),
+        );
+        assert!(
+            err.contains("off feature") || err.contains("one commit"),
+            "{err}"
+        );
+        assert_eq!(
+            git_in(&wt, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap(),
+            "feature"
+        );
         assert_eq!(repo.resolve_commit("feature").unwrap(), before);
-        assert_ne!(repo.resolve_commit("other").unwrap(), before, "other keeps its commit");
+        assert_ne!(
+            repo.resolve_commit("other").unwrap(),
+            before,
+            "other keeps its commit"
+        );
         assert!(!wt.join("fixed.txt").exists());
     }
 
@@ -3660,7 +3872,9 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let input = thread_input(&repo);
         git_in(&wt, &["config", "status.showUntrackedFiles", "no"]).unwrap();
         std::fs::write(wt.join("mine.txt"), "wip").unwrap();
-        let err = repo.fix_thread(&fake.gh(), &input, "feature", "touch ran.txt", REPLY).unwrap_err();
+        let err = repo
+            .fix_thread(&fake.gh(), &input, "feature", "touch ran.txt", REPLY)
+            .unwrap_err();
         assert!(message(err).contains("Commit or stash"));
         assert!(wt.join("mine.txt").exists() && !wt.join("ran.txt").exists());
     }
@@ -3672,12 +3886,16 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let input = thread_input(&repo);
         let marker = "touch ran.txt";
         std::fs::write(wt.join("mine.txt"), "wip").unwrap();
-        let err = repo.fix_thread(&fake.gh(), &input, "feature", marker, REPLY).unwrap_err();
+        let err = repo
+            .fix_thread(&fake.gh(), &input, "feature", marker, REPLY)
+            .unwrap_err();
         assert!(message(err).contains("Commit or stash"));
         assert!(!wt.join("ran.txt").exists());
         std::fs::remove_file(wt.join("mine.txt")).unwrap();
 
-        let err = repo.fix_thread(&fake.gh(), &input, "nowhere", marker, REPLY).unwrap_err();
+        let err = repo
+            .fix_thread(&fake.gh(), &input, "nowhere", marker, REPLY)
+            .unwrap_err();
         assert!(message(err).contains("in no worktree"));
 
         // The pull request's head is a commit the local branch doesn't have.
@@ -3685,13 +3903,22 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let sig = git2::Signature::now("T", "t@example.com").unwrap();
         let parent = git.head().unwrap().peel_to_commit().unwrap();
         let newer = git
-            .commit(None, &sig, &sig, "pushed elsewhere", &parent.tree().unwrap(), &[&parent])
+            .commit(
+                None,
+                &sig,
+                &sig,
+                "pushed elsewhere",
+                &parent.tree().unwrap(),
+                &[&parent],
+            )
             .unwrap();
         let input = ThreadInput {
             head: newer.to_string(),
             ..input
         };
-        let err = repo.fix_thread(&fake.gh(), &input, "feature", marker, REPLY).unwrap_err();
+        let err = repo
+            .fix_thread(&fake.gh(), &input, "feature", marker, REPLY)
+            .unwrap_err();
         assert!(message(err).contains("behind"));
         assert!(!wt.join("ran.txt").exists());
     }
@@ -3709,10 +3936,15 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             .unwrap()
             .to_string();
         let input = thread_input(&repo);
-        let c = repo.fix_thread(&fake.gh(), &input, &name, COMMIT_ONCE, REPLY).unwrap();
+        let c = repo
+            .fix_thread(&fake.gh(), &input, &name, COMMIT_ONCE, REPLY)
+            .unwrap();
         assert!(dir.path().join("fixed.txt").exists());
         let fix = &c.turns[c.turns.len() - 2];
-        assert_eq!(fix.worktree.as_deref().map(canonical_str), Some(canonical_str(dir.path().to_str().unwrap())));
+        assert_eq!(
+            fix.worktree.as_deref().map(canonical_str),
+            Some(canonical_str(dir.path().to_str().unwrap()))
+        );
     }
 
     #[test]
@@ -3735,7 +3967,9 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let mut c = repo.thread_conversation(7, 500).unwrap().unwrap();
         c.turns.retain(|t| t.role != TurnRole::User);
         repo.save_thread_conversation(&c).unwrap();
-        let err = repo.fix_thread(&fake.gh(), &input, "feature", "touch ran.txt", REPLY).unwrap_err();
+        let err = repo
+            .fix_thread(&fake.gh(), &input, "feature", "touch ran.txt", REPLY)
+            .unwrap_err();
         assert!(message(err).contains("follow-up first"));
     }
 
@@ -4020,13 +4254,19 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let fake = Fake::new();
         fake.answer("api graphql", "{}", "", 0);
         let (_dir, repo) = github_repo();
-        repo.resolve_review_thread(&fake.gh(), "PRRT_abc", true).unwrap();
+        repo.resolve_review_thread(&fake.gh(), "PRRT_abc", true)
+            .unwrap();
         let call = fake.calls()[0].clone();
         assert_eq!(&call[..2], ["api", "graphql"]);
         assert!(call.contains(&"id=PRRT_abc".to_string()));
-        assert!(call.iter().any(|a| a.contains("resolveReviewThread(input: {threadId: $id})")));
-        repo.resolve_review_thread(&fake.gh(), "PRRT_abc", false).unwrap();
-        assert!(fake.calls()[1].iter().any(|a| a.contains("unresolveReviewThread(")));
+        assert!(call
+            .iter()
+            .any(|a| a.contains("resolveReviewThread(input: {threadId: $id})")));
+        repo.resolve_review_thread(&fake.gh(), "PRRT_abc", false)
+            .unwrap();
+        assert!(fake.calls()[1]
+            .iter()
+            .any(|a| a.contains("unresolveReviewThread(")));
     }
 
     #[test]
@@ -4092,8 +4332,16 @@ cat "$d/out.$1.$2" 2>/dev/null
         assert_eq!(
             detail.review_threads,
             vec![
-                PrReviewThread { id: "PRRT_1".into(), resolved: true, comment_ids: vec![501, 502] },
-                PrReviewThread { id: "PRRT_2".into(), resolved: false, comment_ids: vec![600] },
+                PrReviewThread {
+                    id: "PRRT_1".into(),
+                    resolved: true,
+                    comment_ids: vec![501, 502]
+                },
+                PrReviewThread {
+                    id: "PRRT_2".into(),
+                    resolved: false,
+                    comment_ids: vec![600]
+                },
             ]
         );
     }
@@ -4149,7 +4397,13 @@ cat "$d/out.$1.$2" 2>/dev/null
 
         // The calls run at once, so in any order.
         let calls = fake.calls();
-        assert!(calls.iter().any(|c| c.starts_with(&["pr".into(), "view".into(), "7".into(), "--repo".into(), "octo/hello".into()])));
+        assert!(calls.iter().any(|c| c.starts_with(&[
+            "pr".into(),
+            "view".into(),
+            "7".into(),
+            "--repo".into(),
+            "octo/hello".into()
+        ])));
         assert!(calls.contains(&vec![
             "api".to_string(),
             "--paginate".to_string(),
@@ -4206,7 +4460,9 @@ cat "$d/out.$1.$2" 2>/dev/null
         );
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "a.txt");
-        assert!(repo.github_commit_files(&fake.gh(), "945dddc/../x").is_err());
+        assert!(repo
+            .github_commit_files(&fake.gh(), "945dddc/../x")
+            .is_err());
         assert_eq!(fake.calls().len(), 1, "a bad id never reaches gh");
     }
 

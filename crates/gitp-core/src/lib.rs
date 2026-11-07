@@ -4,11 +4,11 @@
 
 mod activity;
 mod bisect;
-mod claude_ask;
 mod blame;
 mod branch_ops;
 mod branch_review;
 mod checkout;
+mod claude_ask;
 mod claude_transcript;
 mod commit_ops;
 mod compare;
@@ -38,7 +38,6 @@ mod log;
 mod merge_preview;
 mod pick_plan;
 mod pr_threads;
-mod review_store;
 mod progress;
 mod rebase;
 mod reflog;
@@ -46,6 +45,7 @@ mod refs;
 mod remote;
 mod remote_config;
 mod repo;
+mod review_store;
 mod search;
 mod signature;
 mod stash_ops;
@@ -64,36 +64,35 @@ pub use blame::{BlameCommit, BlameLine, FileBlame};
 pub use branch_ops::{AheadCommit, MergeMode};
 pub use branch_review::{BranchDiff, FindingInput, GeneratedBranchReview};
 pub use checkout::StashSwitch;
+pub use claude_ask::AskKind;
 pub use claude_transcript::{
-    local_day_start, new_session_id, subagent_transcripts, transcript_path, transcript_path_in, Transcript,
-    TranscriptEvent, Usage,
+    local_day_start, new_session_id, subagent_transcripts, transcript_path, transcript_path_in,
+    Transcript, TranscriptEvent, Usage,
 };
 pub use commit_ops::ResetMode;
 pub use compare::{CompareEnd, Comparison, EMPTY_REV, WORKDIR_REV};
 pub use config::{ConfigEntry, ConfigScope};
 pub use conflict_ops::{ConflictCommit, ConflictSides, ConflictStatus, SideCommits};
-pub use storage::{disk_usage, MergedBranches};
-pub use claude_ask::AskKind;
-pub use unpushed::Unpushed;
 pub use create::{clone_repo, init_repo, CloneOptions};
 pub use diff::{
     ChangeKind, CommitDetail, DiffHunk, DiffLine, FileDiff, DEFAULT_CONTEXT_LINES, MAX_DIFF_LINES,
 };
-pub use encoding::{TextEncoding, ENCODING_KEY};
 pub use drafts::{CommitDraft, DRAFT_TIMEOUT};
+pub use encoding::{TextEncoding, ENCODING_KEY};
 pub use error::{Error, Result};
 pub use external_tool::DiffToolTarget;
 pub use file_content::{FileContent, FileSide, PREVIEW_MAX_BYTES};
 pub use file_edit::{TextFile, EDIT_MAX_BYTES};
 pub use filelog::FileCommit;
-pub use gh::{
-    CommitPullRequest, DiffSide, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings, LineComment, MergeMethod, NewPullRequest,
-    PrCheck, PrComment, PrDraft, PrFilter, PrLabel, PrReview, PrReviewComment, PullRequest,
-    PullRequestDetail, ReviewFile, ReviewVerdict, ThreadInput, LOGIN_TIMEOUT,
-};
-pub use gh::{inbox_repo, inbox_sources, InboxPr, InboxRepo};
 pub use gh::PrSignature;
 pub use gh::PrViewed;
+pub use gh::{inbox_repo, inbox_sources, InboxPr, InboxRepo};
+pub use gh::{
+    CommitPullRequest, DiffSide, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings,
+    LineComment, MergeMethod, NewPullRequest, PrCheck, PrComment, PrDraft, PrFilter, PrLabel,
+    PrReview, PrReviewComment, PullRequest, PullRequestDetail, ReviewFile, ReviewVerdict,
+    ThreadInput, LOGIN_TIMEOUT,
+};
 pub use gitflow::{FlowKind, GitFlowConfig};
 pub use hooks::{Hook, HookState, Hooks, HOOK_NAMES};
 pub use identity::{global_identity, restore_local_identity, set_global_identity, Identity};
@@ -105,10 +104,9 @@ pub use local_history::{
 pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope, LogWalk};
 pub use merge_preview::MergePreview;
 pub use pick_plan::{PickAction, PickPlanOutcome, PickStep};
-pub use review_store::{DraftStatus, ReviewFix, ReviewKey, StoredDraft, StoredReview};
 pub use pr_threads::{
-    prepared_reply, ReplyState, ThreadComment, ThreadConversation, ThreadHit, ThreadSearch, ThreadTurn, TurnKind,
-    TurnRole, THREAD_KEEP, THREAD_SEARCH_LIMIT,
+    prepared_reply, ReplyState, ThreadComment, ThreadConversation, ThreadHit, ThreadSearch,
+    ThreadTurn, TurnKind, TurnRole, THREAD_KEEP, THREAD_SEARCH_LIMIT,
 };
 pub use progress::{ClaudeRun, ClaudeRunFn, NetworkHooks, Progress, ProgressFn};
 pub use rebase::{RebaseAction, RebaseCommit, RebaseStatus, RebaseStep};
@@ -117,12 +115,15 @@ pub use refs::{BranchRef, Refs, RemoteBranch, StashRef, TagRef};
 pub use remote::PullMode;
 pub use remote_config::RemoteInfo;
 pub use repo::Repo;
+pub use review_store::{DraftStatus, ReviewFix, ReviewKey, StoredDraft, StoredReview};
 pub use search::LogSearch;
 pub use signature::{CommitSignature, SignatureStatus, SigningConfig};
 pub use status::StatusLists;
+pub use storage::{disk_usage, MergedBranches};
 pub use submodule_ops::{Submodule, SubmoduleState};
 pub use tag_ops::TagDetail;
 pub use undo::{DeletedBranch, FileBlob, HeadMoveMode, Undoable};
+pub use unpushed::Unpushed;
 pub use worktree_ops::{
     StaleWorktree, Worktree, WorktreeSummary, WorktreeTarget, WorktreeUnsavedWork,
 };

@@ -13,12 +13,12 @@ use serde::{Deserialize, Serialize};
 use crate::diff::FileDiff;
 use crate::error::{Error, Result};
 use crate::gh::{
-    claude_answer, git_in, parse_pr_diff, require_clean, require_contains, review_file_written_since,
-    run_shell, run_verified_fix, FIX_TIMEOUT, REVIEW_TIMEOUT,
+    claude_answer, git_in, parse_pr_diff, require_clean, require_contains,
+    review_file_written_since, run_shell, run_verified_fix, FIX_TIMEOUT, REVIEW_TIMEOUT,
 };
 use crate::pr_threads::now_millis;
-use crate::review_store::{DraftStatus, ReviewFix, ReviewKey, StoredReview};
 use crate::repo::Repo;
+use crate::review_store::{DraftStatus, ReviewFix, ReviewKey, StoredReview};
 
 /// A branch's changes against its base, from their merge base.
 #[derive(Debug, Clone, Serialize)]
@@ -53,17 +53,33 @@ pub(crate) fn git_raw(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
     if out.status.success() {
         Ok(out.stdout)
     } else {
-        Err(Error::Message(String::from_utf8_lossy(&out.stderr).trim().to_string()))
+        Err(Error::Message(
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ))
     }
 }
 
-pub(crate) const DIFF: [&str; 5] = ["-c", "core.quotepath=false", "diff", "--no-color", "--no-ext-diff"];
+pub(crate) const DIFF: [&str; 5] = [
+    "-c",
+    "core.quotepath=false",
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+];
 
 impl Repo {
     /// `branch` against `base`: what the branch adds since they forked.
     pub fn branch_diff(&self, branch: &str, base: &str) -> Result<BranchDiff> {
         let dir = self.workdir();
-        let head = git_in(dir, &["rev-parse", "--verify", "--end-of-options", &format!("{branch}^{{commit}}")])?;
+        let head = git_in(
+            dir,
+            &[
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                &format!("{branch}^{{commit}}"),
+            ],
+        )?;
         let merge_base = git_in(dir, &["merge-base", "--end-of-options", base, &head])
             .map_err(|e| Error::Message(format!("{branch} and {base} share no commit: {e}")))?;
         let mut args = DIFF.to_vec();
@@ -85,13 +101,21 @@ impl Repo {
     /// repository's own exclude file, which every worktree shares and which
     /// is never committed.
     fn keep_review_folder_out(&self, dir: &Path, file: &Path) -> Result<()> {
-        let rel = file.strip_prefix(dir).unwrap_or(file).to_string_lossy().into_owned();
-        let status = git_in(dir, &["status", "--porcelain", "--untracked-files=all", "--", &rel])?;
+        let rel = file
+            .strip_prefix(dir)
+            .unwrap_or(file)
+            .to_string_lossy()
+            .into_owned();
+        let status = git_in(
+            dir,
+            &["status", "--porcelain", "--untracked-files=all", "--", &rel],
+        )?;
         if !status.starts_with("??") {
             return Ok(());
         }
         let info = self.common_dir().join("info");
-        std::fs::create_dir_all(&info).map_err(|e| Error::Message(format!("{}: {e}", info.display())))?;
+        std::fs::create_dir_all(&info)
+            .map_err(|e| Error::Message(format!("{}: {e}", info.display())))?;
         let exclude = info.join("exclude");
         let mut text = std::fs::read_to_string(&exclude).unwrap_or_default();
         if text.lines().any(|l| l.trim() == "/review/") {
@@ -101,14 +125,25 @@ impl Repo {
             text.push('\n');
         }
         text.push_str("# gitp: review pages written by branch reviews\n/review/\n");
-        std::fs::write(&exclude, text).map_err(|e| Error::Message(format!("{}: {e}", exclude.display())))
+        std::fs::write(&exclude, text)
+            .map_err(|e| Error::Message(format!("{}: {e}", exclude.display())))
     }
 
     /// `git diff from to` as files; `None` when `from` is not in the
     /// repository any more (a reviewed head garbage-collected away).
     pub fn diff_between(&self, from: &str, to: &str) -> Result<Option<Vec<FileDiff>>> {
         let dir = self.workdir();
-        if git_in(dir, &["cat-file", "-e", "--end-of-options", &format!("{from}^{{commit}}")]).is_err() {
+        if git_in(
+            dir,
+            &[
+                "cat-file",
+                "-e",
+                "--end-of-options",
+                &format!("{from}^{{commit}}"),
+            ],
+        )
+        .is_err()
+        {
             return Ok(None);
         }
         let mut args = DIFF.to_vec();
@@ -136,13 +171,22 @@ impl Repo {
     /// branch's worktree: the diff on stdin; `GITP_BRANCH`, `GITP_BASE` and
     /// `GITP_HEAD` set. A review file written under that worktree's `review/`
     /// while it ran is the review; otherwise what it printed.
-    pub fn generate_branch_review(&self, branch: &str, base: &str, command: &str) -> Result<GeneratedBranchReview> {
+    pub fn generate_branch_review(
+        &self,
+        branch: &str,
+        base: &str,
+        command: &str,
+    ) -> Result<GeneratedBranchReview> {
         let command = command.trim();
         if command.is_empty() {
-            return Err(Error::Message("Set a review command in Settings → Git first.".into()));
+            return Err(Error::Message(
+                "Set a review command in Settings → Git first.".into(),
+            ));
         }
         let dir = self.branch_worktree(branch)?.ok_or_else(|| {
-            Error::Message(format!("{branch} is checked out in no worktree: check it out first."))
+            Error::Message(format!(
+                "{branch} is checked out in no worktree: check it out first."
+            ))
         })?;
         let diff = self.branch_diff(branch, base)?;
         if diff.text.trim().is_empty() {
@@ -156,11 +200,19 @@ impl Repo {
             ("GITP_HEAD", diff.head.clone()),
         ];
         let started = SystemTime::now();
-        let out = run_shell(&dir, command, diff.text.as_bytes(), &env, REVIEW_TIMEOUT, &self.net)?;
+        let out = run_shell(
+            &dir,
+            command,
+            diff.text.as_bytes(),
+            &env,
+            REVIEW_TIMEOUT,
+            &self.net,
+        )?;
         let (text, file) = match review_file_written_since(&dir, started) {
             Some(file) => (
-                std::fs::read_to_string(&file)
-                    .map_err(|e| Error::Message(format!("couldn't read {}: {e}", file.display())))?,
+                std::fs::read_to_string(&file).map_err(|e| {
+                    Error::Message(format!("couldn't read {}: {e}", file.display()))
+                })?,
                 Some(file.to_string_lossy().into_owned()),
             ),
             None if out.stdout.trim().is_empty() => {
@@ -216,11 +268,15 @@ impl Repo {
     pub fn fix_finding(&self, input: &FindingInput, fix_command: &str) -> Result<ReviewFix> {
         let command = fix_command.trim();
         if command.is_empty() {
-            return Err(Error::Message("Set a fix command in Settings → Git first.".into()));
+            return Err(Error::Message(
+                "Set a fix command in Settings → Git first.".into(),
+            ));
         }
         let branch = input.branch.as_str();
         let dir = self.branch_worktree(branch)?.ok_or_else(|| {
-            Error::Message(format!("Check the branch out first: {branch} is in no worktree."))
+            Error::Message(format!(
+                "Check the branch out first: {branch} is in no worktree."
+            ))
         })?;
         require_clean(&dir)?;
         if let (Some(number), Some(head)) = (input.pr, input.pr_head.as_deref()) {
@@ -259,7 +315,14 @@ impl Repo {
             ("GITP_BASE", input.base.clone()),
         ];
         let fixed = run_verified_fix(&dir, branch, &before, || {
-            let out = run_shell(&dir, command, input.body.as_bytes(), &env, FIX_TIMEOUT, &self.net)?;
+            let out = run_shell(
+                &dir,
+                command,
+                input.body.as_bytes(),
+                &env,
+                FIX_TIMEOUT,
+                &self.net,
+            )?;
             // A JSON answer that reports an error fails the fix.
             claude_answer(&out.stdout).map(|_| ())
         });
@@ -283,13 +346,19 @@ impl Repo {
         fix_command: &str,
     ) -> Result<StoredReview> {
         let missing = || Error::Message(format!("The review has no draft {id}."));
-        let review = self.stored_review(key)?.ok_or_else(|| Error::Message("There is no saved review to fix.".into()))?;
+        let review = self
+            .stored_review(key)?
+            .ok_or_else(|| Error::Message("There is no saved review to fix.".into()))?;
         if !review.drafts.iter().any(|d| d.id == id) {
             return Err(missing());
         }
         let fix = self.fix_finding(input, fix_command)?;
         let mut review = self.stored_review(key)?.unwrap_or(review);
-        let draft = review.drafts.iter_mut().find(|d| d.id == id).ok_or_else(missing)?;
+        let draft = review
+            .drafts
+            .iter_mut()
+            .find(|d| d.id == id)
+            .ok_or_else(missing)?;
         draft.status = DraftStatus::Fixed;
         draft.fix = Some(fix);
         self.save_stored_review(&review)?;
@@ -313,7 +382,11 @@ mod tests {
             .env("GIT_COMMITTER_EMAIL", "t@example.com")
             .output()
             .unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
@@ -344,7 +417,10 @@ mod tests {
     }
 
     fn canonical(p: &Path) -> String {
-        std::fs::canonicalize(p).unwrap().to_string_lossy().into_owned()
+        std::fs::canonicalize(p)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
     }
 
     fn message(e: Error) -> String {
@@ -376,7 +452,10 @@ mod tests {
         assert_eq!(canonical(Path::new(parts[0])), canonical(&wt));
         assert_eq!(&parts[1..5], ["feature", "main", head.as_str(), "none"]);
         assert_ne!(parts[5], "0", "the diff came on stdin");
-        assert_eq!((out.head, out.base, out.file), (head, "main".to_string(), None));
+        assert_eq!(
+            (out.head, out.base, out.file),
+            (head, "main".to_string(), None)
+        );
     }
 
     #[test]
@@ -396,7 +475,10 @@ mod tests {
         let (dir, repo, _wt, _fork) = branch_repo();
         git(dir.path(), &["branch", "empty", "main"]);
         git(dir.path(), &["worktree", "add", "-q", "wt2", "empty"]);
-        let err = message(repo.generate_branch_review("empty", "main", "touch ran.txt").unwrap_err());
+        let err = message(
+            repo.generate_branch_review("empty", "main", "touch ran.txt")
+                .unwrap_err(),
+        );
         assert_eq!(err, "Nothing to review: empty has no changes against main.");
         assert!(!dir.path().join("wt2/ran.txt").exists());
     }
@@ -405,11 +487,16 @@ mod tests {
     fn a_branch_in_no_worktree_is_not_reviewed() {
         let (dir, repo, _wt, _fork) = branch_repo();
         git(dir.path(), &["branch", "loose", "feature"]);
-        let err = message(repo.generate_branch_review("loose", "main", "true").unwrap_err());
+        let err = message(
+            repo.generate_branch_review("loose", "main", "true")
+                .unwrap_err(),
+        );
         assert!(err.contains("in no worktree"), "{err}");
         assert!(repo.branch_worktree("loose").unwrap().is_none());
         assert_eq!(
-            repo.branch_worktree("feature").unwrap().map(|p| canonical(&p)),
+            repo.branch_worktree("feature")
+                .unwrap()
+                .map(|p| canonical(&p)),
             Some(canonical(&dir.path().join("wt")))
         );
     }
@@ -423,7 +510,12 @@ mod tests {
         let moved = repo.diff_between(&before, "feature").unwrap().unwrap();
         assert_eq!(moved.len(), 1);
         assert_eq!(moved[0].path, "src/f.rs");
-        assert_eq!(repo.diff_between(&"0".repeat(40), "feature").unwrap().map(|f| f.len()), None);
+        assert_eq!(
+            repo.diff_between(&"0".repeat(40), "feature")
+                .unwrap()
+                .map(|f| f.len()),
+            None
+        );
     }
 
     const COMMIT_ONCE: &str = r#"echo x > fixed.txt; git add fixed.txt; git -c user.name=T -c user.email=t@example.com commit -qm "fix(review): src/f.rs:2 — x""#;
@@ -460,7 +552,18 @@ mod tests {
         let mut lines = logged.lines();
         let env: Vec<_> = lines.next().unwrap().split('|').collect();
         assert_eq!(canonical(Path::new(env[0])), canonical(&wt));
-        assert_eq!(&env[1..8], ["fix", "src/f.rs:2", "feature", before.as_str(), "feature", "main", "s="]);
+        assert_eq!(
+            &env[1..8],
+            [
+                "fix",
+                "src/f.rs:2",
+                "feature",
+                before.as_str(),
+                "feature",
+                "main",
+                "s="
+            ]
+        );
         let json: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
         assert_eq!(json["kind"], "finding");
         assert_eq!(json["path"], "src/f.rs");
@@ -495,7 +598,10 @@ mod tests {
         assert!(err.contains("Commit or stash"), "{err}");
         assert!(!wt.join("ran.txt").exists() && wt.join("mine.txt").exists());
         git(dir.path(), &["branch", "loose", "main"]);
-        let loose = FindingInput { branch: "loose".into(), ..finding() };
+        let loose = FindingInput {
+            branch: "loose".into(),
+            ..finding()
+        };
         let err = message(repo.fix_finding(&loose, "touch ran.txt").unwrap_err());
         assert!(err.contains("in no worktree"), "{err}");
     }
@@ -536,11 +642,17 @@ mod tests {
         let cmd = format!("cp {} {}; {COMMIT_ONCE}", edit.display(), store.display());
         let out = repo.fix_review_draft(&key, 1, &finding(), &cmd).unwrap();
         assert_eq!(out.drafts[0].status, DraftStatus::Fixed);
-        assert_eq!(out.drafts[0].fix.as_ref().unwrap().commit, repo.resolve_commit("feature").unwrap());
+        assert_eq!(
+            out.drafts[0].fix.as_ref().unwrap().commit,
+            repo.resolve_commit("feature").unwrap()
+        );
         assert_eq!(out.drafts[1].body, "two, edited");
         assert_eq!(out.drafts[1].status, DraftStatus::Pending);
         assert_eq!(repo.stored_review(&key).unwrap(), Some(out));
-        let err = message(repo.fix_review_draft(&key, 9, &finding(), "touch ran.txt").unwrap_err());
+        let err = message(
+            repo.fix_review_draft(&key, 9, &finding(), "touch ran.txt")
+                .unwrap_err(),
+        );
         assert!(err.contains("no draft"), "{err}");
         assert!(!dir.path().join("wt/ran.txt").exists());
     }
@@ -553,7 +665,10 @@ mod tests {
         let exclude = std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
         assert!(exclude.lines().any(|l| l == "/review/"), "{exclude}");
         repo.fix_finding(&finding(), COMMIT_ONCE).unwrap();
-        assert!(wt.join("review/s/pr-review-x.md").exists(), "the review page stays");
+        assert!(
+            wt.join("review/s/pr-review-x.md").exists(),
+            "the review page stays"
+        );
         // A second review adds no second line.
         repo.generate_branch_review("feature", "main", cmd).unwrap();
         let again = std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();

@@ -37,7 +37,11 @@ fn review_default_base_impl(path: String) -> Result<String, String> {
 
 /// Load the panel's data for `branch` against `base` (the default base when
 /// none is given).
-fn branch_review_load_impl(path: String, branch: String, base: Option<String>) -> Result<BranchReviewData, String> {
+fn branch_review_load_impl(
+    path: String,
+    branch: String,
+    base: Option<String>,
+) -> Result<BranchReviewData, String> {
     let repo = open(&path)?;
     let base = match base.filter(|b| !b.trim().is_empty()) {
         Some(b) => b,
@@ -108,7 +112,10 @@ fn branch_generate_review_impl(
     let out = repo
         .generate_branch_review(&branch, &base, &command)
         .map_err(to_message);
-    run.finish(out.as_ref().map(|r| r.text.clone()).map_err(Clone::clone), &[]);
+    run.finish(
+        out.as_ref().map(|r| r.text.clone()).map_err(Clone::clone),
+        &[],
+    );
     out
 }
 
@@ -124,7 +131,12 @@ fn review_draft_fix_impl(
     input: FindingInput,
     fix_command: String,
 ) -> Result<StoredReview, String> {
-    let file = input.path.rsplit('/').next().unwrap_or(&input.path).to_string();
+    let file = input
+        .path
+        .rsplit('/')
+        .next()
+        .unwrap_or(&input.path)
+        .to_string();
     let place = match &key {
         ReviewKey::Pr(n) => format!("#{n}"),
         ReviewKey::Branch(b) => b.clone(),
@@ -175,12 +187,19 @@ pub(crate) fn review_default_base(path: String) -> Result<String, String> {
 }
 
 #[tauri::command(async)]
-pub(crate) fn branch_review_load(path: String, branch: String, base: Option<String>) -> Result<BranchReviewData, String> {
+pub(crate) fn branch_review_load(
+    path: String,
+    branch: String,
+    base: Option<String>,
+) -> Result<BranchReviewData, String> {
     branch_review_load_impl(path, branch, base)
 }
 
 #[tauri::command(async)]
-pub(crate) fn stored_review_load(path: String, key: ReviewKey) -> Result<Option<StoredReview>, String> {
+pub(crate) fn stored_review_load(
+    path: String,
+    key: ReviewKey,
+) -> Result<Option<StoredReview>, String> {
     stored_review_load_impl(path, key)
 }
 
@@ -259,7 +278,11 @@ mod tests {
     }
 
     fn rev(dir: &std::path::Path, r: &str) -> String {
-        let out = std::process::Command::new("git").current_dir(dir).args(["rev-parse", r]).output().unwrap();
+        let out = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["rev-parse", r])
+            .output()
+            .unwrap();
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
@@ -275,13 +298,18 @@ mod tests {
         let path = d.to_string_lossy().into_owned();
         let reviewed = rev(d, "feature");
         let repo = Repo::open(d).unwrap();
-        repo.save_stored_review(&stored("feature", &reviewed)).unwrap();
+        repo.save_stored_review(&stored("feature", &reviewed))
+            .unwrap();
 
         let data = branch_review_load_impl(path.clone(), "feature".into(), None).unwrap();
         assert_eq!(data.base, "main");
         assert_eq!(data.head, reviewed);
         assert_eq!(data.files.len(), 1);
-        assert_eq!(data.moves.as_ref().map(Vec::len), Some(0), "nothing moved yet");
+        assert_eq!(
+            data.moves.as_ref().map(Vec::len),
+            Some(0),
+            "nothing moved yet"
+        );
         assert!(data.review.is_some());
         assert_eq!(data.worktree.as_deref().map(canon), Some(canon(&path)));
         assert!(!data.dirty);
@@ -297,7 +325,10 @@ mod tests {
     }
 
     fn canon(p: &str) -> String {
-        std::fs::canonicalize(p).unwrap().to_string_lossy().into_owned()
+        std::fs::canonicalize(p)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
     }
 
     #[test]
@@ -318,12 +349,29 @@ mod tests {
         };
         let key = ReviewKey::Branch("feature".into());
         fixes.hold("/nowhere", "feature").unwrap();
-        let err = review_draft_fix_impl(&jobs, &fixes, "/nowhere".into(), key.clone(), 1, input(), "true".into())
-            .unwrap_err();
+        let err = review_draft_fix_impl(
+            &jobs,
+            &fixes,
+            "/nowhere".into(),
+            key.clone(),
+            1,
+            input(),
+            "true".into(),
+        )
+        .unwrap_err();
         assert_eq!(err, "A fix is already running on feature.");
         fixes.release("/nowhere", "feature");
         // A repository that doesn't exist fails and releases both locks.
-        assert!(review_draft_fix_impl(&jobs, &fixes, "/nowhere".into(), key, 1, input(), "true".into()).is_err());
+        assert!(review_draft_fix_impl(
+            &jobs,
+            &fixes,
+            "/nowhere".into(),
+            key,
+            1,
+            input(),
+            "true".into()
+        )
+        .is_err());
         assert!(fixes.hold("/nowhere", "feature").is_ok() && jobs.running().is_empty());
     }
 }

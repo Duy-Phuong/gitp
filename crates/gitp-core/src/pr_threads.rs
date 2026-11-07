@@ -194,7 +194,11 @@ impl Repo {
     /// The saved conversation of thread `thread` on pull request `number`,
     /// or `None` when there is none. A file that no longer parses is deleted
     /// and counts as none.
-    pub fn thread_conversation(&self, number: u64, thread: u64) -> Result<Option<ThreadConversation>> {
+    pub fn thread_conversation(
+        &self,
+        number: u64,
+        thread: u64,
+    ) -> Result<Option<ThreadConversation>> {
         load(&self.thread_file(number, thread))
     }
 
@@ -220,10 +224,17 @@ impl Repo {
         self.change_prepared_reply(number, thread, |t| t.dropped = true)
     }
 
-    fn change_prepared_reply(&self, number: u64, thread: u64, change: impl FnOnce(&mut ThreadTurn)) -> Result<()> {
-        let mut c = self
-            .thread_conversation(number, thread)?
-            .ok_or_else(|| Error::Message(format!("#{number} has no Claude conversation on that thread")))?;
+    fn change_prepared_reply(
+        &self,
+        number: u64,
+        thread: u64,
+        change: impl FnOnce(&mut ThreadTurn),
+    ) -> Result<()> {
+        let mut c = self.thread_conversation(number, thread)?.ok_or_else(|| {
+            Error::Message(format!(
+                "#{number} has no Claude conversation on that thread"
+            ))
+        })?;
         // Only the latest draft counts: an older one was superseded.
         let at = c
             .turns
@@ -260,7 +271,10 @@ impl Repo {
         let folders = match std::fs::read_dir(&root) {
             Ok(d) => d,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(ThreadSearch { hits: Vec::new(), total: 0 })
+                return Ok(ThreadSearch {
+                    hits: Vec::new(),
+                    total: 0,
+                })
             }
             Err(e) => return Err(io_err(&root, e)),
         };
@@ -268,17 +282,25 @@ impl Repo {
         let mut hits = Vec::new();
         for folder in folders.flatten() {
             let folder = folder.path();
-            let number = folder.file_name().and_then(|n| n.to_str()).and_then(|n| n.parse::<u64>().ok());
+            let number = folder
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.parse::<u64>().ok());
             if !folder.is_dir() || number.is_none() || pr.is_some_and(|p| Some(p) != number) {
                 continue;
             }
-            for entry in std::fs::read_dir(&folder).map_err(|e| io_err(&folder, e))?.flatten() {
+            for entry in std::fs::read_dir(&folder)
+                .map_err(|e| io_err(&folder, e))?
+                .flatten()
+            {
                 let file = entry.path();
                 if file.extension().is_none_or(|x| x != "json") {
                     continue;
                 }
                 let Some(c) = load(&file)? else { continue };
-                let Some(at) = c.turns.last().map(|t| t.at) else { continue };
+                let Some(at) = c.turns.last().map(|t| t.at) else {
+                    continue;
+                };
                 if range.is_some_and(|(from, to)| at < from || at >= to) {
                     continue;
                 }
@@ -310,7 +332,10 @@ impl Repo {
             if !folder.is_dir() {
                 continue;
             }
-            for entry in std::fs::read_dir(&folder).map_err(|e| io_err(&folder, e))?.flatten() {
+            for entry in std::fs::read_dir(&folder)
+                .map_err(|e| io_err(&folder, e))?
+                .flatten()
+            {
                 let file = entry.path();
                 if file.extension().is_none_or(|x| x != "json") {
                     continue;
@@ -336,7 +361,9 @@ const SNIPPET_SIDE: usize = 80;
 
 /// Lowercase, one character for one, so positions match the original's.
 fn fold(s: &str) -> Vec<char> {
-    s.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect()
+    s.chars()
+        .map(|c| c.to_lowercase().next().unwrap_or(c))
+        .collect()
 }
 
 fn position(hay: &[char], needle: &[char]) -> Option<usize> {
@@ -350,7 +377,11 @@ fn position(hay: &[char], needle: &[char]) -> Option<usize> {
 /// in some field of `c`; the start of the thread when there are no words.
 fn find_snippet(c: &ThreadConversation, words: &[Vec<char>]) -> Option<(String, bool)> {
     let number = c.pr.to_string();
-    let mut fields: Vec<(&str, bool)> = c.comments.iter().map(|x| (x.body.as_str(), false)).collect();
+    let mut fields: Vec<(&str, bool)> = c
+        .comments
+        .iter()
+        .map(|x| (x.body.as_str(), false))
+        .collect();
     fields.extend(c.turns.iter().map(|t| (t.text.as_str(), t.dropped)));
     fields.extend(c.title.as_deref().map(|t| (t, false)));
     fields.push((c.path.as_str(), false));
@@ -365,13 +396,22 @@ fn find_snippet(c: &ThreadConversation, words: &[Vec<char>]) -> Option<(String, 
         return Some((cut(&chars, 0, 2 * SNIPPET_SIDE), dropped));
     };
     let folded: Vec<Vec<char>> = fields.iter().map(|(text, _)| fold(text)).collect();
-    if !words.iter().all(|w| folded.iter().any(|f| position(f, w).is_some())) {
+    if !words
+        .iter()
+        .all(|w| folded.iter().any(|f| position(f, w).is_some()))
+    {
         return None;
     }
-    let (i, at) = folded.iter().enumerate().find_map(|(i, f)| position(f, first).map(|p| (i, p)))?;
+    let (i, at) = folded
+        .iter()
+        .enumerate()
+        .find_map(|(i, f)| position(f, first).map(|p| (i, p)))?;
     let chars: Vec<char> = fields[i].0.chars().collect();
     let start = at.saturating_sub(SNIPPET_SIDE);
-    Some((cut(&chars, start, at + first.len() + SNIPPET_SIDE), fields[i].1))
+    Some((
+        cut(&chars, start, at + first.len() + SNIPPET_SIDE),
+        fields[i].1,
+    ))
 }
 
 /// `chars[start..end]` on one line, with `…` where it was cut.
@@ -401,7 +441,10 @@ fn hit(c: &ThreadConversation, at: u64, snippet: String, dropped: bool) -> Threa
         snippet,
         dropped,
         at,
-        fixed: c.turns.iter().any(|t| t.kind == TurnKind::Fix && t.commit.is_some()),
+        fixed: c
+            .turns
+            .iter()
+            .any(|t| t.kind == TurnKind::Fix && t.commit.is_some()),
         reply_state: if prepared_reply(c).is_some() {
             Some(ReplyState::Ready)
         } else if last_draft.is_some_and(|t| t.posted.is_some()) {
@@ -441,7 +484,8 @@ mod tests {
         let sig = git2::Signature::now("T", "t@example.com").unwrap();
         let tree = git.treebuilder(None).unwrap().write().unwrap();
         let tree = git.find_tree(tree).unwrap();
-        git.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+        git.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
         let repo = Repo::open(dir.path()).unwrap();
         (dir, repo)
     }
@@ -468,8 +512,14 @@ mod tests {
         repo.save_thread_conversation(&c).unwrap();
         let file = dir.path().join(".git/gitp/pr-threads/3426/1234567890.json");
         assert!(file.is_file());
-        assert!(!dir.path().join("gitp").exists(), "never in the working tree");
-        assert!(!file.with_extension("json.tmp").exists(), "the temp file was renamed away");
+        assert!(
+            !dir.path().join("gitp").exists(),
+            "never in the working tree"
+        );
+        assert!(
+            !file.with_extension("json.tmp").exists(),
+            "the temp file was renamed away"
+        );
         assert_eq!(repo.thread_conversation(3426, 1234567890).unwrap(), Some(c));
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("\"kind\": \"check\""), "{text}");
@@ -516,9 +566,12 @@ mod tests {
         let (dir, repo) = test_repo();
         let now: u64 = 100 * 24 * 60 * 60 * 1000;
         let keep = THREAD_KEEP.as_millis() as u64;
-        repo.save_thread_conversation(&conv(1, 10, now - keep - 1)).unwrap();
-        repo.save_thread_conversation(&conv(1, 11, now - keep + 1)).unwrap();
-        repo.save_thread_conversation(&conv(2, 20, now - keep - 1)).unwrap();
+        repo.save_thread_conversation(&conv(1, 10, now - keep - 1))
+            .unwrap();
+        repo.save_thread_conversation(&conv(1, 11, now - keep + 1))
+            .unwrap();
+        repo.save_thread_conversation(&conv(2, 20, now - keep - 1))
+            .unwrap();
         let damaged = dir.path().join(".git/gitp/pr-threads/3/30.json");
         std::fs::create_dir_all(damaged.parent().unwrap()).unwrap();
         std::fs::write(&damaged, "nope").unwrap();
@@ -527,9 +580,17 @@ mod tests {
         assert!(repo.thread_conversation(1, 11).unwrap().is_some());
         assert!(!dir.path().join(".git/gitp/pr-threads/2").exists());
         assert!(!dir.path().join(".git/gitp/pr-threads/3").exists());
-        assert_eq!(repo.prune_thread_conversations(now).unwrap(), 0, "a second pass finds nothing");
+        assert_eq!(
+            repo.prune_thread_conversations(now).unwrap(),
+            0,
+            "a second pass finds nothing"
+        );
         let (_d2, empty) = test_repo();
-        assert_eq!(empty.prune_thread_conversations(now).unwrap(), 0, "no folder yet is not an error");
+        assert_eq!(
+            empty.prune_thread_conversations(now).unwrap(),
+            0,
+            "no folder yet is not an error"
+        );
     }
 
     #[test]
@@ -546,7 +607,11 @@ mod tests {
             comments: vec![],
             session: None,
             fix_session: None,
-            turns: vec![draft("A"), ThreadTurn::user(TurnKind::Followup, "q".into()), draft("B")],
+            turns: vec![
+                draft("A"),
+                ThreadTurn::user(TurnKind::Followup, "q".into()),
+                draft("B"),
+            ],
         };
         assert_eq!(prepared_reply(&c).map(|t| t.text.as_str()), Some("B"));
         repo.save_thread_conversation(&c).unwrap();
@@ -563,7 +628,10 @@ mod tests {
         assert_eq!(prepared_reply(&c), None);
         assert!(c.turns[3].dropped);
         assert!(repo.drop_reply(1, 2).is_err(), "nothing left to drop");
-        assert!(repo.mark_reply_posted(9, 9, "u").is_err(), "no conversation");
+        assert!(
+            repo.mark_reply_posted(9, 9, "u").is_err(),
+            "no conversation"
+        );
     }
 
     #[test]
@@ -577,9 +645,19 @@ mod tests {
         )
         .unwrap();
         let c = repo.thread_conversation(5, 6).unwrap().unwrap();
-        assert_eq!((c.fix_session.clone(), c.turns[0].commit.clone(), c.turns[0].dropped), (None, None, false));
+        assert_eq!(
+            (
+                c.fix_session.clone(),
+                c.turns[0].commit.clone(),
+                c.turns[0].dropped
+            ),
+            (None, None, false)
+        );
         let text = serde_json::to_string(&c).unwrap();
-        assert!(!text.contains("dropped") && !text.contains("fix_session"), "{text}");
+        assert!(
+            !text.contains("dropped") && !text.contains("fix_session"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -609,7 +687,10 @@ mod tests {
             path: "src/retry.ts".into(),
             title: Some(format!("PR {pr}")),
             line: Some(12),
-            comments: vec![ThreadComment { author: "anna".into(), body: comment.into() }],
+            comments: vec![ThreadComment {
+                author: "anna".into(),
+                body: comment.into(),
+            }],
             session: None,
             fix_session: None,
             turns: vec![ThreadTurn {
@@ -626,11 +707,23 @@ mod tests {
     #[test]
     fn every_token_must_match_somewhere_case_insensitively() {
         let (_dir, repo) = test_repo();
-        repo.save_thread_conversation(&stored(1, 10, 100, "Retry STOPS early", "the loop ends one try sooner")).unwrap();
-        repo.save_thread_conversation(&stored(2, 20, 200, "naming nit", "rename it")).unwrap();
-        let s = repo.search_thread_conversations("retry LOOP", None, None).unwrap();
+        repo.save_thread_conversation(&stored(
+            1,
+            10,
+            100,
+            "Retry STOPS early",
+            "the loop ends one try sooner",
+        ))
+        .unwrap();
+        repo.save_thread_conversation(&stored(2, 20, 200, "naming nit", "rename it"))
+            .unwrap();
+        let s = repo
+            .search_thread_conversations("retry LOOP", None, None)
+            .unwrap();
         assert_eq!((found(&s), s.total), (vec![(1, 10)], 1));
-        let s = repo.search_thread_conversations("loop nit", None, None).unwrap();
+        let s = repo
+            .search_thread_conversations("loop nit", None, None)
+            .unwrap();
         assert_eq!((found(&s), s.total), (vec![], 0));
     }
 
@@ -641,41 +734,65 @@ mod tests {
         c.path = "crates/core/src/merge.rs".into();
         c.title = Some("Faster merges".into());
         repo.save_thread_conversation(&c).unwrap();
-        repo.save_thread_conversation(&stored(7, 20, 200, "a", "b")).unwrap();
+        repo.save_thread_conversation(&stored(7, 20, 200, "a", "b"))
+            .unwrap();
         for q in ["3426", "merge.rs", "faster"] {
-            assert_eq!(found(&repo.search_thread_conversations(q, None, None).unwrap()), vec![(3426, 10)], "{q}");
+            assert_eq!(
+                found(&repo.search_thread_conversations(q, None, None).unwrap()),
+                vec![(3426, 10)],
+                "{q}"
+            );
         }
     }
 
     #[test]
     fn range_and_pr_filters() {
         let (_dir, repo) = test_repo();
-        repo.save_thread_conversation(&stored(1, 10, 100, "x", "y")).unwrap();
-        repo.save_thread_conversation(&stored(1, 11, 200, "x", "y")).unwrap();
-        repo.save_thread_conversation(&stored(2, 20, 300, "x", "y")).unwrap();
-        let s = repo.search_thread_conversations("x", Some((150, 300)), None).unwrap();
+        repo.save_thread_conversation(&stored(1, 10, 100, "x", "y"))
+            .unwrap();
+        repo.save_thread_conversation(&stored(1, 11, 200, "x", "y"))
+            .unwrap();
+        repo.save_thread_conversation(&stored(2, 20, 300, "x", "y"))
+            .unwrap();
+        let s = repo
+            .search_thread_conversations("x", Some((150, 300)), None)
+            .unwrap();
         assert_eq!(found(&s), vec![(1, 11)], "[from, to): 300 is out");
-        let s = repo.search_thread_conversations("x", None, Some(1)).unwrap();
+        let s = repo
+            .search_thread_conversations("x", None, Some(1))
+            .unwrap();
         assert_eq!(found(&s), vec![(1, 11), (1, 10)]);
     }
 
     #[test]
     fn an_empty_query_with_a_pr_lists_only_that_pr() {
         let (_dir, repo) = test_repo();
-        repo.save_thread_conversation(&stored(1, 10, 100, "first comment", "y")).unwrap();
-        repo.save_thread_conversation(&stored(2, 20, 300, "root comment", "y")).unwrap();
-        repo.save_thread_conversation(&stored(2, 21, 200, "other", "y")).unwrap();
-        let s = repo.search_thread_conversations("  ", None, Some(2)).unwrap();
+        repo.save_thread_conversation(&stored(1, 10, 100, "first comment", "y"))
+            .unwrap();
+        repo.save_thread_conversation(&stored(2, 20, 300, "root comment", "y"))
+            .unwrap();
+        repo.save_thread_conversation(&stored(2, 21, 200, "other", "y"))
+            .unwrap();
+        let s = repo
+            .search_thread_conversations("  ", None, Some(2))
+            .unwrap();
         assert_eq!(found(&s), vec![(2, 20), (2, 21)]);
-        assert_eq!(s.hits[0].snippet, "root comment", "the start of the root comment");
-        assert_eq!(found(&repo.search_thread_conversations("", None, None).unwrap()), vec![(2, 20), (2, 21), (1, 10)]);
+        assert_eq!(
+            s.hits[0].snippet, "root comment",
+            "the start of the root comment"
+        );
+        assert_eq!(
+            found(&repo.search_thread_conversations("", None, None).unwrap()),
+            vec![(2, 20), (2, 21), (1, 10)]
+        );
     }
 
     #[test]
     fn hits_are_newest_first_and_capped_with_the_total() {
         let (_dir, repo) = test_repo();
         for i in 0..205 {
-            repo.save_thread_conversation(&stored(1 + i % 3, i, 1_000 + i, "x", "y")).unwrap();
+            repo.save_thread_conversation(&stored(1 + i % 3, i, 1_000 + i, "x", "y"))
+                .unwrap();
         }
         let s = repo.search_thread_conversations("", None, None).unwrap();
         assert_eq!((s.hits.len(), s.total), (THREAD_SEARCH_LIMIT, 205));
@@ -686,21 +803,45 @@ mod tests {
     fn the_snippet_is_80_chars_either_side_of_the_first_match() {
         let (_dir, repo) = test_repo();
         let long = format!("{}NEEDLE{}", "a".repeat(100), "b".repeat(100));
-        repo.save_thread_conversation(&stored(1, 10, 100, &long, "short answer needle")).unwrap();
-        let s = repo.search_thread_conversations("needle", None, None).unwrap();
-        assert_eq!(s.hits[0].snippet, format!("…{}NEEDLE{}…", "a".repeat(80), "b".repeat(80)));
-        repo.save_thread_conversation(&stored(1, 10, 100, "nothing here", "line one\n\nline   two sooner")).unwrap();
-        let s = repo.search_thread_conversations("SOONER", None, None).unwrap();
-        assert_eq!(s.hits[0].snippet, "line one line two sooner", "the first field it matches, one line");
+        repo.save_thread_conversation(&stored(1, 10, 100, &long, "short answer needle"))
+            .unwrap();
+        let s = repo
+            .search_thread_conversations("needle", None, None)
+            .unwrap();
+        assert_eq!(
+            s.hits[0].snippet,
+            format!("…{}NEEDLE{}…", "a".repeat(80), "b".repeat(80))
+        );
+        repo.save_thread_conversation(&stored(
+            1,
+            10,
+            100,
+            "nothing here",
+            "line one\n\nline   two sooner",
+        ))
+        .unwrap();
+        let s = repo
+            .search_thread_conversations("SOONER", None, None)
+            .unwrap();
+        assert_eq!(
+            s.hits[0].snippet, "line one line two sooner",
+            "the first field it matches, one line"
+        );
     }
 
     #[test]
     fn a_snippet_cuts_on_characters_not_bytes() {
         let (_dir, repo) = test_repo();
         let text = format!("{}Ünïcode{}", "é".repeat(100), "ø".repeat(100));
-        repo.save_thread_conversation(&stored(1, 10, 100, &text, "y")).unwrap();
-        let s = repo.search_thread_conversations("ünïCODE", None, None).unwrap();
-        assert_eq!(s.hits[0].snippet, format!("…{}Ünïcode{}…", "é".repeat(80), "ø".repeat(80)));
+        repo.save_thread_conversation(&stored(1, 10, 100, &text, "y"))
+            .unwrap();
+        let s = repo
+            .search_thread_conversations("ünïCODE", None, None)
+            .unwrap();
+        assert_eq!(
+            s.hits[0].snippet,
+            format!("…{}Ünïcode{}…", "é".repeat(80), "ø".repeat(80))
+        );
     }
 
     #[test]
@@ -709,11 +850,26 @@ mod tests {
         let mut c = stored(1, 10, 100, "naming", "nothing to change");
         c.turns.push(ThreadTurn {
             dropped: true,
-            ..ThreadTurn::claude(TurnKind::ReplyDraft, "h".into(), "We will rename foo.".into())
+            ..ThreadTurn::claude(
+                TurnKind::ReplyDraft,
+                "h".into(),
+                "We will rename foo.".into(),
+            )
         });
         repo.save_thread_conversation(&c).unwrap();
-        assert!(repo.search_thread_conversations("rename", None, None).unwrap().hits[0].dropped);
-        assert!(!repo.search_thread_conversations("nothing", None, None).unwrap().hits[0].dropped);
+        assert!(
+            repo.search_thread_conversations("rename", None, None)
+                .unwrap()
+                .hits[0]
+                .dropped
+        );
+        assert!(
+            !repo
+                .search_thread_conversations("nothing", None, None)
+                .unwrap()
+                .hits[0]
+                .dropped
+        );
     }
 
     #[test]
@@ -725,11 +881,14 @@ mod tests {
             ..ThreadTurn::claude(TurnKind::ReplyDraft, "h".into(), "reply".into())
         };
         let mut fixed = stored(1, 10, 100, "x", "y");
-        fixed.turns.insert(0, ThreadTurn {
-            at: 10,
-            commit: Some("c0ffee".into()),
-            ..ThreadTurn::claude(TurnKind::Fix, "h".into(), "fixed".into())
-        });
+        fixed.turns.insert(
+            0,
+            ThreadTurn {
+                at: 10,
+                commit: Some("c0ffee".into()),
+                ..ThreadTurn::claude(TurnKind::Fix, "h".into(), "fixed".into())
+            },
+        );
         let mut ready = stored(2, 20, 200, "x", "y");
         ready.turns.insert(0, draft(None));
         let mut posted = stored(3, 30, 300, "x", "y");
@@ -738,10 +897,18 @@ mod tests {
             repo.save_thread_conversation(c).unwrap();
         }
         let s = repo.search_thread_conversations("", None, None).unwrap();
-        let badges: Vec<_> = s.hits.iter().map(|h| (h.pr, h.fixed, h.reply_state)).collect();
+        let badges: Vec<_> = s
+            .hits
+            .iter()
+            .map(|h| (h.pr, h.fixed, h.reply_state))
+            .collect();
         assert_eq!(
             badges,
-            vec![(3, false, Some(ReplyState::Posted)), (2, false, Some(ReplyState::Ready)), (1, true, None)]
+            vec![
+                (3, false, Some(ReplyState::Posted)),
+                (2, false, Some(ReplyState::Ready)),
+                (1, true, None)
+            ]
         );
         let h = &s.hits[2];
         assert_eq!(
@@ -763,9 +930,15 @@ mod tests {
         let c = repo.thread_conversation(5, 6).unwrap().unwrap();
         assert_eq!((c.title.clone(), c.line, c.comments.len()), (None, None, 0));
         let text = serde_json::to_string(&c).unwrap();
-        assert!(!text.contains("title") && !text.contains("comments") && !text.contains("\"line\""), "{text}");
+        assert!(
+            !text.contains("title") && !text.contains("comments") && !text.contains("\"line\""),
+            "{text}"
+        );
         let s = repo.search_thread_conversations("OLD", None, None).unwrap();
-        assert_eq!((found(&s), s.hits[0].title.clone(), s.hits[0].line), (vec![(5, 6)], None, None));
+        assert_eq!(
+            (found(&s), s.hits[0].title.clone(), s.hits[0].line),
+            (vec![(5, 6)], None, None)
+        );
         assert_eq!(s.hits[0].snippet, "an old answer");
     }
 

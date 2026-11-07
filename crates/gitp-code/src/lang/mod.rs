@@ -47,7 +47,12 @@ impl LangDef {
     fn load(lang: Lang, language: Language, defs: &str, refs: &str) -> LangDef {
         let defs = Query::new(&language, defs).unwrap_or_else(|e| panic!("{lang:?} defs.scm: {e}"));
         let refs = Query::new(&language, refs).unwrap_or_else(|e| panic!("{lang:?} refs.scm: {e}"));
-        LangDef { lang, language, defs, refs }
+        LangDef {
+            lang,
+            language,
+            defs,
+            refs,
+        }
     }
 }
 

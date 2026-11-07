@@ -423,7 +423,11 @@ mod tests {
                 .env("GIT_COMMITTER_EMAIL", "t@example.com")
                 .output()
                 .unwrap();
-            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         };
         let bare = dir.path().join("remote.git");
         let work = dir.path().join("work");
@@ -432,12 +436,21 @@ mod tests {
         git(&work, &["commit", "-q", "--allow-empty", "-m", "base"]);
         git(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
         git(&work, &["push", "-q", "-u", "origin", "main"]);
-        git(&work, &["commit", "-q", "--allow-empty", "-m", "first ahead"]);
-        git(&work, &["commit", "-q", "--allow-empty", "-m", "second ahead"]);
+        git(
+            &work,
+            &["commit", "-q", "--allow-empty", "-m", "first ahead"],
+        );
+        git(
+            &work,
+            &["commit", "-q", "--allow-empty", "-m", "second ahead"],
+        );
         git(&work, &["branch", "-q", "lonely"]);
         let repo = crate::repo::Repo::open(&work).unwrap();
         let ahead = repo.ahead_log("main").unwrap();
-        assert_eq!(ahead.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(), ["second ahead", "first ahead"]);
+        assert_eq!(
+            ahead.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(),
+            ["second ahead", "first ahead"]
+        );
         assert!(ahead.iter().all(|c| c.sha.len() >= 7));
         assert_eq!(repo.ahead_log("lonely").unwrap(), vec![], "no upstream");
         assert!(repo.ahead_log("-x").is_err(), "a dash is not a branch");

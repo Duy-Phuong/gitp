@@ -38,13 +38,20 @@ impl PrSignature {
     /// The signature of `detail`, read at the same moment: what a poll
     /// right after would answer, built the same way.
     pub(crate) fn of(detail: &PullRequestDetail) -> Self {
-        let mut checks: Vec<(String, String)> =
-            detail.checks.iter().map(|c| (c.name.clone(), c.state.clone())).collect();
+        let mut checks: Vec<(String, String)> = detail
+            .checks
+            .iter()
+            .map(|c| (c.name.clone(), c.state.clone()))
+            .collect();
         checks.sort();
         PrSignature {
             head: detail.head_oid.clone(),
             updated_at: detail.updated_at.clone(),
-            threads: detail.review_threads.iter().map(|t| (t.id.clone(), t.resolved)).collect(),
+            threads: detail
+                .review_threads
+                .iter()
+                .map(|t| (t.id.clone(), t.resolved))
+                .collect(),
             checks,
         }
     }
@@ -64,7 +71,17 @@ impl Repo {
         let name_arg = format!("name={name}");
         let number_arg = format!("number={number}");
         let query_arg = format!("query={QUERY}");
-        args.extend(["graphql", "-F", &owner_arg, "-F", &name_arg, "-F", &number_arg, "-f", &query_arg]);
+        args.extend([
+            "graphql",
+            "-F",
+            &owner_arg,
+            "-F",
+            &name_arg,
+            "-F",
+            &number_arg,
+            "-f",
+            &query_arg,
+        ]);
         let out = self.gh_call(gh, &target, &args, None, TIMEOUT)?;
         let raw: RawAnswer = parse_json(&out.stdout)?;
         let pr = raw.data.repository.pull_request;
@@ -86,7 +103,12 @@ impl Repo {
         Ok(PrSignature {
             head: pr.head_ref_oid,
             updated_at: pr.updated_at,
-            threads: pr.review_threads.nodes.into_iter().map(|t| (t.id, t.is_resolved)).collect(),
+            threads: pr
+                .review_threads
+                .nodes
+                .into_iter()
+                .map(|t| (t.id, t.is_resolved))
+                .collect(),
             checks,
         })
     }
@@ -152,8 +174,20 @@ mod tests {
         // One GraphQL answer serves both the detail's threads query and the
         // poll's: the same pull request, read twice.
         let fake = Fake::new();
-        fake.answer("api graphql", &ANSWER.replace(r#""isResolved":false}"#, r#""isResolved":false,"comments":{"nodes":[]}}"#)
-            .replace(r#""isResolved":true}"#, r#""isResolved":true,"comments":{"nodes":[]}}"#), "", 0);
+        fake.answer(
+            "api graphql",
+            &ANSWER
+                .replace(
+                    r#""isResolved":false}"#,
+                    r#""isResolved":false,"comments":{"nodes":[]}}"#,
+                )
+                .replace(
+                    r#""isResolved":true}"#,
+                    r#""isResolved":true,"comments":{"nodes":[]}}"#,
+                ),
+            "",
+            0,
+        );
         fake.answer("api --paginate", "[]", "", 0);
         fake.answer(
             "pr view",
@@ -204,7 +238,10 @@ mod tests {
 
         assert_eq!(sig.head, "abc123");
         assert_eq!(sig.updated_at, "2026-11-07T10:00:00Z");
-        assert_eq!(sig.threads, vec![("T1".to_string(), false), ("T2".to_string(), true)]);
+        assert_eq!(
+            sig.threads,
+            vec![("T1".to_string(), false), ("T2".to_string(), true)]
+        );
         // By name, so GitHub listing them in another order is no change.
         assert_eq!(
             sig.checks,
@@ -239,13 +276,22 @@ mod tests {
             "",
             0,
         );
-        assert!(repo.pull_request_signature(&fake.gh(), 3).unwrap().checks.is_empty());
+        assert!(repo
+            .pull_request_signature(&fake.gh(), 3)
+            .unwrap()
+            .checks
+            .is_empty());
     }
 
     #[test]
     fn signature_rate_limit_says_rate_limit() {
         let fake = Fake::new();
-        fake.answer("api graphql", "", "GraphQL: API rate limit exceeded for user ID 1.\n", 1);
+        fake.answer(
+            "api graphql",
+            "",
+            "GraphQL: API rate limit exceeded for user ID 1.\n",
+            1,
+        );
         let (_dir, repo) = github_repo();
         let err = repo.pull_request_signature(&fake.gh(), 3).unwrap_err();
         assert!(message(err).starts_with(RATE_LIMITED));

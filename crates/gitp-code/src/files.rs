@@ -83,15 +83,24 @@ pub fn ignored(root: &Path, files: &[FileEntry]) -> Vec<IgnoredEntry> {
     known.extend(dirs.iter().copied());
     let mut out = Vec::new();
     for dir in dirs {
-        let Ok(children) = std::fs::read_dir(root.join(dir)) else { continue };
+        let Ok(children) = std::fs::read_dir(root.join(dir)) else {
+            continue;
+        };
         for child in children.flatten() {
             let name = child.file_name().to_string_lossy().into_owned();
             if name == ".git" {
                 continue;
             }
-            let path = if dir.is_empty() { name } else { format!("{dir}/{name}") };
+            let path = if dir.is_empty() {
+                name
+            } else {
+                format!("{dir}/{name}")
+            };
             if !known.contains(path.as_str()) {
-                out.push(IgnoredEntry { dir: child.file_type().is_ok_and(|t| t.is_dir()), path });
+                out.push(IgnoredEntry {
+                    dir: child.file_type().is_ok_and(|t| t.is_dir()),
+                    path,
+                });
             }
         }
     }
@@ -123,14 +132,22 @@ pub fn ignored_files(root: &Path, ignored: &[IgnoredEntry], max: usize) -> Vec<S
         }
         let walker = ignore::WalkBuilder::new(root.join(&e.path))
             .standard_filters(false)
-            .filter_entry(|d| !(d.file_type().is_some_and(|t| t.is_dir()) && SKIPPED_DIRS.contains(&d.file_name().to_string_lossy().as_ref())))
+            .filter_entry(|d| {
+                !(d.file_type().is_some_and(|t| t.is_dir())
+                    && SKIPPED_DIRS.contains(&d.file_name().to_string_lossy().as_ref()))
+            })
             .build();
         for entry in walker.flatten() {
             if out.len() >= max {
                 break;
             }
             if entry.file_type().is_some_and(|t| t.is_file()) {
-                let rel = entry.path().strip_prefix(root).unwrap_or(entry.path()).to_string_lossy().replace('\\', "/");
+                let rel = entry
+                    .path()
+                    .strip_prefix(root)
+                    .unwrap_or(entry.path())
+                    .to_string_lossy()
+                    .replace('\\', "/");
                 out.push(rel);
             }
         }
@@ -148,8 +165,15 @@ pub fn list_dir(root: &Path, dir: &str) -> Result<Vec<IgnoredEntry>, String> {
         if name == ".git" {
             continue;
         }
-        let path = if dir.is_empty() { name } else { format!("{dir}/{name}") };
-        out.push(IgnoredEntry { dir: child.file_type().is_ok_and(|t| t.is_dir()), path });
+        let path = if dir.is_empty() {
+            name
+        } else {
+            format!("{dir}/{name}")
+        };
+        out.push(IgnoredEntry {
+            dir: child.file_type().is_ok_and(|t| t.is_dir()),
+            path,
+        });
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(out)
@@ -187,7 +211,11 @@ mod tests {
     #[test]
     fn lists_files_and_skips_gitignored_and_dot_git() {
         let dir = tree();
-        let paths: Vec<String> = walk(dir.path()).unwrap().into_iter().map(|f| f.path).collect();
+        let paths: Vec<String> = walk(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
         assert_eq!(paths, vec![".github/ci.yml", ".gitignore", "src/a.java"]);
     }
 
@@ -200,12 +228,21 @@ mod tests {
         assert_eq!(
             ignored,
             vec![
-                IgnoredEntry { path: "build".into(), dir: true },
-                IgnoredEntry { path: "run.log".into(), dir: false }
+                IgnoredEntry {
+                    path: "build".into(),
+                    dir: true
+                },
+                IgnoredEntry {
+                    path: "run.log".into(),
+                    dir: false
+                }
             ]
         );
         let inside = list_dir(dir.path(), "build").unwrap();
-        assert_eq!(inside.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), vec!["build/deep.log", "build/x.class"]);
+        assert_eq!(
+            inside.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(),
+            vec!["build/deep.log", "build/x.class"]
+        );
     }
 
     #[test]
@@ -217,7 +254,10 @@ mod tests {
         std::fs::write(dir.path().join("build/notes/3.36.0.md"), "x").unwrap();
         let files = walk(dir.path()).unwrap();
         let ignored = ignored(dir.path(), &files);
-        assert_eq!(ignored_files(dir.path(), &ignored, 100), vec!["build/notes/3.36.0.md", "build/x.class", "run.log"]);
+        assert_eq!(
+            ignored_files(dir.path(), &ignored, 100),
+            vec!["build/notes/3.36.0.md", "build/x.class", "run.log"]
+        );
         assert_eq!(ignored_files(dir.path(), &ignored, 1).len(), 1);
     }
 

@@ -19,8 +19,17 @@ use gitp_code::index::{reindex_many, RefKind, SymbolIndex};
 use gitp_code::resolve::{callers, definition, references};
 
 fn rss_mb() -> f64 {
-    let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &std::process::id().to_string()]).output();
-    out.ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok()).map_or(0.0, |kb| kb / 1024.0)
+    let out = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output();
+    out.ok()
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .parse::<f64>()
+                .ok()
+        })
+        .map_or(0.0, |kb| kb / 1024.0)
 }
 
 fn pct(times: &mut [Duration], p: f64) -> Duration {
@@ -36,7 +45,13 @@ fn report(what: &str, times: &mut [Duration]) {
     let p50 = pct(times, 0.5);
     let p95 = pct(times, 0.95);
     let max = *times.last().unwrap();
-    println!("{what:<34} n={:<5} p50={:>8.2?} p95={:>8.2?} max={:>8.2?}", times.len(), p50, p95, max);
+    println!(
+        "{what:<34} n={:<5} p50={:>8.2?} p95={:>8.2?} max={:>8.2?}",
+        times.len(),
+        p50,
+        p95,
+        max
+    );
 }
 
 fn main() {
@@ -48,12 +63,19 @@ fn main() {
     let t = Instant::now();
     let files = walk(root).expect("walk");
     let supported = files.iter().filter(|f| f.lang.is_some()).count();
-    println!("walk: {} files ({supported} supported) in {:.2?}", files.len(), t.elapsed());
+    println!(
+        "walk: {} files ({supported} supported) in {:.2?}",
+        files.len(),
+        t.elapsed()
+    );
 
     let t = Instant::now();
     let index = SymbolIndex::build(root, &files);
     let (nfiles, nsymbols, nrefs) = index.stats();
-    println!("build: {nfiles} files, {nsymbols} symbols, {nrefs} refs in {:.2?}", t.elapsed());
+    println!(
+        "build: {nfiles} files, {nsymbols} symbols, {nrefs} refs in {:.2?}",
+        t.elapsed()
+    );
     println!("rss after build: {:.0} MB", rss_mb());
 
     // Queries over a spread of files: every reference in every 25th file.
@@ -65,7 +87,12 @@ fn main() {
         if i % 25 != 0 {
             continue;
         }
-        for r in fi.refs.iter().filter(|r| r.kind != RefKind::Import).take(20) {
+        for r in fi
+            .refs
+            .iter()
+            .filter(|r| r.kind != RefKind::Import)
+            .take(20)
+        {
             samples.push((fi.path.clone(), r.range.start_line, r.range.start_col));
         }
     }
@@ -81,11 +108,24 @@ fn main() {
         }
     }
     report("definition", &mut defs);
-    println!("  resolved {found}/{} ({ambiguous} with a pick list)", samples.len());
+    println!(
+        "  resolved {found}/{} ({ambiguous} with a pick list)",
+        samples.len()
+    );
 
     // Usages and callers for a spread of symbols, including the popular names.
-    let mut syms: Vec<_> = index.files().flat_map(|f| f.symbols.iter()).step_by(97).take(300).cloned().collect();
-    let mut popular: Vec<_> = index.top_names(10).into_iter().filter_map(|n| index.definitions_named(&n).next().cloned()).collect();
+    let mut syms: Vec<_> = index
+        .files()
+        .flat_map(|f| f.symbols.iter())
+        .step_by(97)
+        .take(300)
+        .cloned()
+        .collect();
+    let mut popular: Vec<_> = index
+        .top_names(10)
+        .into_iter()
+        .filter_map(|n| index.definitions_named(&n).next().cloned())
+        .collect();
     syms.append(&mut popular);
     let mut usages = Vec::new();
     let mut callers_t = Vec::new();
@@ -107,24 +147,68 @@ fn main() {
 
     // Reindex one file, parsed outside the lock, as a save does.
     let lock = RwLock::new(index);
-    let target = files.iter().filter(|f| f.lang.is_some()).max_by_key(|f| f.size).map(|f| f.path.clone()).unwrap();
-    let size = files.iter().find(|f| f.path == target).map_or(0, |f| f.size);
+    let target = files
+        .iter()
+        .filter(|f| f.lang.is_some())
+        .max_by_key(|f| f.size)
+        .map(|f| f.path.clone())
+        .unwrap();
+    let size = files
+        .iter()
+        .find(|f| f.path == target)
+        .map_or(0, |f| f.size);
     let mut re = Vec::new();
     for _ in 0..5 {
         let t = Instant::now();
         reindex_many(&lock, root, std::slice::from_ref(&target));
         re.push(t.elapsed());
     }
-    report(&format!("reindex largest file ({} KB)", size / 1024), &mut re);
+    report(
+        &format!("reindex largest file ({} KB)", size / 1024),
+        &mut re,
+    );
 
     for (label, q) in [
-        ("search literal `function`", Query { pattern: "function".into(), regex: false, case_sensitive: false, whole_word: false, include_glob: None }),
-        ("search regex", Query { pattern: r"fun[ct]+ion\s+\w+\(".into(), regex: true, case_sensitive: true, whole_word: false, include_glob: None }),
-        ("search whole word `require`", Query { pattern: "require".into(), regex: false, case_sensitive: true, whole_word: true, include_glob: Some("*.js".into()) }),
+        (
+            "search literal `function`",
+            Query {
+                pattern: "function".into(),
+                regex: false,
+                case_sensitive: false,
+                whole_word: false,
+                include_glob: None,
+            },
+        ),
+        (
+            "search regex",
+            Query {
+                pattern: r"fun[ct]+ion\s+\w+\(".into(),
+                regex: true,
+                case_sensitive: true,
+                whole_word: false,
+                include_glob: None,
+            },
+        ),
+        (
+            "search whole word `require`",
+            Query {
+                pattern: "require".into(),
+                regex: false,
+                case_sensitive: true,
+                whole_word: true,
+                include_glob: Some("*.js".into()),
+            },
+        ),
     ] {
         let t = Instant::now();
         let r = search(root, &q, 2000, Arc::new(AtomicBool::new(false))).expect("search");
-        println!("{label:<34} {} hits{} in {} files, {:.2?}", r.hits.len(), if r.truncated { " (truncated)" } else { "" }, r.files_searched, t.elapsed());
+        println!(
+            "{label:<34} {} hits{} in {} files, {:.2?}",
+            r.hits.len(),
+            if r.truncated { " (truncated)" } else { "" },
+            r.files_searched,
+            t.elapsed()
+        );
     }
     println!("rss at end: {:.0} MB", rss_mb());
 }

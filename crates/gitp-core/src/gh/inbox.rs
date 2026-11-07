@@ -62,8 +62,18 @@ impl Repo {
         let repo = target.repo_arg();
         let list = |filter: [&str; 2]| -> Result<Vec<RawInboxPr>> {
             let args = [
-                "pr", "list", "--repo", &repo, "--state", "open", "--limit", "100", "--json",
-                INBOX_FIELDS, filter[0], filter[1],
+                "pr",
+                "list",
+                "--repo",
+                &repo,
+                "--state",
+                "open",
+                "--limit",
+                "100",
+                "--json",
+                INBOX_FIELDS,
+                filter[0],
+                filter[1],
             ];
             parse_json(&self.gh_call(gh, &target, &args, None, TIMEOUT)?.stdout)
         };
@@ -71,7 +81,11 @@ impl Repo {
         let requested = list(["--search", "review-requested:@me"])?;
         let path = self.workdir().to_string_lossy().into_owned();
         let mut prs: Vec<InboxPr> = Vec::new();
-        for (raw, is_mine) in mine.into_iter().map(|r| (r, true)).chain(requested.into_iter().map(|r| (r, false))) {
+        for (raw, is_mine) in mine
+            .into_iter()
+            .map(|r| (r, true))
+            .chain(requested.into_iter().map(|r| (r, false)))
+        {
             if raw.is_draft {
                 continue;
             }
@@ -103,9 +117,14 @@ impl Repo {
         let numbers: Vec<u64> = prs.iter().map(|p| p.number).collect();
         if let Ok(open) = self.open_thread_roots(gh, &target, &numbers) {
             for pr in &mut prs {
-                let Some(roots) = open.get(&pr.number) else { continue };
+                let Some(roots) = open.get(&pr.number) else {
+                    continue;
+                };
                 pr.unresolved = Some(roots.len() as u32);
-                pr.prepared = roots.iter().filter(|&&root| self.thread_prepared(pr.number, root)).count() as u32;
+                pr.prepared = roots
+                    .iter()
+                    .filter(|&&root| self.thread_prepared(pr.number, root))
+                    .count() as u32;
             }
         }
         Ok(prs)
@@ -113,7 +132,12 @@ impl Repo {
 
     /// The root comment of each unresolved thread of pull requests `numbers`,
     /// by number, in one GraphQL query (an alias per pull request).
-    fn open_thread_roots(&self, gh: &Gh, target: &GitHubRepo, numbers: &[u64]) -> Result<HashMap<u64, Vec<u64>>> {
+    fn open_thread_roots(
+        &self,
+        gh: &Gh,
+        target: &GitHubRepo,
+        numbers: &[u64],
+    ) -> Result<HashMap<u64, Vec<u64>>> {
         let (owner, name) = target
             .path
             .split_once('/')
@@ -135,7 +159,9 @@ impl Repo {
         let owner_arg = format!("owner={owner}");
         let name_arg = format!("name={name}");
         let query_arg = format!("query={query}");
-        args.extend(["graphql", "-F", &owner_arg, "-F", &name_arg, "-f", &query_arg]);
+        args.extend([
+            "graphql", "-F", &owner_arg, "-F", &name_arg, "-f", &query_arg,
+        ]);
         let out = self.gh_call(gh, target, &args, None, TIMEOUT)?;
         let raw: RawInboxAnswer = parse_json(&out.stdout)?;
         Ok(raw
@@ -149,7 +175,13 @@ impl Repo {
                     .nodes
                     .into_iter()
                     .filter(|t| !t.is_resolved)
-                    .map(|t| t.comments.nodes.first().and_then(|c| c.database_id).unwrap_or(0))
+                    .map(|t| {
+                        t.comments
+                            .nodes
+                            .first()
+                            .and_then(|c| c.database_id)
+                            .unwrap_or(0)
+                    })
                     .collect();
                 (pr.number, roots)
             })
@@ -163,7 +195,9 @@ impl Repo {
             return false;
         };
         prepared_reply(&c).is_some()
-            || c.turns.iter().any(|t| t.kind == TurnKind::Fix && t.commit.is_some())
+            || c.turns
+                .iter()
+                .any(|t| t.kind == TurnKind::Fix && t.commit.is_some())
     }
 }
 
@@ -174,11 +208,18 @@ pub fn inbox_sources(paths: &[String]) -> (Vec<(String, String)>, Vec<InboxRepo>
     let mut sources: Vec<(String, String)> = Vec::new();
     let mut errors = Vec::new();
     for path in paths {
-        let failed = |error: String| InboxRepo { path: path.clone(), repo: None, prs: Vec::new(), error: Some(error) };
+        let failed = |error: String| InboxRepo {
+            path: path.clone(),
+            repo: None,
+            prs: Vec::new(),
+            error: Some(error),
+        };
         match Repo::open(path) {
             Err(e) => errors.push(failed(format!("not a git repository: {e}"))),
             Ok(repo) => match repo.github_repo() {
-                None => errors.push(failed(inbox_reason(Error::Message(NO_GITHUB_REMOTE.into())))),
+                None => errors.push(failed(inbox_reason(Error::Message(
+                    NO_GITHUB_REMOTE.into(),
+                )))),
                 Some(name) => {
                     if !sources.iter().any(|(_, n)| *n == name) {
                         sources.push((path.clone(), name));
@@ -192,7 +233,12 @@ pub fn inbox_sources(paths: &[String]) -> (Vec<(String, String)>, Vec<InboxRepo>
 
 /// One repository's inbox rows, or why there are none.
 pub fn inbox_repo(gh: &Gh, path: &str) -> InboxRepo {
-    let mut answer = InboxRepo { path: path.to_string(), repo: None, prs: Vec::new(), error: None };
+    let mut answer = InboxRepo {
+        path: path.to_string(),
+        repo: None,
+        prs: Vec::new(),
+        error: None,
+    };
     let repo = match Repo::open(path) {
         Ok(repo) => repo,
         Err(e) => {
@@ -203,7 +249,13 @@ pub fn inbox_repo(gh: &Gh, path: &str) -> InboxRepo {
     answer.repo = repo.github_repo();
     match repo.inbox_pull_requests(gh) {
         Ok(prs) => {
-            answer.prs = prs.into_iter().map(|pr| InboxPr { path: path.to_string(), ..pr }).collect()
+            answer.prs = prs
+                .into_iter()
+                .map(|pr| InboxPr {
+                    path: path.to_string(),
+                    ..pr
+                })
+                .collect()
         }
         Err(e) => answer.error = Some(inbox_reason(e)),
     }
@@ -303,7 +355,8 @@ exit "$(cat "$d/code.$k" 2>/dev/null || echo 0)"
         }
         fn gh(&self) -> Gh {
             let real = std::env::var_os("PATH").unwrap_or_default();
-            let dirs = std::iter::once(self.0.path().to_path_buf()).chain(std::env::split_paths(&real));
+            let dirs =
+                std::iter::once(self.0.path().to_path_buf()).chain(std::env::split_paths(&real));
             Gh::with_search_path(std::env::join_paths(dirs).unwrap())
         }
         fn calls(&self) -> Vec<Vec<String>> {
@@ -320,7 +373,8 @@ exit "$(cat "$d/code.$k" 2>/dev/null || echo 0)"
         let sig = git2::Signature::now("T", "t@example.com").unwrap();
         let tree = git.treebuilder(None).unwrap().write().unwrap();
         let tree = git.find_tree(tree).unwrap();
-        git.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+        git.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
         if let Some(url) = remote {
             git.remote("origin", url).unwrap();
         }
@@ -357,7 +411,9 @@ exit "$(cat "$d/code.$k" 2>/dev/null || echo 0)"
     }
 
     fn thread(resolved: bool, root: u64) -> String {
-        format!(r#"{{"isResolved": {resolved}, "comments": {{"nodes": [{{"databaseId": {root}}}]}}}}"#)
+        format!(
+            r#"{{"isResolved": {resolved}, "comments": {{"nodes": [{{"databaseId": {root}}}]}}}}"#
+        )
     }
 
     #[test]
@@ -365,22 +421,46 @@ exit "$(cat "$d/code.$k" 2>/dev/null || echo 0)"
         let fake = Fake::new();
         fake.answer("mine", MINE, "", 0)
             .answer("review", REVIEW, "", 0)
-            .answer("graphql", &threads(&format!("[{}, {}]", thread(false, 1), thread(true, 2))), "", 0);
+            .answer(
+                "graphql",
+                &threads(&format!("[{}, {}]", thread(false, 1), thread(true, 2))),
+                "",
+                0,
+            );
         let (_dir, repo) = github_repo();
         let prs = repo.inbox_pull_requests(&fake.gh()).unwrap();
 
         let calls = fake.calls();
         assert_eq!(calls.len(), 3);
-        let mine = calls.iter().find(|c| c.contains(&"--author".to_string())).unwrap();
-        assert_eq!(mine[..6], ["pr", "list", "--repo", "octo/hello", "--state", "open"]);
+        let mine = calls
+            .iter()
+            .find(|c| c.contains(&"--author".to_string()))
+            .unwrap();
+        assert_eq!(
+            mine[..6],
+            ["pr", "list", "--repo", "octo/hello", "--state", "open"]
+        );
         let fields = &mine[mine.iter().position(|a| a == "--json").unwrap() + 1];
-        assert!(fields.split(',').any(|f| f == "mergeStateStatus"), "{fields}");
+        assert!(
+            fields.split(',').any(|f| f == "mergeStateStatus"),
+            "{fields}"
+        );
         assert!(mine.ends_with(&["--author".to_string(), "@me".to_string()]));
-        let review = calls.iter().find(|c| c.contains(&"review-requested:@me".to_string())).unwrap();
+        let review = calls
+            .iter()
+            .find(|c| c.contains(&"review-requested:@me".to_string()))
+            .unwrap();
         assert!(review.ends_with(&["--search".to_string(), "review-requested:@me".to_string()]));
-        let graphql = calls.iter().find(|c| c.contains(&"graphql".to_string())).unwrap();
+        let graphql = calls
+            .iter()
+            .find(|c| c.contains(&"graphql".to_string()))
+            .unwrap();
         let query = graphql.iter().find(|a| a.starts_with("query=")).unwrap();
-        assert!(query.contains("p12: pullRequest(number: 12)") && query.contains("p30: pullRequest(number: 30)"), "{query}");
+        assert!(
+            query.contains("p12: pullRequest(number: 12)")
+                && query.contains("p30: pullRequest(number: 30)"),
+            "{query}"
+        );
 
         let numbers: Vec<u64> = prs.iter().map(|p| p.number).collect();
         assert_eq!(numbers, [12, 30], "the draft is left out");
@@ -393,30 +473,65 @@ exit "$(cat "$d/code.$k" 2>/dev/null || echo 0)"
         assert_eq!((p12.unresolved, p12.prepared), (Some(1), 0));
         assert_eq!(p12.updated_at, "2026-11-06T10:00:00Z");
         let p30 = &prs[1];
-        assert_eq!((p30.mine, p30.review_requested, p30.author.as_str()), (false, true, "anna"));
+        assert_eq!(
+            (p30.mine, p30.review_requested, p30.author.as_str()),
+            (false, true, "anna")
+        );
         assert_eq!((p30.checks.clone(), p30.unresolved), (None, Some(0)));
     }
 
     fn conversation(thread: u64, turns: Vec<ThreadTurn>) -> ThreadConversation {
-        ThreadConversation { version: 1, pr: 12, thread, path: "a.rs".into(), title: None, line: None, comments: Vec::new(), session: None, fix_session: None, turns }
+        ThreadConversation {
+            version: 1,
+            pr: 12,
+            thread,
+            path: "a.rs".into(),
+            title: None,
+            line: None,
+            comments: Vec::new(),
+            session: None,
+            fix_session: None,
+            turns,
+        }
     }
 
     #[test]
     fn prepared_counts_unresolved_threads_with_a_ready_reply_or_a_fix_commit() {
         let fake = Fake::new();
-        let nodes = format!("[{}, {}, {}, {}, {}]", thread(false, 100), thread(false, 101), thread(true, 102), thread(false, 103), thread(false, 104));
-        fake.answer("mine", MINE, "", 0).answer("review", "[]", "", 0).answer("graphql", &threads(&nodes), "", 0);
+        let nodes = format!(
+            "[{}, {}, {}, {}, {}]",
+            thread(false, 100),
+            thread(false, 101),
+            thread(true, 102),
+            thread(false, 103),
+            thread(false, 104)
+        );
+        fake.answer("mine", MINE, "", 0)
+            .answer("review", "[]", "", 0)
+            .answer("graphql", &threads(&nodes), "", 0);
         let (_dir, repo) = github_repo();
         let reply = || ThreadTurn::claude(TurnKind::ReplyDraft, "h".into(), "Done.".into());
         let mut fix = ThreadTurn::claude(TurnKind::Fix, "h".into(), "Fixed.".into());
         fix.commit = Some("abc".into());
         let mut posted = reply();
         posted.posted = Some("https://x".into());
-        repo.save_thread_conversation(&conversation(100, vec![reply()])).unwrap();
-        repo.save_thread_conversation(&conversation(101, vec![fix])).unwrap();
-        repo.save_thread_conversation(&conversation(102, vec![reply()])).unwrap(); // resolved
-        repo.save_thread_conversation(&conversation(103, vec![posted])).unwrap();
-        repo.save_thread_conversation(&conversation(104, vec![ThreadTurn::claude(TurnKind::Explain, "h".into(), "?".into())])).unwrap();
+        repo.save_thread_conversation(&conversation(100, vec![reply()]))
+            .unwrap();
+        repo.save_thread_conversation(&conversation(101, vec![fix]))
+            .unwrap();
+        repo.save_thread_conversation(&conversation(102, vec![reply()]))
+            .unwrap(); // resolved
+        repo.save_thread_conversation(&conversation(103, vec![posted]))
+            .unwrap();
+        repo.save_thread_conversation(&conversation(
+            104,
+            vec![ThreadTurn::claude(
+                TurnKind::Explain,
+                "h".into(),
+                "?".into(),
+            )],
+        ))
+        .unwrap();
 
         let prs = repo.inbox_pull_requests(&fake.gh()).unwrap();
         assert_eq!((prs[0].unresolved, prs[0].prepared), (Some(4), 2));
@@ -425,17 +540,22 @@ exit "$(cat "$d/code.$k" 2>/dev/null || echo 0)"
     #[test]
     fn a_failed_thread_query_leaves_the_counts_unknown() {
         let fake = Fake::new();
-        fake.answer("mine", MINE, "", 0).answer("review", REVIEW, "", 0).answer("graphql", "", "HTTP 502", 1);
+        fake.answer("mine", MINE, "", 0)
+            .answer("review", REVIEW, "", 0)
+            .answer("graphql", "", "HTTP 502", 1);
         let (_dir, repo) = github_repo();
         let prs = repo.inbox_pull_requests(&fake.gh()).unwrap();
         assert_eq!(prs.len(), 2);
-        assert!(prs.iter().all(|p| p.unresolved.is_none() && p.prepared == 0));
+        assert!(prs
+            .iter()
+            .all(|p| p.unresolved.is_none() && p.prepared == 0));
     }
 
     #[test]
     fn nothing_listed_asks_no_thread_query() {
         let fake = Fake::new();
-        fake.answer("mine", "[]", "", 0).answer("review", "[]", "", 0);
+        fake.answer("mine", "[]", "", 0)
+            .answer("review", "[]", "", 0);
         let (_dir, repo) = github_repo();
         assert!(repo.inbox_pull_requests(&fake.gh()).unwrap().is_empty());
         assert_eq!(fake.calls().len(), 2);
@@ -444,7 +564,11 @@ exit "$(cat "$d/code.$k" 2>/dev/null || echo 0)"
     #[test]
     fn sources_merge_paths_by_github_repo_first_path_wins() {
         let root = tempfile::tempdir().unwrap();
-        let (a, b, lab) = (root.path().join("a"), root.path().join("b"), root.path().join("lab"));
+        let (a, b, lab) = (
+            root.path().join("a"),
+            root.path().join("b"),
+            root.path().join("lab"),
+        );
         for d in [&a, &b, &lab] {
             fs::create_dir(d).unwrap();
         }
@@ -456,15 +580,31 @@ exit "$(cat "$d/code.$k" 2>/dev/null || echo 0)"
         let (sources, errors) = inbox_sources(&[s(&b), s(&a), s(&lab), gone.clone()]);
         assert_eq!(sources, [(s(&b), "octo/hello".to_string())]);
         assert_eq!(errors.len(), 2);
-        assert_eq!((errors[0].path.clone(), errors[0].error.as_deref()), (s(&lab), Some("no GitHub remote")));
+        assert_eq!(
+            (errors[0].path.clone(), errors[0].error.as_deref()),
+            (s(&lab), Some("no GitHub remote"))
+        );
         assert_eq!(errors[1].path, gone);
-        assert!(errors[1].error.as_deref().unwrap().starts_with("not a git repository"), "{:?}", errors[1].error);
+        assert!(
+            errors[1]
+                .error
+                .as_deref()
+                .unwrap()
+                .starts_with("not a git repository"),
+            "{:?}",
+            errors[1].error
+        );
     }
 
     #[test]
     fn a_signed_out_gh_is_named_as_such() {
         let fake = Fake::new();
-        fake.answer("mine", "", "To get started with GitHub CLI, please run:  gh auth login", 4);
+        fake.answer(
+            "mine",
+            "",
+            "To get started with GitHub CLI, please run:  gh auth login",
+            4,
+        );
         let (dir, _repo) = github_repo();
         let path = dir.path().to_string_lossy().into_owned();
         let r = inbox_repo(&fake.gh(), &path);
@@ -476,11 +616,16 @@ exit "$(cat "$d/code.$k" 2>/dev/null || echo 0)"
     #[test]
     fn a_repo_answers_with_its_rows() {
         let fake = Fake::new();
-        fake.answer("mine", MINE, "", 0).answer("review", "[]", "", 0).answer("graphql", &threads("[]"), "", 0);
+        fake.answer("mine", MINE, "", 0)
+            .answer("review", "[]", "", 0)
+            .answer("graphql", &threads("[]"), "", 0);
         let (dir, _repo) = github_repo();
         let path = dir.path().to_string_lossy().into_owned();
         let r = inbox_repo(&fake.gh(), &path);
         assert_eq!((r.error, r.prs.len()), (None, 1));
-        assert_eq!(r.prs[0].path, path, "the path as given, which a click opens");
+        assert_eq!(
+            r.prs[0].path, path,
+            "the path as given, which a click opens"
+        );
     }
 }

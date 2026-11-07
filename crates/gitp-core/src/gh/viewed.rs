@@ -44,7 +44,17 @@ impl Repo {
         for _ in 0..MAX_PAGES {
             let mut args = Vec::new();
             target.api(&mut args);
-            args.extend(["graphql", "-F", &owner_arg, "-F", &name_arg, "-F", &number_arg, "-f", &query_arg]);
+            args.extend([
+                "graphql",
+                "-F",
+                &owner_arg,
+                "-F",
+                &name_arg,
+                "-F",
+                &number_arg,
+                "-f",
+                &query_arg,
+            ]);
             let after_arg = after.as_ref().map(|a| format!("after={a}"));
             if let Some(a) = &after_arg {
                 args.extend(["-f", a]);
@@ -53,7 +63,13 @@ impl Repo {
             let raw: RawAnswer = parse_json(&out.stdout)?;
             let pr = raw.data.repository.pull_request;
             id = pr.id;
-            viewed.extend(pr.files.nodes.into_iter().filter(|f| f.viewer_viewed_state == "VIEWED").map(|f| f.path));
+            viewed.extend(
+                pr.files
+                    .nodes
+                    .into_iter()
+                    .filter(|f| f.viewer_viewed_state == "VIEWED")
+                    .map(|f| f.path),
+            );
             if !pr.files.page_info.has_next_page {
                 break;
             }
@@ -64,9 +80,19 @@ impl Repo {
 
     /// Mark `path` of the pull request with node id `pr_id` Viewed, or take
     /// the mark off with `viewed` false.
-    pub fn set_pull_request_file_viewed(&self, gh: &Gh, pr_id: &str, path: &str, viewed: bool) -> Result<()> {
+    pub fn set_pull_request_file_viewed(
+        &self,
+        gh: &Gh,
+        pr_id: &str,
+        path: &str,
+        viewed: bool,
+    ) -> Result<()> {
         let target = self.github_target()?;
-        let mutation = if viewed { "markFileAsViewed" } else { "unmarkFileAsViewed" };
+        let mutation = if viewed {
+            "markFileAsViewed"
+        } else {
+            "unmarkFileAsViewed"
+        };
         let query = format!(
             "query=mutation($id: ID!, $path: String!) {{ {mutation}(input: {{pullRequestId: $id, path: $path}}) {{ clientMutationId }} }}"
         );
@@ -159,11 +185,20 @@ cat "$d/page.$n"
         let fake = Fake::new();
         fake.answer("api graphql", "{}", "", 0);
         let (_dir, repo) = github_repo();
-        repo.set_pull_request_file_viewed(&fake.gh(), "PR_1", "src/a.ts", true).unwrap();
-        repo.set_pull_request_file_viewed(&fake.gh(), "PR_1", "src/a.ts", false).unwrap();
+        repo.set_pull_request_file_viewed(&fake.gh(), "PR_1", "src/a.ts", true)
+            .unwrap();
+        repo.set_pull_request_file_viewed(&fake.gh(), "PR_1", "src/a.ts", false)
+            .unwrap();
         let calls = fake.calls();
-        assert!(calls[0].contains(&"id=PR_1".to_string()) && calls[0].contains(&"path=src/a.ts".to_string()));
-        assert!(calls[0].iter().any(|a| a.contains("markFileAsViewed(input:") && !a.contains("unmark")));
-        assert!(calls[1].iter().any(|a| a.contains("unmarkFileAsViewed(input:")));
+        assert!(
+            calls[0].contains(&"id=PR_1".to_string())
+                && calls[0].contains(&"path=src/a.ts".to_string())
+        );
+        assert!(calls[0]
+            .iter()
+            .any(|a| a.contains("markFileAsViewed(input:") && !a.contains("unmark")));
+        assert!(calls[1]
+            .iter()
+            .any(|a| a.contains("unmarkFileAsViewed(input:")));
     }
 }

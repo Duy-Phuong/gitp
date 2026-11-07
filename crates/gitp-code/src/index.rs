@@ -95,8 +95,12 @@ pub struct FileIndex {
 pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIndex {
     let def = lang.def();
     let mut parser = Parser::new();
-    parser.set_language(&def.language).expect("grammar matches the tree-sitter version");
-    let tree = parser.parse(source, None).expect("parse without a timeout never fails");
+    parser
+        .set_language(&def.language)
+        .expect("grammar matches the tree-sitter version");
+    let tree = parser
+        .parse(source, None)
+        .expect("parse without a timeout never fails");
     let root = tree.root_node();
     let lines = LineTable::new(source);
     let path: Arc<str> = Arc::from(path);
@@ -104,7 +108,10 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
     let mut names: HashMap<&[u8], Arc<str>> = HashMap::new();
     let mut intern = |n: Node| -> Arc<str> {
         let bytes = &source[n.byte_range()];
-        names.entry(bytes).or_insert_with(|| Arc::from(String::from_utf8_lossy(bytes).as_ref())).clone()
+        names
+            .entry(bytes)
+            .or_insert_with(|| Arc::from(String::from_utf8_lossy(bytes).as_ref()))
+            .clone()
     };
 
     let mut symbols: Vec<Symbol> = Vec::new();
@@ -121,9 +128,14 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
                 None => {}
             }
         }
-        let (Some(name), Some((kind, body))) = (name, body) else { continue };
+        let (Some(name), Some((kind, body))) = (name, body) else {
+            continue;
+        };
         symbols.push(Symbol {
-            id: SymbolId { file: file_id, byte: body.start_byte() as u32 },
+            id: SymbolId {
+                file: file_id,
+                byte: body.start_byte() as u32,
+            },
             name: intern(name),
             kind,
             path: path.clone(),
@@ -136,7 +148,13 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
     // Outer definitions first; the innermost other symbol around each is its
     // container. A span matched twice (`const f = () => …` is a variable and
     // a function) keeps the more specific kind.
-    symbols.sort_by_key(|s| (s.range.start_byte, std::cmp::Reverse(s.range.end_byte), kind_rank(s.kind)));
+    symbols.sort_by_key(|s| {
+        (
+            s.range.start_byte,
+            std::cmp::Reverse(s.range.end_byte),
+            kind_rank(s.kind),
+        )
+    });
     symbols.dedup_by_key(|s| s.id);
     // Only scopes contain things: a variable's declaration spans its
     // initializer, but nothing is "inside" a variable.
@@ -149,7 +167,9 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
         spans
             .iter()
             .rev()
-            .find(|(a, b, id)| Some(*id) != not && *a <= start && end <= *b && (*a, *b) != (start, end))
+            .find(|(a, b, id)| {
+                Some(*id) != not && *a <= start && end <= *b && (*a, *b) != (start, end)
+            })
             .map(|(_, _, id)| *id)
     };
     for s in &mut symbols {
@@ -157,14 +177,21 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
     }
     // A function directly inside a class is a method (Python's `def` says no
     // more than that).
-    let classes: HashSet<SymbolId> = symbols.iter().filter(|s| s.kind == SymbolKind::Class).map(|s| s.id).collect();
+    let classes: HashSet<SymbolId> = symbols
+        .iter()
+        .filter(|s| s.kind == SymbolKind::Class)
+        .map(|s| s.id)
+        .collect();
     for s in &mut symbols {
         if s.kind == SymbolKind::Function && s.container.is_some_and(|c| classes.contains(&c)) {
             s.kind = SymbolKind::Method;
         }
     }
 
-    let def_names: HashSet<(u32, u32)> = symbols.iter().map(|s| (s.name_range.start_byte, s.name_range.end_byte)).collect();
+    let def_names: HashSet<(u32, u32)> = symbols
+        .iter()
+        .map(|s| (s.name_range.start_byte, s.name_range.end_byte))
+        .collect();
     let mut refs: Vec<Reference> = Vec::new();
     let mut matches = cursor.matches(&def.refs, root, source);
     while let Some(m) = matches.next() {
@@ -182,7 +209,9 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
                 _ => {}
             }
         }
-        let (Some(name), Some(kind)) = (name, kind) else { continue };
+        let (Some(name), Some(kind)) = (name, kind) else {
+            continue;
+        };
         let range = lines.range(name);
         if def_names.contains(&(range.start_byte, range.end_byte)) {
             continue; // a definition's own name
@@ -198,10 +227,25 @@ pub fn index_file(file_id: u32, path: &str, lang: Lang, source: &[u8]) -> FileIn
     }
     // One reference per identifier: the most specific kind, with a receiver
     // when any match had one.
-    refs.sort_by_key(|r| (r.range.start_byte, r.range.end_byte, specificity(r.kind), r.receiver.is_none()));
-    refs.dedup_by(|b, a| (a.range.start_byte, a.range.end_byte) == (b.range.start_byte, b.range.end_byte));
+    refs.sort_by_key(|r| {
+        (
+            r.range.start_byte,
+            r.range.end_byte,
+            specificity(r.kind),
+            r.receiver.is_none(),
+        )
+    });
+    refs.dedup_by(|b, a| {
+        (a.range.start_byte, a.range.end_byte) == (b.range.start_byte, b.range.end_byte)
+    });
 
-    FileIndex { path, lang, symbols, refs, mtime_ms: 0 }
+    FileIndex {
+        path,
+        lang,
+        symbols,
+        refs,
+        mtime_ms: 0,
+    }
 }
 
 /// Lower sorts first when two patterns match the same span.
@@ -245,13 +289,21 @@ struct LineTable<'a> {
 impl<'a> LineTable<'a> {
     fn new(source: &'a [u8]) -> Self {
         let mut starts = vec![0];
-        starts.extend(source.iter().enumerate().filter(|(_, b)| **b == b'\n').map(|(i, _)| i + 1));
+        starts.extend(
+            source
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| **b == b'\n')
+                .map(|(i, _)| i + 1),
+        );
         LineTable { source, starts }
     }
 
     fn col(&self, point: Point, byte: usize) -> u32 {
         let start = self.starts[point.row];
-        String::from_utf8_lossy(&self.source[start..byte]).encode_utf16().count() as u32
+        String::from_utf8_lossy(&self.source[start..byte])
+            .encode_utf16()
+            .count() as u32
     }
 
     fn range(&self, n: Node) -> Range {
@@ -308,9 +360,13 @@ impl SymbolIndex {
     /// file is dropped from the index.
     pub fn reindex(&mut self, root: &Path, path: &str) {
         self.remove(path);
-        let Some(lang) = Lang::from_path(path) else { return };
+        let Some(lang) = Lang::from_path(path) else {
+            return;
+        };
         let full = root.join(path);
-        let (Ok(src), Ok(meta)) = (std::fs::read(&full), std::fs::metadata(&full)) else { return };
+        let (Ok(src), Ok(meta)) = (std::fs::read(&full), std::fs::metadata(&full)) else {
+            return;
+        };
         let id = self.id_for(path);
         let mut fi = index_file(id, path, lang, &src);
         fi.mtime_ms = crate::files::mtime_ms(&meta);
@@ -318,7 +374,9 @@ impl SymbolIndex {
     }
 
     pub fn remove(&mut self, path: &str) {
-        let Some(old) = self.files.remove(path) else { return };
+        let Some(old) = self.files.remove(path) else {
+            return;
+        };
         let file = old.symbols.first().map(|s| s.id.file);
         let names: HashSet<&Arc<str>> = old.symbols.iter().map(|s| &s.name).collect();
         for name in names {
@@ -366,11 +424,18 @@ impl SymbolIndex {
         let path = self.paths.get(id.file as usize)?;
         // Symbols are sorted by start byte, and ids are unique per file.
         let symbols = &self.files.get(path)?.symbols;
-        symbols.binary_search_by_key(&id.byte, |s| s.id.byte).ok().map(|i| &symbols[i])
+        symbols
+            .binary_search_by_key(&id.byte, |s| s.id.byte)
+            .ok()
+            .map(|i| &symbols[i])
     }
 
     pub fn definitions_named(&self, name: &str) -> impl Iterator<Item = &Symbol> {
-        self.by_name.get(name).into_iter().flatten().filter_map(move |id| self.symbol(*id))
+        self.by_name
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter_map(move |id| self.symbol(*id))
     }
 
     pub fn references_named(&self, name: &str) -> impl Iterator<Item = &Reference> {
@@ -387,7 +452,11 @@ impl SymbolIndex {
 
     /// Files, symbols and references indexed.
     pub fn stats(&self) -> (usize, usize, usize) {
-        (self.files.len(), self.symbol_count(), self.files.values().map(|f| f.refs.len()).sum())
+        (
+            self.files.len(),
+            self.symbol_count(),
+            self.files.values().map(|f| f.refs.len()).sum(),
+        )
     }
 
     pub fn files(&self) -> impl Iterator<Item = &FileIndex> {
@@ -396,13 +465,24 @@ impl SymbolIndex {
 
     /// The `n` names with the most references, most first.
     pub fn top_names(&self, n: usize) -> Vec<String> {
-        let mut names: Vec<(&Arc<str>, usize)> = self.refs_by_name.iter().map(|(k, v)| (k, v.len())).collect();
+        let mut names: Vec<(&Arc<str>, usize)> = self
+            .refs_by_name
+            .iter()
+            .map(|(k, v)| (k, v.len()))
+            .collect();
         names.sort_by_key(|n| std::cmp::Reverse(n.1));
-        names.into_iter().take(n).map(|(k, _)| k.to_string()).collect()
+        names
+            .into_iter()
+            .take(n)
+            .map(|(k, _)| k.to_string())
+            .collect()
     }
 
     pub fn file_symbols(&self, path: &str) -> Vec<Symbol> {
-        self.files.get(path).map(|f| f.symbols.clone()).unwrap_or_default()
+        self.files
+            .get(path)
+            .map(|f| f.symbols.clone())
+            .unwrap_or_default()
     }
 
     /// Supported files whose mtime differs from the indexed one or that the
@@ -411,11 +491,20 @@ impl SymbolIndex {
         let mut stale: Vec<String> = files
             .iter()
             .filter(|f| f.lang.is_some())
-            .filter(|f| self.files.get(&f.path).is_none_or(|fi| fi.mtime_ms != f.mtime_ms))
+            .filter(|f| {
+                self.files
+                    .get(&f.path)
+                    .is_none_or(|fi| fi.mtime_ms != f.mtime_ms)
+            })
             .map(|f| f.path.clone())
             .collect();
         let present: HashSet<&str> = files.iter().map(|f| f.path.as_str()).collect();
-        stale.extend(self.files.keys().filter(|p| !present.contains(p.as_str())).cloned());
+        stale.extend(
+            self.files
+                .keys()
+                .filter(|p| !present.contains(p.as_str()))
+                .cloned(),
+        );
         stale
     }
 
@@ -434,7 +523,10 @@ impl SymbolIndex {
             self.by_name.entry(s.name.clone()).or_default().push(s.id);
         }
         for (i, r) in fi.refs.iter().enumerate() {
-            self.refs_by_name.entry(r.name.clone()).or_default().push((fi.path.clone(), i));
+            self.refs_by_name
+                .entry(r.name.clone())
+                .or_default()
+                .push((fi.path.clone(), i));
         }
         self.files.insert(fi.path.to_string(), fi);
     }
@@ -451,7 +543,12 @@ pub fn reindex_many(lock: &RwLock<SymbolIndex>, root: &Path, paths: &[String]) {
         for p in paths {
             let full = root.join(p);
             match (Lang::from_path(p), std::fs::metadata(&full)) {
-                (Some(lang), Ok(meta)) if meta.is_file() => jobs.push((index.prepare(p), p.clone(), lang, crate::files::mtime_ms(&meta))),
+                (Some(lang), Ok(meta)) if meta.is_file() => jobs.push((
+                    index.prepare(p),
+                    p.clone(),
+                    lang,
+                    crate::files::mtime_ms(&meta),
+                )),
                 _ => gone.push(p.clone()),
             }
         }
@@ -495,7 +592,11 @@ mod tests {
     fn java_definitions() {
         use SymbolKind::*;
         let fi = java();
-        let names: Vec<(&str, SymbolKind)> = fi.symbols.iter().map(|s| (s.name.as_ref(), s.kind)).collect();
+        let names: Vec<(&str, SymbolKind)> = fi
+            .symbols
+            .iter()
+            .map(|s| (s.name.as_ref(), s.kind))
+            .collect();
         assert_eq!(
             names,
             [
@@ -510,8 +611,14 @@ mod tests {
                 ("all", Variable),
             ]
         );
-        assert_eq!(sym(&fi, "deposit", Method).container, Some(sym(&fi, "Account", Class).id));
-        assert_eq!(sym(&fi, "amount", Variable).container, Some(sym(&fi, "deposit", Method).id));
+        assert_eq!(
+            sym(&fi, "deposit", Method).container,
+            Some(sym(&fi, "Account", Class).id)
+        );
+        assert_eq!(
+            sym(&fi, "amount", Variable).container,
+            Some(sym(&fi, "deposit", Method).id)
+        );
         assert_eq!(sym(&fi, "Account", Class).container, None);
         assert_eq!(sym(&fi, "deposit", Method).name_range.start_line, 11);
         assert_eq!(sym(&fi, "deposit", Method).name_range.start_col, 16);
@@ -523,7 +630,11 @@ mod tests {
     fn java_references() {
         let fi = java();
         let audit = sym(&fi, "audit", SymbolKind::Method).id;
-        let deposit = fi.refs.iter().find(|r| r.name.as_ref() == "deposit").unwrap();
+        let deposit = fi
+            .refs
+            .iter()
+            .find(|r| r.name.as_ref() == "deposit")
+            .unwrap();
         assert_eq!(deposit.kind, RefKind::Call);
         assert_eq!(deposit.receiver.as_deref(), Some("this"));
         assert_eq!(deposit.enclosing, Some(audit));
@@ -531,15 +642,33 @@ mod tests {
         assert_eq!(log.receiver.as_deref(), Some("Logger"));
         let import = fi.refs.iter().find(|r| r.kind == RefKind::Import).unwrap();
         assert_eq!(import.name.as_ref(), "java.util.List");
-        let new = fi.refs.iter().find(|r| r.name.as_ref() == "ArrayList").unwrap();
+        let new = fi
+            .refs
+            .iter()
+            .find(|r| r.name.as_ref() == "ArrayList")
+            .unwrap();
         assert_eq!(new.kind, RefKind::Call);
-        let list = fi.refs.iter().find(|r| r.name.as_ref() == "List" && r.kind == RefKind::Ident).unwrap();
+        let list = fi
+            .refs
+            .iter()
+            .find(|r| r.name.as_ref() == "List" && r.kind == RefKind::Ident)
+            .unwrap();
         assert_eq!(list.enclosing, Some(audit));
         // The field's own declaration is a definition, not a reference.
-        assert!(!fi.refs.iter().any(|r| r.name.as_ref() == "balance" && r.range.start_line == 5));
+        assert!(!fi
+            .refs
+            .iter()
+            .any(|r| r.name.as_ref() == "balance" && r.range.start_line == 5));
         // The constructor's `this.balance` is a member access.
-        let field = fi.refs.iter().find(|r| r.name.as_ref() == "balance").unwrap();
-        assert_eq!((field.kind, field.receiver.as_deref()), (RefKind::Ident, Some("this")));
+        let field = fi
+            .refs
+            .iter()
+            .find(|r| r.name.as_ref() == "balance")
+            .unwrap();
+        assert_eq!(
+            (field.kind, field.receiver.as_deref()),
+            (RefKind::Ident, Some("this"))
+        );
     }
 
     #[test]
@@ -558,13 +687,33 @@ mod tests {
     #[test]
     fn overlapping_captures_are_deduped() {
         let fi = java();
-        assert_eq!(fi.refs.iter().filter(|r| r.name.as_ref() == "deposit").count(), 1);
-        assert_eq!(fi.refs.iter().filter(|r| r.name.as_ref() == "ArrayList").count(), 1);
-        let mut spans: Vec<(u32, u32)> = fi.refs.iter().map(|r| (r.range.start_byte, r.range.end_byte)).collect();
+        assert_eq!(
+            fi.refs
+                .iter()
+                .filter(|r| r.name.as_ref() == "deposit")
+                .count(),
+            1
+        );
+        assert_eq!(
+            fi.refs
+                .iter()
+                .filter(|r| r.name.as_ref() == "ArrayList")
+                .count(),
+            1
+        );
+        let mut spans: Vec<(u32, u32)> = fi
+            .refs
+            .iter()
+            .map(|r| (r.range.start_byte, r.range.end_byte))
+            .collect();
         let n = spans.len();
         spans.sort();
         spans.dedup();
-        assert_eq!(spans.len(), n, "every reference spans a distinct identifier");
+        assert_eq!(
+            spans.len(),
+            n,
+            "every reference spans a distinct identifier"
+        );
     }
 }
 
@@ -579,7 +728,10 @@ mod lang_tests {
     const PY: &str = include_str!("../tests/fixtures/py/cart.py");
 
     fn names(fi: &FileIndex) -> Vec<(&str, SymbolKind)> {
-        fi.symbols.iter().map(|s| (s.name.as_ref(), s.kind)).collect()
+        fi.symbols
+            .iter()
+            .map(|s| (s.name.as_ref(), s.kind))
+            .collect()
     }
 
     #[test]
@@ -600,8 +752,16 @@ mod lang_tests {
                 ("n", Variable),
             ]
         );
-        let add = fi.symbols.iter().find(|s| s.name.as_ref() == "add").unwrap();
-        let cart = fi.symbols.iter().find(|s| s.name.as_ref() == "Cart").unwrap();
+        let add = fi
+            .symbols
+            .iter()
+            .find(|s| s.name.as_ref() == "add")
+            .unwrap();
+        let cart = fi
+            .symbols
+            .iter()
+            .find(|s| s.name.as_ref() == "Cart")
+            .unwrap();
         assert_eq!(add.container, Some(cart.id));
     }
 
@@ -630,9 +790,20 @@ mod lang_tests {
     #[test]
     fn tsx_parses_jsx() {
         let fi = index_file(0, "Cart.tsx", Lang::Tsx, TSX.as_bytes());
-        assert!(fi.symbols.iter().any(|s| s.name.as_ref() == "View" && s.kind == Function));
-        let view = fi.symbols.iter().find(|s| s.name.as_ref() == "View").unwrap();
-        let fmt_call = fi.refs.iter().find(|r| r.name.as_ref() == "fmt" && r.kind == RefKind::Call).unwrap();
+        assert!(fi
+            .symbols
+            .iter()
+            .any(|s| s.name.as_ref() == "View" && s.kind == Function));
+        let view = fi
+            .symbols
+            .iter()
+            .find(|s| s.name.as_ref() == "View")
+            .unwrap();
+        let fmt_call = fi
+            .refs
+            .iter()
+            .find(|r| r.name.as_ref() == "fmt" && r.kind == RefKind::Call)
+            .unwrap();
         assert_eq!(fmt_call.enclosing, Some(view.id));
         let props = fi.refs.iter().find(|r| r.name.as_ref() == "Props").unwrap();
         assert_eq!(props.kind, RefKind::Ident);
@@ -656,7 +827,10 @@ mod lang_tests {
                 ("x", Variable),
             ]
         );
-        assert!(!fi.symbols.iter().any(|s| s.name.as_ref() == "items"), "self.items is an attribute, not a definition");
+        assert!(
+            !fi.symbols.iter().any(|s| s.name.as_ref() == "items"),
+            "self.items is an attribute, not a definition"
+        );
     }
 
     #[test]
@@ -668,15 +842,41 @@ mod lang_tests {
             ("cart.py", Lang::Python, PY),
         ] {
             let fi = index_file(0, path, lang, src.as_bytes());
-            let total = fi.symbols.iter().find(|s| s.name.as_ref() == "total").unwrap();
-            let add = fi.refs.iter().find(|r| r.name.as_ref() == "add" && r.kind == RefKind::Call).unwrap_or_else(|| panic!("{path}: cart.add"));
+            let total = fi
+                .symbols
+                .iter()
+                .find(|s| s.name.as_ref() == "total")
+                .unwrap();
+            let add = fi
+                .refs
+                .iter()
+                .find(|r| r.name.as_ref() == "add" && r.kind == RefKind::Call)
+                .unwrap_or_else(|| panic!("{path}: cart.add"));
             assert_eq!(add.receiver.as_deref(), Some("cart"), "{path}");
             assert_eq!(add.enclosing, Some(total.id), "{path}");
-            let new = fi.refs.iter().find(|r| r.name.as_ref() == "Cart" && r.kind == RefKind::Call).unwrap_or_else(|| panic!("{path}: new Cart"));
+            let new = fi
+                .refs
+                .iter()
+                .find(|r| r.name.as_ref() == "Cart" && r.kind == RefKind::Call)
+                .unwrap_or_else(|| panic!("{path}: new Cart"));
             assert_eq!(new.enclosing, Some(total.id), "{path}");
-            assert!(fi.refs.iter().any(|r| r.name.as_ref() == "money" && r.kind == RefKind::Import), "{path}: import money");
-            assert!(fi.refs.iter().any(|r| r.name.as_ref() == "money" && r.kind == RefKind::Call), "{path}: money(...)");
-            let spans: Vec<(u32, u32)> = fi.refs.iter().map(|r| (r.range.start_byte, r.range.end_byte)).collect();
+            assert!(
+                fi.refs
+                    .iter()
+                    .any(|r| r.name.as_ref() == "money" && r.kind == RefKind::Import),
+                "{path}: import money"
+            );
+            assert!(
+                fi.refs
+                    .iter()
+                    .any(|r| r.name.as_ref() == "money" && r.kind == RefKind::Call),
+                "{path}: money(...)"
+            );
+            let spans: Vec<(u32, u32)> = fi
+                .refs
+                .iter()
+                .map(|r| (r.range.start_byte, r.range.end_byte))
+                .collect();
             let mut uniq = spans.clone();
             uniq.sort();
             uniq.dedup();
@@ -692,7 +892,11 @@ mod index_tests {
 
     fn workspace() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("a.ts"), "export function alpha() { beta(); }\n").unwrap();
+        std::fs::write(
+            dir.path().join("a.ts"),
+            "export function alpha() { beta(); }\n",
+        )
+        .unwrap();
         std::fs::write(dir.path().join("b.ts"), "export function beta() {}\n").unwrap();
         std::fs::write(dir.path().join("c.py"), "def gamma():\n    beta()\n").unwrap();
         std::fs::write(dir.path().join("notes.md"), "# not code\n").unwrap();
@@ -726,7 +930,10 @@ mod index_tests {
         assert_eq!(index.definitions_named("beta").count(), 0);
         assert_eq!(index.definitions_named("beta2").count(), 1);
         for r in index.references_named("beta") {
-            assert!(index.file(&r.path).is_some(), "reference points at an indexed file");
+            assert!(
+                index.file(&r.path).is_some(),
+                "reference points at an indexed file"
+            );
         }
     }
 
@@ -737,7 +944,11 @@ mod index_tests {
         index.remove("a.ts");
         assert!(index.file("a.ts").is_none());
         assert_eq!(index.definitions_named("alpha").count(), 0);
-        assert_eq!(index.references_named("beta").count(), 1, "only c.py's call is left");
+        assert_eq!(
+            index.references_named("beta").count(),
+            1,
+            "only c.py's call is left"
+        );
         index.remove("never-there.ts"); // harmless
     }
 
@@ -764,7 +975,11 @@ mod index_tests {
         std::fs::write(dir.path().join("b.ts"), "export function beta2() {}\n").unwrap();
         std::fs::write(dir.path().join("d.py"), "def delta():\n    pass\n").unwrap();
         std::fs::remove_file(dir.path().join("c.py")).unwrap();
-        reindex_many(&lock, dir.path(), &["b.ts".to_string(), "d.py".to_string(), "c.py".to_string()]);
+        reindex_many(
+            &lock,
+            dir.path(),
+            &["b.ts".to_string(), "d.py".to_string(), "c.py".to_string()],
+        );
         let index = lock.read().unwrap();
         assert_eq!(index.definitions_named("beta2").count(), 1);
         assert_eq!(index.definitions_named("delta").count(), 1);
@@ -773,7 +988,13 @@ mod index_tests {
         let before = index.file("b.ts").unwrap().symbols[0].id.file;
         drop(index);
         reindex_many(&lock, dir.path(), &["b.ts".to_string()]);
-        assert_eq!(lock.read().unwrap().file("b.ts").unwrap().symbols[0].id.file, before, "ids survive");
+        assert_eq!(
+            lock.read().unwrap().file("b.ts").unwrap().symbols[0]
+                .id
+                .file,
+            before,
+            "ids survive"
+        );
     }
 
     #[test]

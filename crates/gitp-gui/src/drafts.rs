@@ -57,14 +57,26 @@ impl DraftRuns {
 
     /// Raise the cancel flag of the draft of `kind` running in `path`, if any.
     fn cancel(&self, path: &str, kind: DraftKind) {
-        if let Some(flag) = self.0.lock().ok().and_then(|r| r.get(&(path.to_string(), kind)).cloned()) {
+        if let Some(flag) = self
+            .0
+            .lock()
+            .ok()
+            .and_then(|r| r.get(&(path.to_string(), kind)).cloned())
+        {
             flag.store(true, Ordering::SeqCst);
         }
     }
 }
 
-fn draft_commit_message_impl(runs: &DraftRuns, path: String, command: String, amend: bool) -> Result<CommitDraft, String> {
-    runs.run(&path, DraftKind::CommitMessage, |repo| repo.draft_commit_message(&command, amend))
+fn draft_commit_message_impl(
+    runs: &DraftRuns,
+    path: String,
+    command: String,
+    amend: bool,
+) -> Result<CommitDraft, String> {
+    runs.run(&path, DraftKind::CommitMessage, |repo| {
+        repo.draft_commit_message(&command, amend)
+    })
 }
 
 fn draft_pull_request_impl(
@@ -74,7 +86,9 @@ fn draft_pull_request_impl(
     base: String,
     command: String,
 ) -> Result<PrDraft, String> {
-    runs.run(&path, DraftKind::PullRequest, |repo| repo.draft_pull_request(&command, &base, &branch))
+    runs.run(&path, DraftKind::PullRequest, |repo| {
+        repo.draft_pull_request(&command, &base, &branch)
+    })
 }
 
 // --- Tauri commands ----------------------------------------------------------
@@ -124,8 +138,17 @@ mod tests {
     fn a_commit_draft_runs_in_the_repo() {
         let (_dir, path) = staged_repo();
         let runs = DraftRuns::default();
-        let draft = draft_commit_message_impl(&runs, path, "cat >/dev/null; printf 'feat: a\\n\\nbody'".into(), false).unwrap();
-        assert_eq!((draft.subject.as_str(), draft.body.as_str()), ("feat: a", "body"));
+        let draft = draft_commit_message_impl(
+            &runs,
+            path,
+            "cat >/dev/null; printf 'feat: a\\n\\nbody'".into(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            (draft.subject.as_str(), draft.body.as_str()),
+            ("feat: a", "body")
+        );
     }
 
     #[test]
@@ -134,7 +157,8 @@ mod tests {
         let runs = Arc::new(DraftRuns::default());
         let (r, p) = (Arc::clone(&runs), path.clone());
         let started = Instant::now();
-        let run = std::thread::spawn(move || draft_commit_message_impl(&r, p, "sleep 5".into(), false));
+        let run =
+            std::thread::spawn(move || draft_commit_message_impl(&r, p, "sleep 5".into(), false));
         while runs.0.lock().unwrap().is_empty() {
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -150,17 +174,29 @@ mod tests {
         let (_dir, path) = staged_repo();
         let runs = Arc::new(DraftRuns::default());
         let (r, p) = (Arc::clone(&runs), path.clone());
-        let run = std::thread::spawn(move || draft_commit_message_impl(&r, p, "cat >/dev/null; sleep 1; echo first".into(), false));
+        let run = std::thread::spawn(move || {
+            draft_commit_message_impl(&r, p, "cat >/dev/null; sleep 1; echo first".into(), false)
+        });
         while runs.0.lock().unwrap().is_empty() {
             std::thread::sleep(Duration::from_millis(10));
         }
-        let err = draft_commit_message_impl(&runs, path.clone(), "echo second".into(), false).unwrap_err();
+        let err = draft_commit_message_impl(&runs, path.clone(), "echo second".into(), false)
+            .unwrap_err();
         assert_eq!(err, "A draft is already running.");
         // Another kind is not held up.
-        let pr = draft_pull_request_impl(&runs, path.clone(), "nope".into(), "main".into(), "true".into()).unwrap_err();
+        let pr = draft_pull_request_impl(
+            &runs,
+            path.clone(),
+            "nope".into(),
+            "main".into(),
+            "true".into(),
+        )
+        .unwrap_err();
         assert!(pr.contains("nope"), "{pr}");
         assert_eq!(run.join().unwrap().unwrap().subject, "first");
-        let again = draft_commit_message_impl(&runs, path, "cat >/dev/null; echo again".into(), false).unwrap();
+        let again =
+            draft_commit_message_impl(&runs, path, "cat >/dev/null; echo again".into(), false)
+                .unwrap();
         assert_eq!(again.subject, "again");
     }
 

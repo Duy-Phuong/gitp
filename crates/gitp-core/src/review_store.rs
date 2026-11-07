@@ -105,11 +105,14 @@ impl Repo {
 
     fn review_file(&self, key: &ReviewKey) -> PathBuf {
         match key {
-            ReviewKey::Branch(b) => self
+            ReviewKey::Branch(b) => self.reviews_root().join("branch-reviews").join(format!(
+                "{}.json",
+                b.replace('%', "%25").replace('/', "%2F")
+            )),
+            ReviewKey::Pr(n) => self
                 .reviews_root()
-                .join("branch-reviews")
-                .join(format!("{}.json", b.replace('%', "%25").replace('/', "%2F"))),
-            ReviewKey::Pr(n) => self.reviews_root().join("pr-reviews").join(format!("{n}.json")),
+                .join("pr-reviews")
+                .join(format!("{n}.json")),
         }
     }
 
@@ -155,7 +158,8 @@ impl Repo {
     /// Delete every review file last written more than [`THREAD_KEEP`]
     /// before `now_millis`. Returns how many went.
     pub fn prune_stored_reviews(&self, now_millis: u64) -> Result<usize> {
-        let cutoff = UNIX_EPOCH + Duration::from_millis(now_millis.saturating_sub(THREAD_KEEP.as_millis() as u64));
+        let cutoff = UNIX_EPOCH
+            + Duration::from_millis(now_millis.saturating_sub(THREAD_KEEP.as_millis() as u64));
         let mut deleted = 0;
         for folder in ["branch-reviews", "pr-reviews"] {
             let dir = self.reviews_root().join(folder);
@@ -190,7 +194,9 @@ impl Repo {
             .ok()
             .and_then(|r| r.symbolic_target().map(str::to_string))
             .and_then(|t| t.strip_prefix("refs/remotes/origin/").map(str::to_string));
-        let candidates = from_origin.into_iter().chain(["main".to_string(), "master".to_string()]);
+        let candidates = from_origin
+            .into_iter()
+            .chain(["main".to_string(), "master".to_string()]);
         for name in candidates {
             if exists(&format!("refs/remotes/origin/{name}")) {
                 return Ok(format!("origin/{name}"));
@@ -220,7 +226,8 @@ mod tests {
         let sig = git2::Signature::now("T", "t@example.com").unwrap();
         let tree = git.treebuilder(None).unwrap().write().unwrap();
         let tree = git.find_tree(tree).unwrap();
-        git.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+        git.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
         let repo = Repo::open(dir.path()).unwrap();
         (dir, repo)
     }
@@ -251,7 +258,11 @@ mod tests {
             drafts: vec![
                 draft(1, DraftStatus::Pending),
                 StoredDraft {
-                    fix: Some(ReviewFix { commit: "b".repeat(40), worktree: "/w".into(), at: 5 }),
+                    fix: Some(ReviewFix {
+                        commit: "b".repeat(40),
+                        worktree: "/w".into(),
+                        at: 5,
+                    }),
                     ..draft(2, DraftStatus::Fixed)
                 },
             ],
@@ -269,12 +280,22 @@ mod tests {
         repo.save_stored_review(&b).unwrap();
         repo.save_stored_review(&p).unwrap();
         repo.save_stored_review(&odd).unwrap();
-        assert!(dir.path().join(".git/gitp/branch-reviews/feat%2Fx.json").is_file());
-        assert!(dir.path().join(".git/gitp/branch-reviews/feat%252Fx.json").is_file());
+        assert!(dir
+            .path()
+            .join(".git/gitp/branch-reviews/feat%2Fx.json")
+            .is_file());
+        assert!(dir
+            .path()
+            .join(".git/gitp/branch-reviews/feat%252Fx.json")
+            .is_file());
         assert!(dir.path().join(".git/gitp/pr-reviews/7.json").is_file());
         assert_eq!(repo.stored_review(&bk).unwrap(), Some(b));
         assert_eq!(repo.stored_review(&ReviewKey::Pr(7)).unwrap(), Some(p));
-        assert_eq!(repo.stored_review(&ReviewKey::Branch("feat%2Fx".into())).unwrap(), Some(odd));
+        assert_eq!(
+            repo.stored_review(&ReviewKey::Branch("feat%2Fx".into()))
+                .unwrap(),
+            Some(odd)
+        );
         let text = std::fs::read_to_string(dir.path().join(".git/gitp/pr-reviews/7.json")).unwrap();
         assert!(text.contains("\"status\": \"fixed\""), "{text}");
         repo.delete_stored_review(&bk).unwrap();
@@ -299,7 +320,12 @@ mod tests {
         repo.save_stored_review(&review(None, Some(4))).unwrap();
         let old = dir.path().join(".git/gitp/branch-reviews/old.json");
         let then = SystemTime::now() - Duration::from_secs(61 * 24 * 60 * 60);
-        std::fs::File::options().write(true).open(&old).unwrap().set_modified(then).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(then)
+            .unwrap();
         let now = crate::pr_threads::now_millis();
         assert_eq!(repo.prune_stored_reviews(now).unwrap(), 1);
         assert!(!old.exists());
@@ -308,7 +334,10 @@ mod tests {
 
     #[test]
     fn a_key_needs_exactly_one_of_branch_and_pr() {
-        assert_eq!(review(Some("b"), None).key().unwrap(), ReviewKey::Branch("b".into()));
+        assert_eq!(
+            review(Some("b"), None).key().unwrap(),
+            ReviewKey::Branch("b".into())
+        );
         assert_eq!(review(None, Some(2)).key().unwrap(), ReviewKey::Pr(2));
         assert!(review(None, None).key().is_err());
         assert!(review(Some("b"), Some(2)).key().is_err());
@@ -316,7 +345,10 @@ mod tests {
         assert!(repo.save_stored_review(&review(None, None)).is_err());
         let json = serde_json::to_string(&ReviewKey::Branch("x".into())).unwrap();
         assert_eq!(json, r#"{"branch":"x"}"#);
-        assert_eq!(serde_json::from_str::<ReviewKey>(r#"{"pr":7}"#).unwrap(), ReviewKey::Pr(7));
+        assert_eq!(
+            serde_json::from_str::<ReviewKey>(r#"{"pr":7}"#).unwrap(),
+            ReviewKey::Pr(7)
+        );
     }
 
     #[test]
@@ -328,16 +360,25 @@ mod tests {
         // name in a default init, so name the cases explicitly.
         let current = git.head().unwrap().shorthand().unwrap().to_string();
         if current != "master" {
-            git.branch("master", &git.find_commit(head).unwrap(), true).unwrap();
+            git.branch("master", &git.find_commit(head).unwrap(), true)
+                .unwrap();
         }
         assert_eq!(repo.default_review_base().unwrap(), "master");
-        git.branch("main", &git.find_commit(head).unwrap(), true).unwrap();
-        assert_eq!(repo.default_review_base().unwrap(), "main");
-        git.reference("refs/remotes/origin/main", head, true, "t").unwrap();
-        assert_eq!(repo.default_review_base().unwrap(), "origin/main");
-        git.reference("refs/remotes/origin/develop", head, true, "t").unwrap();
-        git.reference_symbolic("refs/remotes/origin/HEAD", "refs/remotes/origin/develop", true, "t")
+        git.branch("main", &git.find_commit(head).unwrap(), true)
             .unwrap();
+        assert_eq!(repo.default_review_base().unwrap(), "main");
+        git.reference("refs/remotes/origin/main", head, true, "t")
+            .unwrap();
+        assert_eq!(repo.default_review_base().unwrap(), "origin/main");
+        git.reference("refs/remotes/origin/develop", head, true, "t")
+            .unwrap();
+        git.reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/develop",
+            true,
+            "t",
+        )
+        .unwrap();
         assert_eq!(repo.default_review_base().unwrap(), "origin/develop");
     }
 }

@@ -13,9 +13,9 @@ use std::sync::{Arc, Mutex};
 
 use gitp_core::{
     CommitPullRequest, FileDiff, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings,
-    LineComment, MergeMethod, NewPullRequest, PrDraft, PrFilter, PrReviewComment,
-    PullRequest, PullRequestDetail, Repo, ReviewFile, ReviewVerdict, ThreadConversation,
-    ThreadInput, ThreadSearch, TurnKind, Undoable, LOGIN_TIMEOUT,
+    LineComment, MergeMethod, NewPullRequest, PrDraft, PrFilter, PrReviewComment, PullRequest,
+    PullRequestDetail, Repo, ReviewFile, ReviewVerdict, ThreadConversation, ThreadInput,
+    ThreadSearch, TurnKind, Undoable, LOGIN_TIMEOUT,
 };
 use serde::Serialize;
 use tauri::State;
@@ -232,7 +232,10 @@ fn gh_generate_review_impl(
     let out = repo
         .generate_review_drafts(&Gh::system(), number, &command)
         .map_err(to_message);
-    run.finish(out.as_ref().map(|r| r.text.clone()).map_err(Clone::clone), &[]);
+    run.finish(
+        out.as_ref().map(|r| r.text.clone()).map_err(Clone::clone),
+        &[],
+    );
     out
 }
 
@@ -329,7 +332,10 @@ impl FixJobs {
     }
 
     pub(crate) fn release(&self, path: &str, branch: &str) {
-        self.0.lock().unwrap().remove(&(path.to_string(), branch.to_string()));
+        self.0
+            .lock()
+            .unwrap()
+            .remove(&(path.to_string(), branch.to_string()));
     }
 }
 
@@ -360,9 +366,15 @@ fn gh_thread_fix_impl(
     out
 }
 
-fn gh_thread_mark_posted_impl(path: String, number: u64, thread: u64, url: String) -> Result<(), String> {
+fn gh_thread_mark_posted_impl(
+    path: String,
+    number: u64,
+    thread: u64,
+    url: String,
+) -> Result<(), String> {
     let repo = Repo::open(&path).map_err(to_message)?;
-    repo.mark_reply_posted(number, thread, &url).map_err(to_message)
+    repo.mark_reply_posted(number, thread, &url)
+        .map_err(to_message)
 }
 
 fn gh_thread_drop_reply_impl(path: String, number: u64, thread: u64) -> Result<(), String> {
@@ -395,8 +407,10 @@ fn gh_thread_search_impl(
     pr: Option<u64>,
 ) -> Result<ThreadSearch, String> {
     let repo = Repo::open(&path).map_err(to_message)?;
-    let range = (from.is_some() || to.is_some()).then(|| (from.unwrap_or(0), to.unwrap_or(u64::MAX)));
-    repo.search_thread_conversations(&query, range, pr).map_err(to_message)
+    let range =
+        (from.is_some() || to.is_some()).then(|| (from.unwrap_or(0), to.unwrap_or(u64::MAX)));
+    repo.search_thread_conversations(&query, range, pr)
+        .map_err(to_message)
 }
 
 /// Delete the conversations older than two months; how many went.
@@ -570,7 +584,9 @@ pub(crate) fn gh_pull_request_signature(
     number: u64,
     state: State<RepoState>,
 ) -> Result<gitp_core::PrSignature, String> {
-    with_repo_unlocked(&state, |repo| repo.pull_request_signature(&Gh::system(), number))
+    with_repo_unlocked(&state, |repo| {
+        repo.pull_request_signature(&Gh::system(), number)
+    })
 }
 
 /// Which files of the pull request are marked Viewed on GitHub.
@@ -579,7 +595,9 @@ pub(crate) fn gh_pull_request_viewed(
     number: u64,
     state: State<RepoState>,
 ) -> Result<gitp_core::PrViewed, String> {
-    with_repo_unlocked(&state, |repo| repo.pull_request_viewed(&Gh::system(), number))
+    with_repo_unlocked(&state, |repo| {
+        repo.pull_request_viewed(&Gh::system(), number)
+    })
 }
 
 /// Mark a file of the pull request (by its node id) Viewed on GitHub, or not.
@@ -604,7 +622,10 @@ pub(crate) fn gh_pull_request_files(
 }
 
 #[tauri::command(async)]
-pub(crate) fn gh_commit_files(oid: String, state: State<RepoState>) -> Result<Vec<FileDiff>, String> {
+pub(crate) fn gh_commit_files(
+    oid: String,
+    state: State<RepoState>,
+) -> Result<Vec<FileDiff>, String> {
     with_repo_unlocked(&state, |repo| repo.github_commit_files(&Gh::system(), &oid))
 }
 
@@ -779,11 +800,24 @@ pub(crate) fn gh_thread_fix(
     jobs: State<ClaudeJobs>,
     fixes: State<FixJobs>,
 ) -> Result<ThreadConversation, String> {
-    gh_thread_fix_impl(&jobs, &fixes, path, input, branch, fix_command, reply_command)
+    gh_thread_fix_impl(
+        &jobs,
+        &fixes,
+        path,
+        input,
+        branch,
+        fix_command,
+        reply_command,
+    )
 }
 
 #[tauri::command(async)]
-pub(crate) fn gh_thread_mark_posted(path: String, number: u64, thread: u64, url: String) -> Result<(), String> {
+pub(crate) fn gh_thread_mark_posted(
+    path: String,
+    number: u64,
+    thread: u64,
+    url: String,
+) -> Result<(), String> {
     gh_thread_mark_posted_impl(path, number, thread, url)
 }
 
@@ -878,7 +912,11 @@ mod tests {
                 .env("GIT_COMMITTER_EMAIL", "t@example.com")
                 .output()
                 .unwrap();
-            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
             String::from_utf8_lossy(&out.stdout).trim().to_string()
         };
         git(&["init", "-q"]);
@@ -910,29 +948,85 @@ mod tests {
         let held = jobs
             .begin(thread_job(&path, &input(7), TurnKind::Check, "", 0).unwrap())
             .unwrap();
-        let err = gh_thread_turn_impl(&jobs, path.clone(), input(7), TurnKind::Check, String::new(), "echo hi".into())
-            .unwrap_err();
+        let err = gh_thread_turn_impl(
+            &jobs,
+            path.clone(),
+            input(7),
+            TurnKind::Check,
+            String::new(),
+            "echo hi".into(),
+        )
+        .unwrap_err();
         assert!(err.contains("already running"), "{err}");
         // Another thread of the same pull request is free.
-        let c = gh_thread_turn_impl(&jobs, path.clone(), input(8), TurnKind::Check, String::new(), "echo hi".into())
-            .unwrap();
+        let c = gh_thread_turn_impl(
+            &jobs,
+            path.clone(),
+            input(8),
+            TurnKind::Check,
+            String::new(),
+            "echo hi".into(),
+        )
+        .unwrap();
         assert_eq!(c.turns[0].text.trim(), "hi");
-        assert_eq!(jobs.running(), ["Check · a:1 · #7"], "the turn on #8 is released");
+        assert_eq!(
+            jobs.running(),
+            ["Check · a:1 · #7"],
+            "the turn on #8 is released"
+        );
         held.finish(Ok(String::new()), &[]);
-        assert_eq!(gh_thread_conversation_impl(path.clone(), 8, 500).unwrap(), Some(c));
-        let found = gh_thread_search_impl(path.clone(), "retry HI".into(), None, None, None).unwrap();
-        assert_eq!((found.total, found.hits[0].pr, found.hits[0].title.as_deref()), (1, 8, Some("Retry fix")));
-        assert_eq!(gh_thread_search_impl(path.clone(), "hi".into(), None, None, Some(7)).unwrap().total, 0);
-        assert_eq!(gh_thread_search_impl(path.clone(), "hi".into(), Some(0), Some(1), None).unwrap().total, 0);
-        assert_eq!(gh_thread_search_impl(path.clone(), "hi".into(), Some(0), None, None).unwrap().total, 1, "from alone");
+        assert_eq!(
+            gh_thread_conversation_impl(path.clone(), 8, 500).unwrap(),
+            Some(c)
+        );
+        let found =
+            gh_thread_search_impl(path.clone(), "retry HI".into(), None, None, None).unwrap();
+        assert_eq!(
+            (
+                found.total,
+                found.hits[0].pr,
+                found.hits[0].title.as_deref()
+            ),
+            (1, 8, Some("Retry fix"))
+        );
+        assert_eq!(
+            gh_thread_search_impl(path.clone(), "hi".into(), None, None, Some(7))
+                .unwrap()
+                .total,
+            0
+        );
+        assert_eq!(
+            gh_thread_search_impl(path.clone(), "hi".into(), Some(0), Some(1), None)
+                .unwrap()
+                .total,
+            0
+        );
+        assert_eq!(
+            gh_thread_search_impl(path.clone(), "hi".into(), Some(0), None, None)
+                .unwrap()
+                .total,
+            1,
+            "from alone"
+        );
         gh_thread_clear_impl(path.clone(), 8, 500).unwrap();
-        assert_eq!(gh_thread_conversation_impl(path.clone(), 8, 500).unwrap(), None);
+        assert_eq!(
+            gh_thread_conversation_impl(path.clone(), 8, 500).unwrap(),
+            None
+        );
         assert_eq!(gh_thread_prune_impl(path.clone()).unwrap(), 0);
         let empty = gitp_core::ThreadInput {
             comments: vec![],
             ..input(9)
         };
-        assert!(gh_thread_turn_impl(&jobs, path, empty, TurnKind::Check, String::new(), "echo".into()).is_err());
+        assert!(gh_thread_turn_impl(
+            &jobs,
+            path,
+            empty,
+            TurnKind::Check,
+            String::new(),
+            "echo".into()
+        )
+        .is_err());
     }
 
     #[test]
@@ -960,15 +1054,41 @@ mod tests {
             comments,
         };
         fixes.hold("/nowhere", "b").unwrap();
-        let err = gh_thread_fix_impl(&jobs, &fixes, "/nowhere".into(), input(vec![comment.clone()]), "b".into(), "true".into(), "true".into())
-            .unwrap_err();
+        let err = gh_thread_fix_impl(
+            &jobs,
+            &fixes,
+            "/nowhere".into(),
+            input(vec![comment.clone()]),
+            "b".into(),
+            "true".into(),
+            "true".into(),
+        )
+        .unwrap_err();
         assert!(err.contains("already running on b"), "{err}");
         fixes.release("/nowhere", "b");
         // No comments: refused before any lock is taken.
-        assert!(gh_thread_fix_impl(&jobs, &fixes, "/nowhere".into(), input(vec![]), "b".into(), "true".into(), "true".into()).is_err());
+        assert!(gh_thread_fix_impl(
+            &jobs,
+            &fixes,
+            "/nowhere".into(),
+            input(vec![]),
+            "b".into(),
+            "true".into(),
+            "true".into()
+        )
+        .is_err());
         assert!(fixes.0.lock().unwrap().is_empty() && jobs.running().is_empty());
         // A repository that doesn't exist fails and releases both locks.
-        assert!(gh_thread_fix_impl(&jobs, &fixes, "/nowhere".into(), input(vec![comment]), "b".into(), "true".into(), "true".into()).is_err());
+        assert!(gh_thread_fix_impl(
+            &jobs,
+            &fixes,
+            "/nowhere".into(),
+            input(vec![comment]),
+            "b".into(),
+            "true".into(),
+            "true".into()
+        )
+        .is_err());
         assert!(fixes.0.lock().unwrap().is_empty() && jobs.running().is_empty());
     }
 }
