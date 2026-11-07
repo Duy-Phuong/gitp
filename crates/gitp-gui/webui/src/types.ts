@@ -338,6 +338,30 @@ export interface ConflictStatus {
   summary: string;
   conflicted: string[];
   message: string;
+  // What "ours" and "theirs" are, in words. In a rebase git swaps them: ours
+  // is the branch rebased onto, theirs the user's commit being applied.
+  ours_label: string;
+  theirs_label: string;
+  // A rebase's commit being applied and how many there are, when known.
+  step: number | null;
+  steps: number | null;
+  // Conflicted files with no conflict markers left on disk (git rerere
+  // replayed a resolution, or they were edited), ready to mark resolved.
+  clean: string[];
+}
+
+// A commit that changed a conflicted file, for the "why" panel.
+export interface ConflictCommit {
+  short: string;
+  author: string;
+  when: string;
+  subject: string;
+}
+
+// The commits each side made to a conflicted file since the sides split.
+export interface SideCommits {
+  ours: ConflictCommit[];
+  theirs: ConflictCommit[];
 }
 
 // The three staged versions plus the working text of a conflicted file.

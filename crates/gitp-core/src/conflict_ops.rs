@@ -23,7 +23,50 @@ pub struct ConflictStatus {
     pub conflicted: Vec<String>,
     /// The default commit message (merge only; empty for rebase/none).
     pub message: String,
+    /// What the "ours" side (stage 2) is, in words: the checked-out branch
+    /// for a merge, cherry-pick or revert, but the branch being rebased onto
+    /// during a rebase, where git swaps the sides.
+    pub ours_label: String,
+    /// What the "theirs" side (stage 3) is: the merged branch, the picked or
+    /// reverted commit, or during a rebase the user's own commit being applied.
+    pub theirs_label: String,
+    /// During a rebase, the number of the commit being applied and how many
+    /// there are, when git's rebase state says.
+    pub step: Option<u32>,
+    pub steps: Option<u32>,
+    /// Conflicted paths whose working file has no conflict markers left (git
+    /// rerere replayed a resolution, or it was edited), so they can be marked
+    /// resolved as they are. Delete/modify conflicts are never listed.
+    pub clean: Vec<String>,
 }
+
+/// One commit that changed a conflicted file, for the "why" panel.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConflictCommit {
+    pub short: String,
+    pub author: String,
+    /// Relative date, e.g. "3 days ago".
+    pub when: String,
+    pub subject: String,
+}
+
+/// The commits each side made to a conflicted file since the sides split.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct SideCommits {
+    pub ours: Vec<ConflictCommit>,
+    pub theirs: Vec<ConflictCommit>,
+}
+
+/// How many commits per side the "why" panel lists.
+const SIDE_COMMITS: usize = 15;
+
+/// The files under `.git` that name the commit coming in, by operation.
+const OTHER_HEADS: [&str; 4] = [
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "REBASE_HEAD",
+];
 
 /// The three staged versions plus the working-tree text of a conflicted file.
 #[derive(Debug, Clone, Serialize)]
@@ -57,34 +100,45 @@ impl Repo {
         let reverting = git_dir.join("REVERT_HEAD").exists();
         let squashing = self.squash_pending();
 
+        let mut status = ConflictStatus {
+            kind: "none".into(),
+            summary: String::new(),
+            conflicted: Vec::new(),
+            message: String::new(),
+            ours_label: String::new(),
+            theirs_label: String::new(),
+            step: None,
+            steps: None,
+            clean: Vec::new(),
+        };
         if !merging && !rebasing && !cherry_picking && !reverting && !squashing {
-            return Ok(ConflictStatus {
-                kind: "none".into(),
-                summary: String::new(),
-                conflicted: Vec::new(),
-                message: String::new(),
-            });
+            return Ok(status);
         }
 
-        let conflicted = self.unmerged_paths()?;
+        status.conflicted = self.unmerged_paths()?;
+        status.clean = self.marker_free(&status.conflicted);
+        let branch = self.current_branch_label();
 
         if squashing {
-            return Ok(ConflictStatus {
-                kind: "merge".into(),
-                summary: format!("Squash merge into {}", self.current_branch_label()),
-                conflicted,
-                message: self.squash_message().unwrap_or_default(),
-            });
+            status.kind = "merge".into();
+            status.summary = format!("Squash merge into {branch}");
+            status.message = self.squash_message().unwrap_or_default();
+            status.ours_label = branch;
+            status.theirs_label = "the squashed branch".into();
+            return Ok(status);
         }
 
         if rebasing {
             let into = self.rebasing_branch_label();
-            return Ok(ConflictStatus {
-                kind: "rebase".into(),
-                summary: format!("Rebasing {into}"),
-                conflicted,
-                message: String::new(),
-            });
+            status.kind = "rebase".into();
+            status.summary = format!("Rebasing {into}");
+            status.ours_label = format!("{} (rebasing onto)", self.rebase_onto_label());
+            status.theirs_label = match self.head_file_commit("REBASE_HEAD") {
+                Some(c) => format!("your commit {c}"),
+                None => format!("your commit on {into}"),
+            };
+            (status.step, status.steps) = self.rebase_progress();
+            return Ok(status);
         }
 
         // Merge, cherry-pick, and revert all stage their pending commit message
@@ -97,24 +151,90 @@ impl Repo {
             "revert"
         };
         let message = std::fs::read_to_string(git_dir.join("MERGE_MSG")).unwrap_or_default();
-        let into = self.current_branch_label();
         let default_summary = match kind {
-            "cherry-pick" => format!("Cherry-picking onto {into}"),
-            "revert" => format!("Reverting on {into}"),
-            _ => format!("Merging into {into}"),
+            "cherry-pick" => format!("Cherry-picking onto {branch}"),
+            "revert" => format!("Reverting on {branch}"),
+            _ => format!("Merging into {branch}"),
         };
+        status.theirs_label = match kind {
+            "cherry-pick" => self
+                .head_file_commit("CHERRY_PICK_HEAD")
+                .map(|c| format!("picked commit {c}")),
+            "revert" => self
+                .head_file_commit("REVERT_HEAD")
+                .map(|c| format!("undoing {c}")),
+            _ => merged_name(&message).or_else(|| self.head_file_commit("MERGE_HEAD")),
+        }
+        .unwrap_or_else(|| "incoming".into());
+        status.ours_label = branch;
         // MERGE_MSG's first line is git's own summary (e.g. "Merge …").
-        let summary = message
+        status.summary = message
             .lines()
             .next()
             .map(str::to_string)
             .unwrap_or(default_summary);
-        Ok(ConflictStatus {
-            kind: kind.into(),
-            summary,
-            conflicted,
-            message,
-        })
+        status.kind = kind.into();
+        status.message = message;
+        Ok(status)
+    }
+
+    /// The commits that changed `path` on each side since the sides split:
+    /// ours from HEAD, theirs from the incoming commit (MERGE_HEAD,
+    /// CHERRY_PICK_HEAD, REVERT_HEAD or REBASE_HEAD), newest first and at most
+    /// [`SIDE_COMMITS`] each. A side with none of its own (the reverted commit
+    /// is the split point) lists the incoming commit itself. Empty when there
+    /// is no incoming commit, as in a squash merge.
+    pub fn conflict_side_commits(&self, path: &str) -> Result<SideCommits> {
+        let git_dir = self.inner.path();
+        let Some(other) = OTHER_HEADS
+            .iter()
+            .find_map(|f| std::fs::read_to_string(git_dir.join(f)).ok())
+            .map(|s| s.lines().next().unwrap_or("").trim().to_string())
+            .filter(|s| !s.is_empty())
+        else {
+            return Ok(SideCommits::default());
+        };
+        let base = self
+            .run_git(&["merge-base", "HEAD", &other])?
+            .trim()
+            .to_string();
+        let spec = literal_pathspec(path);
+        let log = |range: &str| -> Result<Vec<ConflictCommit>> {
+            let max = format!("-{SIDE_COMMITS}");
+            let out = self.run_git(&[
+                "log",
+                &max,
+                "--format=%h%x1f%an%x1f%ar%x1f%s",
+                range,
+                "--",
+                &spec,
+            ])?;
+            Ok(out.lines().filter_map(parse_commit_line).collect())
+        };
+        let ours = log(&format!("{base}..HEAD"))?;
+        let mut theirs = log(&format!("{base}..{other}"))?;
+        if theirs.is_empty() {
+            let one = self.run_git(&["log", "-1", "--format=%h%x1f%an%x1f%ar%x1f%s", &other])?;
+            theirs = one.lines().filter_map(parse_commit_line).collect();
+        }
+        Ok(SideCommits { ours, theirs })
+    }
+
+    /// Run shell line `command` in the work tree to suggest resolutions for a
+    /// file's conflicts: `input` (the conflicts, as the caller words them)
+    /// goes on its stdin, and what it prints is the answer — the `result` of
+    /// a `claude -p --output-format json` run. Read-only by contract: the
+    /// command's own tool list keeps it so; nothing here writes.
+    pub fn suggest_conflict_resolution(&self, command: &str, input: &str) -> Result<String> {
+        let out = crate::gh::run_shell(
+            &self.workdir_path()?,
+            command,
+            input.as_bytes(),
+            &[],
+            crate::gh::EXPLAIN_TIMEOUT,
+            &self.net,
+        )?;
+        crate::gh::claude_answer(&out.stdout).map(|(text, _)| text)
     }
 
     /// Read the ours/theirs/base staged versions and the working text of `path`.
@@ -343,4 +463,111 @@ impl Repo {
             .and_then(|h| h.shorthand().map(str::to_string))
             .unwrap_or_else(|| "HEAD".into())
     }
+
+    /// `abc1234 "subject"` for the commit the `.git` file `name` holds.
+    fn head_file_commit(&self, name: &str) -> Option<String> {
+        let sha = std::fs::read_to_string(self.inner.path().join(name)).ok()?;
+        let sha = sha.lines().next()?.trim();
+        let out = self
+            .run_git(&["log", "-1", "--format=%h%x1f%s", sha])
+            .ok()?;
+        let (short, subject) = out.trim().split_once('\x1f')?;
+        Some(format!("{short} \"{subject}\""))
+    }
+
+    /// The branch a rebase replays onto: a branch whose tip is the `onto`
+    /// commit (a local one first), else its short id.
+    fn rebase_onto_label(&self) -> String {
+        let git_dir = self.inner.path();
+        let Some(onto) = ["rebase-merge", "rebase-apply"]
+            .iter()
+            .find_map(|d| std::fs::read_to_string(git_dir.join(d).join("onto")).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        else {
+            return "upstream".into();
+        };
+        self.run_git(&[
+            "for-each-ref",
+            "--points-at",
+            &onto,
+            "--format=%(refname:short)",
+            "refs/heads",
+            "refs/remotes",
+        ])
+        .ok()
+        .and_then(|out| {
+            out.lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty() && !l.ends_with("/HEAD"))
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| onto.chars().take(7).collect())
+    }
+
+    /// The commit a rebase is on and how many it has, from git's rebase
+    /// state (`msgnum`/`end`, or `next`/`last` for the apply backend).
+    fn rebase_progress(&self) -> (Option<u32>, Option<u32>) {
+        let git_dir = self.inner.path();
+        let read = |d: &str, f: &str| {
+            std::fs::read_to_string(git_dir.join(d).join(f))
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+        };
+        if git_dir.join("rebase-merge").is_dir() {
+            (read("rebase-merge", "msgnum"), read("rebase-merge", "end"))
+        } else {
+            (read("rebase-apply", "next"), read("rebase-apply", "last"))
+        }
+    }
+
+    /// The `paths` whose working file is text with no conflict markers left.
+    /// A path missing a side (delete/modify) is left out: no markers is how
+    /// git leaves it, not a sign it was resolved.
+    fn marker_free(&self, paths: &[String]) -> Vec<String> {
+        if paths.is_empty() {
+            return Vec::new();
+        }
+        let Ok(workdir) = self.workdir_path() else {
+            return Vec::new();
+        };
+        let staged = self.run_git(&["ls-files", "-u"]).unwrap_or_default();
+        let has_stage = |path: &str, stage: &str| {
+            staged.lines().any(|l| {
+                l.split_once('\t').is_some_and(|(meta, p)| {
+                    p == path && meta.split_whitespace().nth(2) == Some(stage)
+                })
+            })
+        };
+        paths
+            .iter()
+            .filter(|p| has_stage(p, "2") && has_stage(p, "3"))
+            .filter(|p| {
+                std::fs::read(workdir.join(p.as_str())).is_ok_and(|b| {
+                    !b.contains(&0) && !b.split(|&c| c == b'\n').any(|l| l.starts_with(b"<<<<<<<"))
+                })
+            })
+            .cloned()
+            .collect()
+    }
+}
+
+/// The branch a merge brought in, from git's message: the first quoted name
+/// of "Merge branch 'x'" or "Merge remote-tracking branch 'origin/x'".
+fn merged_name(message: &str) -> Option<String> {
+    let first = message.lines().next()?;
+    let rest = first.split_once('\'')?.1;
+    let name = rest.split_once('\'')?.0;
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// One `%h%x1f%an%x1f%ar%x1f%s` line of `git log`.
+fn parse_commit_line(line: &str) -> Option<ConflictCommit> {
+    let mut f = line.split('\x1f');
+    Some(ConflictCommit {
+        short: f.next()?.to_string(),
+        author: f.next()?.to_string(),
+        when: f.next()?.to_string(),
+        subject: f.next().unwrap_or("").to_string(),
+    })
 }

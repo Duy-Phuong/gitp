@@ -345,6 +345,8 @@ pub fn run() {
             conflict::resolve_conflict_side,
             conflict::abort_conflict,
             conflict::finish_conflict,
+            conflict::conflict_side_commits,
+            conflict::suggest_conflict_resolution,
             history::get_commit_tree,
             history::get_blame,
             history::get_file_history,

@@ -17,6 +17,8 @@
   --del-fg: #ff9a94;
   --word-add-bg: rgba(63, 185, 80, 0.4);
   --word-del-bg: rgba(248, 81, 73, 0.4);
+  --claude-bg: rgba(163, 113, 247, 0.16);
+  --claude-fg: #bc8cff;
   --mod-bg: rgba(227, 179, 65, 0.16);
   --mod-fg: #e3b341;
   --ren-bg: rgba(121, 192, 255, 0.16);
@@ -79,6 +81,8 @@
   --del-fg: #b42318;
   --word-add-bg: rgba(46, 160, 67, 0.3);
   --word-del-bg: rgba(207, 34, 46, 0.24);
+  --claude-bg: rgba(130, 80, 223, 0.1);
+  --claude-fg: #8250df;
   --mod-bg: rgba(154, 103, 0, 0.12);
   --mod-fg: #9a6700;
   --ren-bg: rgba(9, 105, 218, 0.12);
@@ -139,6 +143,8 @@
     --del-fg: #b42318;
     --word-add-bg: rgba(46, 160, 67, 0.3);
     --word-del-bg: rgba(207, 34, 46, 0.24);
+    --claude-bg: rgba(130, 80, 223, 0.1);
+    --claude-fg: #8250df;
     --mod-bg: rgba(154, 103, 0, 0.12);
     --mod-fg: #9a6700;
     --ren-bg: rgba(9, 105, 218, 0.12);
@@ -1124,6 +1130,56 @@ textarea.rename-input {
   font-size: 13px;
   border-bottom: 1px solid var(--border);
 }
+.conflict-progress {
+  padding: 6px 12px 0;
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 600;
+}
+/* What "ours" and "theirs" are, named: git swaps them in a rebase. */
+.conflict-sides {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.conflict-sides > div {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+.conflict-sides > div > span:last-child {
+  overflow-wrap: anywhere;
+}
+.conflict-side-tag {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+}
+.conflict-sides-note {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.conflict-file.clean .conflict-file-icon {
+  color: var(--add-fg);
+}
+.conflict-rerere {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
 .conflict-list-head {
   display: flex;
   align-items: center;
@@ -1236,6 +1292,101 @@ textarea.rename-input {
   color: #d29922;
   cursor: pointer;
   text-decoration: underline dotted;
+}
+/* A note above the merge grid: a file git rerere resolved, or Claude's
+   proposals waiting to be checked. */
+.conflict-banner {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--add-bg);
+}
+.conflict-banner.claude {
+  background: var(--claude-bg);
+}
+.conflict-editor-actions .btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.cf-suggest-btn {
+  color: var(--claude-fg);
+}
+/* Why each side changed the file: the commits on each side. */
+.conflict-why {
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.conflict-why > summary {
+  padding: 5px 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.conflict-why-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 16px;
+  padding: 0 12px 8px;
+  max-height: 140px;
+  overflow: auto;
+}
+.conflict-why-side {
+  min-width: 0;
+}
+.conflict-why-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conflict-why-commit {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  white-space: nowrap;
+  min-width: 0;
+}
+.conflict-why-sha {
+  font-family: var(--mono);
+  color: var(--accent);
+  flex: none;
+}
+/* The subject says why; it keeps its room, and the author and date give
+   way first when the panel is narrow. */
+.conflict-why-subject {
+  flex: 1 1 auto;
+  min-width: 6em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.conflict-why-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+.conflict-why-empty {
+  color: var(--text-dim);
+}
+/* A change Claude resolved: purple until the file is saved. */
+.cf-claude {
+  background: var(--claude-bg);
+  box-shadow: inset 3px 0 0 var(--claude-fg);
+}
+/* The base shown in an undecided change: a reference, not the result. */
+.cf-ghost .cf-tx {
+  font-style: italic;
+  opacity: 0.6;
+}
+/* The words that differ between the two sides of an open conflict. */
+.cf-word {
+  background: var(--word-del-bg);
+  border-radius: 2px;
 }
 /* A resolved change dims so it reads as settled. */
 .cf-done {

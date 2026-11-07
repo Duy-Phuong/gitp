@@ -492,3 +492,117 @@ fn aborting_a_clean_squash_merge_restores_the_branch() {
     );
     assert_eq!(repo.local_change_count().unwrap(), 0);
 }
+
+// --- What each side is, and why it changed ----------------------------------
+
+#[test]
+fn a_merge_names_both_sides_and_lists_each_sides_commits_to_the_file() {
+    let fx = conflicted_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    let status = repo.conflict_status().unwrap();
+    assert_eq!(status.ours_label, "dev");
+    assert_eq!(status.theirs_label, "theirs");
+    assert_eq!((status.step, status.steps), (None, None));
+
+    let commits = repo.conflict_side_commits("f.txt").unwrap();
+    let subjects =
+        |v: &[gitp_core::ConflictCommit]| v.iter().map(|c| c.subject.clone()).collect::<Vec<_>>();
+    assert_eq!(subjects(&commits.ours), vec!["ours change"]);
+    assert_eq!(subjects(&commits.theirs), vec!["theirs change"]);
+}
+
+#[test]
+fn a_cherry_pick_names_the_picked_commit_as_theirs() {
+    let (fx, _) = conflicted_cherry_pick_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    let status = repo.conflict_status().unwrap();
+    assert_eq!(status.ours_label, "dev");
+    assert!(
+        status.theirs_label.starts_with("picked commit "),
+        "{}",
+        status.theirs_label
+    );
+    assert!(
+        status.theirs_label.ends_with("\"feature change\""),
+        "{}",
+        status.theirs_label
+    );
+}
+
+// git swaps the sides in a rebase: ours is the branch rebased onto, theirs
+// the user's own commit being applied.
+#[test]
+fn a_rebase_names_the_swapped_sides_and_its_progress() {
+    let fx = FixtureRepo::init();
+    fx.commit_file("f.txt", "base\n", "c1");
+    let dir = fx.path();
+    git(dir, &["branch", "-M", "side"]);
+    git(dir, &["checkout", "-b", "target"]);
+    std::fs::write(dir.join("f.txt"), "target\n").unwrap();
+    git(dir, &["commit", "-am", "target change"]);
+    git(dir, &["checkout", "side"]);
+    std::fs::write(dir.join("f.txt"), "side\n").unwrap();
+    git(dir, &["commit", "-am", "side change"]);
+    std::fs::write(dir.join("g.txt"), "more\n").unwrap();
+    git(dir, &["add", "g.txt"]);
+    git(dir, &["commit", "-m", "side more"]);
+
+    let repo = Repo::open(dir).unwrap();
+    assert!(
+        repo.rebase_onto("target").is_err(),
+        "rebase should conflict"
+    );
+
+    let status = repo.conflict_status().unwrap();
+    assert_eq!(status.ours_label, "target (rebasing onto)");
+    assert!(
+        status.theirs_label.starts_with("your commit "),
+        "{}",
+        status.theirs_label
+    );
+    assert!(
+        status.theirs_label.ends_with("\"side change\""),
+        "{}",
+        status.theirs_label
+    );
+    assert_eq!((status.step, status.steps), (Some(1), Some(2)));
+}
+
+#[test]
+fn a_conflicted_file_without_markers_on_disk_is_listed_as_clean() {
+    let fx = conflicted_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+    assert!(repo.conflict_status().unwrap().clean.is_empty());
+
+    // What git rerere does when it replays a recorded resolution.
+    std::fs::write(fx.path().join("f.txt"), "a\nboth\nc\n").unwrap();
+    assert_eq!(repo.conflict_status().unwrap().clean, vec!["f.txt"]);
+}
+
+#[test]
+fn a_delete_modify_conflict_is_never_listed_as_clean() {
+    let fx = delete_modify_conflicted_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+    let status = repo.conflict_status().unwrap();
+    assert!(!status.conflicted.is_empty());
+    assert!(status.clean.is_empty(), "{:?}", status.clean);
+}
+
+#[test]
+fn a_suggestion_run_gets_the_conflicts_on_stdin_and_answers_with_its_result() {
+    let fx = conflicted_repo();
+    let repo = Repo::open(fx.path()).unwrap();
+
+    assert_eq!(
+        repo.suggest_conflict_resolution("cat", "the conflicts")
+            .unwrap(),
+        "the conflicts"
+    );
+    assert_eq!(
+        repo.suggest_conflict_resolution(r#"printf '{"result":"merged","session_id":"s1"}'"#, "")
+            .unwrap(),
+        "merged"
+    );
+}
