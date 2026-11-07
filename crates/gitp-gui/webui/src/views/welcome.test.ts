@@ -22,6 +22,15 @@ function mount(overrides: Partial<WelcomeCallbacks> = {}) {
 const texts = (host: HTMLElement, sel: string) => [...host.querySelectorAll(sel)].map((n) => n.textContent);
 
 describe("the welcome screen", () => {
+  it("opens the review inbox", () => {
+    const inbox = vi.fn();
+    const { host, handle } = mount({ inbox });
+    handle.sync(false);
+    const button = [...host.querySelectorAll<HTMLButtonElement>(".welcome-action")].find((b) => b.textContent?.startsWith("Review Inbox"));
+    button!.click();
+    expect(inbox).toHaveBeenCalled();
+  });
+
   it("shows when no repository is open, and hides once one is", () => {
     const { host, handle } = mount();
     handle.sync(false);

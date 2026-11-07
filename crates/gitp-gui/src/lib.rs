@@ -23,6 +23,7 @@ mod editor;
 mod gh;
 mod gitflow;
 mod history;
+mod inbox;
 mod lfs;
 mod local_history;
 mod local_workspaces;
@@ -279,6 +280,7 @@ pub fn run() {
             gh::gh_login_cancel,
             gh::gh_logout,
             gh::open_github_url,
+            inbox::inbox,
             remote::cancel_network_op,
             remote::clone_repository,
             local_workspaces::workspace_repo_summary,

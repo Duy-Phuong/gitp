@@ -70,6 +70,7 @@ import { refreshActionButtons } from "./toolbar";
 import { cancelComparison, compareSelectedCommits, showComparison } from "./compare";
 import { tabCycler } from "./tab-order";
 import { applyProfileIdentityHere } from "./profile-menu";
+import { hideReviewInbox } from "./inbox-actions";
 
 // What a ref or commit row does when it's right-clicked (or, for a branch,
 // double-clicked) — set once by main.ts at startup; see the module comment.
@@ -765,6 +766,7 @@ export function operationInFlight(): boolean {
 // the view's data.
 export function showView(view: View, opts: { refreshHistory?: boolean } = {}): void {
   closeCommitMenu();
+  hideReviewInbox();
   state.view = view;
   $("#history-view").classList.toggle("hidden", view !== "history" && view !== "reflog");
   $("#changes-view").classList.toggle("hidden", view !== "changes");

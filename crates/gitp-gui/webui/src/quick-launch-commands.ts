@@ -118,6 +118,7 @@ import { showThreadSearch } from "./thread-search-actions";
 import { openBranchReview } from "./branch-review-actions";
 import { cloneRepoAction, initRepoAction } from "./new-repo-actions";
 import { openWorkspacesAction } from "./local-workspace-actions";
+import { openReviewInbox } from "./inbox-actions";
 import { addRemoteAction } from "./remote-actions";
 import { createFileAction, editFileStage } from "./editor-actions";
 import { shortcutHint } from "./shortcuts";
@@ -208,6 +209,7 @@ function openOnlyCommands(): QuickItem[] {
     { kind: "command", label: "Clone Repository…", detail: shortcutHint("cloneRepo"), run: cloneRepoAction },
     { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Workspaces…", detail: "groups of repositories to fetch, pull or open together", run: openWorkspacesAction },
+    { kind: "command", label: "Open Review Inbox", detail: "the pull requests that need you, across your repositories", run: openReviewInbox },
     { kind: "command", label: "Terminal", run: toggleTerminal },
     { kind: "command", label: "Toggle Theme", detail: "light ↔ your last dark theme", run: toggleTheme },
     { kind: "command", label: "Keyboard Shortcuts", detail: shortcutHint("cheatSheet"), run: openShortcutsDialog },
@@ -475,6 +477,7 @@ function repoCommands(): QuickItem[] {
     { kind: "command", label: "Clone Repository…", detail: shortcutHint("cloneRepo"), run: cloneRepoAction },
     { kind: "command", label: "Init Repository…", run: initRepoAction },
     { kind: "command", label: "Workspaces…", detail: "groups of repositories to fetch, pull or open together", run: openWorkspacesAction },
+    { kind: "command", label: "Open Review Inbox", detail: "the pull requests that need you, across your repositories", run: openReviewInbox },
     { kind: "command", label: "Close Repository", run: () => void closeRepoTab(state.repoPath) },
     {
       kind: "command",
