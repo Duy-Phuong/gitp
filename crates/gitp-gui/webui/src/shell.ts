@@ -1126,13 +1126,13 @@ export function searchPullRequests(text: string): void {
   }, 120);
 }
 
-// Open pull request `number` in the pull request view.
 // The Review panel of local branch `branch` (branch-review-actions.ts).
 export function showBranchReview(branch: string): void {
   ui.branchReviewView?.show(branch);
   showView("branchreview");
 }
 
+// Open pull request `number` in the pull request view.
 export function showPullRequest(number: number): void {
   prTabOpen = null;
   state.prs.open = number;
