@@ -46,3 +46,10 @@ Two rows under the thread commands. Blank restores the default.
 - Which tools go in the allow list (read-only: Read, Grep, Glob, Bash(git log *), Bash(git diff *), Bash(git show *)).
 - The form-dialog extension for a field action button.
 - Tests: core (diff/log inputs, output parse incl. non-JSON, cut), GUI commands, DOM tests for the confirm-before-replace and cancel.
+
+## Decisions after the builder check
+
+- **Asking before replacing (my call):** the dialog and the commit box ask only when the current text differs from what gitp pre-filled (the template or the commit list, the pre-filled title). A pre-filled box is replaced without asking.
+- **Nothing staged (answered):** the fallback is dropped; the button is disabled with "Stage something first". In Amend mode the input is HEAD's diff plus what is staged, and the box asks before replacing HEAD's message since that was not pre-filled by gitp.
+- **Where the commit button goes (answered):** the commit box in `changes.ts`, in its controls row before Commit. The draft's first line goes to Subject, the rest to Description.
+- **Unresolved findings note:** belongs to the fix-before-review feature, not this one.

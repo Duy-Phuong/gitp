@@ -34,3 +34,14 @@ Thread conversations are kept 60 days so Phuong can look back. This adds a searc
 
 - Whether to store the PR title in the conversation file on first turn (my call: yes, add `title: Option<String>` to the conversation, written when known; older files just lack it).
 - Tests: core search (tokens, month, pr filter, snippet), DOM for debounce and click-through.
+
+## Decisions after the builder check
+
+- **Stored text (my call):** the conversation file gains `title`, `line` and `comments: [{author, body}]` (the whole thread as given to the turn), written on every turn so edits and replies are picked up. Older files without them match on turns only and show no line.
+- **Resolved threads (my call):** the PR view renders the stored conversation block on resolved threads too, collapsed by default, read-only (no buttons but Clear); the search click expands it. A thread gone from GitHub opens the PR with a "thread no longer on GitHub" note and the stored conversation shown at the top of the Conversation tab.
+- **Date (my call):** the last turn's time. The month filter is sent as a millisecond `[from, to)` range computed in the frontend in local time.
+- **Title (my call):** the stored `title` only; older files show the number.
+- **Query (my call):** `#123` or `pr:123` in the query is parsed out as the exact PR filter; any other number is a plain token. No separate PR box.
+- **Where (my call):** a main-panel view like the PR list, Esc or Back returns to the previous view; a click calls `showPullRequest`.
+- **Cap (my call):** core returns the first 200 after sorting plus the total; the view says "Showing 200 of N, narrow the search".
+- **Turns (my call):** every turn with text is searched, dropped drafts included, marked "dropped" in the snippet row.

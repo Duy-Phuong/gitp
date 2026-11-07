@@ -39,3 +39,12 @@ The first screen of the morning: what needs Phuong across every repo in Open Rec
 - The exact gh/GraphQL query that gives review requests and unresolved counts in one call.
 - How "open that repo on that PR" is wired (existing Open Recent + PR open callbacks).
 - Tests: grouping and sort (pure), per-repo streaming (DOM), error rows.
+
+## Decisions after the builder check
+
+- **"Committed-not-pushed" (my call):** dropped. The count is threads with a prepared reply or a fix commit recorded in the conversation, named "prepared".
+- **Team review requests (my call):** one `gh pr list --search "review-requested:@me"` call per repo in addition to the author list, so teams count, no extra scope.
+- **Mergeable (my call):** `mergeStateStatus == CLEAN`; UNKNOWN does not count.
+- **Repos (my call):** Open Recent plus starred. Rows are merged by `owner/name`; the path that appears first in the recent list gives the thread files and is what a click opens.
+- **Where (my call):** a main-panel view that also works from the welcome screen with no repo open, reached from the welcome screen, the PR list header and Quick Launch. A click opens the repo if needed, then the PR.
+- **Poller:** the shared `poller.ts` from the auto-refresh design, which lands first; if the inbox is built before it, the inbox carries the module and the auto-refresh feature adopts it.

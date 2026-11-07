@@ -55,3 +55,11 @@ When a check on a pull request goes red, Phuong copies the log into Claude, asks
 - Parsing the Actions URL and the shape of `statusCheckRollup` for the job URL.
 - Where the "contains the commit" check runs (one `merge-base --is-ancestor` against the fetched PR head).
 - Tests: log cut, URL parse, check turn with the fake command, fix on a check, conversation storage key, DOM for the Checks tab block.
+
+## Decisions after the builder check
+
+- **Commands (my call):** one new setting, "CI check command", used for the Check turn on a check. Explain, follow-up and Fix reuse the thread commands; their default prompts become neutral ("the review thread or CI failure in $GITP_THREAD_FILE"), and the fix prompt's commit subject reads `fix(ci): <check> — <what>` when `GITP_CHECK_NAME` is set, else the thread form.
+- **Key (my call):** workflow name plus job name when both are known (`<workflow> / <job>`), else the check name. `PrCheck` gains `workflow: Option<String>` from `statusCheckRollup.workflowName`. The file name is the key hashed to 16 hex characters, with the key kept inside the file, so no collisions.
+- **Storage (my call):** `ThreadConversation.thread` becomes a string in version 2; files of version 1 load by converting the number to its text; `path` becomes optional. New optional fields `run_id` (per check turn) and `title`. `run_turn` and `fix_thread` are generalised over a `TurnSubject { Thread(ThreadInput) | Check(CheckInput) }`; the fix on a check skips the reply-draft. The frontend key becomes a string.
+- **Rows (my call):** the block renders on any check row that has a conversation, failed or not; a conversation whose check is gone from the rollup is listed under "Earlier checks" at the bottom of the tab with the block, so nothing is orphaned. The "fixed" badge clears when the fetched PR head contains the commit, on any row.
+- **Log (my call):** fetched once per Check turn and kept as `<common_dir>/gitp/pr-threads/<pr>/<file>.log`, overwritten on the next Check, pruned with the conversation. Follow-ups and Fix get `GITP_CI_LOG_FILE` pointing at it.

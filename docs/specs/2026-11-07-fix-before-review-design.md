@@ -80,3 +80,18 @@ Atomic write (.tmp + rename), damaged file deleted, pruned with the thread conve
 - Exact placement of the Review panel on the branch view, and how the Files tab is fed a branch diff instead of a PR diff.
 - The diff-hunk extraction for the finding temp file.
 - Test plan: core (branch diff, finding fix with the same fake-command harness as the thread fix, storage round trip and prune), GUI commands, and DOM tests for cards in both views staying in sync.
+
+## Decisions after the builder check
+
+- **Fix prompt for a finding (my call):** the Fix command stays one setting. The temp file is given as `GITP_THREAD_FILE` as for a thread, but holds `{"kind":"finding", "path", "line", "side", "body", "severity", "diff_hunk", "branch", "base"}`. The default fix prompt is made neutral: "Read $GITP_THREAD_FILE: a review thread on a pull request, or a review finding on a branch…", commit subject `fix(review): <path>:<line> — <what>` in both cases. The thread fix keeps working unchanged.
+- **Where the review runs (my call):** in the worktree that has the branch, not the main checkout. The review file is looked for in that worktree's `review/` folder. The skill line for a branch is `/review-pr-phuong $GITP_BRANCH` against `$GITP_BASE` (the skill's branch form), without board mode; the PR skill line stays as it is. `GITP_BASE` is always set.
+- **Anchors after the branch moves (my call):** the stored `head` never changes; the panel keeps `reviewed head`. When the current head differs, every draft's line is remapped through `git diff <reviewed head>..<current head>` for its path (pure hunk arithmetic, tested); a line inside a changed hunk is marked "line moved" and gets no card and no Fix until the review is run again. Fix always sends the remapped line and a hunk cut from the current diff.
+- **Running the review again (my call):** drafts are merged by fingerprint (path + first 80 chars of the original body): existing ones keep their status and fix record, new ones are added pending, missing ones with status pending or approved are dropped, fixed and discarded ones stay. Changing the base in "Against" runs a new review on the next click and the merge rule applies.
+- **Approve on a branch (my call):** a label only. Nothing carries into the PR's drafts.
+- **"Opened again" (answered):** view only. A fixed card shows the commit; Fix is not offered again. Discard is allowed on a fixed finding and keeps the fix record.
+- **Base (my call):** the remote-tracking ref `origin/<default>` when it exists, else the local branch; the default branch name comes from `origin/HEAD` without a network call, falling back to `main` then `master`.
+- **Fix on pull request drafts:** see the open question below.
+
+## Open question for Phuong
+
+Should Fix also appear on the drafts of a pull request you authored (the review run from the PR view), or only on a branch review? On a PR it needs the per-PR fix lock and a fixed status in the PR drafts store.

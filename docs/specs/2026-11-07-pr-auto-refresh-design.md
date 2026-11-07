@@ -39,3 +39,9 @@ One call per 30 s per open PR view, one per 60 s for the list; about 180 calls a
 
 - Whether `gh pr view` with those fields is one API call or two; if two, use the GraphQL query already in `gh.rs` for threads with the extra fields.
 - Tests: signature compare (pure), poller focus/visibility behaviour (DOM test with fake timers), redraw keeping typed text (extend existing tests).
+
+## Decisions after the builder check
+
+- **Unsent line comment (my call):** survives. The Files tab keeps open line composers in a map by path, side and line, and reopens them after a redraw; a line that left the diff keeps its text in a "comment on a line no longer in the diff" box at the top of the file with Discard. A redraw of any tab is deferred while a text box has focus, and runs as soon as it loses focus.
+- **Sidebar list (my call):** the sidebar's Pull Requests section counts. List polling runs whenever a signed-in GitHub repo is open, every 60 seconds, from `pr-actions.ts`; the Performance section's count rises to about 240 calls an hour with one PR view open.
+- **The notice (my call):** counts come from comparing the old and new detail: new commits, new comments (issue comments + line comments + review bodies, by id), resolved threads, checks finished. Only `updatedAt` moved: "Updated". The user's own actions through gitp refresh the stored signature quietly after their reload, so they produce no notice.
