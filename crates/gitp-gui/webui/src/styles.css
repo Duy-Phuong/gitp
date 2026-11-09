@@ -1614,6 +1614,108 @@ textarea.rename-input {
   font-size: 13px;
 }
 
+/* A pull request's conflicts as Claude resolved them, before the approve:
+   what Claude says, the files (conflicted first), the diff; it scrolls, the
+   buttons stay put. */
+.conflict-preview {
+  width: min(820px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+.conflict-preview > .conflict-preview-summary,
+.conflict-preview > .conflict-preview-files,
+.conflict-preview > .conflict-preview-diff {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.conflict-preview-summary {
+  max-height: 22vh;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-elev);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.conflict-preview-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin: 4px 0 6px;
+}
+.conflict-preview-files {
+  max-height: 22vh;
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  list-style: none;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.conflict-preview-files li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.conflict-preview-path {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.conflict-preview-files li.conflicted .conflict-preview-path {
+  font-weight: 600;
+}
+.conflict-preview-status {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--mod-fg);
+}
+.conflict-preview-status.s-a {
+  color: var(--add-fg);
+}
+.conflict-preview-status.s-d {
+  color: var(--del-fg);
+}
+.conflict-preview-diff {
+  max-height: 40vh;
+  margin: 0 0 12px;
+  padding: 6px 0;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.conflict-preview-diff > div {
+  padding: 0 10px;
+  white-space: pre;
+}
+.conflict-preview-diff .d-add {
+  color: var(--add-fg);
+  background: color-mix(in srgb, var(--add-fg) 10%, transparent);
+}
+.conflict-preview-diff .d-del {
+  color: var(--del-fg);
+  background: color-mix(in srgb, var(--del-fg) 10%, transparent);
+}
+.conflict-preview-diff .d-hunk {
+  color: var(--accent);
+}
+.conflict-preview-diff .d-file {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+/* "Resolve Conflicts with Claude": red like the conflicts it fixes. */
+.pr-actions .btn.pr-resolve-conflicts {
+  background: var(--del-fg);
+}
+
 /* Error / message dialog -------------------------------------------------- */
 .list-confirm {
   width: min(560px, 92vw);

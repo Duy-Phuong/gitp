@@ -138,6 +138,10 @@ export interface PullRequestCallbacks {
   fixThread: (pr: PullRequestDetail, thread: Thread) => void;
   // Apply review suggestions in the branch's worktree, as one commit.
   applySuggestions?: (pr: PullRequestDetail, suggestions: Suggestion[]) => Promise<void>;
+  // Merge the base in the branch's worktree, let Claude resolve the
+  // conflicts and show them for an approve (commit and push) or a discard;
+  // true once pushed.
+  resolveConflicts?: (pr: PullRequestDetail) => Promise<boolean>;
   // Save the chosen option on the thread, for Fix to take; false when it
   // couldn't (reported).
   chooseOption: (pr: PullRequestDetail, thread: Thread, text: string) => Promise<boolean>;
@@ -241,6 +245,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // ("t<root id>" for a thread, "d<id>" for a draft), kept across redraws.
   let commentsCollapsed = loadPrCollapseComments();
   const openComments = new Set<string>();
+  // The pull requests "Resolve Conflicts with Claude" is running for.
+  const resolvingConflicts = new Set<number>();
   const treeCollapsed = new Set<string>();
   let treeSelected: string | null = null;
   // The Files tab's Viewed marks on GitHub, read once per pull request and
@@ -565,6 +571,27 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       const merge = button("Merge…", () => cb.merge(pr), `Merge #${pr.number} into ${pr.base} on GitHub`);
       merge.classList.remove("ghost");
       actions.prepend(merge);
+    }
+    if (cb.resolveConflicts && hasConflicts(pr)) {
+      const running = resolvingConflicts.has(pr.number);
+      const resolve = button(
+        running ? "Resolving Conflicts…" : "Resolve Conflicts with Claude",
+        () => {
+          resolvingConflicts.add(pr.number);
+          render();
+          void cb.resolveConflicts!(pr).then((pushed) => {
+            resolvingConflicts.delete(pr.number);
+            if (detail?.number !== pr.number) return;
+            if (pushed) void load(true);
+            else render();
+          });
+        },
+        `Merge ${pr.base} into ${pr.head} in its worktree and let Claude resolve the conflicts; you see the changes before anything is committed or pushed`,
+      );
+      resolve.classList.remove("ghost");
+      resolve.classList.add("pr-resolve-conflicts");
+      resolve.disabled = running;
+      actions.prepend(resolve);
     }
     const refresh = button("", () => void load(false), `Refresh: read #${pr.number} again from GitHub`);
     refresh.classList.add("pr-icon-btn");

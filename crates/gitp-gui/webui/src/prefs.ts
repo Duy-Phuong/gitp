@@ -806,6 +806,18 @@ export const RESOLVE_CONFLICT_COMMAND =
   `--model opus --effort medium --permission-mode dontAsk --output-format json ${SESSION_ID_ARG} ` +
   `--allowedTools "Read Grep Glob Bash(git log *) Bash(git show *) Bash(git diff *) Bash(git blame *)"`;
 
+// "Resolve Conflicts with Claude" on a pull request: run in the branch's
+// worktree in the middle of a merge of the base, with the conflicted files on
+// stdin. Claude edits them and nothing else: no git add, no commit, no new
+// file (gitp checks all three, stages the files and waits for the user).
+export const RESOLVE_PR_CONFLICTS_COMMAND =
+  `claude -p "Merging the base into this pull request's branch stopped with conflicts in the files listed on stdin. ` +
+  `Resolve them: edit each file so it keeps what both sides meant, with no conflict marker left. ` +
+  `Read git log, git show and git diff of both sides when it helps. Do not stage, commit or create files, ` +
+  `and ask no questions. Then say in a few short lines what you chose in each file." ` +
+  `--model opus --effort medium --permission-mode dontAsk --output-format json ` +
+  `--allowedTools "Read Grep Glob Edit Bash(git log *) Bash(git show *) Bash(git diff *) Bash(git blame *) Bash(git status *)"`;
+
 // The commands behind Check, Explain simply, a follow-up and Reply with
 // Claude on a pull request thread. Read-only toward the checkout and GitHub:
 // the review skill's lookups, none of its writes under review/, no python,

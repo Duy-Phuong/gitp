@@ -12,10 +12,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use gitp_core::{
-    CommitPullRequest, FileDiff, GeneratedReview, Gh, GhAccount, GhLogin, GitHubRepoSettings,
-    LineComment, MergeMethod, NewPullRequest, PrDraft, PrFilter, PrReviewComment, PullRequest,
-    PullRequestDetail, Repo, ReviewFile, ReviewVerdict, ThreadConversation, ThreadInput,
-    ThreadSearch, TurnKind, Undoable, LOGIN_TIMEOUT,
+    CommitPullRequest, ConflictResolution, FileDiff, GeneratedReview, Gh, GhAccount, GhLogin,
+    GitHubRepoSettings, LineComment, MergeMethod, NewPullRequest, PrDraft, PrFilter,
+    PrReviewComment, PullRequest, PullRequestDetail, Repo, ReviewFile, ReviewVerdict,
+    ThreadConversation, ThreadInput, ThreadSearch, TurnKind, Undoable, LOGIN_TIMEOUT,
 };
 use serde::Serialize;
 use tauri::State;
@@ -848,6 +848,86 @@ pub(crate) fn gh_apply_suggestions(
     let repo = Repo::open(&path).map_err(to_message)?;
     repo.apply_suggestions(number, &head, &branch, &suggestions)
         .map_err(to_message)
+}
+
+/// Merge the base into the pull request's branch in its worktree and let
+/// `command` (Claude) resolve the conflicts; the merge then waits for an
+/// approve or a discard (see `Repo::resolve_pr_conflicts`). A Claude job,
+/// under the pull request's fix lock: one change at a time in the worktree.
+#[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn gh_resolve_conflicts(
+    path: String,
+    number: u64,
+    head: String,
+    branch: String,
+    base: String,
+    command: String,
+    jobs: State<ClaudeJobs>,
+    fixes: State<FixJobs>,
+) -> Result<ConflictResolution, String> {
+    fixes.hold(&path, &branch)?;
+    let out = jobs
+        .begin(NewJob {
+            kind: JobKind::Resolve,
+            label: format!("Resolve conflicts · #{number}"),
+            activity: String::new(),
+            repo: path.clone(),
+            pr: number,
+            thread: None,
+            finding: None,
+            branch: Some(branch.clone()),
+            command: command.clone(),
+            stdin_bytes: 0,
+        })
+        .and_then(|run| {
+            let out = Repo::open(&path).map_err(to_message).and_then(|mut repo| {
+                repo.set_network_hooks(run.hooks());
+                repo.resolve_pr_conflicts(number, &head, &branch, &base, &command)
+                    .map_err(to_message)
+            });
+            run.finish(
+                out.as_ref()
+                    .map(|r| r.summary.clone())
+                    .map_err(Clone::clone),
+                &[],
+            );
+            out
+        });
+    fixes.release(&path, &branch);
+    out
+}
+
+/// Commit the waiting merge and push the branch; the merge commit.
+#[tauri::command(async)]
+pub(crate) fn gh_approve_conflicts(
+    path: String,
+    branch: String,
+    before: String,
+    fixes: State<FixJobs>,
+) -> Result<String, String> {
+    fixes.hold(&path, &branch)?;
+    let out = Repo::open(&path)
+        .and_then(|repo| repo.approve_conflict_resolution(&branch, &before))
+        .map_err(to_message);
+    fixes.release(&path, &branch);
+    out
+}
+
+/// Abort the waiting merge, back to where the branch was.
+#[tauri::command(async)]
+pub(crate) fn gh_discard_conflicts(
+    path: String,
+    branch: String,
+    before: String,
+    fixes: State<FixJobs>,
+) -> Result<(), String> {
+    fixes.hold(&path, &branch)?;
+    let out = Repo::open(&path)
+        .and_then(|repo| repo.discard_conflict_resolution(&branch, &before))
+        .map_err(to_message);
+    fixes.release(&path, &branch);
+    out
 }
 
 /// Record the user's chosen option on a thread, unanswered, for Fix to take.

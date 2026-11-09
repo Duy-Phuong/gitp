@@ -37,6 +37,7 @@ mod local_history;
 mod log;
 mod merge_preview;
 mod pick_plan;
+mod pr_conflicts;
 mod pr_threads;
 mod progress;
 mod rebase;
@@ -107,6 +108,7 @@ pub use local_history::{
 pub use log::{CommitRow, LogCache, LogOptions, LogRefresh, LogScope, LogWalk};
 pub use merge_preview::MergePreview;
 pub use pick_plan::{PickAction, PickPlanOutcome, PickStep};
+pub use pr_conflicts::{ChangedFile, ConflictResolution};
 pub use pr_threads::{
     prepared_reply, ReplyState, ThreadComment, ThreadConversation, ThreadHit, ThreadSearch,
     ThreadTurn, TurnKind, TurnRole, THREAD_KEEP, THREAD_SEARCH_LIMIT,

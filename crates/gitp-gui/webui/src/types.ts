@@ -1171,3 +1171,23 @@ export interface FindingInput {
   pr?: number | null;
   pr_head?: string | null;
 }
+
+// A merge of the base into a pull request's branch, with Claude's edits of
+// the conflicted files, waiting in the branch's worktree for an approve
+// (commit and push) or a discard.
+export interface ConflictResolution {
+  worktree: string;
+  branch: string;
+  // What was merged in: <remote>/<base>.
+  base: string;
+  // The branch's commit before the merge.
+  before: string;
+  // The files that had conflicts, which Claude edited.
+  conflicted: string[];
+  // Every file the merge changes on the branch, with git's status letter.
+  changed: { status: string; path: string }[];
+  // The diff of the conflicted files against the branch's commit.
+  diff: string;
+  // What Claude said it did; empty for a merge shown again.
+  summary: string;
+}

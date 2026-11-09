@@ -8,6 +8,7 @@ import type { Suggestion } from "./suggestions";
 import type { QuitCheck, Unpushed } from "./quit-check";
 import type {
   BranchReviewData,
+  ConflictResolution,
   FindingInput,
   GeneratedBranchReview,
   ReviewKey,
@@ -2681,6 +2682,65 @@ export async function applySuggestions(path: string, number: number, head: strin
     return "5a9e57c0de0000000000000000000000000000ab";
   }
   return invoke<string>("gh_apply_suggestions", { path, number, head, branch, suggestions });
+}
+
+// Merge the base into the pull request's branch in its worktree and let
+// `command` (Claude) resolve the conflicts; the merge then waits.
+export async function resolvePrConflicts(
+  path: string,
+  number: number,
+  head: string,
+  branch: string,
+  base: string,
+  command: string,
+): Promise<ConflictResolution> {
+  if (!isTauri()) {
+    await mockNetworkDelay();
+    return {
+      worktree: `${path}-${branch.replace(/\//g, "-")}`,
+      branch,
+      base: `origin/${base}`,
+      before: "3c1d9e0000000000000000000000000000000000",
+      conflicted: ["src/report/dates.ts"],
+      changed: [
+        { status: "M", path: "src/report/dates.ts" },
+        { status: "M", path: "src/report/export.ts" },
+        { status: "A", path: "docs/reports.md" },
+      ],
+      diff:
+        "diff --git a/src/report/dates.ts b/src/report/dates.ts\n--- a/src/report/dates.ts\n+++ b/src/report/dates.ts\n" +
+        "@@ -10,7 +10,8 @@ export function formatDate(d: Date): string {\n" +
+        "   const day = pad(d.getDate());\n-  return `${day}.${month}.${year}`;\n+  // Both: the ISO order from main, the zero padding from this branch.\n" +
+        "+  return `${year}-${month}-${day}`;\n }\n",
+      summary:
+        "**src/report/dates.ts**: `main` switched to the ISO order and this branch added zero padding; " +
+        "the resolution keeps both.",
+    };
+  }
+  return invoke<ConflictResolution>("gh_resolve_conflicts", { path, number, head, branch, base, command });
+}
+
+// Commit the waiting merge and push the branch; the merge commit.
+export async function approvePrConflicts(path: string, branch: string, before: string): Promise<string> {
+  if (!isTauri()) {
+    await mockNetworkDelay();
+    const pr = MOCK_PULL_REQUESTS.find((p) => p.head === branch);
+    if (pr) {
+      pr.conflicting = false;
+      Object.assign(mockPrDetailOf(pr.number), { mergeable: "MERGEABLE", merge_state: "CLEAN" });
+    }
+    return "9b2f0c0000000000000000000000000000000000";
+  }
+  return invoke<string>("gh_approve_conflicts", { path, branch, before });
+}
+
+// Abort the waiting merge, back to where the branch was.
+export async function discardPrConflicts(path: string, branch: string, before: string): Promise<void> {
+  if (!isTauri()) {
+    await mockNetworkDelay();
+    return;
+  }
+  return invoke<void>("gh_discard_conflicts", { path, branch, before });
 }
 
 // Save `text` as the user's chosen option on a thread, unanswered, for Fix.

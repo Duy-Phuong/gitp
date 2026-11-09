@@ -7,6 +7,9 @@
 // confirmed first and its result reported after.
 
 import {
+  approvePrConflicts,
+  discardPrConflicts,
+  resolvePrConflicts,
   checkoutPullRequest,
   checkoutPullRequestInWorktree,
   commentOnLine,
@@ -83,7 +86,9 @@ import { hunkAround, openFindingsNote } from "./branch-reviews";
 import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
 import { cancelDraft, draftPullRequest, loadDraftCommand } from "./claude-drafts";
 import { prDraftAction } from "./pr-draft-action";
-import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, SKILL_REVIEW_COMMAND, withClaudeChoice } from "./prefs";
+import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, RESOLVE_PR_CONFLICTS_COMMAND, SKILL_REVIEW_COMMAND, withClaudeChoice } from "./prefs";
+import { conflictPreviewBody } from "./pr-conflicts";
+import { askChoice } from "./views/choice-dialog";
 import { finishTurn, lastUserText, preparedReply, runningTurns, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
@@ -108,7 +113,7 @@ import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
 import { openReviewViewer } from "./views/review-viewer";
 import { baseBranches, canFixDrafts, defaultMergeMethod, githubRemoteName, listingOf, mergeAdvice, mergeChoices, otherListings, reviewThreads, type Thread } from "./pull-requests";
-import type { AheadCommit, BranchRef, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict, ThreadConversation, TurnKind } from "./types";
+import type { AheadCommit, BranchRef, ConflictResolution, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict, ThreadConversation, TurnKind } from "./types";
 
 // --- The sidebar section ----------------------------------------------------
 
@@ -655,6 +660,7 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
       opFailed(`Couldn't apply ${what}`, err);
     }
   },
+  resolveConflicts: (pr) => resolveConflictsWithClaude(pr),
   chooseOption: async (pr, thread, text) => {
     const repo = state.repoPath;
     try {
@@ -1152,4 +1158,52 @@ async function fixPrDraft(repo: string, pr: PullRequestDetail, d: Draft): Promis
     prFixing.delete(key);
     reviewsChanged();
   }
+}
+
+// Merge the base into the pull request's branch in its worktree, let Claude
+// resolve the conflicts, and show what it did: Approve commits the merge and
+// pushes the branch (GitHub then sees the conflicts resolved), Discard puts
+// the branch back, Later leaves the merge waiting in the worktree — the
+// button shows it again. True once pushed.
+async function resolveConflictsWithClaude(pr: PullRequestDetail): Promise<boolean> {
+  const repo = state.repoPath;
+  setStatus(`Claude is resolving the conflicts of #${pr.number} in ${pr.head}'s worktree…`);
+  let r: ConflictResolution;
+  try {
+    r = await resolvePrConflicts(repo, pr.number, pr.head_oid, pr.head, pr.base, withClaudeChoice(RESOLVE_PR_CONFLICTS_COMMAND));
+  } catch (err) {
+    opFailed(`Couldn't resolve the conflicts of #${pr.number}`, err);
+    return false;
+  }
+  setStatus("");
+  const answer = await askChoice<"approve" | "discard" | "later">(
+    `Resolved conflicts · #${pr.number}`,
+    `Merging ${r.base} into ${pr.head}. Nothing is committed or pushed until you approve.`,
+    [
+      { label: "Discard", answer: "discard", left: true, danger: true },
+      { label: "Later", answer: "later" },
+      { label: "Approve, Commit and Push", answer: "approve", primary: true },
+    ],
+    "later",
+    "conflict-preview",
+    conflictPreviewBody(r),
+  );
+  try {
+    if (answer === "approve") {
+      setStatus(`Committing the merge and pushing ${pr.head}…`);
+      const commit = await approvePrConflicts(repo, pr.head, r.before);
+      await Promise.all([refreshHistory(), loadSidebar(), loadPullRequests()]);
+      reportDone(`Merged ${r.base} into ${pr.head} (${commit.slice(0, 7)}) and pushed: GitHub now sees the conflicts resolved.`);
+      return true;
+    }
+    if (answer === "discard") {
+      await discardPrConflicts(repo, pr.head, r.before);
+      reportDone(`Discarded the merge: ${pr.head} is back where it was.`);
+      return false;
+    }
+    reportDone(`The merge waits in ${r.worktree}: "Resolve Conflicts with Claude" shows it again.`);
+  } catch (err) {
+    opFailed(answer === "approve" ? `Couldn't commit and push ${pr.head}` : "Couldn't discard the merge", err);
+  }
+  return false;
 }
