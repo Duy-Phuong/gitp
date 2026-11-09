@@ -21,7 +21,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::claude_jobs::{ClaudeJobs, JobKind, NewJob, Running};
-use crate::os::{open_in_browser, open_in_default_app};
+use crate::os::{open_file_in_editor, open_in_browser, open_in_default_app};
 use crate::state::{
     invalidate_status, to_message, with_repo, with_repo_networked, with_repo_networked_prepared,
     with_repo_unlocked, RepoState,
@@ -497,7 +497,24 @@ fn open_review_page_impl(state: &RepoState, path: String) -> Result<(), String> 
     if !review_files_impl(state)?.iter().any(|f| f.path == path) {
         return Err(format!("{path} is not a saved review of this repository"));
     }
-    open_in_default_app(std::path::Path::new(&path))
+    let page = review_page_to_open(std::path::Path::new(&path));
+    if page.extension().is_some_and(|e| e == "md") {
+        open_file_in_editor(&page)
+    } else {
+        open_in_default_app(&page)
+    }
+}
+
+/// The file to open for the saved review `path`: the HTML page beside a
+/// Markdown copy when there is one. The default app for `.md` is often not a
+/// viewer at all (a terminal app), so a review with no page goes to the editor.
+fn review_page_to_open(path: &std::path::Path) -> std::path::PathBuf {
+    let page = path.with_extension("html");
+    if path.extension().is_some_and(|e| e == "md") && page.is_file() {
+        page
+    } else {
+        path.to_path_buf()
+    }
 }
 
 /// Start a sign-in, stopping one already waiting (a second click on Sign In).
@@ -1035,6 +1052,18 @@ pub(crate) fn open_github_url(url: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_markdown_review_opens_the_page_beside_it_when_there_is_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let md = dir.path().join("pr-review-UBIID-1.md");
+        std::fs::write(&md, "# review").unwrap();
+        assert_eq!(review_page_to_open(&md), md, "no page: the Markdown itself");
+        let page = dir.path().join("pr-review-UBIID-1.html");
+        std::fs::write(&page, "<html></html>").unwrap();
+        assert_eq!(review_page_to_open(&md), page);
+        assert_eq!(review_page_to_open(&page), page);
+    }
 
     #[test]
     fn a_thread_turn_runs_once_per_thread_and_is_keyed_by_path() {
