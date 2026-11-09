@@ -907,6 +907,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     };
     const open = smallButton("Reply…", () => openReply());
     const actions = el("div", { class: "pr-thread-actions" }, [open]);
+    const chips: HTMLElement[] = [];
     // Claude on the thread: its conversation block, and the buttons that
     // start a turn — not on a resolved thread, as on GitHub nothing happens
     // there any more.
@@ -1001,8 +1002,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
           }
         }
       }
+      // What Claude has done on the thread, first in the row (below).
       for (const text of threadBadges(ts.conversation)) {
-        actions.append(el("span", { class: "pr-badge pr-thread-ready", text }));
+        chips.push(threadChip(text));
         if (text === "reply ready") actions.append(smallButton("Drop", () => void dropReply()));
       }
       for (const b of threadClaudeButtons(false, ts.running)) {
@@ -1017,6 +1019,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     }
     if (state) {
       actions.prepend(
+        ...chips,
         threadStatus(resolved),
         smallButton(resolved ? "Unresolve" : "Resolve", () => {
           void cb.resolve(pr, state, !resolved).then((ok) => {
@@ -1024,7 +1027,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
           });
         }),
       );
-    }
+    } else actions.prepend(...chips);
     node.append(actions);
     if (replyOpen.has(root.id) || (replyText.get(root.id) ?? "") !== "") openReply(false);
     if (resolved) {
@@ -1032,6 +1035,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       addFold(node, `t${root.id}`, where + threadFoldText(root.author, root.body, thread.replies.length, false), threadStatus(true));
     }
     return node;
+  }
+
+  // "✓ fixed" (blue) or "✉ reply ready" (purple): what Claude has done.
+  function threadChip(text: string): HTMLElement {
+    const look = text === "fixed" ? { cls: "fixed", icon: "✓ " } : text === "reply ready" ? { cls: "reply-ready", icon: "✉ " } : { cls: "", icon: "" };
+    return el("span", { class: `pr-thread-chip ${look.cls}`.trim(), text: `${look.icon}${text}` });
   }
 
   function threadStatus(resolved: boolean): HTMLElement {
