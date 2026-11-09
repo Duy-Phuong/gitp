@@ -1037,9 +1037,15 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     return node;
   }
 
-  // "✓ fixed" (blue) or "✉ reply ready" (purple): what Claude has done.
+  // "✓ fixed" (blue), "✉ reply ready" (purple) or "↗ posted" (green): what
+  // Claude has done on the thread.
   function threadChip(text: string): HTMLElement {
-    const look = text === "fixed" ? { cls: "fixed", icon: "✓ " } : text === "reply ready" ? { cls: "reply-ready", icon: "✉ " } : { cls: "", icon: "" };
+    const looks: Record<string, { cls: string; icon: string }> = {
+      fixed: { cls: "fixed", icon: "✓ " },
+      "reply ready": { cls: "reply-ready", icon: "✉ " },
+      posted: { cls: "posted", icon: "↗ " },
+    };
+    const look = looks[text] ?? { cls: "", icon: "" };
     return el("span", { class: `pr-thread-chip ${look.cls}`.trim(), text: `${look.icon}${text}` });
   }
 

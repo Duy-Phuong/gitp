@@ -778,9 +778,16 @@ export function setupDetail(host: HTMLElement, cb: DetailCallbacks): DetailHandl
     const row = el("div", { class: `file-item${active ? " active" : ""}${picked}`, title: file.path });
     row.dataset.path = file.path;
     row.append(statusBadge(file.status));
-    const label =
-      file.old_path && file.old_path !== file.path ? `${file.old_path} → ${file.path}` : file.path;
-    row.append(el("span", { class: "file-item-path", text: label }));
+    // The file's name first, its folder dimmed after it: long paths share
+    // their start, and a cut at the end would hide every name.
+    const slash = file.path.lastIndexOf("/");
+    const renamed = file.old_path && file.old_path !== file.path ? ` · from ${file.old_path}` : "";
+    row.append(
+      el("span", { class: "file-item-path" }, [
+        el("span", { class: "file-item-name", text: file.path.slice(slash + 1) }),
+        el("span", { class: "file-item-dir", text: `${slash > 0 ? file.path.slice(0, slash) : ""}${renamed}` }),
+      ]),
+    );
     row.addEventListener("click", (e) => {
       // A comparison's files belong to no one commit: nothing to restore.
       if (!compare && (e.shiftKey || e.metaKey || e.ctrlKey)) return pickFile(idx, e.shiftKey);

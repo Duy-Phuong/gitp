@@ -3128,6 +3128,26 @@ body.ref-dragging * {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.file-item-name {
+  color: var(--text);
+}
+.file-item-dir {
+  margin-left: 8px;
+  color: var(--text-dim);
+}
+.file-item-dir:empty {
+  display: none;
+}
+/* The Changes tab's narrow list scrolls sideways for a long folder rather
+   than cutting it: each row as wide as its text, the list as wide as its
+   widest row. */
+.changes-list .file-item {
+  width: max-content;
+  min-width: 100%;
+}
+.changes-list .file-item-path {
+  overflow: visible;
+}
 /* Changes tab: file list beside the selected diff. */
 .changes-split {
   flex: 1 1 auto;
@@ -6423,6 +6443,10 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .pr-thread-chip.reply-ready {
   color: var(--claude-fg);
   background: color-mix(in srgb, var(--claude-fg) 16%, transparent);
+}
+.pr-thread-chip.posted {
+  color: var(--add-fg);
+  background: color-mix(in srgb, var(--add-fg) 16%, transparent);
 }
 .pr-thread-status.resolved {
   color: var(--add-fg);
