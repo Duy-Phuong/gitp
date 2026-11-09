@@ -20,6 +20,9 @@ export interface ToastOptions {
   // the message dialog). Ignored when `onDetails` is absent.
   detail?: string;
   onDetails?: () => void;
+  // A button that does the obvious next thing ("Show"); clicking it also
+  // dismisses the toast.
+  action?: { label: string; run: () => void };
 }
 
 // How long a toast stays before fading, per kind. Errors never auto-dismiss.
@@ -80,6 +83,15 @@ export function toast(message: string, opts: ToastOptions = {}): void {
   close.addEventListener("click", () => dismiss(node));
   node.append(close);
   setDetails(node, opts.onDetails);
+  if (opts.action) {
+    const { label, run } = opts.action;
+    const act = el("button", { class: "toast-details toast-action", text: label });
+    act.addEventListener("click", () => {
+      dismiss(node);
+      run();
+    });
+    close.before(act);
+  }
 
   // Hovering holds a toast open — you shouldn't lose a message by reaching for
   // its own Details button.

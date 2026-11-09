@@ -1792,19 +1792,45 @@ impl Repo {
             timeout: FIX_TIMEOUT,
             fix_session: true,
         };
-        let fixed = run_verified_fix(&dir, branch, &before, || {
-            self.run_turn(gh, input, TurnKind::Fix, &option, fix_command, place)
-        });
+        let first_line = option.lines().next().unwrap_or_default();
+        let rules = FixRules {
+            commit_message: &format!(
+                "fix(review): {}{} — {first_line}",
+                root.path,
+                root.line.map(|l| format!(":{l}")).unwrap_or_default()
+            ),
+            none_ok: true,
+        };
+        // The turn keeps Claude's answer: the error needn't.
+        let fixed = run_verified_fix(
+            &dir,
+            branch,
+            &before,
+            &rules,
+            |_| None,
+            || self.run_turn(gh, input, TurnKind::Fix, &option, fix_command, place),
+        );
         let (mut c, after) = match fixed {
             Ok(ok) => ok,
             Err(e) => {
-                // The failed turn, if it was saved, goes; a bookkeeping
-                // error here must not hide the real one.
+                // The failed turn stays, with why and what it had changed,
+                // so the thread shows what Claude said and did; the error is
+                // the short why. A bookkeeping error must not hide the real one.
+                let text = e.to_string();
+                let why = text.split("\n\n").next().unwrap_or_default().to_string();
                 if let Ok(Some(mut saved)) = self.thread_conversation(input.number, root.id) {
-                    saved
-                        .turns
-                        .retain(|t| t.kind != TurnKind::Fix || t.commit.is_some());
-                    let _ = self.save_thread_conversation(&saved);
+                    if let Some(failed) = saved.turns.last_mut().filter(|t| {
+                        t.kind == TurnKind::Fix && t.role == TurnRole::Claude && t.commit.is_none()
+                    }) {
+                        failed.text = format!(
+                            "{}\n\n---\n\n**Not applied:** {text}",
+                            failed.text.trim_end()
+                        );
+                        let _ = self.save_thread_conversation(&saved);
+                        return Err(Error::Message(format!(
+                            "{why} Claude's answer and what it changed are in the thread."
+                        )));
+                    }
                 }
                 return Err(e);
             }
@@ -1814,8 +1840,11 @@ impl Repo {
             if let Some(notice) = &notice {
                 fix.text = format!("{}\n\n⚠ {notice}", fix.text.trim_end());
             }
-            fix.commit = Some(after.clone());
-            fix.head = Some(after);
+            if after.is_none() {
+                fix.text = format!("{}\n\n_No change to commit._", fix.text.trim_end());
+            }
+            fix.head = Some(after.clone().unwrap_or_else(|| before.clone()));
+            fix.commit = after;
             fix.worktree = Some(dir.to_string_lossy().into_owned());
         }
         self.save_thread_conversation(&c)?;
@@ -2178,55 +2207,127 @@ pub(crate) fn require_contains(dir: &Path, head: &str) -> Result<()> {
     }
 }
 
+/// What a fix may leave besides the one commit it is asked for.
+pub(crate) struct FixRules<'a> {
+    /// The message gitp commits changes left uncommitted with: Claude can't
+    /// always commit (a refused command, a hook), and the change is no worse
+    /// for gitp making the commit.
+    pub commit_message: &'a str,
+    /// No commit and a clean tree is "nothing to change": the option asked
+    /// only for a test run, or for no change. The run's answer says what it
+    /// found; there is no commit.
+    pub none_ok: bool,
+}
+
 /// Run a fix in the worktree `dir` of `branch`, which was clean at `before`,
 /// and check what it left: still on the branch, exactly one new commit whose
-/// only parent is `before`, nothing uncommitted. Any failure — the run's or
-/// a check's — is undone back to `before`. Returns the run's value and the
-/// new commit.
+/// only parent is `before` (gitp makes it from changes left uncommitted),
+/// nothing uncommitted after. Any failure — the run's or a check's — is
+/// undone back to `before`, and the error shows what the fix had changed.
+/// Returns the run's value and the new commit; none for a fix with nothing
+/// to change, when `rules` allow one.
 pub(crate) fn run_verified_fix<T>(
     dir: &Path,
     branch: &str,
     before: &str,
+    rules: &FixRules,
+    said: impl FnOnce(&T) -> Option<String>,
     run: impl FnOnce() -> Result<T>,
-) -> Result<(T, String)> {
+) -> Result<(T, Option<String>)> {
     let checked = run().and_then(|value| {
-        if git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])? != branch {
-            return Err(Error::Message(format!(
-                "The fix left the worktree off {branch}."
-            )));
-        }
-        let after = git_in(dir, &["rev-parse", "HEAD"])?;
-        // Exactly one new commit whose only parent is where the run
-        // started: not none, not two, not an amend, not a merge.
-        let parents = git_in(dir, &["rev-list", "--parents", "-n", "1", &after])?;
-        if parents != format!("{after} {before}") {
-            let made = git_in(dir, &["rev-list", "--count", &format!("{before}..{after}")])
-                .unwrap_or_else(|_| "?".into());
-            return Err(Error::Message(format!(
-                "The fix must make exactly one commit on top of {}; it made {made}{}.",
-                &before[..7],
-                if after == before {
-                    " (none)"
-                } else if made == "1" {
-                    " (amended or rebased)"
-                } else {
-                    ""
+        let verdict = (|| -> Result<Option<String>> {
+            if git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])? != branch {
+                return Err(Error::Message(format!(
+                    "The fix left the worktree off {branch}."
+                )));
+            }
+            let mut after = git_in(dir, &["rev-parse", "HEAD"])?;
+            if after == before {
+                let left = git_in(dir, &["status", "--porcelain", "--untracked-files=all"])?;
+                if left.is_empty() {
+                    if rules.none_ok {
+                        return Ok(None);
+                    }
+                    return Err(Error::Message("The fix changed nothing.".into()));
                 }
-            )));
+                // The tree was clean before: all of it is the fix's.
+                git_in(dir, &["add", "-A"])?;
+                git_in(dir, &["commit", "-q", "-m", rules.commit_message]).map_err(|e| {
+                    Error::Message(format!("Couldn't commit what the fix changed: {e}"))
+                })?;
+                after = git_in(dir, &["rev-parse", "HEAD"])?;
+            }
+            // Exactly one new commit whose only parent is where the run
+            // started: not none, not two, not an amend, not a merge.
+            let parents = git_in(dir, &["rev-list", "--parents", "-n", "1", &after])?;
+            if parents != format!("{after} {before}") {
+                let made = git_in(dir, &["rev-list", "--count", &format!("{before}..{after}")])
+                    .unwrap_or_else(|_| "?".into());
+                return Err(Error::Message(format!(
+                    "The fix must make exactly one commit on top of {}; it made {made}{}.",
+                    &before[..7],
+                    if after == before {
+                        " (none)"
+                    } else if made == "1" {
+                        " (amended or rebased)"
+                    } else {
+                        ""
+                    }
+                )));
+            }
+            if !git_in(dir, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
+                return Err(Error::Message(
+                    "The fix left uncommitted changes behind.".into(),
+                ));
+            }
+            Ok(Some(after))
+        })();
+        match verdict {
+            Ok(commit) => Ok((value, commit)),
+            // What the run answered says why, often better than the check.
+            Err(e) => Err(match said(&value).filter(|s| !s.trim().is_empty()) {
+                Some(answer) => Error::Message(format!("{e}\n\nClaude said:\n\n{}", answer.trim())),
+                None => e,
+            }),
         }
-        if !git_in(dir, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
-            return Err(Error::Message(
-                "The fix left uncommitted changes behind.".into(),
-            ));
-        }
-        Ok((value, after))
     });
-    checked.map_err(|e| match undo_fix(dir, branch, before) {
-        Ok(()) => e,
-        Err(undo) => Error::Message(format!(
-            "{e}\n\nAnd the undo failed in {}: {undo}",
-            dir.display()
-        )),
+    checked.map_err(|e| {
+        let changed = fix_changes(dir, before);
+        let e = match changed {
+            Some(diff) => Error::Message(format!(
+                "{e}\n\nWhat it changed (undone):\n\n```diff\n{diff}\n```"
+            )),
+            None => e,
+        };
+        match undo_fix(dir, branch, before) {
+            Ok(()) => e,
+            Err(undo) => Error::Message(format!(
+                "{e}\n\nAnd the undo failed in {}: {undo}",
+                dir.display()
+            )),
+        }
+    })
+}
+
+/// How much of a failed fix's diff the error keeps.
+const FIX_DIFF_LIMIT: usize = 8000;
+
+/// What a fix changed since `before`, committed or not, new files included
+/// (staged first, so the diff sees them); none when it changed nothing.
+fn fix_changes(dir: &Path, before: &str) -> Option<String> {
+    let _ = git_in(dir, &["add", "-A"]);
+    let diff = git_in(dir, &["diff", "--cached", before]).ok()?;
+    if diff.trim().is_empty() {
+        return None;
+    }
+    Some(if diff.len() > FIX_DIFF_LIMIT {
+        let mut cut = FIX_DIFF_LIMIT;
+        while !diff.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!("{}\n… (cut)", &diff[..cut])
+    } else {
+        diff
     })
 }
 
@@ -3978,17 +4079,18 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert_eq!(repo.resolve_commit("feature").unwrap(), before);
         assert!(!wt.join("fixed.txt").exists() && !wt.join("again.txt").exists());
 
-        let err = repo
-            .fix_thread(
-                &fake.gh(),
-                &input,
-                "feature",
-                "echo z > dirty.txt; echo done",
-                REPLY,
-            )
-            .unwrap_err();
-        assert!(message(err).contains("one commit"), "no commit at all");
-        assert!(!wt.join("dirty.txt").exists());
+        // The failed turn stays, saying why and what it had changed.
+        let c = repo.thread_conversation(7, 500).unwrap().unwrap();
+        let failed = c.turns.last().unwrap();
+        assert_eq!(
+            (failed.kind, failed.commit.as_deref()),
+            (TurnKind::Fix, None)
+        );
+        assert!(
+            failed.text.contains("**Not applied:**") && failed.text.contains("+++ b/again.txt"),
+            "{}",
+            failed.text
+        );
 
         let err = repo
             .fix_thread(
@@ -4003,9 +4105,10 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         assert!(!wt.join("half.txt").exists());
         assert_eq!(repo.resolve_commit("feature").unwrap(), before);
         let c = repo.thread_conversation(7, 500).unwrap().unwrap();
-        assert!(
-            c.turns.iter().all(|t| t.kind != TurnKind::Fix),
-            "no fix turn kept"
+        assert_eq!(
+            c.turns.iter().filter(|t| t.kind == TurnKind::Fix).count(),
+            1,
+            "the run that crashed answered nothing to keep; the earlier failed turn stays"
         );
     }
 
@@ -4071,6 +4174,55 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             "",
             "the stash is dropped"
         );
+    }
+
+    #[test]
+    fn gitp_commits_what_a_fix_left_uncommitted_and_a_clean_run_is_no_change() {
+        let fake = Fake::new();
+        let (_dir, repo, wt) = fix_repo();
+        let input = thread_input(&repo);
+        let before = repo.resolve_commit("feature").unwrap();
+        // Claude edited but couldn't commit: gitp commits it.
+        let c = repo
+            .fix_thread(
+                &fake.gh(),
+                &input,
+                "feature",
+                "echo z > edited.txt; echo 'could not commit'",
+                REPLY,
+            )
+            .unwrap();
+        let fix = c.turns.iter().rfind(|t| t.kind == TurnKind::Fix).unwrap();
+        let after = repo.resolve_commit("feature").unwrap();
+        assert_eq!(fix.commit.as_deref(), Some(after.as_str()));
+        assert_eq!(
+            git_in(&wt, &["log", "-1", "--format=%P %s"]).unwrap(),
+            format!("{before} fix(review): src/retry.ts:12 — restore >")
+        );
+        assert_eq!(git_in(&wt, &["status", "--porcelain"]).unwrap(), "");
+
+        // Nothing to change (a test run, say): no commit, the answer kept,
+        // the reply drafted.
+        let c = repo
+            .fix_thread(
+                &fake.gh(),
+                &input,
+                "feature",
+                "echo 'ran the IT: green'",
+                REPLY,
+            )
+            .unwrap();
+        let n = c.turns.len();
+        let (fix, reply) = (&c.turns[n - 2], &c.turns[n - 1]);
+        assert_eq!((fix.kind, fix.commit.as_deref()), (TurnKind::Fix, None));
+        assert!(
+            fix.text.contains("ran the IT: green") && fix.text.contains("No change to commit"),
+            "{}",
+            fix.text
+        );
+        assert_eq!(fix.head.as_deref(), Some(after.as_str()));
+        assert_eq!(reply.kind, TurnKind::ReplyDraft);
+        assert_eq!(repo.resolve_commit("feature").unwrap(), after);
     }
 
     #[test]

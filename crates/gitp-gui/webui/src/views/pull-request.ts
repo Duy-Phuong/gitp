@@ -70,7 +70,7 @@ import {
   type Draft,
   type PrReview,
 } from "../pr-reviews";
-import type { FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PrSignature, PrViewed, PullRequestDetail, ReviewVerdict, TurnKind } from "../types";
+import type { CommitDetail, FileDiff, LineComment, PrLabel, PrReviewComment, PrReviewThread, PrSignature, PrViewed, PullRequestDetail, ReviewVerdict, TurnKind } from "../types";
 import { pausePollingFor, startPolling } from "../poller";
 import { isRateLimit, NOTICE_MS, PR_VIEW_POLL_MS, RATE_LIMIT_NOTICE, RATE_LIMIT_PAUSE_MS, refreshNotice, signatureChanged } from "../pr-refresh";
 
@@ -169,6 +169,8 @@ export interface PullRequestCallbacks {
   draftFix: (pr: PullRequestDetail) => { reason: (d: Draft) => string | null; run: (d: Draft) => void } | null;
   // Shows a commit in History.
   openCommit: (sha: string) => void;
+  // A commit's files and diff: a fix's, shown under its turn.
+  loadCommit?: (sha: string) => Promise<CommitDetail>;
   // Asks before a draft replaces what the user typed.
   confirm: (message: string) => Promise<boolean>;
   reportError: (title: string, err: unknown) => void;
@@ -760,6 +762,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       open: openBlocks.has(id),
       lastKind: null,
       readOnly: true,
+      loadCommit: cb.loadCommit,
+      openCommit: cb.openCommit,
       onFollowup() {},
       onRetry() {},
       onCancel() {},
@@ -877,6 +881,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
             head: pr.head_oid,
             open: openBlocks.has(root.id),
             lastKind: lastKind.get(root.id) ?? null,
+            loadCommit: cb.loadCommit,
+            openCommit: cb.openCommit,
             draft: followupText.get(root.id),
             onDraft: (text) => followupText.set(root.id, text),
             onFollowup: (text) => turn("followup", text),

@@ -14,7 +14,8 @@ use crate::diff::FileDiff;
 use crate::error::{Error, Result};
 use crate::gh::{
     claude_answer, git_in, parse_pr_diff, require_clean, require_contains,
-    review_file_written_since, run_shell, run_verified_fix, SetAside, FIX_TIMEOUT, REVIEW_TIMEOUT,
+    review_file_written_since, run_shell, run_verified_fix, FixRules, SetAside, FIX_TIMEOUT,
+    REVIEW_TIMEOUT,
 };
 use crate::pr_threads::now_millis;
 use crate::repo::Repo;
@@ -314,20 +315,43 @@ impl Repo {
             ("GITP_BRANCH", branch.to_string()),
             ("GITP_BASE", input.base.clone()),
         ];
-        let fixed = run_verified_fix(&dir, branch, &before, || {
-            let out = run_shell(
-                &dir,
-                command,
-                input.body.as_bytes(),
-                &env,
-                FIX_TIMEOUT,
-                &self.net,
-            )?;
-            // A JSON answer that reports an error fails the fix.
-            claude_answer(&out.stdout).map(|_| ())
-        });
+        let rules = FixRules {
+            commit_message: &format!(
+                "fix(review): {}:{} — {}",
+                input.path,
+                input.line,
+                input
+                    .body
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or_default()
+                    .trim()
+            ),
+            // A finding asks for a change.
+            none_ok: false,
+        };
+        let fixed = run_verified_fix(
+            &dir,
+            branch,
+            &before,
+            &rules,
+            |answer: &String| Some(answer.clone()),
+            || {
+                let out = run_shell(
+                    &dir,
+                    command,
+                    input.body.as_bytes(),
+                    &env,
+                    FIX_TIMEOUT,
+                    &self.net,
+                )?;
+                // A JSON answer that reports an error fails the fix.
+                claude_answer(&out.stdout).map(|(text, _)| text)
+            },
+        );
         let _ = std::fs::remove_file(&file);
-        let ((), commit) = fixed?;
+        let (_, commit) = fixed?;
+        let commit = commit.ok_or_else(|| Error::Message("The fix changed nothing.".into()))?;
         Ok(ReviewFix {
             commit,
             worktree: dir.to_string_lossy().into_owned(),
@@ -595,10 +619,17 @@ mod tests {
     fn a_finding_fix_keeps_the_worktree_s_changes_and_refuses_a_missing_worktree() {
         let (dir, repo, wt, _fork) = branch_repo();
         std::fs::write(wt.join("mine.txt"), "wip").unwrap();
-        // No commit: the fix fails and is undone; the user's file comes back.
-        let err = message(repo.fix_finding(&finding(), "touch ran.txt").unwrap_err());
-        assert!(err.contains("exactly one commit"), "{err}");
-        assert!(!wt.join("ran.txt").exists() && wt.join("mine.txt").exists());
+        // Nothing changed: a finding asks for a change, so it fails; the
+        // answer says why, and the user's file comes back.
+        let err = message(
+            repo.fix_finding(&finding(), "echo 'cannot run the test'")
+                .unwrap_err(),
+        );
+        assert!(
+            err.contains("changed nothing") && err.contains("cannot run the test"),
+            "{err}"
+        );
+        assert!(wt.join("mine.txt").exists());
         let fix = repo.fix_finding(&finding(), COMMIT_ONCE).unwrap();
         assert_eq!(fix.notice, None);
         assert_eq!(std::fs::read_to_string(wt.join("mine.txt")).unwrap(), "wip");

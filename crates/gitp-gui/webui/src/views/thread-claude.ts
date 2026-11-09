@@ -10,7 +10,8 @@ import { renderGitHubMarkdown } from "./github-markdown";
 import { composerArea } from "./composer";
 import { relativeTime, fullTime } from "../timeago";
 import { lastFix, NO_OPTION_CHOSEN, preparedReply, type ThreadState } from "../pr-threads";
-import type { ThreadConversation, ThreadTurn, TurnKind } from "../types";
+import { fixChangesNode } from "../fix-changes";
+import type { CommitDetail, ThreadConversation, ThreadTurn, TurnKind } from "../types";
 
 // What a button starts: a follow-up has its own composer.
 export type ClaudeAction = "check" | "explain" | "reply-draft";
@@ -186,6 +187,9 @@ export interface ConversationOptions {
   onRetry: (kind: TurnKind) => void;
   onCancel: () => void;
   onToggle: () => void;
+  // A fix's commit: read it for the changes under the turn, open it in History.
+  loadCommit?: (commit: string) => Promise<CommitDetail>;
+  openCommit?: (commit: string) => void;
 }
 
 // The block under a thread.
@@ -207,7 +211,7 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
 
   const body = el("div", { class: "pr-thread-claude-body" });
   if (open && c) {
-    for (const t of c.turns) body.append(turnNode(t, head));
+    for (const t of c.turns) body.append(turnNode(t, head, o));
     // The pull request moved on since the last Check: offer another.
     const stale = c.turns.some((t) => t.role === "claude" && t.kind === "check" && t.head && !sameCommit(t.head, head));
     if (stale && !state.running && !o.readOnly) {
@@ -310,7 +314,7 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
 const sameCommit = (a: string, b: string) => !a || !b || a.startsWith(b) || b.startsWith(a);
 
 // One turn: who, which kind, when, against which commit, and the text.
-function turnNode(t: ThreadTurn, head: string): HTMLElement {
+function turnNode(t: ThreadTurn, head: string, o?: Pick<ConversationOptions, "loadCommit" | "openCommit">): HTMLElement {
   const secs = Math.floor(t.at / 1000);
   const who = t.role === "user" ? "you" : "Claude";
   const headLine = el("div", { class: "pr-card-head" }, [
@@ -331,7 +335,9 @@ function turnNode(t: ThreadTurn, head: string): HTMLElement {
   }
   const node = el("div", { class: `pr-thread-claude-turn ${t.role}` }, [headLine]);
   node.append(t.role === "user" ? el("div", { class: "pr-thread-claude-text", text: t.text }) : renderGitHubMarkdown(t.text));
-  if (t.kind === "fix" && t.commit) {
+  if (t.kind === "fix" && t.commit && o?.loadCommit) {
+    node.append(fixChangesNode(t.commit, t.worktree ?? null, o.loadCommit, o.openCommit));
+  } else if (t.kind === "fix" && t.commit) {
     const where = t.worktree ? ` in ${t.worktree.replace(/\/$/, "").split("/").pop()}` : "";
     node.append(el("div", { class: "pr-thread-claude-commit", text: `Commit ${t.commit.slice(0, 7)}${where}` }));
   }

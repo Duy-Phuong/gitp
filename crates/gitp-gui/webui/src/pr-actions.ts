@@ -21,6 +21,7 @@ import {
   clearThreadConversation,
   confirmDialog,
   createPullRequestOnGitHub,
+  fetchCommitDetail,
   fetchPullRequestFiles,
   fetchPullRequestViewed,
   setPullRequestFileViewed,
@@ -64,6 +65,7 @@ import {
   reviewDraftFix,
   storedReviewLoad,
 } from "./api";
+import { expandFixChanges } from "./fix-changes";
 import { pushAndReplyListing, type ReplyToPost } from "./pr-push-reply";
 import { pausePollingFor, startPolling } from "./poller";
 import { isRateLimit, listChanged, PR_LIST_POLL_MS, RATE_LIMIT_PAUSE_MS } from "./pr-refresh";
@@ -791,6 +793,7 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   confirm: (message) => confirmDialog(message),
   draftFix: (pr) => prDraftFix(state.repoPath, pr),
   openCommit: (sha) => void jumpToCommit(sha, sha.slice(0, 7)),
+  loadCommit: (sha) => fetchCommitDetail(sha),
   loadThreadConversation: (pr, thread) => void loadThreadConversation(state.repoPath, pr.number, thread.root.id),
   clearThreadConversation: async (pr, thread) => {
     const repo = state.repoPath;
@@ -864,8 +867,22 @@ async function runFix(repo: string, pr: PullRequestDetail, thread: Thread): Prom
     const input = { number, head: pr.head_oid, author: pr.author, title: pr.title, comments: [thread.root, ...thread.replies] };
     const conversation = await threadFix(repo, input, pr.head, withClaudeChoice(loadThreadCommand("fix")), withClaudeChoice(loadThreadCommand("reply-draft")));
     finishTurn(repo, number, id, conversation);
-    const commit = [...conversation.turns].reverse().find((t) => t.kind === "fix" && t.commit)?.commit?.slice(0, 7);
-    reportDone(`Fixed ${where} of #${number}${commit ? ` in ${commit}` : ""}; the reply is ready.`);
+    // This run's fix turn: the last one (a reply draft follows it).
+    const fix = [...conversation.turns].reverse().find((t) => t.kind === "fix");
+    const commit = fix?.commit ?? null;
+    const said = commit ? `Fixed ${where} of #${number} in ${commit.slice(0, 7)}` : `Nothing to change at ${where} of #${number}`;
+    setStatus(`${said}; the reply is ready.`);
+    toast(`${said}. The reply is ready to review.`, {
+      kind: "success",
+      action: {
+        label: commit ? "Show Changes" : "Show",
+        run: () => {
+          if (commit) expandFixChanges(commit);
+          showPullRequest(number);
+          ui.prView?.focusThread(id);
+        },
+      },
+    });
   } catch (err) {
     if (isCancelled(err)) {
       finishTurn(repo, number, id, { error: "Cancelled; the worktree is back where it was." });

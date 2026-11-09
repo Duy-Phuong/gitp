@@ -230,9 +230,18 @@ impl Repo {
         let mut c = self.thread_conversation(number, thread)?.ok_or_else(|| {
             Error::Message("The thread has no conversation yet: Check it first.".into())
         })?;
-        c.turns
-            .push(ThreadTurn::user(TurnKind::Followup, text.to_string()));
-        self.save_thread_conversation(&c)?;
+        // The same choice again (a retry after a failed fix) is not a new message.
+        let again = c
+            .turns
+            .iter()
+            .rev()
+            .find(|t| t.role == TurnRole::User)
+            .is_some_and(|t| t.text.trim() == text);
+        if !again {
+            c.turns
+                .push(ThreadTurn::user(TurnKind::Followup, text.to_string()));
+            self.save_thread_conversation(&c)?;
+        }
         Ok(c)
     }
 
@@ -547,6 +556,11 @@ mod tests {
             (TurnRole::User, TurnKind::Followup, "I choose: A")
         );
         assert_eq!(repo.thread_conversation(7, 1).unwrap().unwrap(), saved);
+        // The same choice again — a retry after a failed fix — adds nothing.
+        let again = repo.record_thread_choice(7, 1, "I choose: A").unwrap();
+        assert_eq!(again.turns.len(), saved.turns.len());
+        let other = repo.record_thread_choice(7, 1, "I choose: B").unwrap();
+        assert_eq!(other.turns.len(), saved.turns.len() + 1);
     }
 
     #[test]

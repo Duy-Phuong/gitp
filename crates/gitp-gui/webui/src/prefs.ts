@@ -853,6 +853,9 @@ export const FIX_TOOLS = [
   "Bash(./gradlew test --tests *)",
   "Bash(mvn test)",
   "Bash(mvn test -*)",
+  // Integration tests (failsafe) run under verify.
+  "Bash(mvn verify)",
+  "Bash(mvn verify -*)",
   "Bash(pytest *)",
   "Bash(go test *)",
 ];
@@ -900,10 +903,14 @@ export const DEFAULT_THREAD_COMMANDS: Record<TurnKind, string> = {
       "conversation in it ends with the option the user chose; for a finding, do what it asks. Either way " +
       "that text is also on stdin. You are in the worktree of the branch; the tree is clean. Make the " +
       "smallest change that answers it, matching the style around it. Add or update a test and run the " +
-      "project's test command for it. Then commit exactly once on the current branch, with " +
-      "'fix(review): <path>:<line> — <what>' as the subject and a body that names the point and what " +
-      "changed. Do not push, do not post, do not touch other branches. " +
-      "Print a short summary in Markdown: the files changed, the test, the commit id.",
+      "project's test command for it. Run each command as it is, from the worktree, with nothing like cd " +
+      "or export in front: the permission rules match a command's start. Then commit exactly once on the " +
+      "current branch, with 'fix(review): <path>:<line> — <what>' as the subject and a body that names the " +
+      "point and what changed. If the commit is refused, leave the change uncommitted: gitp commits it. " +
+      "If the chosen option needs no change to the code (only a test run, or no change), change nothing " +
+      "and commit nothing: say what you ran and what came out. Do not push, do not post, do not touch " +
+      "other branches. Print a short summary in Markdown: the files changed, the test and whether it ran, " +
+      "the commit id.",
     FIX_TOOLS,
   ),
 };
