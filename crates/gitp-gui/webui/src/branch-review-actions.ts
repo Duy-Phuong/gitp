@@ -127,8 +127,10 @@ async function fixBranchDraft(repo: string, branch: string, d: Draft): Promise<v
       withClaudeChoice(loadThreadCommand("fix")),
     );
     applyStored(repo, { branch }, stored);
-    const commit = stored.drafts.find((x) => x.id === d.id)?.fix?.commit.slice(0, 7);
+    const fix = stored.drafts.find((x) => x.id === d.id)?.fix;
+    const commit = fix?.commit.slice(0, 7);
     reportDone(`Fixed ${where} on ${branch}${commit ? ` in ${commit}` : ""}.`);
+    if (fix?.notice) toast(fix.notice, { kind: "info" });
     void loadSidebar();
   } catch (err) {
     if (isCancelled(err)) setStatus(`Fix of ${where} cancelled; the worktree is back where it was.`);

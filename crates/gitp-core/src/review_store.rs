@@ -24,6 +24,10 @@ pub struct ReviewFix {
     pub commit: String,
     pub worktree: String,
     pub at: u64,
+    /// Set when the worktree's own changes, set aside for the fix, clashed
+    /// with it and stay in the stash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }
 
 /// What the user decided about a draft, or that a fix answered it.
@@ -262,6 +266,7 @@ mod tests {
                         commit: "b".repeat(40),
                         worktree: "/w".into(),
                         at: 5,
+                        notice: None,
                     }),
                     ..draft(2, DraftStatus::Fixed)
                 },

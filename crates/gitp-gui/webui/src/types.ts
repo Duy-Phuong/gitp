@@ -1122,6 +1122,9 @@ export interface ReviewFix {
   commit: string;
   worktree: string;
   at: number;
+  // The worktree's own changes, set aside for the fix, clashed with it and
+  // stay in the stash: what to do about it.
+  notice?: string;
 }
 
 export type DraftStatus = "pending" | "approved" | "discarded" | "fixed";

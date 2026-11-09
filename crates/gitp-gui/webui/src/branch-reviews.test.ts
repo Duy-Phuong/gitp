@@ -94,7 +94,7 @@ describe("branch reviews", () => {
     expect(m.fixDisabledReason(s, draft(), { ...ok, moved: true })).toBe("The line moved since the review: run it again");
     expect(m.fixDisabledReason({ ...s, fixing: 2 }, draft(), ok)).toBe("A fix is running on feat");
     expect(m.fixDisabledReason({ ...s, data: { ...data, worktree: null } }, draft(), ok)).toBe("Check feat out first");
-    expect(m.fixDisabledReason({ ...s, data: { ...data, dirty: true } }, draft(), ok)).toBe("Commit or stash the changes in /w first");
+    expect(m.fixDisabledReason({ ...s, data: { ...data, dirty: true } }, draft(), ok), "the fix sets the changes aside").toBeNull();
     expect(m.fixDisabledReason({ ...s, running: true }, draft(), ok)).toBe("A review is running on feat");
     expect(m.fixDisabledReason(s, draft({ status: "approved" }), ok)).toBeNull();
   });

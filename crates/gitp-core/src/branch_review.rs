@@ -14,7 +14,7 @@ use crate::diff::FileDiff;
 use crate::error::{Error, Result};
 use crate::gh::{
     claude_answer, git_in, parse_pr_diff, require_clean, require_contains,
-    review_file_written_since, run_shell, run_verified_fix, FIX_TIMEOUT, REVIEW_TIMEOUT,
+    review_file_written_since, run_shell, run_verified_fix, SetAside, FIX_TIMEOUT, REVIEW_TIMEOUT,
 };
 use crate::pr_threads::now_millis;
 use crate::repo::Repo;
@@ -152,8 +152,8 @@ impl Repo {
         Ok(Some(parse_pr_diff(&bytes, self.text_encoding())?))
     }
 
-    /// Whether the worktree at `dir` has changes a fix would refuse
-    /// (untracked files included, ignored ones aside).
+    /// Whether the worktree at `dir` has uncommitted changes (untracked
+    /// files included, ignored ones aside), which a fix sets aside.
     pub fn worktree_dirty(dir: &Path) -> Result<bool> {
         Ok(require_clean(dir).is_err())
     }
@@ -278,7 +278,7 @@ impl Repo {
                 "Check the branch out first: {branch} is in no worktree."
             ))
         })?;
-        require_clean(&dir)?;
+        let aside = SetAside::new(&dir, &format!("Claude's fix of {} ({branch})", input.path))?;
         if let (Some(number), Some(head)) = (input.pr, input.pr_head.as_deref()) {
             self.ensure_pull_request_head(number, head)?;
             require_contains(&dir, head)?;
@@ -332,6 +332,7 @@ impl Repo {
             commit,
             worktree: dir.to_string_lossy().into_owned(),
             at: now_millis(),
+            notice: aside.put_back(),
         })
     }
 
@@ -591,12 +592,17 @@ mod tests {
     }
 
     #[test]
-    fn a_finding_fix_refuses_a_dirty_or_missing_worktree() {
+    fn a_finding_fix_keeps_the_worktree_s_changes_and_refuses_a_missing_worktree() {
         let (dir, repo, wt, _fork) = branch_repo();
         std::fs::write(wt.join("mine.txt"), "wip").unwrap();
+        // No commit: the fix fails and is undone; the user's file comes back.
         let err = message(repo.fix_finding(&finding(), "touch ran.txt").unwrap_err());
-        assert!(err.contains("Commit or stash"), "{err}");
+        assert!(err.contains("exactly one commit"), "{err}");
         assert!(!wt.join("ran.txt").exists() && wt.join("mine.txt").exists());
+        let fix = repo.fix_finding(&finding(), COMMIT_ONCE).unwrap();
+        assert_eq!(fix.notice, None);
+        assert_eq!(std::fs::read_to_string(wt.join("mine.txt")).unwrap(), "wip");
+        assert_eq!(git(&wt, &["stash", "list"]), "");
         git(dir.path(), &["branch", "loose", "main"]);
         let loose = FindingInput {
             branch: "loose".into(),

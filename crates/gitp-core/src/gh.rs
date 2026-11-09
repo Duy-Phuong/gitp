@@ -1775,7 +1775,10 @@ impl Repo {
                 ))
             })?;
         let dir = PathBuf::from(&worktree.path);
-        require_clean(&dir)?;
+        let aside = SetAside::new(
+            &dir,
+            &format!("Claude's fix on #{} ({branch})", input.number),
+        )?;
         self.ensure_pull_request_head(input.number, &input.head)?;
         require_contains(&dir, &input.head)?;
         let before = git_in(&dir, &["rev-parse", "HEAD"])?;
@@ -1806,7 +1809,11 @@ impl Repo {
                 return Err(e);
             }
         };
+        let notice = aside.put_back();
         if let Some(fix) = c.turns.iter_mut().rev().find(|t| t.kind == TurnKind::Fix) {
+            if let Some(notice) = &notice {
+                fix.text = format!("{}\n\n⚠ {notice}", fix.text.trim_end());
+            }
             fix.commit = Some(after.clone());
             fix.head = Some(after);
             fix.worktree = Some(dir.to_string_lossy().into_owned());
@@ -2057,6 +2064,104 @@ pub(crate) fn require_clean(dir: &Path) -> Result<()> {
             dir.display()
         )))
     }
+}
+
+/// The uncommitted changes of a worktree — untracked files too — stashed so
+/// a fix runs on a clean tree, and put back after it. The stash is known by
+/// its commit, not its place: the stash list is shared by every worktree of
+/// the repository. Dropped without [`SetAside::put_back`] (an early return, a
+/// failed fix), it puts them back all the same.
+pub(crate) struct SetAside {
+    dir: PathBuf,
+    // The stash commit and its message; none when the tree was clean.
+    stash: Option<(String, String)>,
+}
+
+impl SetAside {
+    /// Stash what is uncommitted in `dir`; nothing when it is clean. `what`
+    /// names the stash, for the user who finds it in `git stash list`.
+    pub(crate) fn new(dir: &Path, what: &str) -> Result<Self> {
+        let mut aside = SetAside {
+            dir: dir.to_path_buf(),
+            stash: None,
+        };
+        if git_in(dir, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
+            return Ok(aside);
+        }
+        let message = format!("gitp: set aside for {what}");
+        git_in(
+            dir,
+            &["stash", "push", "-q", "--include-untracked", "-m", &message],
+        )
+        .map_err(|e| {
+            Error::Message(format!(
+                "Couldn't set the changes in {} aside: {e}",
+                dir.display()
+            ))
+        })?;
+        let sha = git_in(dir, &["rev-parse", "-q", "--verify", "refs/stash"])?;
+        aside.stash = Some((sha, message));
+        // What the stash couldn't take would be lost to a failed fix's undo.
+        require_clean(dir)?;
+        Ok(aside)
+    }
+
+    /// Put the changes back. A notice when they clash with what the fix
+    /// committed: then the worktree stays as the fix left it and they stay
+    /// in the stash.
+    pub(crate) fn put_back(mut self) -> Option<String> {
+        self.restore()
+    }
+
+    fn restore(&mut self) -> Option<String> {
+        let (sha, message) = self.stash.take()?;
+        let dir = self.dir.as_path();
+        let kept = |why: &str| {
+            Some(format!(
+                "Your uncommitted changes in {} {why}, so they stay in the stash \"{message}\" ({}): \
+                 run `git stash pop` there once you're ready.",
+                dir.display(),
+                &sha[..7]
+            ))
+        };
+        // Only onto a clean tree: clearing a failed apply must not touch
+        // anything but what the apply wrote.
+        if !git_in(dir, &["status", "--porcelain", "--untracked-files=all"])
+            .is_ok_and(|s| s.is_empty())
+        {
+            return kept("couldn't go back onto a tree with other changes");
+        }
+        let applied = git_in(dir, &["stash", "apply", "-q", "--index", &sha]).or_else(|_| {
+            clear_apply(dir);
+            git_in(dir, &["stash", "apply", "-q", &sha])
+        });
+        if applied.is_err() {
+            clear_apply(dir);
+            return kept("clash with what the fix changed");
+        }
+        // Applied: drop the entry, found by its commit.
+        if let Ok(list) = git_in(dir, &["stash", "list", "--format=%H"]) {
+            if let Some(i) = list.lines().position(|l| l == sha) {
+                let _ = git_in(dir, &["stash", "drop", "-q", &format!("stash@{{{i}}}")]);
+            }
+        }
+        None
+    }
+}
+
+impl Drop for SetAside {
+    fn drop(&mut self) {
+        if let Some(notice) = self.restore() {
+            eprintln!("gitp: {notice}");
+        }
+    }
+}
+
+/// Undo a stash apply that failed on a clean tree: everything in the tree is
+/// the apply's (the stash still holds it).
+fn clear_apply(dir: &Path) {
+    let _ = git_in(dir, &["reset", "-q", "--hard", "HEAD"]);
+    let _ = git_in(dir, &["clean", "-fdq"]);
 }
 
 /// Refuse a worktree whose HEAD lacks the pull request's `head`.
@@ -3944,33 +4049,96 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
     }
 
     #[test]
-    fn a_fix_sees_untracked_files_whatever_the_status_config_says() {
+    fn a_failed_fix_keeps_the_worktree_s_untracked_files_whatever_the_status_config_says() {
         let fake = Fake::new();
         let (_dir, repo, wt) = fix_repo();
         let input = thread_input(&repo);
         git_in(&wt, &["config", "status.showUntrackedFiles", "no"]).unwrap();
         std::fs::write(wt.join("mine.txt"), "wip").unwrap();
+        // No commit: the fix fails, and its undo cleans the tree.
         let err = repo
             .fix_thread(&fake.gh(), &input, "feature", "touch ran.txt", REPLY)
             .unwrap_err();
-        assert!(message(err).contains("Commit or stash"));
-        assert!(wt.join("mine.txt").exists() && !wt.join("ran.txt").exists());
+        let said = message(err);
+        assert!(
+            said.contains("printed nothing") || said.contains("exactly one commit"),
+            "{said}"
+        );
+        assert_eq!(std::fs::read_to_string(wt.join("mine.txt")).unwrap(), "wip");
+        assert!(!wt.join("ran.txt").exists());
+        assert_eq!(
+            git_in(&wt, &["stash", "list"]).unwrap(),
+            "",
+            "the stash is dropped"
+        );
     }
 
     #[test]
-    fn a_fix_refuses_a_dirty_worktree_a_missing_one_and_a_branch_behind() {
+    fn a_fix_sets_the_worktree_s_changes_aside_and_puts_them_back() {
+        let fake = Fake::new();
+        let (_dir, repo, wt) = fix_repo();
+        let input = thread_input(&repo);
+        // An older stash of the user's stays where it is.
+        std::fs::write(wt.join("old.txt"), "old").unwrap();
+        git_in(&wt, &["stash", "push", "-q", "-u", "-m", "theirs"]).unwrap();
+        std::fs::write(wt.join("mine.txt"), "wip").unwrap();
+        let c = repo
+            .fix_thread(&fake.gh(), &input, "feature", COMMIT_ONCE, REPLY)
+            .unwrap();
+        let fix = c.turns.iter().rfind(|t| t.kind == TurnKind::Fix).unwrap();
+        assert!(!fix.text.contains('⚠'), "{}", fix.text);
+        assert_eq!(
+            git_in(&wt, &["show", "--name-only", "--format=", "HEAD"]).unwrap(),
+            "fixed.txt",
+            "the commit holds the fix alone"
+        );
+        assert_eq!(std::fs::read_to_string(wt.join("mine.txt")).unwrap(), "wip");
+        let stashes = git_in(&wt, &["stash", "list", "--format=%s"]).unwrap();
+        assert!(
+            stashes.ends_with("theirs") && stashes.lines().count() == 1,
+            "{stashes}"
+        );
+    }
+
+    #[test]
+    fn changes_that_clash_with_the_fix_stay_in_the_stash_and_the_fix_says_so() {
+        let fake = Fake::new();
+        let (_dir, repo, wt) = fix_repo();
+        let input = thread_input(&repo);
+        // The fix commits fixed.txt: the user's own fixed.txt can't come back.
+        std::fs::write(wt.join("fixed.txt"), "mine").unwrap();
+        let c = repo
+            .fix_thread(&fake.gh(), &input, "feature", COMMIT_ONCE, REPLY)
+            .unwrap();
+        let fix = c.turns.iter().rfind(|t| t.kind == TurnKind::Fix).unwrap();
+        assert!(fix.text.contains("stay in the stash"), "{}", fix.text);
+        assert_eq!(
+            std::fs::read_to_string(wt.join("fixed.txt")).unwrap(),
+            "x\n"
+        );
+        assert_eq!(
+            git_in(&wt, &["status", "--porcelain", "--untracked-files=all"]).unwrap(),
+            "",
+            "the tree is as the fix left it"
+        );
+        let stashes = git_in(&wt, &["stash", "list", "--format=%s"]).unwrap();
+        assert!(
+            stashes.contains("gitp: set aside for Claude's fix on #7"),
+            "{stashes}"
+        );
+        assert_eq!(
+            git_in(&wt, &["show", "--format=", "stash@{0}^3:fixed.txt"]).unwrap(),
+            "mine",
+            "the user's file is in the stash"
+        );
+    }
+
+    #[test]
+    fn a_fix_refuses_a_missing_worktree_and_a_branch_behind() {
         let fake = Fake::new();
         let (dir, repo, wt) = fix_repo();
         let input = thread_input(&repo);
         let marker = "touch ran.txt";
-        std::fs::write(wt.join("mine.txt"), "wip").unwrap();
-        let err = repo
-            .fix_thread(&fake.gh(), &input, "feature", marker, REPLY)
-            .unwrap_err();
-        assert!(message(err).contains("Commit or stash"));
-        assert!(!wt.join("ran.txt").exists());
-        std::fs::remove_file(wt.join("mine.txt")).unwrap();
-
         let err = repo
             .fix_thread(&fake.gh(), &input, "nowhere", marker, REPLY)
             .unwrap_err();

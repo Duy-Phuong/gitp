@@ -131,7 +131,7 @@ export function fixDisabledReason(s: BranchReviewState, d: Draft, placed: Placed
   // The review runs in the same worktree: a fix there would change what it reads.
   if (s.running) return `A review is running on ${s.branch}`;
   if (!s.data?.worktree) return `Check ${s.branch} out first`;
-  if (s.data.dirty) return `Commit or stash the changes in ${s.data.worktree} first`;
+  // Uncommitted changes are no reason: the fix sets them aside and puts them back.
   return null;
 }
 
