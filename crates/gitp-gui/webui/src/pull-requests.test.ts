@@ -12,6 +12,8 @@ import {
   prAttentionTags,
   approvalCount,
   hasConflicts,
+  reviewerMatches,
+  reviewerRows,
   mergeChoices,
   NO_PR_LIST_FILTERS,
   prListChoices,
@@ -63,6 +65,7 @@ function detail(over: Partial<PullRequestDetail> = {}): PullRequestDetail {
     labels: [],
     checks: [],
     reviews: [],
+    review_requests: [],
     comments: [],
     review_comments: [],
     review_threads: [],
@@ -456,5 +459,46 @@ describe("the list a filter reads", () => {
   it("the other listings are read ahead, each once", () => {
     expect(otherListings("reviewed")).toEqual(["mine", "review_requested", "merged"]);
     expect(otherListings("merged")).toEqual(["all", "mine", "review_requested"]);
+  });
+});
+
+describe("the Reviewers row", () => {
+  const review = (author: string, state: string, at: string) => ({ author, state, body: "", submitted_at: at });
+
+  it("lists each reviewer by the verdict that counts, and the ones asked", () => {
+    const rows = reviewerRows({
+      author: "me",
+      reviews: [
+        review("me", "COMMENTED", "2026-11-01T00:00:00Z"),
+        review("dung", "APPROVED", "2026-11-01T00:00:00Z"),
+        review("dung", "COMMENTED", "2026-11-02T00:00:00Z"),
+        review("tu", "COMMENTED", "2026-11-01T00:00:00Z"),
+        review("an", "APPROVED", "2026-11-01T00:00:00Z"),
+        review("an", "CHANGES_REQUESTED", "2026-11-03T00:00:00Z"),
+      ],
+      review_requests: [
+        { id: "tu", team: false },
+        { id: "octo/phoenix", team: true },
+        { id: "bao", team: false },
+      ],
+    });
+    expect(rows.map((r) => [r.id, r.state, r.requested])).toEqual([
+      ["an", "CHANGES_REQUESTED", false],
+      ["bao", "requested", true],
+      ["dung", "APPROVED", false],
+      ["tu", "COMMENTED", true],
+      ["octo/phoenix", "requested", true],
+    ]);
+  });
+
+  it("reads a detail stored before reviewers were", () => {
+    expect(reviewerRows({ author: "me", reviews: [] })).toEqual([]);
+  });
+
+  it("offers the people that match, the ones it starts with first, none twice", () => {
+    const all = ["andung", "dung-truong", "Dunk", "tu", "me"];
+    expect(reviewerMatches(all, "dun", ["me"])).toEqual(["dung-truong", "Dunk", "andung"]);
+    expect(reviewerMatches(all, "@DUNG", ["dung-truong"])).toEqual(["andung"]);
+    expect(reviewerMatches(all, "", ["me"], 2)).toEqual(["andung", "dung-truong"]);
   });
 });

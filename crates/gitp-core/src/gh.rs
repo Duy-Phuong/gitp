@@ -29,6 +29,9 @@ pub use signature::PrSignature;
 mod viewed;
 pub use viewed::PrViewed;
 
+mod reviewers;
+pub use reviewers::PrReviewer;
+
 mod ci;
 pub use ci::BranchCi;
 
@@ -244,6 +247,8 @@ pub struct PullRequestDetail {
     pub labels: Vec<PrLabel>,
     pub checks: Vec<PrCheck>,
     pub reviews: Vec<PrReview>,
+    /// Who is asked for a review and hasn't answered since.
+    pub review_requests: Vec<PrReviewer>,
     pub comments: Vec<PrComment>,
     pub review_comments: Vec<PrReviewComment>,
     /// Empty when the host doesn't answer the GraphQL query (threads are
@@ -899,7 +904,8 @@ impl Repo {
         let review_comments = parse_review_comments(&comments.stdout)?;
         let threads = threads.ok().and_then(|t| t.ok());
         let read_threads = threads.is_some();
-        let mut detail = raw.into_detail(review_comments, threads.unwrap_or_default());
+        let owner = target.path.split('/').next().unwrap_or_default();
+        let mut detail = raw.into_detail(owner, review_comments, threads.unwrap_or_default());
         detail.signature = read_threads.then(|| PrSignature::of(&detail));
         Ok(detail)
     }
@@ -2319,7 +2325,7 @@ fn review_threads(
 
 const VIEW_FIELDS: &str = "number,title,body,state,isDraft,author,baseRefName,headRefName,\
      headRefOid,labels,url,createdAt,reviewDecision,statusCheckRollup,reviews,comments,commits,\
-     additions,deletions,changedFiles,mergeable,mergeStateStatus,updatedAt";
+     additions,deletions,changedFiles,mergeable,mergeStateStatus,updatedAt,reviewRequests";
 
 const REPO_SETTINGS_FIELDS: &str = "defaultBranchRef,mergeCommitAllowed,squashMergeAllowed,\
      rebaseMergeAllowed,deleteBranchOnMerge";
@@ -2805,6 +2811,8 @@ struct RawPrDetail {
     merge_state_status: String,
     #[serde(default)]
     updated_at: String,
+    #[serde(default)]
+    review_requests: Vec<reviewers::RawRequest>,
 }
 
 #[derive(Deserialize)]
@@ -2851,6 +2859,7 @@ struct RawBranchName {
 impl RawPrDetail {
     fn into_detail(
         self,
+        owner: &str,
         review_comments: Vec<PrReviewComment>,
         review_threads: Vec<PrReviewThread>,
     ) -> PullRequestDetail {
@@ -2883,6 +2892,7 @@ impl RawPrDetail {
                     submitted_at: r.submitted_at,
                 })
                 .collect(),
+            review_requests: reviewers::requested_reviewers(self.review_requests, owner),
             comments: self
                 .comments
                 .into_iter()
@@ -4403,7 +4413,9 @@ cat "$d/out.$1.$2" 2>/dev/null
                     "committedDate": "2026-10-28T07:00:00Z", "authoredDate": "2026-10-28T07:00:00Z",
                     "authors": [{"login": "octocat", "name": "Octo"}, {"login": "", "name": "Claude"}]}],
                 "additions": 3, "deletions": 1, "changedFiles": 1,
-                "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"}"#,
+                "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY",
+                "reviewRequests": [{"__typename": "User", "login": "dung"},
+                  {"__typename": "Team", "name": "team-phoenix", "slug": "team-phoenix"}]}"#,
             "",
             0,
         );
@@ -4461,6 +4473,19 @@ cat "$d/out.$1.$2" 2>/dev/null
         assert_eq!(
             (pr.mergeable.as_str(), pr.merge_state.as_str()),
             ("CONFLICTING", "DIRTY")
+        );
+        assert_eq!(
+            pr.review_requests,
+            [
+                PrReviewer {
+                    id: "dung".into(),
+                    team: false
+                },
+                PrReviewer {
+                    id: "octo/team-phoenix".into(),
+                    team: true
+                }
+            ]
         );
     }
 

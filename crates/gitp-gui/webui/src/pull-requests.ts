@@ -245,6 +245,50 @@ export function approvalCount(reviews: Pick<PrReview, "author" | "state" | "subm
   return [...latest.values()].filter((s) => s === "APPROVED").length;
 }
 
+// The pull request's reviewers, as GitHub's Reviewers box lists them: each
+// person who reviewed, by the verdict that counts (their latest approve,
+// request for changes or dismissal; a comment when that is all they left),
+// and each one asked and not answered since. The author's own comments
+// aren't a review.
+export type ReviewerState = "requested" | "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
+export interface ReviewerRow {
+  id: string;
+  team: boolean;
+  state: ReviewerState;
+  // Asked (again) and not answered since.
+  requested: boolean;
+}
+
+export function reviewerRows(pr: Pick<PullRequestDetail, "author" | "reviews"> & { review_requests?: PullRequestDetail["review_requests"] }): ReviewerRow[] {
+  const requests = pr.review_requests ?? [];
+  const asked = new Set(requests.map((r) => r.id));
+  const verdict = new Map<string, ReviewerState>();
+  const ordered = [...pr.reviews].sort((a, b) => a.submitted_at.localeCompare(b.submitted_at));
+  for (const r of ordered) {
+    if (r.author === pr.author || r.state === "PENDING") continue;
+    if (r.state === "COMMENTED") {
+      if (!verdict.has(r.author)) verdict.set(r.author, "COMMENTED");
+    } else verdict.set(r.author, r.state as ReviewerState);
+  }
+  const rows: ReviewerRow[] = [...verdict].map(([id, state]) => ({ id, team: false, state, requested: asked.has(id) }));
+  for (const r of requests) {
+    if (!verdict.has(r.id)) rows.push({ id: r.id, team: r.team, state: "requested", requested: true });
+  }
+  return rows.sort((a, b) => Number(a.team) - Number(b.team) || a.id.toLowerCase().localeCompare(b.id.toLowerCase()));
+}
+
+// The logins to offer in the reviewer picker for `query`: the ones that
+// contain it, those that start with it first, without `exclude` (already
+// reviewers, the author), at most `limit`.
+export function reviewerMatches(all: string[], query: string, exclude: string[], limit = 8): string[] {
+  const q = query.trim().replace(/^@/, "").toLowerCase();
+  const skip = new Set(exclude.map((e) => e.toLowerCase()));
+  return all
+    .filter((l) => !skip.has(l.toLowerCase()) && l.toLowerCase().includes(q))
+    .sort((a, b) => Number(!a.toLowerCase().startsWith(q)) - Number(!b.toLowerCase().startsWith(q)) || a.localeCompare(b))
+    .slice(0, limit);
+}
+
 // The review state in words, for a badge.
 export function reviewDecisionLabel(decision: string | null): string | null {
   switch (decision) {

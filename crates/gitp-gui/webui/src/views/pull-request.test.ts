@@ -37,6 +37,7 @@ const base = (): PullRequestDetail => ({
   labels: [],
   checks: [],
   reviews: [],
+  review_requests: [],
   comments: [],
   review_comments: [lineComment],
   review_threads: [{ id: "T1", resolved: false, comment_ids: [1] }],

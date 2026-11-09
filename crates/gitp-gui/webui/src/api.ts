@@ -2046,6 +2046,31 @@ export async function setPullRequestFileViewed(prId: string, path: string, viewe
   await invoke("gh_set_pull_request_file_viewed", { prId, path, viewed });
 }
 
+// Ask `add` for a review (again, for one who reviewed) and take back the
+// requests of `remove`: logins or org/team.
+export async function setPullRequestReviewers(number: number, add: string[], remove: string[]): Promise<void> {
+  if (!isTauri()) {
+    await mockNetworkDelay();
+    const d = mockPrDetailOf(number);
+    const gone = new Set(remove);
+    d.review_requests = d.review_requests.filter((r) => !gone.has(r.id));
+    for (const id of add) {
+      if (!d.review_requests.some((r) => r.id === id)) d.review_requests.push({ id, team: id.includes("/") });
+    }
+    return;
+  }
+  await invoke("gh_set_pull_request_reviewers", { number, add, remove });
+}
+
+// The people a review can be asked of in the repository, by login.
+export async function assignableUsers(): Promise<string[]> {
+  if (!isTauri()) {
+    await mockNetworkDelay();
+    return ["dung-truong-meso", "hubot", "monalisa", "octocat", "tunguyen-mesoneer", "you"];
+  }
+  return invoke<string[]>("gh_assignable_users");
+}
+
 // The pull request's changed files and their diffs (`gh pr diff`).
 export async function fetchPullRequestFiles(number: number): Promise<FileDiff[]> {
   if (!isTauri()) return structuredClone(number === 42 ? MOCK_PR_FILES : MOCK_PR_FILES.slice(0, 1));
@@ -3783,6 +3808,7 @@ function mockPrDetail(pr: PullRequest): PullRequestDetail {
     labels: pr.labels,
     checks: [],
     reviews: [],
+    review_requests: pr.number === 39 ? [{ id: "dung-truong-meso", team: false }] : [],
     comments: [],
     review_comments: [],
     review_threads: [],
@@ -3824,6 +3850,10 @@ const MOCK_PR_DETAILS = new Map<number, PullRequestDetail>([
         { name: "build", state: "success", url: "https://github.com/example/mideal/actions/runs/1" },
         { name: "unit-tests", state: "failure", url: "https://github.com/example/mideal/actions/runs/2" },
         { name: "lint", state: "skipped", url: null },
+      ],
+      review_requests: [
+        { id: "tunguyen-mesoneer", team: false },
+        { id: "example/team-phoenix", team: true },
       ],
       reviews: [
         { author: "hubot", state: "CHANGES_REQUESTED", body: "The backoff should be capped.", submitted_at: "2026-10-28T10:00:00Z" },

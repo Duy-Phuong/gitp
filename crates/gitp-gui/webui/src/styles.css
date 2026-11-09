@@ -5396,6 +5396,107 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   color: #fff;
   background: var(--del-fg);
 }
+/* The pull request's Reviewers row: each reviewer by their verdict, the ones
+   asked and not answered in amber, and "+ Add" with its picker. */
+.pr-reviewers {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+.pr-reviewers-label {
+  color: var(--text-dim);
+  font-weight: 600;
+  margin-right: 2px;
+}
+.pr-reviewers-none {
+  color: var(--text-dim);
+}
+.pr-reviewer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  white-space: nowrap;
+}
+.pr-reviewer-icon {
+  font-weight: 700;
+}
+.pr-reviewer.approved .pr-reviewer-icon {
+  color: var(--add-fg);
+}
+.pr-reviewer.changes_requested .pr-reviewer-icon {
+  color: var(--del-fg);
+}
+.pr-reviewer.requested .pr-reviewer-icon,
+.pr-reviewer-again {
+  color: var(--mod-fg);
+}
+.pr-reviewer.commented .pr-reviewer-icon,
+.pr-reviewer.dismissed .pr-reviewer-icon {
+  color: var(--text-dim);
+}
+.pr-reviewer-btn {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 4px;
+  font: inherit;
+  border-radius: 999px;
+}
+.pr-reviewer-btn:hover {
+  color: var(--text);
+  background: var(--bg-elev-2);
+}
+.pr-reviewers .pr-reviewer-add {
+  padding: 1px 8px;
+}
+.reviewer-picker {
+  position: fixed;
+  z-index: 1000;
+  width: 260px;
+  padding: 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+}
+.reviewer-picker-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font: inherit;
+}
+.reviewer-picker-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.reviewer-picker-list li {
+  padding: 4px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.reviewer-picker-list li.first,
+.reviewer-picker-list li:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.reviewer-picker-note {
+  margin-top: 4px;
+  padding: 0 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
 /* The pull request's header: conflicts in red, the approvals in green (grey
    while there are none). */
 .pr-status {

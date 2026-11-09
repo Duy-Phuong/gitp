@@ -88,6 +88,7 @@ pub use file_edit::{TextFile, EDIT_MAX_BYTES};
 pub use filelog::FileCommit;
 pub use gh::my_work_input;
 pub use gh::BranchCi;
+pub use gh::PrReviewer;
 pub use gh::PrSignature;
 pub use gh::PrViewed;
 pub use gh::{inbox_repo, inbox_sources, InboxPr, InboxRepo};

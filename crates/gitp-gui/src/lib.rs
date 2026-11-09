@@ -281,6 +281,8 @@ pub fn run() {
             gh::gh_thread_choose,
             gh::gh_apply_suggestions,
             gh::gh_resolve_conflicts,
+            gh::gh_set_pull_request_reviewers,
+            gh::gh_assignable_users,
             gh::gh_approve_conflicts,
             gh::gh_discard_conflicts,
             reviews::review_default_base,

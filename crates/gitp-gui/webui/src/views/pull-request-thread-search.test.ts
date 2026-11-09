@@ -37,6 +37,7 @@ const detail = (): PullRequestDetail => ({
   labels: [],
   checks: [],
   reviews: [],
+  review_requests: [],
   comments: [],
   review_comments: [comment(500, "src/open.ts"), comment(600, "src/resolved.ts")],
   review_threads: [

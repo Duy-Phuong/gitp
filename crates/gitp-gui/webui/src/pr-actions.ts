@@ -7,6 +7,8 @@
 // confirmed first and its result reported after.
 
 import {
+  assignableUsers,
+  setPullRequestReviewers,
   approvePrConflicts,
   discardPrConflicts,
   resolvePrConflicts,
@@ -661,6 +663,20 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
     }
   },
   resolveConflicts: (pr) => resolveConflictsWithClaude(pr),
+  setReviewers: async (pr, add, remove) => {
+    const who = (ids: string[]) => ids.map((id) => (id.includes("/") ? id : `@${id}`)).join(", ");
+    try {
+      await setPullRequestReviewers(pr.number, add, remove);
+      reportDone(
+        add.length ? `Asked ${who(add)} to review #${pr.number}.` : `Took back the review request of ${who(remove)} on #${pr.number}.`,
+      );
+      return true;
+    } catch (err) {
+      opFailed(add.length ? `Couldn't ask ${who(add)} for a review` : "Couldn't take the request back", err);
+      return false;
+    }
+  },
+  assignableUsers: () => assignableUsersOnce(state.repoPath),
   chooseOption: async (pr, thread, text) => {
     const repo = state.repoPath;
     try {
@@ -1206,4 +1222,17 @@ async function resolveConflictsWithClaude(pr: PullRequestDetail): Promise<boolea
     opFailed(answer === "approve" ? `Couldn't commit and push ${pr.head}` : "Couldn't discard the merge", err);
   }
   return false;
+}
+
+// The people a review can be asked of, read once per repository while gitp
+// runs: the picker opens at once the second time.
+const assignable = new Map<string, Promise<string[]>>();
+function assignableUsersOnce(repo: string): Promise<string[]> {
+  let read = assignable.get(repo);
+  if (!read) {
+    read = assignableUsers();
+    assignable.set(repo, read);
+    read.catch(() => assignable.delete(repo));
+  }
+  return read;
 }

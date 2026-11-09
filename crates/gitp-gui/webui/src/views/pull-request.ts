@@ -32,6 +32,7 @@ import { whenPointedAt } from "../read-ahead";
 import { prSuggestions, suggestionOf, type Suggestion } from "../suggestions";
 import { jiraKeyIn, jiraTicketUrl } from "../jira";
 import { renderFileTree } from "./tree";
+import { openReviewerPicker } from "./reviewer-picker";
 import {
   checksSummary,
   isoSeconds,
@@ -40,6 +41,8 @@ import {
   prTimeline,
   quoteReply,
   reviewDecisionLabel,
+  reviewerRows,
+  type ReviewerState,
   approvalCount,
   hasConflicts,
   reviewThreads,
@@ -142,6 +145,10 @@ export interface PullRequestCallbacks {
   // conflicts and show them for an approve (commit and push) or a discard;
   // true once pushed.
   resolveConflicts?: (pr: PullRequestDetail) => Promise<boolean>;
+  // Ask for reviews (again) and take requests back, as logins or org/team;
+  // true once done. The people a review can be asked of.
+  setReviewers?: (pr: PullRequestDetail, add: string[], remove: string[]) => Promise<boolean>;
+  assignableUsers?: () => Promise<string[]>;
   // Save the chosen option on the thread, for Fix to take; false when it
   // couldn't (reported).
   chooseOption: (pr: PullRequestDetail, thread: Thread, text: string) => Promise<boolean>;
@@ -616,8 +623,61 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         titleLink(PR_LINK_ICON, `Open #${pr.number} on GitHub\n${pr.url}`, () => cb.openUrl(pr.url)),
       ]),
       meta,
+      ...reviewersRow(pr),
       actions,
     ]);
+  }
+
+  // Who reviews: each reviewer by their verdict, the ones asked and not
+  // answered yet, with Ask again / Take back, and "+ Add".
+  const REVIEWER_LOOK: Record<ReviewerState, { icon: string; words: string }> = {
+    requested: { icon: "●", words: "asked, not reviewed yet" },
+    APPROVED: { icon: "✓", words: "approved" },
+    CHANGES_REQUESTED: { icon: "±", words: "requested changes" },
+    COMMENTED: { icon: "💬", words: "commented" },
+    DISMISSED: { icon: "⊘", words: "review dismissed" },
+  };
+  function reviewersRow(pr: PullRequestDetail): HTMLElement[] {
+    const rows = reviewerRows(pr);
+    const edit = pr.state === "OPEN" ? cb.setReviewers : undefined;
+    if (!rows.length && !edit) return [];
+    const change = (add: string[], remove: string[]) => {
+      if (!edit) return;
+      void edit(pr, add, remove).then((done) => {
+        if (done) void load(true);
+      });
+    };
+    const chips = rows.map((r) => {
+      const look = REVIEWER_LOOK[r.state];
+      const chip = el("span", { class: `pr-reviewer ${r.state.toLowerCase()}`, title: `${r.id}: ${look.words}${r.requested && r.state !== "requested" ? " · asked again" : ""}` }, [
+        el("span", { class: "pr-reviewer-icon", text: look.icon }),
+        el("span", { text: r.team ? r.id : `@${r.id}` }),
+      ]);
+      if (r.requested && r.state !== "requested") chip.append(el("span", { class: "pr-reviewer-again", text: "●", title: "Asked again" }));
+      if (edit && !r.requested && !r.team) {
+        const again = el("button", { class: "pr-reviewer-btn", type: "button", text: "↻", title: `Ask @${r.id} to review again` });
+        again.addEventListener("click", () => change([r.id], []));
+        chip.append(again);
+      }
+      if (edit && r.requested) {
+        const remove = el("button", { class: "pr-reviewer-btn", type: "button", text: "×", title: `Take back the review request of ${r.team ? r.id : `@${r.id}`}` });
+        remove.addEventListener("click", () => change([], [r.id]));
+        chip.append(remove);
+      }
+      return chip;
+    });
+    const row = el("div", { class: "pr-reviewers" }, [el("span", { class: "pr-reviewers-label", text: "Reviewers" }), ...chips]);
+    if (!rows.length) row.append(el("span", { class: "pr-reviewers-none", text: "none yet" }));
+    if (edit) {
+      const add = el("button", { class: "btn small ghost pr-reviewer-add", type: "button", text: "+ Add", title: "Ask someone (or a team, as org/team) for a review" });
+      add.addEventListener("click", () =>
+        openReviewerPicker(add, cb.assignableUsers ?? (() => Promise.resolve([])), [pr.author, ...rows.filter((r) => r.requested).map((r) => r.id)], (id) =>
+          change([id], []),
+        ),
+      );
+      row.append(add);
+    }
+    return [row];
   }
 
   // --- Conversation ---------------------------------------------------------

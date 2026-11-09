@@ -27,6 +27,7 @@ const detail = (over: Partial<PullRequestDetail> = {}): PullRequestDetail => ({
   labels: [],
   checks: [{ name: "build", state: "pending", url: null }],
   reviews: [],
+  review_requests: [],
   comments: [],
   review_comments: [],
   review_threads: [{ id: "T1", resolved: false, comment_ids: [1] }],

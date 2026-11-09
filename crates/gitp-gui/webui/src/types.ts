@@ -707,6 +707,13 @@ export interface PrCheck {
   url: string | null;
 }
 
+// A reviewer asked for a review: `id` is what an add takes, a login or
+// org/team.
+export interface PrReviewer {
+  id: string;
+  team: boolean;
+}
+
 export interface PrReview {
   author: string;
   // APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED
@@ -876,6 +883,8 @@ export interface PullRequestDetail {
   labels: PrLabel[];
   checks: PrCheck[];
   reviews: PrReview[];
+  // Who is asked for a review and hasn't answered since.
+  review_requests: PrReviewer[];
   comments: PrComment[];
   review_comments: PrReviewComment[];
   // Which line-comment threads are resolved (empty when the host didn't say).

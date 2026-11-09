@@ -609,6 +609,26 @@ pub(crate) fn gh_pull_request_viewed(
     })
 }
 
+/// Ask `add` for a review of the pull request (again, for one who reviewed)
+/// and take back the requests of `remove`: logins or `org/team`.
+#[tauri::command(async)]
+pub(crate) fn gh_set_pull_request_reviewers(
+    number: u64,
+    add: Vec<String>,
+    remove: Vec<String>,
+    state: State<RepoState>,
+) -> Result<(), String> {
+    with_repo_unlocked(&state, |repo| {
+        repo.set_pull_request_reviewers(&Gh::system(), number, &add, &remove)
+    })
+}
+
+/// The people a review can be asked of in the repository, by login.
+#[tauri::command(async)]
+pub(crate) fn gh_assignable_users(state: State<RepoState>) -> Result<Vec<String>, String> {
+    with_repo_unlocked(&state, |repo| repo.assignable_users(&Gh::system()))
+}
+
 /// Mark a file of the pull request (by its node id) Viewed on GitHub, or not.
 #[tauri::command(async)]
 pub(crate) fn gh_set_pull_request_file_viewed(
