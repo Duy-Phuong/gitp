@@ -603,8 +603,13 @@ body {
   width: 15px;
   height: 15px;
 }
-.btn:hover {
+.btn:hover:not(:disabled) {
   filter: brightness(1.08);
+}
+/* Off: it has to look off, or a click that does nothing reads as broken. */
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .icon-btn {
   font-size: 15px;
@@ -6256,6 +6261,13 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   gap: 4px 12px;
   margin-bottom: 6px;
   font-size: 12px;
+}
+.pr-thread-options-why {
+  font-size: 11px;
+  color: var(--mod-fg);
+}
+.pr-thread-options-why:empty {
+  display: none;
 }
 .pr-thread-options-label {
   color: var(--text-dim);

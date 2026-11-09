@@ -230,13 +230,19 @@ impl Repo {
         let mut c = self.thread_conversation(number, thread)?.ok_or_else(|| {
             Error::Message("The thread has no conversation yet: Check it first.".into())
         })?;
-        // The same choice again (a retry after a failed fix) is not a new message.
+        // The same choice again (a retry after a failed fix) is not a new
+        // message — while it still stands: after a Check or a committed fix
+        // it is a new choice, which Fix needs.
+        let since = c.turns.iter().rposition(|t| {
+            t.kind == TurnKind::Check || (t.kind == TurnKind::Fix && t.commit.is_some())
+        });
         let again = c
             .turns
             .iter()
+            .enumerate()
             .rev()
-            .find(|t| t.role == TurnRole::User)
-            .is_some_and(|t| t.text.trim() == text);
+            .find(|(_, t)| t.role == TurnRole::User)
+            .is_some_and(|(i, t)| since.is_none_or(|s| i > s) && t.text.trim() == text);
         if !again {
             c.turns
                 .push(ThreadTurn::user(TurnKind::Followup, text.to_string()));
@@ -561,6 +567,16 @@ mod tests {
         assert_eq!(again.turns.len(), saved.turns.len());
         let other = repo.record_thread_choice(7, 1, "I choose: B").unwrap();
         assert_eq!(other.turns.len(), saved.turns.len() + 1);
+        // After a committed fix, the same choice is a new one again.
+        let mut fixed = other.clone();
+        fixed.turns.push(ThreadTurn {
+            role: TurnRole::Claude,
+            commit: Some("c".repeat(40)),
+            ..ThreadTurn::user(TurnKind::Fix, "done".into())
+        });
+        repo.save_thread_conversation(&fixed).unwrap();
+        let after = repo.record_thread_choice(7, 1, "I choose: B").unwrap();
+        assert_eq!(after.turns.len(), fixed.turns.len() + 1);
     }
 
     #[test]

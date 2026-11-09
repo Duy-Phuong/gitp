@@ -124,12 +124,15 @@ function optionPicker(
   const row = el("div", { class: "pr-thread-options" }, [el("span", { class: "pr-thread-options-label", text: "Options" })]);
   const boxes: [HTMLInputElement, string][] = [];
   const fixButton = fixWith ? el("button", { class: "btn small", text: "Fix with this" }) : null;
+  // Why it is off, beside it: a title alone is easy to miss.
+  const why = el("span", { class: "pr-thread-options-why" });
   const sync = () => {
     const lines = area.value.split("\n");
     for (const [box, option] of boxes) box.checked = lines.includes(chosen(option));
     if (fixButton && fixWith) {
       fixButton.disabled = running || fixWith.blocked !== null || !boxes.some(([b]) => b.checked);
       fixButton.title = fixWith.blocked ?? "Make the change for the ticked option now: no follow-up to wait for";
+      why.textContent = fixWith.blocked ?? (boxes.some(([b]) => b.checked) ? "" : "Tick an option");
     }
   };
   for (const option of options) {
@@ -155,7 +158,7 @@ function optionPicker(
       sync();
       fixWith.run(text);
     });
-    row.append(fixButton);
+    row.append(fixButton, why);
   }
   area.addEventListener("input", sync);
   sync();
