@@ -93,7 +93,7 @@ import { prDraftAction } from "./pr-draft-action";
 import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, RESOLVE_PR_CONFLICTS_COMMAND, SKILL_REVIEW_COMMAND, withClaudeChoice } from "./prefs";
 import { conflictPreviewBody } from "./pr-conflicts";
 import { askChoice } from "./views/choice-dialog";
-import { finishTurn, lastUserText, preparedReply, runningTurns, setConversation, startTurn, threadState, threadsChanged } from "./pr-threads";
+import { cancelQueuedFix, finishTurn, fixRunningOn, lastUserText, preparedReply, queuedFixes, queueFix, runningTurns, setConversation, startTurn, takeQueuedFix, threadState, threadsChanged } from "./pr-threads";
 import { showContextMenu, showPrompt } from "./views/context-menu";
 import { openFormDialog } from "./views/form-dialog";
 import { showErrorDialog } from "./views/message-dialog";
@@ -794,6 +794,7 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
   draftFix: (pr) => prDraftFix(state.repoPath, pr),
   openCommit: (sha) => void jumpToCommit(sha, sha.slice(0, 7)),
   loadCommit: (sha) => fetchCommitDetail(sha),
+  cancelQueuedFix: (pr, thread, where) => cancelQueuedThreadFix(state.repoPath, pr.number, thread, where),
   loadThreadConversation: (pr, thread) => void loadThreadConversation(state.repoPath, pr.number, thread.root.id),
   clearThreadConversation: async (pr, thread) => {
     const repo = state.repoPath;
@@ -861,6 +862,14 @@ async function runFix(repo: string, pr: PullRequestDetail, thread: Thread): Prom
   const { number } = pr;
   const id = thread.root.id;
   const where = `${thread.root.path}:${thread.root.line ?? thread.root.original_line ?? "?"}`;
+  // Another thread's fix runs on the pull request: this one waits its turn.
+  const running = fixRunningOn(repo, number);
+  if (running !== null && running !== id) {
+    queueFix({ repo, number, thread: id, where, pr, input: thread });
+    const n = queuedFixes(repo, number).length;
+    setStatus(`Queued the fix of ${where} of #${number}: ${n === 1 ? "it starts" : `${n} wait; it starts in turn`} when the running fix ends.`);
+    return;
+  }
   if (!startTurn(repo, number, id, "fix")) return;
   setStatus(`Fixing ${where} of #${number} in ${pr.head}'s worktree in the background — keep working; the thread shows when it's done.`);
   try {
@@ -895,7 +904,20 @@ async function runFix(repo: string, pr: PullRequestDetail, thread: Thread): Prom
     }
     // A fix that committed but whose reply draft failed is still there.
     void loadThreadConversation(repo, number, id, true);
+  } finally {
+    startNextFix(repo, number);
   }
+}
+
+// The pull request's next waiting fix, if any: it starts from the branch as
+// the one that just ended left it.
+function startNextFix(repo: string, number: number): void {
+  const next = takeQueuedFix(repo, number);
+  if (next) void runFix(repo, next.pr as PullRequestDetail, next.input as Thread);
+}
+
+export function cancelQueuedThreadFix(repo: string, number: number, thread: number, where: string): void {
+  if (cancelQueuedFix(repo, number, thread)) setStatus(`Took the fix of ${where} of #${number} off the queue.`);
 }
 
 // The pull requests a Push and reply all is in flight on (`repo\nnumber`):

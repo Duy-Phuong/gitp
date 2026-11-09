@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { finishTurn, fixDisabledReason, fixRunningOn, hasChosenOption, lastFix, lastUserText, onThreadsChange, preparedReplies, preparedReply, runningTurns, setConversation, startTurn, threadState } from "./pr-threads";
+import { cancelQueuedFix, finishTurn, fixDisabledReason, fixRunningOn, hasChosenOption, lastFix, lastUserText, onThreadsChange, ordinal, preparedReplies, preparedReply, queuedFixes, queueFix, queuePosition, runningTurns, setConversation, startTurn, takeQueuedFix, threadState } from "./pr-threads";
 import type { ThreadConversation } from "./types";
 
 const conv = (turns = 1): ThreadConversation => ({
@@ -97,4 +97,25 @@ it("one fix per pull request: the running one disables the others with its place
   expect(fixDisabledReason(chosen, "src/a.ts:1")).toBe("A fix is running on src/a.ts:1");
   finishTurn("/f", 3, 10, { error: "x" });
   expect(fixRunningOn("/f", 3)).toBeNull();
+});
+
+it("queues fixes per pull request, in the order asked, once each", () => {
+  const changes: number[] = [];
+  onThreadsChange(() => changes.push(1));
+  const q = (repo: string, number: number, thread: number) => ({ repo, number, thread, where: `f.ts:${thread}`, pr: null, input: null });
+  queueFix(q("/q", 9, 2));
+  queueFix(q("/q", 9, 3));
+  queueFix(q("/q", 9, 2));
+  queueFix(q("/other", 9, 7));
+  expect(queuedFixes("/q", 9).map((x) => x.thread)).toEqual([2, 3]);
+  expect(queuedFixes().length).toBe(3);
+  expect([queuePosition("/q", 9, 3), queuePosition("/q", 9, 4)]).toEqual([2, null]);
+  expect(takeQueuedFix("/q", 9)?.thread).toBe(2);
+  expect(queuePosition("/q", 9, 3)).toBe(1);
+  expect(cancelQueuedFix("/q", 9, 3)).toBe(true);
+  expect(cancelQueuedFix("/q", 9, 3)).toBe(false);
+  expect(takeQueuedFix("/q", 9)).toBeNull();
+  expect(takeQueuedFix("/other", 9)?.thread).toBe(7);
+  expect(changes.length).toBeGreaterThan(0);
+  expect([1, 2, 3, 4, 11, 12, 13, 21, 22, 102].map(ordinal)).toEqual(["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "102nd"]);
 });

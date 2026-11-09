@@ -5541,6 +5541,14 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   color: #fff;
   background: var(--del-fg);
 }
+/* Claude's fixes on the pull request, a button: its menu lists them. */
+.pr-status.fixing {
+  font-family: inherit;
+  border: none;
+  cursor: pointer;
+  color: var(--claude-fg);
+  background: color-mix(in srgb, var(--claude-fg) 16%, transparent);
+}
 .pr-status.approvals {
   color: var(--add-fg);
   background: color-mix(in srgb, var(--add-fg) 16%, transparent);
@@ -6248,6 +6256,8 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .pr-thread-actions {
   display: flex;
   justify-content: flex-end;
+  /* Chips (fixed, reply ready) keep their own height beside the buttons. */
+  align-items: center;
   gap: 6px;
 }
 /* Claude on the thread: its conversation under the comments, a left rule in
@@ -6261,6 +6271,15 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   gap: 4px 12px;
   margin-bottom: 6px;
   font-size: 12px;
+}
+/* A thread's fix waiting in the pull request's queue. */
+.pr-thread-claude-queued {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--mod-fg);
+  margin: 6px 0;
 }
 .pr-thread-options-why {
   font-size: 11px;
@@ -8099,6 +8118,14 @@ mark.find-hit.current {
   background: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
   animation: cj-pulse 1.6s ease-in-out infinite;
+}
+/* A fix waiting its turn: a hollow amber dot. */
+.cj-dot.queued {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--mod-fg);
+}
+.cj-row.queued .btn {
+  margin-left: auto;
 }
 .cj-dot.done {
   background: var(--add-fg);

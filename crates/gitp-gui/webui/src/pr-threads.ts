@@ -113,6 +113,71 @@ export function fixRunningOn(repo: string, number: number): number | null {
   return null;
 }
 
+// --- The fix queue ----------------------------------------------------------
+//
+// One fix runs per pull request at a time: they share the branch's worktree,
+// and each starts from the commit the one before made. A fix asked for while
+// another runs waits here, in the order asked, and starts when the running
+// one ends — whether it committed, failed or was stopped. In memory only:
+// quitting drops the waiting ones (the chosen options stay saved).
+
+export interface QueuedFix<P = unknown, T = unknown> {
+  repo: string;
+  number: number;
+  thread: number;
+  // "path:line", for the notes and the menus.
+  where: string;
+  // What the fix needs to start: the pull request and the thread as asked.
+  pr: P;
+  input: T;
+}
+
+const fixQueue: QueuedFix[] = [];
+
+export function queueFix(entry: QueuedFix): void {
+  if (fixQueue.some((q) => q.repo === entry.repo && q.number === entry.number && q.thread === entry.thread)) return;
+  fixQueue.push(entry);
+  threadsChanged();
+}
+
+// Take the thread's fix off the queue; whether it was on it.
+export function cancelQueuedFix(repo: string, number: number, thread: number): boolean {
+  const i = fixQueue.findIndex((q) => q.repo === repo && q.number === number && q.thread === thread);
+  if (i < 0) return false;
+  fixQueue.splice(i, 1);
+  threadsChanged();
+  return true;
+}
+
+// The pull request's waiting fixes, in order; every repository's with no
+// arguments (the jobs panel).
+export function queuedFixes(repo?: string, number?: number): QueuedFix[] {
+  return fixQueue.filter((q) => (repo === undefined || q.repo === repo) && (number === undefined || q.number === number));
+}
+
+// The next waiting fix of the pull request, taken off the queue.
+export function takeQueuedFix(repo: string, number: number): QueuedFix | null {
+  const i = fixQueue.findIndex((q) => q.repo === repo && q.number === number);
+  if (i < 0) return null;
+  const [next] = fixQueue.splice(i, 1);
+  threadsChanged();
+  return next;
+}
+
+// The thread's place in its pull request's queue, from 1; null when it
+// isn't waiting.
+export function queuePosition(repo: string, number: number, thread: number): number | null {
+  const i = queuedFixes(repo, number).findIndex((q) => q.thread === thread);
+  return i < 0 ? null : i + 1;
+}
+
+// "2nd", "3rd", "11th".
+export function ordinal(n: number): string {
+  const tens = n % 100;
+  const suffix = tens >= 11 && tens <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ?? "th";
+  return `${n}${suffix}`;
+}
+
 // Why Fix is off on a thread, or null when it is on: no option chosen, or a
 // fix running at `elsewhere` (path:line) on the pull request. The checks on
 // the worktree itself (checked out, clean, up to date) are core's, on click.

@@ -10,9 +10,10 @@
 // which builds text nodes, and the rest is set as text.
 
 import { clear, el, svg } from "../dom";
+import { showContextMenu, type MenuItem } from "./context-menu";
 import { renderGitHubMarkdown } from "./github-markdown";
 import { conversationNode, threadBadges, threadClaudeButtons } from "./thread-claude";
-import { fixDisabledReason, fixRunningOn, preparedReply, runningTurns, threadState } from "../pr-threads";
+import { fixDisabledReason, fixRunningOn, ordinal, preparedReply, queuedFixes, queuePosition, runningTurns, threadState } from "../pr-threads";
 import { storedThread } from "../thread-search";
 import { composerArea, previewToggle } from "./composer";
 import { iconBtn, renderFile, renderSplitDiff, WRAP_ICON } from "./detail";
@@ -169,6 +170,8 @@ export interface PullRequestCallbacks {
   draftFix: (pr: PullRequestDetail) => { reason: (d: Draft) => string | null; run: (d: Draft) => void } | null;
   // Shows a commit in History.
   openCommit: (sha: string) => void;
+  // Take a waiting fix off the pull request's queue.
+  cancelQueuedFix: (pr: PullRequestDetail, thread: number, where: string) => void;
   // A commit's files and diff: a fix's, shown under its turn.
   loadCommit?: (sha: string) => Promise<CommitDetail>;
   // Asks before a draft replaces what the user typed.
@@ -559,6 +562,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     );
     const decision = reviewDecisionLabel(pr.review_decision);
     if (decision) meta.append(el("span", { class: `pr-badge review-${pr.review_decision!.toLowerCase()}`, text: decision }));
+    meta.append(...fixingChip(pr));
     for (const label of pr.labels) meta.append(labelChip(label));
 
     const button = (text: string, onClick: (e: MouseEvent) => void, title?: string) => {
@@ -728,6 +732,59 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
 
   // Where a fix runs on the pull request, if one does on another thread:
   // "path:line", for the other threads' disabled Fix.
+  // "🔧 Fixing 1 · 2 queued" while Claude fixes the pull request's threads:
+  // its menu goes to each one, and takes a waiting one off the queue.
+  function fixingChip(pr: PullRequestDetail): HTMLElement[] {
+    const repo = cb.repoPath();
+    const running = fixRunningOn(repo, pr.number);
+    const waiting = queuedFixes(repo, pr.number);
+    if (running === null && waiting.length === 0) return [];
+    const whereOf = (id: number) => {
+      const root = pr.review_comments.find((c) => c.id === id);
+      return root ? `${root.path.split("/").pop()}:${root.line ?? root.original_line ?? "?"}` : "another thread";
+    };
+    const text = `🔧 ${running === null ? "Starting" : "Fixing 1"}${waiting.length ? ` · ${waiting.length} queued` : ""} ▾`;
+    const chip = el("button", { class: "pr-status fixing", text, title: "Claude's fixes on this pull request, one at a time: click for the list" });
+    const goTo = (id: number) => {
+      focus = id;
+      openBlocks.add(id);
+      tab = "conversation";
+      render();
+    };
+    chip.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const items: MenuItem[] = [];
+      if (running !== null) items.push({ label: `⟳ ${whereOf(running)} — fixing now`, run: () => goTo(running) });
+      waiting.forEach((q, i) => items.push({ label: `${i + (running === null ? 1 : 2)}. ${whereOf(q.thread)} — queued`, run: () => goTo(q.thread) }));
+      if (waiting.length) {
+        items.push({ separator: true });
+        for (const q of waiting) items.push({ label: `Cancel ${whereOf(q.thread)}`, run: () => cb.cancelQueuedFix(pr, q.thread, q.where) });
+      }
+      showContextMenu(e.clientX, e.clientY, items);
+    });
+    return [chip];
+  }
+
+  // A waiting fix's place, what runs and waits before it, and its Cancel.
+  function queuedNote(pr: PullRequestDetail, thread: number, at: number): { label: string; note: string; cancel: () => void } {
+    const repo = cb.repoPath();
+    const running = fixRunningOn(repo, pr.number);
+    const whereOf = (id: number) => {
+      const root = pr.review_comments.find((c) => c.id === id);
+      return root ? `${root.path.split("/").pop()}:${root.line ?? root.original_line ?? "?"}` : "another thread";
+    };
+    const before = queuedFixes(repo, pr.number)
+      .slice(0, at - 1)
+      .map((q) => whereOf(q.thread));
+    const after = running === null ? "the running fix" : `${whereOf(running)} (fixing now)`;
+    const where = whereOf(thread);
+    return {
+      label: `Queued · ${ordinal(at + (running === null ? 0 : 1))}`,
+      note: `Queued — starts after ${[after, ...before].join(", then ")}.`,
+      cancel: () => cb.cancelQueuedFix(pr, thread, where),
+    };
+  }
+
   function fixElsewhere(pr: PullRequestDetail, thisThread: number): string | null {
     const id = fixRunningOn(cb.repoPath(), pr.number);
     if (id === null || id === thisThread) return null;
@@ -837,6 +894,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         focus,
       );
       const area = box.querySelector("textarea")!;
+      // An empty box starts from the reply Claude has ready, whenever it was
+      // drafted (another session, before a restart).
+      if (!replyText.get(root.id)?.trim()) {
+        const ready = preparedReply(threadState(cb.repoPath(), pr.number, root.id).conversation);
+        if (ready) replyText.set(root.id, ready.text);
+      }
       area.value = replyText.get(root.id) ?? "";
       area.addEventListener("input", () => replyText.set(root.id, area.value));
       actions.before(box);
@@ -865,10 +928,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         replyOpen.delete(root.id);
         render();
       };
-      // Fix: only with an option chosen and no fix elsewhere on the pull
-      // request; it ends in a reply draft, which lands in the Reply box.
+      // Fix: only with an option chosen; with a fix running elsewhere on the
+      // pull request it is queued. It ends in a reply draft, which lands in
+      // the Reply box.
+      const queuedAt = queuePosition(cb.repoPath(), pr.number, root.id);
       const fix = () => {
-        if (fixDisabledReason(ts.conversation, fixElsewhere(pr, root.id))) return;
+        if (queuedAt !== null || fixDisabledReason(ts.conversation, null)) return;
         pendingReplyDraft.set(root.id, ts.conversation?.turns.length ?? 0);
         lastKind.set(root.id, "fix");
         openBlocks.add(root.id);
@@ -886,7 +951,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
             draft: followupText.get(root.id),
             onDraft: (text) => followupText.set(root.id, text),
             onFollowup: (text) => turn("followup", text),
-            fix: { disabled: fixDisabledReason(ts.conversation, fixElsewhere(pr, root.id)) },
+            fix: { disabled: fixDisabledReason(ts.conversation, null), queuesAfter: fixElsewhere(pr, root.id) },
+            queued: queuedAt === null ? undefined : queuedNote(pr, root.id, queuedAt),
+            queuedBehind: ts.running === "fix" ? queuedFixes(cb.repoPath(), pr.number).length : 0,
             onFix: fix,
             onChooseFix: (text) =>
               void cb.chooseOption(pr, thread, text).then((saved) => {
@@ -1448,8 +1515,11 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       text: "Push and reply all",
       title: `${ahead ? `Push ${pr.head} (${ahead} ahead)` : "Nothing to push"}; ${ready ? `post ${ready} ${ready === 1 ? "reply" : "replies"} Claude has ready` : "no reply ready"} — after one confirm that lists both`,
     });
-    b.disabled = runningTurns(cb.repoPath(), pr.number) > 0 || cb.pushReplyInFlight(pr);
+    const working = runningTurns(cb.repoPath(), pr.number);
+    b.disabled = working > 0 || cb.pushReplyInFlight(pr);
     if (cb.pushReplyInFlight(pr)) b.textContent = "Pushing and replying…";
+    // Off: say why, or it reads as broken.
+    else if (working > 0) b.title = `Claude is working on ${working} thread${working === 1 ? "" : "s"} of #${pr.number}: wait for ${working === 1 ? "it" : "them"} to end, then push and reply`;
     b.addEventListener("click", () => void pushAndReplyAll(pr));
     return [b];
   }

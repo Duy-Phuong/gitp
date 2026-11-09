@@ -12,7 +12,7 @@
 
 import type { DraftComment } from "./review-drafts";
 import type { ReviewFix, ReviewKey, ReviewVerdict, StoredReview } from "./types";
-import { runningTurns } from "./pr-threads";
+import { fixRunningOn, queuedFixes, runningTurns } from "./pr-threads";
 
 // A loaded finding and what the user decided about it — or that a fix
 // answered it, with the commit (kept on disk, see setReviewSaver).
@@ -240,7 +240,10 @@ export function clearDrafts(repo: string, number: number): void {
 export function reviewBadge(repo: string, number: number): { text: string; kind: "running" | "failed" | "ready" } | null {
   const r = reviews.get(keyOf(repo, number));
   if (r?.running) return { text: "reviewing…", kind: "running" };
-  // A Claude turn on one of its threads (pr-threads.ts) counts the same.
+  // A Claude turn on one of its threads (pr-threads.ts) counts the same; a
+  // fix, with the ones queued after it.
+  const queued = queuedFixes(repo, number).length;
+  if (fixRunningOn(repo, number) !== null || queued > 0) return { text: `fixing…${queued ? ` · ${queued} queued` : ""}`, kind: "running" };
   if (runningTurns(repo, number) > 0) return { text: "thinking…", kind: "running" };
   if (r?.error) return { text: "review failed", kind: "failed" };
   const pending = r ? r.drafts.filter(isOpen).length : 0;

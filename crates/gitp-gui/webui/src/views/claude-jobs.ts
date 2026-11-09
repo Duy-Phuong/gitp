@@ -20,9 +20,16 @@ export interface ClaudeJobsCallbacks {
   full: (job: ClaudeJob, tool: string) => Promise<{ input: string; output: string }>;
 }
 
+// A fix waiting its turn on a pull request (pr-threads.ts): not a job yet.
+export interface QueuedJob {
+  title: string;
+  repo: string;
+  remove: () => void;
+}
+
 export interface ClaudeJobsView {
   // Draw the list, and the conversation of `selected` with its steps so far.
-  render(jobs: ClaudeJob[], selected: number | null, data: ConversationData | null, openRepo: string): void;
+  render(jobs: ClaudeJob[], selected: number | null, data: ConversationData | null, openRepo: string, queued?: QueuedJob[]): void;
 }
 
 const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -49,7 +56,7 @@ export function setupClaudeJobsView(root: HTMLElement, cb: ClaudeJobsCallbacks):
   let firstPromptSeen = false;
   let earlierMarked = false;
 
-  function renderList(jobs: ClaudeJob[], selected: number | null, openRepo: string): void {
+  function renderList(jobs: ClaudeJob[], selected: number | null, openRepo: string, queued: QueuedJob[]): void {
     const keep = list.scrollTop;
     clear(list);
     const now = Date.now();
@@ -84,8 +91,21 @@ export function setupClaudeJobsView(root: HTMLElement, cb: ClaudeJobsCallbacks):
       }
     };
     section("Running", running);
+    if (queued.length) {
+      list.append(el("div", { class: "cj-section" }, ["Queued"]));
+      for (const q of queued) {
+        const name = el("span", { class: "cj-row-title" }, [q.title]);
+        if (q.repo !== openRepo) name.append(el("span", { class: "cj-row-repo" }, [repoName(q.repo)]));
+        const remove = el("button", { class: "btn small ghost", text: "Remove", title: "Take this fix off the queue" });
+        remove.addEventListener("click", (e) => {
+          e.stopPropagation();
+          q.remove();
+        });
+        list.append(el("div", { class: "cj-row queued", title: q.title }, [el("span", { class: "cj-dot queued", title: "queued" }), name, remove]));
+      }
+    }
     for (const day of days) section(day.title, day.jobs);
-    if (!jobs.length) list.append(el("div", { class: "cj-empty" }, ["No Claude jobs in the last 7 days. Reviews, Explain more and the turns on pull request threads show here while they run."]));
+    if (!jobs.length && !queued.length) list.append(el("div", { class: "cj-empty" }, ["No Claude jobs in the last 7 days. Reviews, Explain more and the turns on pull request threads show here while they run."]));
     list.scrollTop = keep;
   }
 
@@ -279,8 +299,8 @@ export function setupClaudeJobsView(root: HTMLElement, cb: ClaudeJobsCallbacks):
   }
 
   return {
-    render(jobs, selected, data, openRepo) {
-      renderList(jobs, selected, openRepo);
+    render(jobs, selected, data, openRepo, queued = []) {
+      renderList(jobs, selected, openRepo, queued);
       const job = jobs.find((j) => j.id === selected) ?? null;
       if (!job) {
         if (shownJob !== null || !detail.childElementCount) {

@@ -113,26 +113,36 @@ const chosen = (option: string) => `I choose: ${option}`;
 // whether its line is in the text, so a redraw or typing keeps them right.
 // "Fix with this" beside them, when Fix is offered: saves what the box holds
 // as the user's choice and starts the fix, with no follow-up to wait for. Off
-// with nothing ticked, or for `blocked` (a fix running elsewhere).
+// with nothing ticked, or for `blocked`. With a fix running elsewhere on the
+// pull request (`queuesAfter`) it queues; once queued, it says its place.
 function optionPicker(
   options: string[],
   area: HTMLTextAreaElement,
   running: boolean,
   onDraft?: (text: string) => void,
-  fixWith?: { blocked: string | null; run: (text: string) => void },
+  fixWith?: { blocked: string | null; queuesAfter?: string | null; queued?: QueuedInfo; run: (text: string) => void },
 ): HTMLElement {
   const row = el("div", { class: "pr-thread-options" }, [el("span", { class: "pr-thread-options-label", text: "Options" })]);
   const boxes: [HTMLInputElement, string][] = [];
-  const fixButton = fixWith ? el("button", { class: "btn small", text: "Fix with this" }) : null;
-  // Why it is off, beside it: a title alone is easy to miss.
+  const queued = fixWith?.queued;
+  const fixButton = fixWith ? el("button", { class: "btn small", text: queued ? queued.label : "Fix with this" }) : null;
+  // Why it is off, or that it queues, beside it: a title alone is easy to miss.
   const why = el("span", { class: "pr-thread-options-why" });
   const sync = () => {
     const lines = area.value.split("\n");
     for (const [box, option] of boxes) box.checked = lines.includes(chosen(option));
     if (fixButton && fixWith) {
-      fixButton.disabled = running || fixWith.blocked !== null || !boxes.some(([b]) => b.checked);
-      fixButton.title = fixWith.blocked ?? "Make the change for the ticked option now: no follow-up to wait for";
-      why.textContent = fixWith.blocked ?? (boxes.some(([b]) => b.checked) ? "" : "Tick an option");
+      const ticked = boxes.some(([b]) => b.checked);
+      fixButton.disabled = running || queued !== undefined || fixWith.blocked !== null || !ticked;
+      fixButton.title = queued
+        ? queued.note
+        : (fixWith.blocked ??
+          (fixWith.queuesAfter
+            ? `Queue the fix for the ticked option: it starts when the fix on ${fixWith.queuesAfter} ends`
+            : "Make the change for the ticked option now: no follow-up to wait for"));
+      why.textContent = queued
+        ? ""
+        : (fixWith.blocked ?? (!ticked ? "Tick an option" : fixWith.queuesAfter ? `Queues after the fix on ${fixWith.queuesAfter}` : ""));
     }
   };
   for (const option of options) {
@@ -177,8 +187,14 @@ export interface ConversationOptions {
   draft?: string;
   onDraft?: (text: string) => void;
   onFollowup: (text: string) => void;
-  // Fix, when the view offers it: off with the reason as the button's title.
-  fix?: { disabled: string | null };
+  // Fix, when the view offers it: off with the reason as the button's title;
+  // `queuesAfter`, a fix running elsewhere on the pull request ("path:line"),
+  // which this one would wait for.
+  fix?: { disabled: string | null; queuesAfter?: string | null };
+  // This thread's fix waits in the pull request's queue.
+  queued?: QueuedInfo;
+  // While this thread's fix runs: how many wait after it.
+  queuedBehind?: number;
   onFix?: () => void;
   // Save the chosen option (what the follow-up box holds) and start Fix.
   onChooseFix?: (text: string) => void;
@@ -193,6 +209,14 @@ export interface ConversationOptions {
   // A fix's commit: read it for the changes under the turn, open it in History.
   loadCommit?: (commit: string) => Promise<CommitDetail>;
   openCommit?: (commit: string) => void;
+}
+
+// A waiting fix: its button's label ("Queued · 2nd"), what it waits for,
+// and how to take it off the queue.
+export interface QueuedInfo {
+  label: string;
+  note: string;
+  cancel: () => void;
 }
 
 // The block under a thread.
@@ -210,7 +234,7 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
     o.onToggle();
   });
   node.append(headLine);
-  if (!open && !state.running && !state.error) return node;
+  if (!open && !state.running && !state.error && !o.queued) return node;
 
   const body = el("div", { class: "pr-thread-claude-body" });
   if (open && c) {
@@ -226,6 +250,15 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
       body.append(el("div", { class: "pr-thread-claude-stale" }, [el("span", { text: "The pull request has new commits since." }), again]));
     }
   }
+  if (o.queued) {
+    const { note, cancel: onCancel } = o.queued;
+    const cancel = el("button", { class: "btn small ghost", text: "Cancel", title: "Take this fix off the queue" });
+    cancel.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onCancel();
+    });
+    body.append(el("div", { class: "pr-thread-claude-queued" }, [el("span", { text: `⏳ ${note}` }), cancel]));
+  }
   if (state.running) {
     const cancel = el("button", { class: "btn small ghost", text: "Cancel" });
     cancel.addEventListener("click", (e) => {
@@ -235,7 +268,12 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
     body.append(
       el("div", { class: "pr-thread-claude-running" }, [
         el("span", { class: "spinner" }),
-        el("span", { text: state.running === "fix" ? "Claude is fixing (change, test, commit)…" : `Claude is thinking (${TURN_LABELS[state.running]})…` }),
+        el("span", {
+          text:
+            state.running === "fix"
+              ? `Claude is fixing (change, test, commit)…${o.queuedBehind ? ` · ${o.queuedBehind} queued after this` : ""}`
+              : `Claude is thinking (${TURN_LABELS[state.running]})…`,
+        }),
         cancel,
       ]),
     );
@@ -269,8 +307,18 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
     const actions = [clear, send];
     if (o.fix) {
       const reason = o.fix.disabled;
-      const fix = el("button", { class: "btn small", text: "Fix", title: reason ?? "Make the change for the chosen option in the branch's worktree, commit it, and prepare the reply" });
-      fix.disabled = state.running !== null || reason !== null;
+      const fix = el("button", {
+        class: "btn small",
+        text: "Fix",
+        title:
+          reason ??
+          (o.queued
+            ? o.queued.note
+            : o.fix.queuesAfter
+              ? `Queue the fix: it starts when the fix on ${o.fix.queuesAfter} ends`
+              : "Make the change for the chosen option in the branch's worktree, commit it, and prepare the reply"),
+      });
+      fix.disabled = state.running !== null || reason !== null || o.queued !== undefined;
       fix.addEventListener("click", (e) => {
         e.stopPropagation();
         o.onFix?.();
@@ -303,7 +351,9 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
     const options = latestOptions(c);
     // Fix with this ignores "no option chosen": it chooses one.
     const fixWith =
-      o.fix && o.onChooseFix ? { blocked: o.fix.disabled === NO_OPTION_CHOSEN ? null : o.fix.disabled, run: o.onChooseFix } : undefined;
+      o.fix && o.onChooseFix
+        ? { blocked: o.fix.disabled === NO_OPTION_CHOSEN ? null : o.fix.disabled, queuesAfter: o.fix.queuesAfter, queued: o.queued, run: o.onChooseFix }
+        : undefined;
     const picker = options.length ? [optionPicker(options, area, state.running !== null, o.onDraft, fixWith)] : [];
     const box = el("div", { class: "pr-composer pr-thread-claude-composer" }, [...picker, area, el("div", { class: "pr-composer-actions" }, actions)]);
     box.addEventListener("click", (e) => e.stopPropagation());

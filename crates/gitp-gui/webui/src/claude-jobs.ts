@@ -18,6 +18,7 @@ import {
   type ClaudeJob,
 } from "./api";
 import { noticeJobs } from "./notifications";
+import { cancelQueuedFix, queuedFixes } from "./pr-threads";
 import { quitQuestion } from "./quit-check";
 import { state } from "./app-state";
 import { jobsSummary, repoName } from "./claude-jobs-model";
@@ -144,8 +145,16 @@ async function tick(): Promise<void> {
     const job = jobs.find((j) => j.id === selected) ?? null;
     let data: Conversation | null = null;
     if (job) data = await readConversation(job);
-    if (pageShown()) page?.render(jobs, selected, data, state.repoPath);
-    if (panelShown()) panel?.render(jobs, selected, data, state.repoPath);
+    const queued = queuedFixes().map((q) => ({
+      title: `Fix · ${q.where} · #${q.number}`,
+      repo: q.repo,
+      remove: () => {
+        cancelQueuedFix(q.repo, q.number, q.thread);
+        void tick();
+      },
+    }));
+    if (pageShown()) page?.render(jobs, selected, data, state.repoPath, queued);
+    if (panelShown()) panel?.render(jobs, selected, data, state.repoPath, queued);
   } catch {
     // The next tick tries again; a failed read must not stop the poll.
   } finally {
