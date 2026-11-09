@@ -41,13 +41,16 @@ export function otherListings(filter: PrFilter): PrListing[] {
 }
 
 // The tags that make a pull request stand out in the sidebar and the Pull
-// Requests view: line comments still to answer, and two approvals or more
-// (ready to merge, as most repositories ask for two). `short` is for the
-// narrow sidebar.
+// Requests view: conflicts to resolve, line comments still to answer, and two
+// approvals or more (ready to merge, as most repositories ask for two).
+// `short` is for the narrow sidebar.
 export function prAttentionTags(
-  pr: Pick<PullRequest, "approvals" | "unresolved_threads">,
-): { kind: "unresolved" | "approvals"; text: string; short: string; title: string }[] {
-  const tags: { kind: "unresolved" | "approvals"; text: string; short: string; title: string }[] = [];
+  pr: Pick<PullRequest, "approvals" | "unresolved_threads"> & { conflicting?: boolean },
+): { kind: "conflicts" | "unresolved" | "approvals"; text: string; short: string; title: string }[] {
+  const tags: { kind: "conflicts" | "unresolved" | "approvals"; text: string; short: string; title: string }[] = [];
+  if (pr.conflicting) {
+    tags.push({ kind: "conflicts", text: "⚠ Conflicts", short: "⚠", title: "Has conflicts with its base branch: resolve them before it can be merged" });
+  }
   const open = pr.unresolved_threads ?? 0;
   if (open > 0) {
     tags.push({ kind: "unresolved", text: `${open} unresolved`, short: `💬 ${open}`, title: `${open} comment thread${open === 1 ? "" : "s"} not resolved` });
@@ -224,6 +227,22 @@ export function checksSummary(checks: PrCheck[]): string {
     .filter(([n]) => n)
     .map(([n, word]) => `${n} ${word}`);
   return parts.length ? parts.join(", ") : "No checks";
+}
+
+// Whether it has conflicts with its base: GitHub says CONFLICTING, or DIRTY
+// for the merge.
+export function hasConflicts(pr: Pick<PullRequestDetail, "state" | "mergeable" | "merge_state">): boolean {
+  return pr.state === "OPEN" && (pr.mergeable === "CONFLICTING" || pr.merge_state === "DIRTY");
+}
+
+// The reviewers whose latest approve-or-request-changes review approves, as
+// GitHub counts them: a later comment doesn't take an approval back, a
+// dismissal does.
+export function approvalCount(reviews: Pick<PrReview, "author" | "state" | "submitted_at">[]): number {
+  const latest = new Map<string, string>();
+  const ordered = [...reviews].sort((a, b) => a.submitted_at.localeCompare(b.submitted_at));
+  for (const r of ordered) if (r.state !== "COMMENTED" && r.state !== "PENDING") latest.set(r.author, r.state);
+  return [...latest.values()].filter((s) => s === "APPROVED").length;
 }
 
 // The review state in words, for a badge.

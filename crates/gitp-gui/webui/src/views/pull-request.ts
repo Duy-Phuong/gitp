@@ -40,6 +40,8 @@ import {
   prTimeline,
   quoteReply,
   reviewDecisionLabel,
+  approvalCount,
+  hasConflicts,
   reviewThreads,
   reviewVerb,
   searchFiles,
@@ -529,6 +531,17 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         el("code", { text: pr.head }),
       ]),
     ]);
+    if (hasConflicts(pr)) {
+      meta.append(el("span", { class: "pr-status conflicts", text: "⚠ Conflicts", title: `Has conflicts with ${pr.base}: resolve them before it can be merged` }));
+    }
+    const approvals = approvalCount(pr.reviews);
+    meta.append(
+      el("span", {
+        class: `pr-status approvals${approvals ? "" : " none"}`,
+        text: `✓ ${approvals} approval${approvals === 1 ? "" : "s"}`,
+        title: approvals ? `Approved by ${approvals} reviewer${approvals === 1 ? "" : "s"} (their latest review)` : "No approval yet",
+      }),
+    );
     const decision = reviewDecisionLabel(pr.review_decision);
     if (decision) meta.append(el("span", { class: `pr-badge review-${pr.review_decision!.toLowerCase()}`, text: decision }));
     for (const label of pr.labels) meta.append(labelChip(label));
@@ -697,14 +710,13 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         );
       }
     }
-    // Resolved threads fold to their first comment, as on GitHub.
+    // Resolved threads are green and start folded to one line; open ones are
+    // orange. A thread GitHub said nothing about is neither.
     const state = pr.review_threads.find((t) => t.comment_ids.includes(root.id));
     const resolved = state?.resolved ?? false;
     node.classList.toggle("resolved", resolved);
-    if (resolved) {
-      node.append(el("div", { class: "pr-thread-resolved" }, [el("span", { class: "pr-badge", text: "Resolved" }), el("span", { text: `${1 + thread.replies.length} comment${thread.replies.length ? "s" : ""}` })]));
-    }
-    for (const c of resolved ? [root] : [root, ...thread.replies]) {
+    node.classList.toggle("unresolved", !!state && !resolved);
+    for (const c of [root, ...thread.replies]) {
       // A reviewer's suggestion: applied in the branch's worktree, one commit.
       const s = cb.applySuggestions ? suggestionOf(c, resolved) : null;
       const apply = s ? [smallButton("Apply suggestion", () => void cb.applySuggestions?.(pr, [s]))] : [];
@@ -845,6 +857,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     }
     if (state) {
       actions.prepend(
+        threadStatus(resolved),
         smallButton(resolved ? "Unresolve" : "Resolve", () => {
           void cb.resolve(pr, state, !resolved).then((ok) => {
             if (ok) void load(true);
@@ -854,7 +867,15 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     }
     node.append(actions);
     if (replyOpen.has(root.id) || (replyText.get(root.id) ?? "") !== "") openReply(false);
+    if (resolved) {
+      const where = withCode ? `${root.path}:${root.line ?? root.original_line ?? "?"} · ` : "";
+      addFold(node, `t${root.id}`, where + threadFoldText(root.author, root.body, thread.replies.length, false), threadStatus(true));
+    }
     return node;
+  }
+
+  function threadStatus(resolved: boolean): HTMLElement {
+    return el("span", { class: `pr-thread-status ${resolved ? "resolved" : "unresolved"}`, text: resolved ? "✓ Resolved" : "Unresolved" });
   }
 
   // --- Files changed --------------------------------------------------------
@@ -1169,8 +1190,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       while (after.nextElementSibling?.classList.contains("pr-thread")) after = after.nextElementSibling;
       for (const t of threads.get(key) ?? []) {
         const n = threadNode(pr, t, false);
+        // A resolved thread folded itself already.
         const resolved = pr.review_threads.find((s) => s.comment_ids.includes(t.root.id))?.resolved ?? false;
-        addFold(n, `t${t.root.id}`, threadFoldText(t.root.author, t.root.body, t.replies.length, resolved));
+        if (!resolved) addFold(n, `t${t.root.id}`, threadFoldText(t.root.author, t.root.body, t.replies.length, false));
         after.after(n);
         after = n;
       }
@@ -1217,11 +1239,15 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
 
   // Give a thread or draft card under the code its folded line: shown while
   // "Collapse comments" is on, where a click opens or folds just this one.
-  function addFold(node: HTMLElement, id: string, text: string): void {
+  // `badge`: the fold is always there, not only under "Collapse comments",
+  // with the badge on its line (a resolved thread).
+  function addFold(node: HTMLElement, id: string, text: string, badge?: HTMLElement): void {
     node.classList.add("pr-comment-folds");
+    node.classList.toggle("fold-always", !!badge);
     node.classList.toggle("open", openComments.has(id));
     const fold = el("button", { class: "pr-comment-fold", type: "button", title: "Open or fold this comment" }, [
       el("span", { class: "pr-comment-fold-icon", text: "›" }),
+      ...(badge ? [badge] : []),
       el("span", { class: "pr-comment-fold-text", text }),
     ]);
     fold.addEventListener("click", (e) => {

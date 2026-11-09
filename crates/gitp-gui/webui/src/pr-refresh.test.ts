@@ -128,6 +128,7 @@ describe("listChanged", () => {
     merged_at: null,
     approvals: 0,
     unresolved_threads: null,
+    conflicting: false,
     ...over,
   });
 

@@ -145,6 +145,9 @@ pub struct PullRequest {
     pub approvals: u32,
     /// Its line-comment threads not resolved yet; none when GitHub didn't say.
     pub unresolved_threads: Option<u32>,
+    /// Whether it has conflicts with its base: GitHub's `mergeable` is
+    /// `CONFLICTING`. False while GitHub is still working it out.
+    pub conflicting: bool,
 }
 
 /// One check run or commit status on the pull request's head.
@@ -2236,7 +2239,7 @@ pub(crate) struct ShellOutput {
 }
 
 const LIST_FIELDS: &str = "number,title,author,isDraft,reviewDecision,statusCheckRollup,\
-     headRefName,baseRefName,updatedAt,url,labels,latestReviews,mergedAt";
+     headRefName,baseRefName,updatedAt,url,labels,latestReviews,mergedAt,mergeable";
 
 /// What `gh` needs from a [`Repo`] to run for it: its folder, and the flag
 /// that cancels its network commands.
@@ -2705,6 +2708,8 @@ struct RawPr {
     #[serde(default)]
     latest_reviews: Vec<RawReview>,
     merged_at: Option<String>,
+    #[serde(default)]
+    mergeable: String,
 }
 
 impl From<RawPr> for PullRequest {
@@ -2728,6 +2733,7 @@ impl From<RawPr> for PullRequest {
                 .filter(|v| v.state == "APPROVED")
                 .count() as u32,
             unresolved_threads: None,
+            conflicting: r.mergeable == "CONFLICTING",
         }
     }
 }
@@ -3072,7 +3078,7 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
          {"__typename": "CheckRun", "name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"},
          {"__typename": "StatusContext", "context": "ci/legacy", "state": "FAILURE"}]},
       {"number": 9, "title": "WIP", "author": null, "isDraft": true, "reviewDecision": "",
-       "headRefName": "wip", "baseRefName": "main", "url": "https://github.com/octo/hello/pull/9",
+       "mergeable": "CONFLICTING", "headRefName": "wip", "baseRefName": "main", "url": "https://github.com/octo/hello/pull/9",
        "labels": [], "statusCheckRollup": [
          {"__typename": "CheckRun", "name": "test", "status": "IN_PROGRESS", "conclusion": ""}]}
     ]"#;
@@ -3132,6 +3138,11 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             (prs[1].approvals, prs[1].unresolved_threads),
             (0, None),
             "not in GraphQL's answer"
+        );
+        assert_eq!(
+            (prs[0].conflicting, prs[1].conflicting),
+            (false, true),
+            "only CONFLICTING is a conflict; a missing answer is not"
         );
         assert_eq!(prs[1].author, "ghost");
         assert!(prs[1].is_draft);

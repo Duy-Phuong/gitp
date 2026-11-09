@@ -696,6 +696,8 @@ export interface PullRequest {
   approvals: number;
   // Its line-comment threads not resolved yet; null when GitHub didn't say.
   unresolved_threads: number | null;
+  // GitHub says it has conflicts with its base (mergeable is CONFLICTING).
+  conflicting: boolean;
 }
 
 export interface PrCheck {

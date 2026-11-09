@@ -10,6 +10,8 @@ import {
   filterPrList,
   hasPrListFilters,
   prAttentionTags,
+  approvalCount,
+  hasConflicts,
   mergeChoices,
   NO_PR_LIST_FILTERS,
   prListChoices,
@@ -186,6 +188,7 @@ describe("prMatches", () => {
     merged_at: null,
     approvals: 0,
     unresolved_threads: null,
+    conflicting: false,
   };
   const matcher = (q: string) => (text: string) => text.toLowerCase().includes(q);
   it("matches the number, title, author and branch", () => {
@@ -344,6 +347,7 @@ describe("the Pull Requests view's filters and sort", () => {
     merged_at: null,
     approvals: 0,
     unresolved_threads: null,
+    conflicting: false,
     ...over,
   });
   const list = [
@@ -397,6 +401,38 @@ describe("the tags that make a pull request stand out in the lists", () => {
       ["unresolved", "3 unresolved", "💬 3"],
       ["approvals", "✓ 2 approvals", "✓ 2"],
     ]);
+  });
+
+  it("puts conflicts first", () => {
+    expect(prAttentionTags({ ...pr(2, 1), conflicting: true }).map((t) => t.kind)).toEqual(["conflicts", "unresolved", "approvals"]);
+    expect(prAttentionTags({ ...pr(0, 0), conflicting: false })).toEqual([]);
+  });
+});
+
+describe("conflicts and approvals in the pull request's header", () => {
+  const review = (author: string, state: string, at: string) => ({ author, state, submitted_at: at });
+
+  it("counts each reviewer's latest approve or request-changes review", () => {
+    expect(approvalCount([])).toBe(0);
+    expect(
+      approvalCount([
+        review("a", "APPROVED", "2026-11-01T00:00:00Z"),
+        review("a", "COMMENTED", "2026-11-02T00:00:00Z"),
+        review("b", "APPROVED", "2026-11-01T00:00:00Z"),
+        review("b", "CHANGES_REQUESTED", "2026-11-03T00:00:00Z"),
+        review("c", "CHANGES_REQUESTED", "2026-11-01T00:00:00Z"),
+        review("c", "APPROVED", "2026-11-04T00:00:00Z"),
+        review("d", "APPROVED", "2026-11-01T00:00:00Z"),
+        review("d", "DISMISSED", "2026-11-02T00:00:00Z"),
+      ]),
+    ).toBe(2);
+  });
+
+  it("sees conflicts on an open pull request only", () => {
+    expect(hasConflicts({ state: "OPEN", mergeable: "CONFLICTING", merge_state: "DIRTY" })).toBe(true);
+    expect(hasConflicts({ state: "OPEN", mergeable: "UNKNOWN", merge_state: "DIRTY" })).toBe(true);
+    expect(hasConflicts({ state: "OPEN", mergeable: "MERGEABLE", merge_state: "CLEAN" })).toBe(false);
+    expect(hasConflicts({ state: "MERGED", mergeable: "CONFLICTING", merge_state: "DIRTY" })).toBe(false);
   });
 });
 

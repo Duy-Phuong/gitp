@@ -5290,6 +5290,32 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   color: var(--bg);
   background: var(--add-fg);
 }
+.pr-flag.conflicts {
+  color: #fff;
+  background: var(--del-fg);
+}
+/* The pull request's header: conflicts in red, the approvals in green (grey
+   while there are none). */
+.pr-status {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.pr-status.conflicts {
+  color: #fff;
+  background: var(--del-fg);
+}
+.pr-status.approvals {
+  color: var(--add-fg);
+  background: color-mix(in srgb, var(--add-fg) 16%, transparent);
+}
+.pr-status.approvals.none {
+  color: var(--text-dim);
+  background: var(--bg-elev-2);
+}
 .sb-badge.review-approved,
 .pr-badge.review-approved {
   border-color: var(--add-fg);
@@ -6086,16 +6112,30 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
     transform: rotate(360deg);
   }
 }
-/* A resolved thread folds to its first comment, dimmed, as on GitHub. */
+/* A resolved thread is green and starts folded to one line; one still open
+   is orange, so the ones to answer stand out. */
 .pr-thread.resolved {
-  opacity: 0.75;
+  border-left: 3px solid var(--add-fg);
 }
-.pr-thread-resolved {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-dim);
+.pr-thread.unresolved {
+  border-left: 3px solid var(--mod-fg);
+}
+.pr-thread-status {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.pr-thread-status.resolved {
+  color: var(--add-fg);
+  background: color-mix(in srgb, var(--add-fg) 16%, transparent);
+}
+.pr-thread-status.unresolved {
+  color: var(--mod-fg);
+  background: color-mix(in srgb, var(--mod-fg) 16%, transparent);
 }
 .pr-files-hint,
 .pr-checks-summary {
@@ -6146,6 +6186,7 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .pr-comment-fold {
   display: none;
 }
+.fold-always > .pr-comment-fold,
 .comments-collapsed .pr-comment-fold {
   display: flex;
   align-items: center;
@@ -6161,6 +6202,7 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   text-align: left;
   cursor: pointer;
 }
+.fold-always > .pr-comment-fold:hover,
 .comments-collapsed .pr-comment-fold:hover {
   color: var(--text);
 }
@@ -6176,11 +6218,13 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.pr-comment-folds.fold-always:not(.open) > :not(.pr-comment-fold),
 .comments-collapsed .pr-comment-folds:not(.open) > :not(.pr-comment-fold) {
   display: none;
 }
+.pr-comment-folds.fold-always:not(.open),
 .comments-collapsed .pr-comment-folds:not(.open) {
-  padding: 3px 10px;
+  padding: 4px 10px;
 }
 .comments-collapsed .pr-draft.pr-comment-folds.open > .pr-comment-fold {
   padding: 6px 10px 0;

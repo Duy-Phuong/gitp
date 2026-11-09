@@ -2138,6 +2138,7 @@ export async function createPullRequestOnGitHub(pr: NewPullRequest): Promise<num
       merged_at: null,
       approvals: 0,
       unresolved_threads: 0,
+      conflicting: false,
     });
     mockPrDetailOf(number).body = pr.body;
     return number;
@@ -3630,6 +3631,7 @@ const MOCK_MERGED_PULL_REQUESTS: PullRequest[] = [
     merged_at: "2026-11-05T16:20:00Z",
     approvals: 2,
     unresolved_threads: null,
+    conflicting: false,
   },
   {
     number: 38,
@@ -3646,6 +3648,7 @@ const MOCK_MERGED_PULL_REQUESTS: PullRequest[] = [
     merged_at: "2026-11-03T09:00:00Z",
     approvals: 1,
     unresolved_threads: null,
+    conflicting: false,
   },
 ];
 
@@ -3665,6 +3668,7 @@ const MOCK_PULL_REQUESTS: PullRequest[] = [
     merged_at: null,
     approvals: 2,
     unresolved_threads: 0,
+    conflicting: false,
   },
   {
     number: 41,
@@ -3681,6 +3685,7 @@ const MOCK_PULL_REQUESTS: PullRequest[] = [
     merged_at: null,
     approvals: 0,
     unresolved_threads: 3,
+    conflicting: false,
   },
   {
     number: 39,
@@ -3697,6 +3702,7 @@ const MOCK_PULL_REQUESTS: PullRequest[] = [
     merged_at: null,
     approvals: 1,
     unresolved_threads: 1,
+    conflicting: true,
   },
 ];
 
@@ -3739,8 +3745,8 @@ function mockPrDetail(pr: PullRequest): PullRequestDetail {
     additions: 2,
     deletions: 1,
     changed_files: 1,
-    mergeable: "MERGEABLE",
-    merge_state: pr.is_draft ? "DRAFT" : "CLEAN",
+    mergeable: pr.conflicting ? "CONFLICTING" : "MERGEABLE",
+    merge_state: pr.is_draft ? "DRAFT" : pr.conflicting ? "DIRTY" : "CLEAN",
   };
 }
 
