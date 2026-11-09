@@ -28,6 +28,9 @@ import {
   threadsPerFile,
   listingOf,
   otherListings,
+  approvable,
+  menuTargets,
+  toggledSelection,
 } from "./pull-requests";
 import type { FileDiff, PrReviewComment, PullRequest, PullRequestDetail } from "./types";
 
@@ -502,5 +505,27 @@ describe("the Reviewers row", () => {
     expect(reviewerMatches(all, "dun", ["me"])).toEqual(["dung-truong", "Dunk", "andung"]);
     expect(reviewerMatches(all, "@DUNG", ["dung-truong"])).toEqual(["andung"]);
     expect(reviewerMatches(all, "", ["me"], 2)).toEqual(["andung", "dung-truong"]);
+  });
+});
+
+describe("several pull requests at once", () => {
+  it("adds a ⌘-clicked pull request to the selection, or takes it out", () => {
+    expect(toggledSelection([], 42)).toEqual([42]);
+    expect(toggledSelection([42, 39], 42)).toEqual([39]);
+    expect(toggledSelection([39], 42)).toEqual([39, 42]);
+  });
+
+  it("acts on the whole selection from one of its rows, else on the row alone", () => {
+    const listed = [42, 41, 39];
+    expect(menuTargets([42, 39], 39, listed)).toEqual([42, 39]);
+    expect(menuTargets([42, 39], 41, listed), "a row outside the selection").toEqual([41]);
+    expect(menuTargets([42], 42, listed), "one selected is just that row").toEqual([42]);
+    expect(menuTargets([42, 7], 42, listed), "a selected one no longer listed").toEqual([42]);
+  });
+
+  it("leaves the user's own pull requests out of an approval", () => {
+    const prs = [{ number: 1, author: "me" }, { number: 2, author: "hubot" }];
+    expect(approvable(prs, "me")).toEqual({ others: [prs[1]], own: [prs[0]] });
+    expect(approvable(prs, null), "not signed in: GitHub decides").toEqual({ others: prs, own: [] });
   });
 });

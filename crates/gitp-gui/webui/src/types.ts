@@ -660,8 +660,9 @@ export interface GhAccount {
 }
 
 // "reviewed" is gitp's own: all of them, narrowed to the ones with a review
-// saved under the repo's review/ folder. GitHub only sees the other three.
-export type PrFilter = "all" | "mine" | "review_requested" | "reviewed" | "merged";
+// saved under the repo's review/ folder; "rereview" too: the ones with commits
+// since their review. GitHub only sees the others.
+export type PrFilter = "all" | "mine" | "review_requested" | "reviewed" | "rereview" | "merged";
 
 // A review saved under the repo's review/ folder, and the pull request it reviews.
 export interface ReviewFile {

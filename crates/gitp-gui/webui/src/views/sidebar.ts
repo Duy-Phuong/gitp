@@ -83,6 +83,8 @@ export interface PrSectionState {
   query: string;
   // The reviews saved under the repo's review/ folder, by pull request.
   reviewFiles: ReviewFile[];
+  // The pull requests ⌘-clicked into a selection, for one action on all.
+  selected: number[];
 }
 
 export interface SidebarCallbacks {
@@ -135,6 +137,8 @@ export interface SidebarCallbacks {
   onPrPoint?: (pr: PullRequest) => void;
   // Right-click a pull request: check out, open on GitHub, copy.
   onPrMenu: (pr: PullRequest, x: number, y: number) => void;
+  // ⌘-click (Ctrl elsewhere): add the pull request to the selection, or take it out.
+  onPrSelect?: (pr: PullRequest) => void;
   // Its review in the background, as a badge: running, failed, or drafts ready.
   prReviewBadge: (pr: PullRequest) => { text: string; kind: "running" | "failed" | "ready" } | null;
   // Reviewed at its head commit, or commits came since.
@@ -626,7 +630,11 @@ function buildPullRequests(
   const searched = (text: string) => text.toLowerCase().includes(q);
   const reviewed = new Set(p.reviewFiles.map((f) => f.number));
   const shown = p.list.filter(
-    (pr) => prMatches(pr, match) && prMatches(pr, searched) && (p.filter !== "reviewed" || reviewed.has(pr.number)),
+    (pr) =>
+      prMatches(pr, match) &&
+      prMatches(pr, searched) &&
+      (p.filter !== "reviewed" || reviewed.has(pr.number)) &&
+      (p.filter !== "rereview" || cb.prReviewMark?.(pr)?.kind === "stale"),
   );
   // A number the list doesn't hold (closed, merged, or past the open ones
   // loaded): GitHub has it, so offer to open it.
@@ -640,6 +648,8 @@ function buildPullRequests(
     note(
       p.filter === "reviewed"
         ? "No saved review of an open pull request"
+        : p.filter === "rereview"
+          ? "No pull request has commits since its review"
         : p.list.length
           ? "No matches"
           : p.filter === "merged"
@@ -647,12 +657,12 @@ function buildPullRequests(
             : "No open pull requests",
     );
   }
-  for (const pr of shown) tree.append(prLeaf(pr, p.open === pr.number && s.activeView === "pr", cb));
+  for (const pr of shown) tree.append(prLeaf(pr, p.open === pr.number && s.activeView === "pr", cb, p.selected.includes(pr.number)));
 }
 
 // A pull request: its checks as a dot, number and title, draft and review
 // badges, and its author. Click opens it, right-click its menu.
-function prLeaf(pr: PullRequest, open: boolean, cb: SidebarCallbacks): HTMLElement {
+function prLeaf(pr: PullRequest, open: boolean, cb: SidebarCallbacks, selected = false): HTMLElement {
   const review = reviewDecisionLabel(pr.review_decision);
   const row = el("div", {
     class: `sb-leaf indent sb-pr${open ? " head" : ""}`,
@@ -660,7 +670,7 @@ function prLeaf(pr: PullRequest, open: boolean, cb: SidebarCallbacks): HTMLEleme
       `#${pr.number} ${pr.title}`,
       `${pr.author} · ${pr.base} ← ${pr.head}`,
       [pr.is_draft ? "draft" : null, review, pr.checks ? `checks: ${pr.checks}` : null].filter(Boolean).join(" · "),
-      "Click: open · Right-click: actions",
+      "Click: open · ⌘-click: select several · Right-click: actions",
     ]
       .filter(Boolean)
       .join("\n"),
@@ -679,7 +689,11 @@ function prLeaf(pr: PullRequest, open: boolean, cb: SidebarCallbacks): HTMLEleme
     row.append(el("span", { class: `sb-badge review-${pr.review_decision!.toLowerCase()}`, text: review }));
   }
   row.append(el("span", { class: "sb-ab", text: pr.author }));
-  row.addEventListener("click", () => cb.onPrOpen(pr));
+  if (selected) row.classList.add("selected");
+  row.addEventListener("click", (e) => {
+    if ((e.metaKey || e.ctrlKey) && cb.onPrSelect) cb.onPrSelect(pr);
+    else cb.onPrOpen(pr);
+  });
   whenPointedAt(row, () => cb.onPrPoint?.(pr));
   row.addEventListener("contextmenu", (e) => {
     e.preventDefault();

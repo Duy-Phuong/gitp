@@ -5801,6 +5801,13 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .prl-row.open {
   box-shadow: inset 3px 0 0 var(--accent);
 }
+/* ⌘-clicked into a selection, for one action on all of them. */
+.prl-row.selected,
+.prl-row.selected:hover,
+.sb-leaf.sb-pr.selected,
+.sb-leaf.sb-pr.selected:hover {
+  background: var(--row-sel);
+}
 .prl-table .prl-checks {
   width: 14px;
   padding-right: 0;

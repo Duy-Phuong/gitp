@@ -53,6 +53,7 @@ const state = (open: number | null, query = ""): SidebarState => ({
     error: null,
     open,
     query,
+    selected: [],
   },
 });
 
@@ -113,6 +114,34 @@ describe("renderSidebar", () => {
     renderSidebar(host, s, callbacks());
     expect(prRows(host)).toEqual([]);
     expect(host.textContent).toContain("No saved review of an open pull request");
+  });
+
+  it("narrows to the pull requests with commits since their review under Review again", () => {
+    const host = document.createElement("div");
+    const s = state(null, "");
+    s.prs.filter = "rereview";
+    const mark = (n: number) => (n === 39 ? { kind: "stale", short: "↻ rev", title: "" } : { kind: "reviewed", short: "✓ rev", title: "" });
+    renderSidebar(host, s, callbacks({ prReviewMark: (pr) => mark(pr.number) }));
+    expect(prRows(host)).toEqual(["#39 Fix the date format"]);
+
+    renderSidebar(host, s, callbacks({ prReviewMark: () => null }));
+    expect(prRows(host)).toEqual([]);
+    expect(host.textContent).toContain("No pull request has commits since its review");
+  });
+
+  it("selects a pull request on ⌘-click (Ctrl elsewhere) and opens one on a plain click", () => {
+    const host = document.createElement("div");
+    const picked: string[] = [];
+    const cb = callbacks({ onPrOpen: (pr) => picked.push(`open ${pr.number}`), onPrSelect: (pr) => picked.push(`select ${pr.number}`) });
+    const s = state(null);
+    s.prs.selected = [39];
+    renderSidebar(host, s, cb);
+    const rows = [...host.querySelectorAll<HTMLElement>(".sb-pr")];
+    expect(rows.map((r) => r.classList.contains("selected"))).toEqual([false, true]);
+    rows[0].dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true }));
+    rows[0].dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true }));
+    rows[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(picked).toEqual(["select 42", "select 42", "open 39"]);
   });
 
   it("offers to open a number the list doesn't have, closed or merged ones included", () => {

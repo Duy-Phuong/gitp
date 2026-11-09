@@ -1986,7 +1986,7 @@ export async function ghRepo(): Promise<string | null> {
   return invoke<string | null>("gh_repo", {});
 }
 
-export async function listPullRequests(filter: Exclude<PrFilter, "reviewed">): Promise<PullRequest[]> {
+export async function listPullRequests(filter: Exclude<PrFilter, "reviewed" | "rereview">): Promise<PullRequest[]> {
   if (!isTauri()) {
     await mockNetworkDelay();
     const me = MOCK_GH_ACCOUNT.login;

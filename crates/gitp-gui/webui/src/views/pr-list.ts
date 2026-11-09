@@ -39,6 +39,8 @@ export interface PullRequestListCallbacks {
   // The review inbox, across repositories.
   inbox?: () => void;
   signIn: () => void;
+  // ⌘-click (Ctrl elsewhere): add the pull request to the selection, or take it out.
+  select?: (pr: PullRequest) => void;
   // The saved review's badge, as the sidebar shows it.
   reviewBadge: (pr: PullRequest) => { kind: string; text: string } | null;
   // Reviewed at its head commit, or commits came since.
@@ -242,7 +244,10 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
     const shown = sortPrList(
       filterPrList(
         p.list.filter(
-          (pr) => prMatches(pr, (t) => t.toLowerCase().includes(q)) && (p.filter !== "reviewed" || reviewed.has(pr.number)),
+          (pr) =>
+            prMatches(pr, (t) => t.toLowerCase().includes(q)) &&
+            (p.filter !== "reviewed" || reviewed.has(pr.number)) &&
+            (p.filter !== "rereview" || cb.reviewMark?.(pr)?.kind === "stale"),
         ),
         filters,
       ),
@@ -282,12 +287,12 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
       headRow.append(th);
     }
     const rows = el("tbody");
-    for (const pr of shown) rows.append(row(pr, p.open));
+    for (const pr of shown) rows.append(row(pr, p.open, p.selected.includes(pr.number)));
     table.append(el("thead", {}, [headRow]), rows);
     body.append(table);
   }
 
-  function row(pr: PullRequest, open: number | null): HTMLElement {
+  function row(pr: PullRequest, open: number | null, selected = false): HTMLElement {
     const titleLine = el("div", { class: "prl-title-line" }, [el("span", { class: "prl-title-text", text: pr.title })]);
     if (pr.is_draft) titleLine.append(el("span", { class: "sb-badge", text: "draft" }));
     for (const tag of prAttentionTags(pr)) titleLine.append(el("span", { class: `pr-flag ${tag.kind}`, text: tag.text, title: tag.title }));
@@ -307,7 +312,7 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
       e.stopPropagation();
       cb.openInTab(pr);
     });
-    const tr = el("tr", { class: `prl-row${open === pr.number ? " open" : ""}`, title: "Click: open · Right-click: actions" }, [
+    const tr = el("tr", { class: `prl-row${open === pr.number ? " open" : ""}${selected ? " selected" : ""}`, title: "Click: open · ⌘-click: select several · Right-click: actions" }, [
       el("td", { class: "prl-checks", title: pr.checks ? `checks: ${pr.checks}` : "no checks" }, [
         el("span", { class: `pr-check-dot ${pr.checks ?? "none"}` }),
       ]),
@@ -327,7 +332,10 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
       }),
       el("td", { class: "prl-actions" }, [inTab]),
     ]);
-    tr.addEventListener("click", () => cb.open(pr.number));
+    tr.addEventListener("click", (e) => {
+      if ((e.metaKey || e.ctrlKey) && cb.select) cb.select(pr);
+      else cb.open(pr.number);
+    });
     whenPointedAt(tr, () => cb.point?.(pr.number));
     tr.addEventListener("contextmenu", (e) => {
       e.preventDefault();

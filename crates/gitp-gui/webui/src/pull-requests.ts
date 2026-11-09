@@ -23,15 +23,18 @@ export const PR_FILTERS: { value: PrFilter; label: string; short: string }[] = [
   { value: "mine", label: "Created by me", short: "Mine" },
   { value: "review_requested", label: "Review requested", short: "Requested" },
   { value: "reviewed", label: "Reviewed", short: "Reviewed" },
+  // Reviewed before commits came: time to review again.
+  { value: "rereview", label: "Review again", short: "Again" },
   // The last 20 merged, the latest merge first.
   { value: "merged", label: "Merged", short: "Merged" },
 ];
 
 // What gh lists for a filter: Reviewed is All narrowed to the pull requests
-// with a saved review, so it reads All's list.
-export type PrListing = Exclude<PrFilter, "reviewed">;
+// with a saved review, and Review again to those with commits since; so both
+// read All's list.
+export type PrListing = Exclude<PrFilter, "reviewed" | "rereview">;
 export function listingOf(filter: PrFilter): PrListing {
-  return filter === "reviewed" ? "all" : filter;
+  return filter === "reviewed" || filter === "rereview" ? "all" : filter;
 }
 
 // The listings besides `filter`'s, read ahead so a switch shows at once.
@@ -59,6 +62,26 @@ export function prAttentionTags(
     tags.push({ kind: "approvals", text: `✓ ${pr.approvals} approvals`, short: `✓ ${pr.approvals}`, title: `Approved by ${pr.approvals} reviewers` });
   }
   return tags;
+}
+
+// --- Several pull requests at once (⌘-click) ---------------------------------
+
+// The selection with `n` added, or taken out when it was in.
+export function toggledSelection(selected: number[], n: number): number[] {
+  return selected.includes(n) ? selected.filter((x) => x !== n) : [...selected, n];
+}
+
+// The pull requests a right-click on `clicked` acts on: the whole selection
+// when it is one of two or more selected (and still listed), else itself.
+export function menuTargets(selected: number[], clicked: number, listed: number[]): number[] {
+  const live = selected.filter((n) => listed.includes(n));
+  return live.length > 1 && live.includes(clicked) ? live : [clicked];
+}
+
+// `prs` split into the ones `login` may approve and their own, which GitHub
+// refuses.
+export function approvable<T extends { author: string }>(prs: T[], login: string | null): { others: T[]; own: T[] } {
+  return { others: prs.filter((p) => !login || p.author !== login), own: login ? prs.filter((p) => p.author === login) : [] };
 }
 
 // The Pull Requests view's own filters, beside the sidebar's; "" (no

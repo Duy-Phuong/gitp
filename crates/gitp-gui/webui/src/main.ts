@@ -163,8 +163,10 @@ import { onWorktreeDrop, onWorktreeMenu, openWorktreeWip } from "./worktree-acti
 import { addRemoteAction, onRemoteFolderMenu } from "./remote-actions";
 import { addSubmoduleAction, onSubmoduleMenu, openSubmodule } from "./submodule-actions";
 import {
+  clearPrSelection,
   loadPullRequests,
   onPrMenu,
+  togglePrSelected,
   pullRequestCallbacks,
   refreshPullRequests,
   setPrFilter,
@@ -403,6 +405,8 @@ async function init(): Promise<void> {
     onSectionMenu,
     loadPullRequests: () => void loadPullRequests(),
     onPrMenu,
+    togglePrSelected,
+    clearPrSelection,
     onPrFilter: setPrFilter,
     onPrRefresh: refreshPullRequests,
     onGitHubSignIn: () => void signInToGitHub(),
@@ -571,7 +575,11 @@ async function init(): Promise<void> {
   ui.prView = setupPullRequestView($("#pr-view"), pullRequestCallbacks);
   ui.branchReviewView = setupBranchReviewView($("#branch-review-view"), branchReviewCallbacks);
   ui.prListView = setupPullRequestListView($("#prlist-view"), {
-    open: showPullRequest,
+    open: (n) => {
+      clearPrSelection();
+      showPullRequest(n);
+    },
+    select: (pr) => togglePrSelected(pr.number),
     point: readPullRequestAhead,
     openInTab: (pr) => openPullRequestTab(pr.number, pr.title),
     menu: onPrMenu,

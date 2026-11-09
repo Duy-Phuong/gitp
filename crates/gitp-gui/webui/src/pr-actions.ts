@@ -114,7 +114,7 @@ import {
 import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
 import { openReviewViewer } from "./views/review-viewer";
-import { baseBranches, canFixDrafts, defaultMergeMethod, githubRemoteName, listingOf, mergeAdvice, mergeChoices, otherListings, reviewThreads, type Thread } from "./pull-requests";
+import { approvable, menuTargets, toggledSelection, baseBranches, canFixDrafts, defaultMergeMethod, githubRemoteName, listingOf, mergeAdvice, mergeChoices, otherListings, reviewThreads, type Thread } from "./pull-requests";
 import type { AheadCommit, BranchRef, ConflictResolution, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict, ThreadConversation, TurnKind } from "./types";
 
 // --- The sidebar section ----------------------------------------------------
@@ -272,9 +272,52 @@ export function refreshPullRequests(): void {
 }
 
 // Right-click a pull request in the sidebar.
+// ⌘-click: the pull request joins the selection, or leaves it.
+export function togglePrSelected(number: number): void {
+  state.prs.selected = toggledSelection(state.prs.selected, number);
+  const n = state.prs.selected.length;
+  setStatus(n ? `${n} pull request${n === 1 ? "" : "s"} selected: right-click one for an action on all of them.` : "No pull request selected.");
+  renderSidebarNow();
+}
+
+export function clearPrSelection(): void {
+  if (state.prs.selected.length === 0) return;
+  state.prs.selected = [];
+  renderSidebarNow();
+}
+
 export function onPrMenu(pr: PullRequest, x: number, y: number): void {
+  const list = state.prs.list ?? [];
+  const targets = menuTargets(state.prs.selected, pr.number, list.map((p) => p.number));
+  if (targets.length > 1) {
+    // Merged ones need no review or approval.
+    const prs = targets.map((n) => list.find((p) => p.number === n)!).filter((p) => p.merged_at === null);
+    const n = prs.length;
+    if (n === 0) {
+      showContextMenu(x, y, [{ label: "Clear Selection", run: clearPrSelection }]);
+      return;
+    }
+    showContextMenu(x, y, [
+      { label: `Run Review Skill on ${n} Pull Requests`, run: () => reviewPullRequests(prs, SKILL_REVIEW_COMMAND) },
+      { label: `Run Review Command on ${n} Pull Requests`, run: () => reviewPullRequests(prs, loadReviewCommand()) },
+      { separator: true },
+      { label: `Approve ${n} Pull Requests…`, run: () => void approvePullRequests(prs) },
+      { separator: true },
+      { label: "Clear Selection", run: clearPrSelection },
+    ]);
+    return;
+  }
+  const open = pr.merged_at === null;
   showContextMenu(x, y, [
     { label: "Open", run: () => showPullRequest(pr.number) },
+    ...(open
+      ? [
+          { label: "Run Review Skill", run: () => reviewPullRequests([pr], SKILL_REVIEW_COMMAND) },
+          { label: "Run Review Command", run: () => reviewPullRequests([pr], loadReviewCommand()) },
+          { label: "Approve…", run: () => void approvePullRequests([pr]) },
+          { separator: true as const },
+        ]
+      : []),
     { label: "Check Out", run: () => void checkoutPullRequestAction(pr.number) },
     {
       label: "Check Out in New Worktree…",
@@ -289,6 +332,48 @@ export function onPrMenu(pr: PullRequest, x: number, y: number): void {
     { label: "Copy Link", run: () => void copyText(pr.url, `Copied ${pr.url}`) },
     { label: "Copy Branch Name", run: () => void copyText(pr.head, `Copied ${pr.head}`) },
   ]);
+}
+
+// Review each of `prs` with `command`, all at once in the background: each is
+// a job of its own, its drafts ready on its pull request when it is done.
+function reviewPullRequests(prs: PullRequest[], command: string): void {
+  const repo = state.repoPath;
+  for (const pr of prs) void runReview(repo, pr.number, pr.head_oid, command);
+  if (prs.length > 1) setStatus(`Reviewing ${prs.map((p) => `#${p.number}`).join(", ")} in the background — each one's drafts show on it when it's done.`);
+  clearPrSelection();
+}
+
+// Approve `prs` on GitHub, with no message, after one confirmation. The
+// user's own are left out: GitHub doesn't let an author approve.
+async function approvePullRequests(prs: PullRequest[]): Promise<void> {
+  const login = state.prs.account?.login ?? null;
+  const { others, own } = approvable(prs, login);
+  if (others.length === 0) {
+    setStatus(own.length === 1 ? `#${own[0].number} is yours: GitHub doesn't let you approve it.` : "These are yours: GitHub doesn't let you approve them.");
+    return;
+  }
+  const lines = others.map((p) => `#${p.number} ${p.title}`).join("\n");
+  const skipped = own.length ? `\n\nLeft out, yours: ${own.map((p) => `#${p.number}`).join(", ")}.` : "";
+  const what = others.length === 1 ? `pull request #${others[0].number}` : `${others.length} pull requests`;
+  if (!(await confirmDialog(`Approve ${what} on GitHub${login ? ` as ${login}` : ""}?\n\n${lines}${skipped}`))) {
+    setStatus("Not approved.");
+    return;
+  }
+  const failed: string[] = [];
+  for (const [i, p] of others.entries()) {
+    setStatus(`Approving #${p.number} (${i + 1} of ${others.length})…`);
+    try {
+      await reviewPullRequest(p.number, "approve", "");
+    } catch (err) {
+      failed.push(`#${p.number}: ${String(err).trim()}`);
+    }
+  }
+  clearPrSelection();
+  void refreshPullRequests();
+  if (state.prs.open !== null && others.some((p) => p.number === state.prs.open)) ui.prView?.reload();
+  const done = others.length - failed.length;
+  if (failed.length === 0) reportDone(`Approved ${others.map((p) => `#${p.number}`).join(", ")}.`);
+  else opFailed(`Approved ${done} of ${others.length}; ${failed.length} failed`, failed.join("\n"));
 }
 
 // --- Checking out -----------------------------------------------------------
@@ -997,7 +1082,7 @@ async function restoreDrafts(repo: string, number: number): Promise<void> {
   const remembered = rememberedFile(repo, number);
   const file =
     remembered ??
-    (state.prs.filter === "reviewed" && prReview(repo, number).drafts.length === 0 ? savedReview(number) : null);
+    ((state.prs.filter === "reviewed" || state.prs.filter === "rereview") && prReview(repo, number).drafts.length === 0 ? savedReview(number) : null);
   if (!file) return;
   const r = prReview(repo, number);
   try {

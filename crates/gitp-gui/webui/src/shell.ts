@@ -99,6 +99,9 @@ interface RefActions {
   // and header's actions.
   loadPullRequests: () => void;
   onPrMenu: SidebarCallbacks["onPrMenu"];
+  // ⌘-click on a pull request, and a plain click that opens one.
+  togglePrSelected: (n: number) => void;
+  clearPrSelection: () => void;
   onPrFilter: SidebarCallbacks["onPrFilter"];
   onPrRefresh: SidebarCallbacks["onPrRefresh"];
   onGitHubSignIn: SidebarCallbacks["onGitHubSignIn"];
@@ -192,7 +195,7 @@ function resetRepoViews(): void {
   ui.codeView?.reset();
   ui.prView?.reset();
   // The account is gh's, the same in every repo; the rest is this repo's.
-  state.prs = { ...state.prs, repoPath: "", repo: null, list: null, loading: false, error: null, open: null, query: "" };
+  state.prs = { ...state.prs, repoPath: "", repo: null, list: null, loading: false, error: null, open: null, query: "", selected: [] };
   ui.pendingCherryPicks = [];
   ui.pickPlanRepo = "";
   conflictPrefill = null;
@@ -1029,6 +1032,7 @@ function prsSignature(): string {
       )
       .join(","),
     p.list?.map((pr) => reviewBadge(state.repoPath, pr.number)?.text ?? "").join(","),
+    p.selected.join(","),
     p.list?.map((pr) => `${pr.head_oid}:${prReviewMark(state.repoPath, pr, p.reviewFiles)?.kind ?? ""}`).join(","),
   ].join(";");
 }
@@ -1115,7 +1119,11 @@ export function renderSidebarNow(): void {
       onToggleHidden: (refname) => updateGraphPrefs(withHidden(state.graph, [refname], !state.graph.hidden.includes(refname))),
       onSectionMenu: (key, x, y) => refActions.onSectionMenu(key, x, y),
       onAddSubmodule: () => refActions.onAddSubmodule(),
-      onPrOpen: (pr) => showPullRequest(pr.number),
+      onPrOpen: (pr) => {
+        refActions.clearPrSelection();
+        showPullRequest(pr.number);
+      },
+      onPrSelect: (pr) => refActions.togglePrSelected(pr.number),
       onPrPoint: (pr) => readPullRequestAhead(pr.number),
       onPrMenu: (pr, x, y) => refActions.onPrMenu(pr, x, y),
       prReviewBadge: (pr) => reviewBadge(state.repoPath, pr.number),
