@@ -248,7 +248,8 @@ body {
   align-items: center;
   gap: 5px;
   flex: none;
-  padding: 4px 10px;
+  /* Lifted a pixel (the height stays): lowercase words look centered. */
+  padding: 3px 10px 5px;
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent);
@@ -2638,6 +2639,12 @@ body.tab-dragging * {
   white-space: nowrap;
   border: 1px solid transparent;
 }
+/* The name lifted a pixel: lowercase names look centered; the icons beside
+   it are centered already. */
+.commit-ref-name {
+  position: relative;
+  top: -1px;
+}
 .commit-ref .tag-icon,
 .commit-ref .remote-icon {
   width: 10px;
@@ -2998,6 +3005,9 @@ body.ref-dragging * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Lifted a pixel: lowercase names look centered; the icon is already. */
+  position: relative;
+  top: -1px;
 }
 
 /* Detail ----------------------------------------------------------------- */
@@ -5006,7 +5016,8 @@ textarea:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 10px;
-  padding: 1px 6px;
+  /* Lifted a pixel (the height stays): lowercase words look centered. */
+  padding: 0 6px 2px;
   border-radius: 4px;
   background: var(--bg-elev-2);
   color: var(--text-dim);
@@ -5516,7 +5527,8 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   font-size: 11px;
   font-weight: 600;
   line-height: 1;
-  padding: 3px 8px;
+  /* Lifted a pixel (the height stays): lowercase words look centered. */
+  padding: 2px 8px 4px;
   border-radius: 999px;
   white-space: nowrap;
 }
@@ -5963,7 +5975,9 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   color: var(--text-dim);
 }
 .pr-state {
-  padding: 1px 8px;
+  /* Lifted a pixel (the height stays): lowercase words look centered. */
+  line-height: 11px;
+  padding: 1px 8px 3px;
   border-radius: 10px;
   font-size: 11px;
   font-weight: 600;
@@ -5982,7 +5996,9 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 }
 .pr-badge {
   font-size: 11px;
-  padding: 0 6px;
+  /* Lifted a pixel (the height stays): lowercase words look centered. */
+  line-height: 11px;
+  padding: 0 6px 2px;
   border-radius: 8px;
   border: 1px solid var(--border);
   color: var(--text-dim);
@@ -5991,7 +6007,9 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .pr-label {
   --label: var(--text-dim);
   font-size: 11px;
-  padding: 0 7px;
+  /* Lifted a pixel (the height stays): lowercase words look centered. */
+  line-height: 11px;
+  padding: 0 7px 2px;
   border-radius: 8px;
   border: 1px solid var(--label);
   background: color-mix(in srgb, var(--label) 22%, transparent);
@@ -6338,10 +6356,13 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 }
 .pr-thread-status {
   flex: none;
+  /* Its own height, not the row's: the actions beside it are taller. */
+  align-self: center;
   font-size: 11px;
   font-weight: 600;
   line-height: 1;
-  padding: 3px 7px;
+  /* Lifted a pixel (the height stays): lowercase words look centered. */
+  padding: 2px 7px 4px;
   border-radius: 999px;
   white-space: nowrap;
 }
@@ -6457,7 +6478,9 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   margin-left: auto;
   font-family: var(--sans);
   font-size: 11px;
-  padding: 0 7px;
+  /* Lifted a pixel (the height stays): lowercase words look centered. */
+  line-height: 11px;
+  padding: 0 7px 2px;
   border-radius: 8px;
   border: 1px solid var(--border);
   color: var(--text-dim);
