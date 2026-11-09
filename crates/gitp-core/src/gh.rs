@@ -1316,7 +1316,7 @@ impl Repo {
             REVIEW_TIMEOUT,
             &self.net,
         )?;
-        if let Some(file) = review_file_written_since(self.workdir(), started) {
+        if let Some(file) = review_file_written_since(self.workdir(), started, Some(number)) {
             let text = std::fs::read_to_string(&file)
                 .map_err(|e| Error::Message(format!("couldn't read {}: {e}", file.display())))?;
             return Ok(GeneratedReview {
@@ -1522,11 +1522,21 @@ fn preferred(a: &(PathBuf, SystemTime), b: &(PathBuf, SystemTime)) -> bool {
     a.1 > b.1 || (a.1 == b.1 && html(&a.0) && !html(&b.0))
 }
 
-/// The newest review file under `dir` written at or after `since`.
-pub(crate) fn review_file_written_since(dir: &Path, since: SystemTime) -> Option<PathBuf> {
+/// The newest review file under `dir` written at or after `since`. With `pr`,
+/// a file that links another pull request is passed over: reviews of other
+/// pull requests, running at the same time, write there too.
+pub(crate) fn review_file_written_since(
+    dir: &Path,
+    since: SystemTime,
+    pr: Option<u64>,
+) -> Option<PathBuf> {
     let mut best: Option<(PathBuf, SystemTime)> = None;
     for f in review_files_in(dir) {
-        if f.1 >= since && best.as_ref().is_none_or(|b| preferred(&f, b)) {
+        if f.1 < since || best.as_ref().is_some_and(|b| !preferred(&f, b)) {
+            continue;
+        }
+        let other_pr = pr.is_some_and(|n| reviewed_pull_request(&f.0).is_some_and(|m| m != n));
+        if !other_pr {
             best = Some(f);
         }
     }
@@ -4033,6 +4043,21 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             file.ends_with("review/ubiid-sprint-36/pr-review-UBIID-7.html"),
             "{file}"
         );
+
+        // A review of another pull request, finishing while this one runs,
+        // is not this one's, however new.
+        let out = repo
+            .generate_review_drafts(
+                &fake.gh(),
+                7,
+                "cat >/dev/null; \
+                 printf '[#7](https://github.com/octo/hello/pull/7)' > review/ubiid-sprint-36/pr-review-UBIID-7-pr-7.md; \
+                 sleep 0.05; \
+                 printf '[#9](https://github.com/octo/hello/pull/9)' > review/ubiid-sprint-36/pr-review-UBIID-9-pr-9.md",
+            )
+            .unwrap();
+        let file = out.file.unwrap();
+        assert!(file.ends_with("pr-review-UBIID-7-pr-7.md"), "{file}");
 
         // Nothing written this time: the printed text is the review again.
         let out = repo

@@ -208,7 +208,7 @@ impl Repo {
             REVIEW_TIMEOUT,
             &self.net,
         )?;
-        let (text, file) = match review_file_written_since(&dir, started) {
+        let (text, file) = match review_file_written_since(&dir, started, None) {
             Some(file) => (
                 std::fs::read_to_string(&file).map_err(|e| {
                     Error::Message(format!("couldn't read {}: {e}", file.display()))
