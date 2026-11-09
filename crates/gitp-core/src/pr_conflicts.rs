@@ -256,23 +256,49 @@ impl Repo {
 
     /// Commit the waiting merge in `branch`'s worktree and push the branch,
     /// so GitHub sees the conflicts resolved. Refused unless the worktree is
-    /// still mid-merge at `before` with nothing unresolved. Returns the merge
-    /// commit.
+    /// still mid-merge at `before` with nothing unresolved — or holds the
+    /// merge committed already on `before`, whose push failed: then it is
+    /// pushed again. Returns the merge commit.
+    ///
+    /// The repository's pre-commit and commit-msg hooks don't run, as they
+    /// don't for a merge git commits by itself: they would check again every
+    /// file the base brought in, checked when it landed there, with tools a
+    /// fresh worktree often lacks (a project's node_modules, a formatter's
+    /// JDK). The resolution itself was approved in the preview.
     pub fn approve_conflict_resolution(&self, branch: &str, before: &str) -> Result<String> {
         let dir = self.pr_worktree(branch)?;
-        if !merging(&dir) || git_in(&dir, &["rev-parse", "HEAD"])? != before {
-            return Err(Error::Message(
-                "The merge isn't waiting any more: resolve the conflicts again.".into(),
-            ));
-        }
-        if !git_in(&dir, &["diff", "--name-only", "--diff-filter=U"])?.is_empty() {
-            return Err(Error::Message(
-                "Some conflicts are still unresolved.".into(),
-            ));
-        }
-        git_in(&dir, &["commit", "-q", "--no-edit"])?;
-        let commit = git_in(&dir, &["rev-parse", "HEAD"])?;
-        self.push_branch(branch, None)?;
+        let head = git_in(&dir, &["rev-parse", "HEAD"])?;
+        // A merge commit (two parents) whose first parent is `before`.
+        let parents = git_in(&dir, &["rev-list", "--parents", "-n", "1", &head])?;
+        let parents: Vec<&str> = parents.split(' ').skip(1).collect();
+        let committed_already = !merging(&dir) && parents.len() == 2 && parents[0] == before;
+        let commit = if committed_already {
+            head
+        } else {
+            if !merging(&dir) || head != before {
+                return Err(Error::Message(
+                    "The merge isn't waiting any more: resolve the conflicts again.".into(),
+                ));
+            }
+            if !git_in(&dir, &["diff", "--name-only", "--diff-filter=U"])?.is_empty() {
+                return Err(Error::Message(
+                    "Some conflicts are still unresolved.".into(),
+                ));
+            }
+            git_in(&dir, &["commit", "-q", "--no-edit", "--no-verify"]).map_err(|e| {
+                Error::Message(format!(
+                    "Couldn't commit the merge: {e}\n\nIt still waits, staged, in {}.",
+                    dir.display()
+                ))
+            })?;
+            git_in(&dir, &["rev-parse", "HEAD"])?
+        };
+        self.push_branch(branch, None).map_err(|e| {
+            Error::Message(format!(
+                "The merge is committed on {branch} ({}) but the push failed: {e}\n\nApprove again, or push {branch}, to send it.",
+                &commit[..commit.len().min(7)]
+            ))
+        })?;
         Ok(commit)
     }
 
@@ -454,6 +480,91 @@ mod tests {
         assert!(!merging(&wt));
         assert_eq!(git(&wt, &["rev-parse", "HEAD"]), head);
         assert_eq!(git(&wt, &["status", "--porcelain"]), "");
+    }
+
+    #[test]
+    fn the_repository_s_commit_hooks_don_t_stop_the_merge_commit() {
+        let (tmp, repo, wt, head) = setup();
+        let hooks = tmp.path().join("hooks");
+        std::fs::create_dir(&hooks).unwrap();
+        for hook in ["pre-commit", "commit-msg"] {
+            let path = hooks.join(hook);
+            std::fs::write(
+                &path,
+                "#!/bin/sh\necho needs tools this worktree lacks >&2\nexit 1\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+                .unwrap();
+        }
+        git(&wt, &["config", "core.hooksPath", hooks.to_str().unwrap()]);
+        let r = repo
+            .resolve_conflicts_from(
+                "origin",
+                7,
+                &head,
+                "feature",
+                "main",
+                "printf 'one\\nTWO both\\nthree\\n' > a.txt",
+            )
+            .unwrap();
+        let merge = repo
+            .approve_conflict_resolution("feature", &r.before)
+            .unwrap();
+        assert_eq!(
+            git(&tmp.path().join("hello.git"), &["rev-parse", "feature"]),
+            merge
+        );
+    }
+
+    #[test]
+    fn a_failed_push_keeps_the_commit_and_approving_again_pushes_it() {
+        let (tmp, repo, wt, head) = setup();
+        let r = repo
+            .resolve_conflicts_from(
+                "origin",
+                7,
+                &head,
+                "feature",
+                "main",
+                "printf 'one\\nTWO both\\nthree\\n' > a.txt",
+            )
+            .unwrap();
+        let bare = tmp.path().join("hello.git");
+        git(
+            &wt,
+            &[
+                "remote",
+                "set-url",
+                "--push",
+                "origin",
+                tmp.path().join("nowhere.git").to_str().unwrap(),
+            ],
+        );
+        let err = repo
+            .approve_conflict_resolution("feature", &r.before)
+            .unwrap_err();
+        assert!(err.to_string().contains("is committed on feature"), "{err}");
+        assert!(!merging(&wt));
+        let merge = git(&wt, &["rev-parse", "HEAD"]);
+        assert_ne!(merge, head);
+
+        git(
+            &wt,
+            &[
+                "remote",
+                "set-url",
+                "--push",
+                "origin",
+                bare.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(
+            repo.approve_conflict_resolution("feature", &r.before)
+                .unwrap(),
+            merge
+        );
+        assert_eq!(git(&bare, &["rev-parse", "feature"]), merge);
     }
 
     #[test]
