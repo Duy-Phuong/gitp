@@ -667,6 +667,8 @@ export type PrFilter = "all" | "mine" | "review_requested" | "reviewed" | "merge
 export interface ReviewFile {
   path: string;
   number: number;
+  // The head commit the review says it reviewed; null when it names none.
+  head?: string | null;
 }
 
 export interface PrLabel {
@@ -687,6 +689,8 @@ export interface PullRequest {
   checks: string | null;
   head: string;
   base: string;
+  // The commit at the tip of `head`; "" from a list read before gitp knew it.
+  head_oid: string;
   updated_at: string;
   url: string;
   labels: PrLabel[];

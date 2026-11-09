@@ -187,6 +187,39 @@ export function hasNewCommits(reviewed: string | null, head: string): boolean {
   return !(head.startsWith(reviewed) || reviewed.startsWith(head));
 }
 
+// Whether the pull request's review covers its `head` commit: "reviewed" when
+// a review was made at it (or names no commit), "stale" when commits came
+// since — time to review again. `reviewed` are the commits the reviews say they
+// looked at: gitp's own record and the saved review file's header.
+export interface ReviewMark {
+  kind: "reviewed" | "stale";
+  text: string;
+  short: string;
+  title: string;
+}
+
+export function reviewMark(reviewed: (string | null | undefined)[], saved: boolean, head: string): ReviewMark | null {
+  const known = reviewed.filter((h): h is string => Boolean(h));
+  if (known.length === 0 && !saved) return null;
+  const current = known.find((h) => !hasNewCommits(h, head));
+  if (known.length === 0 || current) {
+    const at = current ? ` at ${current.slice(0, 8)}, its head commit` : "";
+    return { kind: "reviewed", text: "✓ Reviewed", short: "✓ rev", title: `Reviewed${at}` };
+  }
+  return {
+    kind: "stale",
+    text: "↻ Review again",
+    short: "↻ rev",
+    title: `New commits since the review (${known[0].slice(0, 8)} → ${head.slice(0, 8)}): run the review again`,
+  };
+}
+
+// The mark of pull request `pr` in `repo`, whose saved reviews are `files`.
+export function prReviewMark(repo: string, pr: { number: number; head_oid?: string }, files: { number: number; head?: string | null }[]): ReviewMark | null {
+  const file = files.find((f) => f.number === pr.number);
+  return reviewMark([reviewedHead(repo, pr.number), file?.head], Boolean(file), pr.head_oid ?? "");
+}
+
 // Remember (or forget) the file the pull request's drafts came from.
 export function setReviewFile(repo: string, number: number, file: string | null): void {
   prReview(repo, number).file = file;

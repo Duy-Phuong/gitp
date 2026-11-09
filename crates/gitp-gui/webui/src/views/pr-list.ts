@@ -41,6 +41,8 @@ export interface PullRequestListCallbacks {
   signIn: () => void;
   // The saved review's badge, as the sidebar shows it.
   reviewBadge: (pr: PullRequest) => { kind: string; text: string } | null;
+  // Reviewed at its head commit, or commits came since.
+  reviewMark?: (pr: PullRequest) => { kind: string; text: string; title: string } | null;
   // The search over the stored Claude thread conversations.
   searchConversations: () => void;
 }
@@ -289,6 +291,8 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
     const titleLine = el("div", { class: "prl-title-line" }, [el("span", { class: "prl-title-text", text: pr.title })]);
     if (pr.is_draft) titleLine.append(el("span", { class: "sb-badge", text: "draft" }));
     for (const tag of prAttentionTags(pr)) titleLine.append(el("span", { class: `pr-flag ${tag.kind}`, text: tag.text, title: tag.title }));
+    const mark = cb.reviewMark?.(pr);
+    if (mark) titleLine.append(el("span", { class: `pr-flag ${mark.kind}`, text: mark.text, title: mark.title }));
     const saved = cb.reviewBadge(pr);
     if (saved) titleLine.append(el("span", { class: `sb-badge pr-review-${saved.kind}`, text: saved.text }));
     for (const label of pr.labels) titleLine.append(labelChip(label));

@@ -130,6 +130,7 @@ describe("listChanged", () => {
     approvals: 0,
     unresolved_threads: null,
     conflicting: false,
+    head_oid: "",
     ...over,
   });
 

@@ -192,6 +192,7 @@ describe("prMatches", () => {
     approvals: 0,
     unresolved_threads: null,
     conflicting: false,
+    head_oid: "",
   };
   const matcher = (q: string) => (text: string) => text.toLowerCase().includes(q);
   it("matches the number, title, author and branch", () => {
@@ -351,6 +352,7 @@ describe("the Pull Requests view's filters and sort", () => {
     approvals: 0,
     unresolved_threads: null,
     conflicting: false,
+    head_oid: "",
     ...over,
   });
   const list = [

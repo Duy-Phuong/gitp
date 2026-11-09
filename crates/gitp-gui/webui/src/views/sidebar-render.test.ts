@@ -20,6 +20,7 @@ const pr = (number: number, title: string, author = "octocat", head = "feature/x
   approvals: 0,
   unresolved_threads: null,
   conflicting: false,
+  head_oid: "",
 });
 
 const branch = (name: string): BranchRef =>

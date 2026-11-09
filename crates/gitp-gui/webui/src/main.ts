@@ -175,7 +175,7 @@ import { setupPullRequestListView } from "./views/pr-list";
 import { readPullRequestAhead } from "./read-ahead";
 import { setupThreadSearchView } from "./views/thread-search";
 import { showThreadSearch, threadSearchCallbacks } from "./thread-search-actions";
-import { reviewBadge } from "./pr-reviews";
+import { prReviewMark, reviewBadge } from "./pr-reviews";
 import { createFileAction, editFileAction } from "./editor-actions";
 import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
@@ -581,6 +581,7 @@ async function init(): Promise<void> {
     inbox: openReviewInbox,
     signIn: () => void signInToGitHub(),
     reviewBadge: (pr) => reviewBadge(state.repoPath, pr.number),
+    reviewMark: (pr) => prReviewMark(state.repoPath, pr, state.prs.reviewFiles),
     searchConversations: showThreadSearch,
   });
   ui.threadSearchView = setupThreadSearchView($("#thread-search-view"), threadSearchCallbacks);

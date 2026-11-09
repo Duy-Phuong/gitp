@@ -8,7 +8,7 @@
 
 import { refreshUnpushed } from "./unpushed-badge";
 import { noticeBranchForCi } from "./ci-badge";
-import { reviewBadge } from "./pr-reviews";
+import { prReviewMark, reviewBadge } from "./pr-reviews";
 import {
   activateRepo,
   closeRepo,
@@ -1029,6 +1029,7 @@ function prsSignature(): string {
       )
       .join(","),
     p.list?.map((pr) => reviewBadge(state.repoPath, pr.number)?.text ?? "").join(","),
+    p.list?.map((pr) => `${pr.head_oid}:${prReviewMark(state.repoPath, pr, p.reviewFiles)?.kind ?? ""}`).join(","),
   ].join(";");
 }
 
@@ -1118,6 +1119,7 @@ export function renderSidebarNow(): void {
       onPrPoint: (pr) => readPullRequestAhead(pr.number),
       onPrMenu: (pr, x, y) => refActions.onPrMenu(pr, x, y),
       prReviewBadge: (pr) => reviewBadge(state.repoPath, pr.number),
+      prReviewMark: (pr) => prReviewMark(state.repoPath, pr, state.prs.reviewFiles),
       onPrFilter: (filter) => refActions.onPrFilter(filter),
       // Debounced like the sidebar's own filter: each search redraws the tree.
       onPrSearch: searchPullRequests,

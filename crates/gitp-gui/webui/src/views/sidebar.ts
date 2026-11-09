@@ -137,6 +137,8 @@ export interface SidebarCallbacks {
   onPrMenu: (pr: PullRequest, x: number, y: number) => void;
   // Its review in the background, as a badge: running, failed, or drafts ready.
   prReviewBadge: (pr: PullRequest) => { text: string; kind: "running" | "failed" | "ready" } | null;
+  // Reviewed at its head commit, or commits came since.
+  prReviewMark?: (pr: PullRequest) => { kind: string; short: string; title: string } | null;
   onPrFilter: (filter: PrFilter) => void;
   // Typing in the Pull Requests search box.
   onPrSearch: (text: string) => void;
@@ -669,6 +671,8 @@ function prLeaf(pr: PullRequest, open: boolean, cb: SidebarCallbacks): HTMLEleme
   );
   if (pr.is_draft) row.append(el("span", { class: "sb-badge", text: "draft" }));
   for (const tag of prAttentionTags(pr)) row.append(el("span", { class: `pr-flag ${tag.kind}`, text: tag.short, title: tag.title }));
+  const mark = cb.prReviewMark?.(pr);
+  if (mark) row.append(el("span", { class: `pr-flag ${mark.kind}`, text: mark.short, title: mark.title }));
   const reviewed = cb.prReviewBadge(pr);
   if (reviewed) row.append(el("span", { class: `sb-badge pr-review-${reviewed.kind}`, text: reviewed.text }));
   if (review && pr.review_decision !== "REVIEW_REQUIRED") {

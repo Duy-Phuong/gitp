@@ -87,6 +87,27 @@ describe("posted drafts and the reviewed head", () => {
     expect(m.hasNewCommits("e0a21160a5", "1234567890abcd")).toBe(true);
     expect(m.hasNewCommits(null, "1234567890abcd"), "never reviewed").toBe(false);
   });
+
+  it("marks a pull request reviewed at its head, or to review again once commits came", async () => {
+    const m = await fresh();
+    const head = "e0a21160a5ffff";
+    const kind = (pr: { number: number; head_oid: string }, files: { number: number; head?: string | null }[]) =>
+      m.prReviewMark("/a", pr, files)?.kind ?? null;
+    expect(kind({ number: 7, head_oid: head }, []), "never reviewed").toBeNull();
+    expect(kind({ number: 7, head_oid: head }, [{ number: 7, head: "e0a21160a5" }])).toBe("reviewed");
+    expect(kind({ number: 7, head_oid: head }, [{ number: 7, head: "0123456789" }])).toBe("stale");
+    expect(kind({ number: 7, head_oid: head }, [{ number: 7, head: null }]), "a review that names no commit").toBe("reviewed");
+    expect(kind({ number: 7, head_oid: "" }, [{ number: 7, head: "0123456789" }]), "the head isn't known").toBe("reviewed");
+    expect(kind({ number: 8, head_oid: head }, [{ number: 7, head: "0123456789" }]), "another PR's review").toBeNull();
+
+    // gitp's own record counts too: a later review run here, with no file.
+    m.setReviewedHead("/a", 7, "e0a21160a5");
+    expect(kind({ number: 7, head_oid: head }, [{ number: 7, head: "0123456789" }]), "either one at the head").toBe("reviewed");
+    expect(kind({ number: 7, head_oid: head }, [])).toBe("reviewed");
+    const stale = m.prReviewMark("/a", { number: 7, head_oid: "abcdef1234" }, []);
+    expect(stale?.kind).toBe("stale");
+    expect(stale?.title).toContain("e0a21160 → abcdef12");
+  });
 });
 
 describe("drafts kept on disk, with a fixed mark", () => {

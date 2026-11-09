@@ -2165,6 +2165,7 @@ export async function createPullRequestOnGitHub(pr: NewPullRequest): Promise<num
       approvals: 0,
       unresolved_threads: 0,
       conflicting: false,
+      head_oid: mockOid("e"),
     });
     mockPrDetailOf(number).body = pr.body;
     return number;
@@ -2373,7 +2374,11 @@ export async function cancelReviewDrafts(path: string, number: number): Promise<
 // The reviews saved under the open repo's review/ folder, one per pull
 // request: the newest, matched by the pull request it links.
 export async function reviewFiles(): Promise<ReviewFile[]> {
-  if (!isTauri()) return [{ path: "/Users/you/Documents/mideal/review/ae-403/pr-review-UBIID-42.html", number: 42 }];
+  if (!isTauri())
+    return [
+      { path: "/Users/you/Documents/mideal/review/ae-403/pr-review-UBIID-42.html", number: 42, head: mockOid("e").slice(0, 10) },
+      { path: "/Users/you/Documents/mideal/review/ae-403/pr-review-UBIID-39.html", number: 39, head: "0123abcd45" },
+    ];
   return invoke<ReviewFile[]>("review_files");
 }
 
@@ -3717,6 +3722,7 @@ const MOCK_MERGED_PULL_REQUESTS: PullRequest[] = [
     approvals: 2,
     unresolved_threads: null,
     conflicting: false,
+    head_oid: mockOid("e"),
   },
   {
     number: 38,
@@ -3734,6 +3740,7 @@ const MOCK_MERGED_PULL_REQUESTS: PullRequest[] = [
     approvals: 1,
     unresolved_threads: null,
     conflicting: false,
+    head_oid: mockOid("e"),
   },
 ];
 
@@ -3754,6 +3761,7 @@ const MOCK_PULL_REQUESTS: PullRequest[] = [
     approvals: 2,
     unresolved_threads: 0,
     conflicting: false,
+    head_oid: mockOid("e"),
   },
   {
     number: 41,
@@ -3771,6 +3779,7 @@ const MOCK_PULL_REQUESTS: PullRequest[] = [
     approvals: 0,
     unresolved_threads: 3,
     conflicting: false,
+    head_oid: mockOid("e"),
   },
   {
     number: 39,
@@ -3788,6 +3797,7 @@ const MOCK_PULL_REQUESTS: PullRequest[] = [
     approvals: 1,
     unresolved_threads: 1,
     conflicting: true,
+    head_oid: mockOid("e"),
   },
 ];
 

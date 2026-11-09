@@ -5242,8 +5242,10 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .sb-badge {
   flex: none;
   font-size: 10px;
-  line-height: 14px;
-  padding: 0 5px;
+  /* The system font leaves more room above its letters than below: lift the
+     text a pixel so lowercase words look centered (the height stays 16px). */
+  line-height: 12px;
+  padding: 0 5px 2px;
   border-radius: 7px;
   border: 1px solid var(--border);
   color: var(--text-dim);
@@ -5380,7 +5382,8 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   font-size: 10px;
   font-weight: 600;
   line-height: 1;
-  padding: 3px 6px;
+  /* Lifted 0.75px, as .sb-badge: lowercase words look centered. */
+  padding: 2.25px 6px 3.75px;
   border-radius: 999px;
   white-space: nowrap;
 }
@@ -5395,6 +5398,16 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .pr-flag.conflicts {
   color: #fff;
   background: var(--del-fg);
+}
+/* The review covers the head commit; or commits came since: review again. */
+.pr-flag.reviewed {
+  color: var(--add-fg);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--add-fg);
+}
+.pr-flag.stale {
+  color: var(--bg);
+  background: var(--claude-fg);
 }
 /* The pull request's Reviewers row: each reviewer by their verdict, the ones
    asked and not answered in amber, and "+ Add" with its picker. */

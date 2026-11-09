@@ -139,6 +139,8 @@ pub struct PullRequest {
     /// The branch it brings in, and the one it goes into.
     pub head: String,
     pub base: String,
+    /// The commit at the tip of `head`.
+    pub head_oid: String,
     pub updated_at: String,
     pub url: String,
     pub labels: Vec<PrLabel>,
@@ -1549,6 +1551,9 @@ pub(crate) fn review_file_written_since(
 pub struct ReviewFile {
     pub path: String,
     pub number: u64,
+    /// The head commit it says it reviewed, full or abbreviated: its
+    /// "**Head:** `branch` (`e0a21160a5`)" line. None when it names none.
+    pub head: Option<String>,
 }
 
 /// How much of a review file is read to find its pull request: the link is in
@@ -1559,14 +1564,8 @@ const REVIEW_HEAD: u64 = 64 * 1024;
 /// The pull request a review file reviews: the number of the first
 /// `github.com/…/pull/<n>` link near its top.
 fn reviewed_pull_request(path: &Path) -> Option<u64> {
-    let mut head = Vec::new();
-    std::fs::File::open(path)
-        .ok()?
-        .take(REVIEW_HEAD)
-        .read_to_end(&mut head)
-        .ok()?;
-    let text = String::from_utf8_lossy(&head);
-    let mut rest = text.as_ref();
+    let text = review_head_text(path)?;
+    let mut rest = text.as_str();
     while let Some(at) = rest.find("/pull/") {
         let before = &rest[..at];
         rest = &rest[at + "/pull/".len()..];
@@ -1582,6 +1581,33 @@ fn reviewed_pull_request(path: &Path) -> Option<u64> {
         }
     }
     None
+}
+
+/// The top of a review file, where its header is.
+fn review_head_text(path: &Path) -> Option<String> {
+    let mut head = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(REVIEW_HEAD)
+        .read_to_end(&mut head)
+        .ok()?;
+    Some(String::from_utf8_lossy(&head).into_owned())
+}
+
+/// The head commit a review's header names: "**Head:** `feature/x`
+/// (`e0a21160a5`)", as the review skills write it.
+fn reviewed_head_in(text: &str) -> Option<String> {
+    text.match_indices("Head:").find_map(|(at, _)| {
+        let rest = text[at + "Head:".len()..]
+            .trim_start_matches('*')
+            .trim_start();
+        let rest = rest.strip_prefix('`')?;
+        let rest = rest[rest.find('`')? + 1..]
+            .trim_start()
+            .strip_prefix("(`")?;
+        let sha: String = rest.chars().take_while(char::is_ascii_hexdigit).collect();
+        (rest[sha.len()..].starts_with('`') && (7..=40).contains(&sha.len())).then_some(sha)
+    })
 }
 
 impl Repo {
@@ -1603,6 +1629,7 @@ impl Repo {
         let mut out: Vec<ReviewFile> = best
             .into_iter()
             .map(|(number, (p, _))| ReviewFile {
+                head: review_head_text(&p).and_then(|t| reviewed_head_in(&t)),
                 path: p.to_string_lossy().into_owned(),
                 number,
             })
@@ -2255,7 +2282,7 @@ pub(crate) struct ShellOutput {
 }
 
 const LIST_FIELDS: &str = "number,title,author,isDraft,reviewDecision,statusCheckRollup,\
-     headRefName,baseRefName,updatedAt,url,labels,latestReviews,mergedAt,mergeable";
+     headRefName,headRefOid,baseRefName,updatedAt,url,labels,latestReviews,mergedAt,mergeable";
 
 /// What `gh` needs from a [`Repo`] to run for it: its folder, and the flag
 /// that cancels its network commands.
@@ -2715,6 +2742,8 @@ struct RawPr {
     #[serde(default)]
     status_check_rollup: Vec<RawCheck>,
     head_ref_name: String,
+    #[serde(default)]
+    head_ref_oid: String,
     base_ref_name: String,
     #[serde(default)]
     updated_at: String,
@@ -2739,6 +2768,7 @@ impl From<RawPr> for PullRequest {
             review_decision: non_empty(r.review_decision),
             head: r.head_ref_name,
             base: r.base_ref_name,
+            head_oid: r.head_ref_oid,
             updated_at: r.updated_at,
             url: r.url,
             labels: r.labels,
@@ -3098,7 +3128,7 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
          {"__typename": "CheckRun", "name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"},
          {"__typename": "StatusContext", "context": "ci/legacy", "state": "FAILURE"}]},
       {"number": 9, "title": "WIP", "author": null, "isDraft": true, "reviewDecision": "",
-       "mergeable": "CONFLICTING", "headRefName": "wip", "baseRefName": "main", "url": "https://github.com/octo/hello/pull/9",
+       "mergeable": "CONFLICTING", "headRefName": "wip", "headRefOid": "abc1234", "baseRefName": "main", "url": "https://github.com/octo/hello/pull/9",
        "labels": [], "statusCheckRollup": [
          {"__typename": "CheckRun", "name": "test", "status": "IN_PROGRESS", "conclusion": ""}]}
     ]"#;
@@ -3163,6 +3193,10 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             (prs[0].conflicting, prs[1].conflicting),
             (false, true),
             "only CONFLICTING is a conflict; a missing answer is not"
+        );
+        assert_eq!(
+            (prs[0].head_oid.as_str(), prs[1].head_oid.as_str()),
+            ("", "abc1234")
         );
         assert_eq!(prs[1].author, "ghost");
         assert!(prs[1].is_draft);
@@ -4116,6 +4150,12 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         )
         .unwrap();
         std::fs::write(sprint.join("notes.html"), page(50)).unwrap();
+        // The reviewed commit, from the skill's header line.
+        std::fs::write(
+            sprint.join("pr-review-UBIID-2.md"),
+            "**Head:** `feature/UBIID-2-x` (`e0a21160a5`) · [#44](https://github.com/octo/hello/pull/44)\n",
+        )
+        .unwrap();
         std::fs::write(sprint.join("pr-review-no-link.md"), "no pull request here").unwrap();
         thread::sleep(Duration::from_millis(20));
         let newer = dir.path().join("review/pr-review-UBIID-1-again.html");
@@ -4124,8 +4164,13 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         let found = repo.review_files();
         assert_eq!(
             found.iter().map(|f| f.number).collect::<Vec<_>>(),
-            [38, 41],
+            [38, 41, 44],
             "{found:?}"
+        );
+        assert_eq!(
+            found.iter().map(|f| f.head.as_deref()).collect::<Vec<_>>(),
+            [None, None, Some("e0a21160a5")],
+            "only the header line names a commit: {found:?}"
         );
         assert!(
             found[0]
