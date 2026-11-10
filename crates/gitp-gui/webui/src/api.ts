@@ -2948,8 +2948,11 @@ let MOCK_REVIEW_FILE = `# Review of #42
 
 The loop gives up one try too soon. It counts the first call as a retry.
 
-\`\`\`
-attempt 1 ─▶ attempt 2 ─▶ attempt 3 ─▶ throw     ◄── only 2 retries
+\`\`\`mermaid
+flowchart LR
+  A[attempt 1] -->|fail| B[attempt 2]
+  B -->|fail| C[attempt 3]
+  C -->|attempt === 3| D[throw: only 2 retries]
 \`\`\`
 
 **Comment to paste:**

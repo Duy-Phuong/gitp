@@ -46,6 +46,7 @@ mod refs;
 mod remote;
 mod remote_config;
 mod repo;
+mod review_explain;
 mod review_store;
 mod search;
 mod signature;

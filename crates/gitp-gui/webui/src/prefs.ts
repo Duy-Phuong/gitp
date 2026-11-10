@@ -771,14 +771,28 @@ export const BRANCH_SKILL_REVIEW_COMMAND =
   `(the sprint folder no-sprint when Jira has no sprint). Write the review Markdown under $GITP_REVIEW_DIR/, not in TMPDIR." ` +
   `--model opus --effort medium --permission-mode dontAsk ${SESSION_ID_ARG} --allowedTools "${SKILL_TOOLS.join(" ")}"`;
 
-// "Explain more" on a finding of a saved review: the review board's own
-// request, served by its skill, which adds the explanation to the board and to
-// the review file. The slug and the finding come in the environment.
+// "Explain more" on a finding of a saved review, done here as the review board
+// does it, without the board: the /explain-simply skill on the finding, which
+// comes on stdin with the answers it had already, and gitp adds the answer to
+// the review's .md and .html. Claude reads the code at the reviewed head and
+// writes only its scratch file and checks in the temp folder.
+const EXPLAIN_TOOLS = [
+  "Read", "Grep", "Glob", "Skill",
+  // The temp folders by fixed paths ($TMPDIR is under /var/folders on macOS):
+  // an unset variable can't widen a rule to the whole disk.
+  "Edit(//tmp/**)", "Edit(//private/tmp/**)", "Edit(//var/folders/**)", "Edit(//private/var/folders/**)", "Bash(python3 *)",
+  "Bash(git show *)", "Bash(git log *)", "Bash(git diff *)", "Bash(git grep *)", "Bash(git fetch *)", "Bash(git blame *)",
+  "Bash(gh pr view *)", "Bash(gh pr diff *)",
+];
 export const EXPLAIN_FINDING_COMMAND =
-  `claude -p "/serve-board Review board request: explain finding $GITP_REVIEW_FINDING of $GITP_REVIEW_SLUG. ` +
-  `Serve only this line, as the README part 'Lines from the review HTML file' says. The review files are under $GITP_REVIEW_DIR/. ` +
-  `Do not arm a watch, ask no questions." ` +
-  `--model opus --effort medium --permission-mode dontAsk ${SESSION_ID_ARG} --allowedTools "${[...SKILL_TOOLS, "ToolSearch"].join(" ")}"`;
+  `claude -p "/explain-simply the review finding on stdin (finding $GITP_REVIEW_FINDING of $GITP_REVIEW_FILE), ` +
+  `for the reviewer who must decide on it. Read the real code at the reviewed head $GITP_REVIEW_HEAD (git show <sha>:<path>; git fetch first when it is missing). ` +
+  `When the finding has Explained more answers already, the reader did not understand them: explain it another way ` +
+  `(another diagram shape, a daily-life comparison, or smaller steps) and repeat nothing of them. ` +
+  `Write your scratch file with the Write tool, not through Bash, then run the STE check on it with python3. ` +
+  `Ask no questions and change no file of the repository. Your last message is only the explanation in Markdown, as it goes into the review file: ` +
+  `no note about the checks or the tools before or after it." ` +
+  `--model opus --effort medium --permission-mode dontAsk --output-format json ${SESSION_ID_ARG} --allowedTools "${EXPLAIN_TOOLS.join(" ")}"`;
 
 // "Explain with Claude" on a commit, a branch or a tag: what Claude reads
 // comes on stdin (see claude_ask.rs). It may look at the repository for

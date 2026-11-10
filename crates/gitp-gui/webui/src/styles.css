@@ -7217,6 +7217,22 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .pr-draft-md pre {
   white-space: pre;
 }
+/* A ```mermaid block of an explanation: its source until Mermaid draws it. */
+.mermaid-diagram {
+  margin: 8px 0;
+  overflow-x: auto;
+}
+.mermaid-diagram.drawn {
+  text-align: center;
+}
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+.mermaid-error {
+  color: var(--del-fg);
+  font-size: 11px;
+}
 .pr-draft-explain-actions {
   display: flex;
   align-items: center;

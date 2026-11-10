@@ -144,9 +144,23 @@ describe("the review skill command", () => {
   });
 });
 
+describe("Explain more on a finding", () => {
+  it("runs /explain-simply here, not the board, and writes nothing of the repository", () => {
+    const c = EXPLAIN_FINDING_COMMAND;
+    expect(c).toContain('claude -p "/explain-simply the review finding on stdin');
+    expect(c).not.toContain("serve-board");
+    expect(c).toContain("explain it another way");
+    expect(c).toContain("--output-format json");
+    const tools = c.slice(c.indexOf('--allowedTools "'));
+    for (const rule of tools.match(/Edit\([^)]*\)/g) ?? []) expect(rule).toMatch(/^Edit\(\/\/(private\/)?(tmp|var\/folders)\/\*\*\)$/);
+    expect(tools).not.toContain("$");
+    expect(tools).not.toContain("ArtifactData");
+  });
+});
+
 describe("the review skill's writes", () => {
   it("go to the review folder gitp sets, allowed by its full path too, which a cd in a Bash call doesn't move", () => {
-    for (const c of [SKILL_REVIEW_COMMAND, BRANCH_SKILL_REVIEW_COMMAND, EXPLAIN_FINDING_COMMAND]) {
+    for (const c of [SKILL_REVIEW_COMMAND, BRANCH_SKILL_REVIEW_COMMAND]) {
       expect(c).toContain("Edit($GITP_REVIEW_DIR/**) Edit(/$GITP_REVIEW_PATH/**)");
       expect(c).not.toMatch(/[ (]review\//);
     }

@@ -49,6 +49,7 @@ use crate::pr_threads::{
 };
 use crate::progress::{kill, ClaudeRun, NetworkHooks};
 use crate::repo::Repo;
+use crate::review_explain;
 use crate::worktree_ops::WorktreeTarget;
 
 mod inbox;
@@ -1656,9 +1657,12 @@ impl Repo {
 
     /// Run `command` to explain finding `finding` (`f3`) of the saved review
     /// of pull request `number` again, in simpler words: the review board's
-    /// "Explain more". The command gets the review's slug (`UBIID-9868`, from
-    /// `pr-review-UBIID-9868.html`), the finding and the file in its
-    /// environment, and is expected to add the explanation to the file.
+    /// "Explain more", done here. The command gets the finding's text, with
+    /// the answers it had already, on stdin, and the review's slug
+    /// (`UBIID-9868`, from `pr-review-UBIID-9868.html`), the finding, the file
+    /// and the reviewed head in its environment. Its answer (plain Markdown,
+    /// or claude's --output-format json) is added to the finding in the
+    /// review's `.md` and `.html`, as the board adds one.
     pub fn explain_review_finding(&self, number: u64, finding: &str, command: &str) -> Result<()> {
         let command = command.trim();
         if command.is_empty() {
@@ -1689,19 +1693,65 @@ impl Repo {
             })
             .ok_or_else(|| Error::Message(format!("{} has no review slug in its name", file.path)))?
             .to_string();
+        let n: usize = finding[1..].parse().unwrap_or(0);
+        let md_path = Path::new(&file.path).with_extension("md");
+        let html_path = Path::new(&file.path).with_extension("html");
+        let read = |p: &Path| std::fs::read_to_string(p).ok();
+        let md = read(&md_path);
+        let html = read(&html_path);
+        let source = md
+            .clone()
+            .or_else(|| html.as_deref().and_then(review_explain::page_markdown))
+            .ok_or_else(|| Error::Message(format!("Couldn't read {}", file.path)))?;
+        let text = review_explain::finding_text(&source, n)
+            .ok_or_else(|| Error::Message(format!("{} has no finding {finding}", file.path)))?;
         let env = [
             ("GITP_REVIEW_SLUG", slug),
             ("GITP_REVIEW_FINDING", finding.to_string()),
             ("GITP_REVIEW_FILE", file.path.clone()),
+            (
+                "GITP_REVIEW_HEAD",
+                reviewed_head_in(&source).or(file.head).unwrap_or_default(),
+            ),
         ];
-        run_shell(
+        let out = run_shell(
             self.workdir(),
             command,
-            b"",
+            text.as_bytes(),
             &env,
             EXPLAIN_TIMEOUT,
             &self.net,
         )?;
+        let (answer, _) = claude_answer(&out.stdout)?;
+        // The explain-simply skill's note on its words is for its own check.
+        let answer: String = answer
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("<!-- ste-names:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if answer.trim().is_empty() {
+            return Err(Error::Message("Claude gave no explanation.".into()));
+        }
+        let id = format!("gitp_{}", crate::pr_threads::now_millis());
+        let write = |p: &Path, text: Option<String>| -> Result<bool> {
+            let Some(text) = text else { return Ok(false) };
+            std::fs::write(p, text).map_err(|e| Error::Message(format!("{}: {e}", p.display())))?;
+            Ok(true)
+        };
+        let wrote_md = write(
+            &md_path,
+            md.and_then(|m| review_explain::add_explanation(&m, n, &id, &answer)),
+        )?;
+        let wrote_html = write(
+            &html_path,
+            html.and_then(|h| review_explain::add_explanation_to_page(&h, n, &id, &answer)),
+        )?;
+        if !wrote_md && !wrote_html {
+            return Err(Error::Message(format!(
+                "Couldn't add the explanation to {}",
+                file.path
+            )));
+        }
         Ok(())
     }
 }
@@ -4487,31 +4537,62 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
     }
 
     #[test]
-    fn explain_more_gets_the_slug_and_the_finding_of_the_saved_review() {
+    fn explain_more_writes_claude_s_answer_into_the_review_files() {
         let (dir, repo) = github_repo();
         let sprint = dir.path().join("review/ae-404");
         std::fs::create_dir_all(&sprint).unwrap();
+        let md = "**Head:** `f` (`e0a21160a5`) · [#7](https://github.com/octo/hello/pull/7)\n\n\
+                  ## Suggested Changes\n\n### `a.rs:1`\n\n**Severity:** nit\n\n\
+                  **Explained simply:**\n\nWhy.\n\n### `b.rs:2`\n\n**Severity:** nit\n\nSecond.\n";
+        std::fs::write(sprint.join("pr-review-UBIID-9868.md"), md).unwrap();
         std::fs::write(
             sprint.join("pr-review-UBIID-9868.html"),
-            "<script id=\"markdown-source\">[#7](https://github.com/octo/hello/pull/7)</script>",
+            format!(
+                "<html><script type=\"text/plain\" id=\"markdown-source\">\n{md}</script></html>"
+            ),
         )
         .unwrap();
+        // The finding comes on stdin; what the command prints is the answer.
         repo.explain_review_finding(
             7,
-            "f3",
-            "printf '%s %s' \"$GITP_REVIEW_SLUG\" \"$GITP_REVIEW_FINDING\" > said",
+            "f2",
+            "cat > said; printf '%s %s %s' \"$GITP_REVIEW_SLUG\" \"$GITP_REVIEW_FINDING\" \"$GITP_REVIEW_HEAD\" > env; \
+             printf '<!-- ste-names: x -->\\n## Bottom line\\nIt runs twice.'",
         )
         .unwrap();
         assert_eq!(
-            std::fs::read_to_string(dir.path().join("said")).unwrap(),
-            "UBIID-9868 f3"
+            std::fs::read_to_string(dir.path().join("env")).unwrap(),
+            "UBIID-9868 f2 e0a21160a5"
         );
+        let said = std::fs::read_to_string(dir.path().join("said")).unwrap();
+        assert!(
+            said.starts_with("### `b.rs:2`") && said.ends_with("Second."),
+            "{said}"
+        );
+        for name in ["pr-review-UBIID-9868.md", "pr-review-UBIID-9868.html"] {
+            let text = std::fs::read_to_string(sprint.join(name)).unwrap();
+            let at = text.find("<details class=\"explain\"").expect(name);
+            assert!(
+                at > text.find("Second.").unwrap(),
+                "{name}: at the end of f2"
+            );
+            assert!(text.contains("#### Bottom line\nIt runs twice."), "{text}");
+            assert!(!text.contains("ste-names"), "{text}");
+        }
 
         assert!(message(
             repo.explain_review_finding(7, "f3; rm -rf x", "true")
                 .unwrap_err()
         )
         .contains("not a finding"));
+        assert!(
+            message(repo.explain_review_finding(7, "f9", "echo x").unwrap_err())
+                .contains("has no finding f9")
+        );
+        assert!(
+            message(repo.explain_review_finding(7, "f1", "true").unwrap_err())
+                .contains("no explanation")
+        );
         assert!(
             message(repo.explain_review_finding(8, "f1", "true").unwrap_err())
                 .contains("no saved review")

@@ -10,7 +10,7 @@ import type { Draft } from "../pr-reviews";
 import { lineKey, lineTarget } from "../pull-requests";
 import type { FileDiff } from "../types";
 import { composerArea, previewToggle } from "./composer";
-import { renderGitHubMarkdown } from "./github-markdown";
+import { renderMarkdownWithMermaid } from "./mermaid-markdown";
 
 export interface DraftCardOptions {
   where: "list" | "inline";
@@ -95,7 +95,7 @@ function explainNode(d: Draft, explain: DraftCardOptions["explain"]): HTMLElemen
   if (!d.explained && !more.length && !explain) return null;
   const node = el("div", { class: "pr-draft-explain" });
   const fold = (title: string, md: string, open: boolean) => {
-    const box = el("details", { class: "pr-draft-fold" }, [el("summary", { text: title }), el("div", { class: "pr-draft-md" }, [renderGitHubMarkdown(md)])]);
+    const box = el("details", { class: "pr-draft-fold" }, [el("summary", { text: title }), el("div", { class: "pr-draft-md" }, [renderMarkdownWithMermaid(md)])]);
     box.open = open;
     return box;
   };
