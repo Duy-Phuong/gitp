@@ -144,6 +144,18 @@ describe("the review skill command", () => {
   });
 });
 
+describe("the review skill's writes", () => {
+  it("allows review/ by its full path too, which a cd in a Bash call doesn't move", () => {
+    for (const c of [SKILL_REVIEW_COMMAND, BRANCH_SKILL_REVIEW_COMMAND, EXPLAIN_FINDING_COMMAND]) {
+      expect(c).toContain("Edit(review/**) Edit(/$(pwd)/review/**)");
+    }
+    // Inside the double quotes, so the shell puts the repository's path in.
+    const c = SKILL_REVIEW_COMMAND;
+    const list = c.slice(c.indexOf('--allowedTools "'));
+    expect(list.endsWith('"') && list.indexOf("$(pwd)") > 0).toBe(true);
+  });
+});
+
 describe("the branch review skill command", () => {
   it("reviews $GITP_BRANCH against $GITP_BASE with the skill's branch form, not board mode", () => {
     const c = BRANCH_SKILL_REVIEW_COMMAND;

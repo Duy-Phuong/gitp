@@ -738,8 +738,11 @@ export const DEFAULT_REVIEW_COMMAND =
 // lookups, the skill's checks and page build, writes under review/, the Jira
 // and Confluence reads and the Review Board.
 const SKILL_TOOLS = [
-  // Edit(path) covers every file-writing tool, Write included.
-  "Read", "Grep", "Glob", "Skill", "Edit(review/**)",
+  // Edit(path) covers every file-writing tool, Write included. A path rule
+  // is relative to Claude's working directory, which a `cd` in a Bash call
+  // moves (into the skill's folder, say), so review/ is also given by its
+  // full path: "//" + the directory the shell starts in, the repository's.
+  "Read", "Grep", "Glob", "Skill", "Edit(review/**)", "Edit(/$(pwd)/review/**)",
   "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)", "Bash(git grep *)", "Bash(git fetch *)",
   "Bash(git rev-parse *)", "Bash(git merge-base *)", "Bash(git ls-files *)", "Bash(git blame *)",
   "Bash(gh pr view *)", "Bash(gh pr diff *)", "Bash(gh api --paginate repos/*)",
