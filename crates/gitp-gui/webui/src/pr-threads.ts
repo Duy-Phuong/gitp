@@ -86,6 +86,15 @@ export function hasChosenOption(c: ThreadConversation | null): boolean {
   return c.turns.some((t, i) => i > after && t.role === "user");
 }
 
+// Whether two commit ids, either abbreviated, name the same commit.
+export const sameCommit = (a: string, b: string) => !a || !b || a.startsWith(b) || b.startsWith(a);
+
+// Whether Check all should check the thread: nothing runs on it and no
+// Check of Claude's is about the pull request's `head` yet.
+export function needsCheck(s: ThreadState, head: string): boolean {
+  return !s.running && !s.conversation?.turns.some((t) => t.role === "claude" && t.kind === "check" && t.head && sameCommit(t.head, head));
+}
+
 // The reply the thread has ready: its latest draft, unless posted or dropped.
 export function preparedReply(c: ThreadConversation | null): ThreadTurn | null {
   const last = c ? [...c.turns].reverse().find((t) => t.kind === "reply-draft" && t.role === "claude") : undefined;

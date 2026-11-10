@@ -9,7 +9,7 @@ import { el } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
 import { composerArea } from "./composer";
 import { relativeTime, fullTime } from "../timeago";
-import { lastFix, NO_OPTION_CHOSEN, preparedReply, type ThreadState } from "../pr-threads";
+import { lastFix, NO_OPTION_CHOSEN, preparedReply, sameCommit, type ThreadState } from "../pr-threads";
 import { fixChangesNode } from "../fix-changes";
 import type { CommitDetail, ThreadConversation, ThreadTurn, TurnKind } from "../types";
 
@@ -362,9 +362,6 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
   node.append(body);
   return node;
 }
-
-// Whether two commit ids, either abbreviated, name the same commit.
-const sameCommit = (a: string, b: string) => !a || !b || a.startsWith(b) || b.startsWith(a);
 
 // One turn: who, which kind, when, against which commit, and the text.
 function turnNode(t: ThreadTurn, head: string, o?: Pick<ConversationOptions, "loadCommit" | "openCommit">): HTMLElement {

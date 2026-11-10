@@ -13,7 +13,7 @@ import { clear, el, svg } from "../dom";
 import { showContextMenu, type MenuItem } from "./context-menu";
 import { renderGitHubMarkdown } from "./github-markdown";
 import { conversationNode, threadBadges, threadClaudeButtons } from "./thread-claude";
-import { fixDisabledReason, fixRunningOn, ordinal, preparedReply, queuedFixes, queuePosition, runningTurns, threadState } from "../pr-threads";
+import { fixDisabledReason, fixRunningOn, needsCheck, ordinal, preparedReply, queuedFixes, queuePosition, runningTurns, threadState } from "../pr-threads";
 import { storedThread } from "../thread-search";
 import { composerArea, previewToggle } from "./composer";
 import { iconBtn, renderFile, renderSplitDiff, WRAP_ICON } from "./detail";
@@ -577,6 +577,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       ...(review().running
         ? [button("Reviewing… Cancel", () => cb.cancelReview(pr), "The review command is running in the background; click to stop it")]
         : [generateButton(pr), skillButton(pr), ...pushAndReplyButton(pr)]),
+      ...checkAllButton(pr),
       button("Load Review File…", () => void loadDrafts(pr), "Read a review's findings as draft comments, to approve or discard before posting"),
       ...applyAllButton(pr, button),
     ]);
@@ -1512,6 +1513,31 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     });
     b.addEventListener("click", () => cb.generateDraftsWithSkill(pr));
     return b;
+  }
+
+  // Check N Comments: a Check on every open thread not checked at the pull
+  // request's head yet, all at once in the background.
+  function checkAllButton(pr: PullRequestDetail): HTMLElement[] {
+    const repo = cb.repoPath();
+    const open = reviewThreads(pr.review_comments).filter((t) => !pr.review_threads.find((s) => s.comment_ids.includes(t.root.id))?.resolved);
+    // Their saved conversations, so a thread checked already isn't counted.
+    for (const t of open) cb.loadThreadConversation(pr, t);
+    const unchecked = open.filter((t) => needsCheck(threadState(repo, pr.number, t.root.id), pr.head_oid));
+    if (!unchecked.length) return [];
+    const n = unchecked.length;
+    const b = el("button", {
+      class: "btn small ghost",
+      text: `Check ${n} ${n === 1 ? "Comment" : "Comments"}`,
+      title: `Ask Claude to check the ${n === 1 ? "open comment" : `${n} open comments`} not checked at ${pr.head_oid.slice(0, 7)} yet, all at once in the background`,
+    });
+    b.addEventListener("click", () => {
+      for (const thread of unchecked) {
+        lastKind.set(thread.root.id, "check");
+        openBlocks.add(thread.root.id);
+        cb.threadTurn(pr, thread, "check", "");
+      }
+    });
+    return [b];
   }
 
   // Push and reply all: once a reply is ready or the branch is ahead of its

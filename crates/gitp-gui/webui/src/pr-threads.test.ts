@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { cancelQueuedFix, finishTurn, fixDisabledReason, fixRunningOn, hasChosenOption, lastFix, lastUserText, onThreadsChange, ordinal, preparedReplies, preparedReply, queuedFixes, queueFix, queuePosition, runningTurns, setConversation, startTurn, takeQueuedFix, threadState } from "./pr-threads";
+import { cancelQueuedFix, finishTurn, fixDisabledReason, fixRunningOn, hasChosenOption, lastFix, lastUserText, needsCheck, onThreadsChange, ordinal, preparedReplies, preparedReply, queuedFixes, queueFix, queuePosition, runningTurns, setConversation, startTurn, takeQueuedFix, threadState } from "./pr-threads";
 import type { ThreadConversation } from "./types";
 
 const conv = (turns = 1): ThreadConversation => ({
@@ -118,4 +118,19 @@ it("queues fixes per pull request, in the order asked, once each", () => {
   expect(takeQueuedFix("/other", 9)?.thread).toBe(7);
   expect(changes.length).toBeGreaterThan(0);
   expect([1, 2, 3, 4, 11, 12, 13, 21, 22, 102].map(ordinal)).toEqual(["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "102nd"]);
+});
+
+it("checks a thread once per head of the pull request", () => {
+  const s = (turns: ThreadConversation["turns"], running: "check" | null = null) => ({ running, error: null, conversation: { ...conv(0), turns }, loaded: true });
+  const check = (head?: string) => ({ kind: "check" as const, role: "claude" as const, at: 1, text: "x", head });
+  // Never talked about, or only explained: check it.
+  expect(needsCheck({ running: null, error: null, conversation: null, loaded: false }, "abc123")).toBe(true);
+  expect(needsCheck(s([{ kind: "explain", role: "claude", at: 1, text: "x" }]), "abc123")).toBe(true);
+  // Checked at this head, even abbreviated: not again.
+  expect(needsCheck(s([check("abc1234567")]), "abc1234")).toBe(false);
+  // Checked before new commits: again.
+  expect(needsCheck(s([check("def4567")]), "abc1234")).toBe(true);
+  expect(needsCheck(s([check("def4567"), check("abc1234")]), "abc1234")).toBe(false);
+  // A turn runs on it: leave it.
+  expect(needsCheck(s([], "check"), "abc1234")).toBe(false);
 });
