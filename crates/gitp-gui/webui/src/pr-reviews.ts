@@ -278,7 +278,7 @@ export function mergeDrafts(existing: Draft[], found: DraftComment[]): Draft[] {
   const out: Draft[] = [];
   for (const d of existing) {
     const again = byPrint.get(fingerprintOf(d))?.shift();
-    if (again) out.push({ ...d, path: again.path, line: again.line, side: again.side, stale: false });
+    if (again) out.push({ ...d, path: again.path, line: again.line, side: again.side, stale: false, ...findingText(again, true) });
     else if (!isOpen(d)) out.push({ ...d, stale: true });
   }
   const fresh = [...byPrint.values()].flat();
@@ -290,6 +290,29 @@ export function mergeDrafts(existing: Draft[], found: DraftComment[]): Draft[] {
       .map((d, i) => ({ ...d, id: next + i, status: "pending" as const, original: d.body })),
   );
   return out;
+}
+
+// The review file's own words on a finding — its Explained simply text, its
+// board id and the Explain more answers — as fields to spread, without the
+// empty ones. `all`: every key, undefined when empty, so a spread replaces
+// what an older read left.
+function findingText(d: Pick<DraftComment, "explained" | "finding" | "explanations">, all = false): Pick<DraftComment, "explained" | "finding" | "explanations"> {
+  const out: Pick<DraftComment, "explained" | "finding" | "explanations"> = all ? { explained: undefined, finding: undefined, explanations: undefined } : {};
+  if (d.explained) out.explained = d.explained;
+  if (d.finding) out.finding = d.finding;
+  if (d.explanations?.length) out.explanations = d.explanations;
+  return out;
+}
+
+// `drafts` with what the review file, read again as `found`, says about each
+// of their findings (a new Explain more answer, say): their decisions, edits
+// and fixes stay as they are.
+export function withFindingText(drafts: Draft[], found: DraftComment[]): Draft[] {
+  const byPrint = new Map(found.map((f) => [fingerprintOf(f), f]));
+  return drafts.map((d) => {
+    const again = byPrint.get(fingerprintOf(d));
+    return again ? { ...d, ...findingText(again, true) } : d;
+  });
 }
 
 // The review in the shape kept on disk.
@@ -311,6 +334,7 @@ export function toStored(r: PrReview, key: ReviewKey): StoredReview {
       ...(d.topic ? { topic: d.topic } : {}),
       ...(d.fix ? { fix: d.fix } : {}),
       ...(d.stale ? { stale: true } : {}),
+      ...findingText(d),
     })),
   };
 }
@@ -331,6 +355,7 @@ export function applyStored(repo: string, key: ReviewKey, s: StoredReview): PrRe
     ...(d.topic ? { topic: d.topic } : {}),
     fix: d.fix ?? null,
     ...(d.stale ? { stale: true } : {}),
+    ...findingText({ explained: d.explained ?? undefined, finding: d.finding ?? undefined, explanations: d.explanations }),
   }));
   r.head = s.head || undefined;
   r.base = s.base || undefined;

@@ -62,6 +62,21 @@ pub struct StoredDraft {
     /// line belongs to an older head.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stale: bool,
+    /// What the review file says about the finding besides the comment.
+    #[serde(flatten)]
+    pub about: FindingText,
+}
+
+/// The review's own words on a finding: its "Explained simply" text, its id
+/// on the review board ("f3"), and the board's "Explain more" answers.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FindingText {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explained: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub explanations: Vec<String>,
 }
 
 /// A review's drafts: of a branch (`branch`) or a pull request (`pr`).
@@ -249,6 +264,7 @@ mod tests {
             topic: None,
             fix: None,
             stale: false,
+            about: Default::default(),
         }
     }
 
@@ -268,6 +284,12 @@ mod tests {
                         at: 5,
                         notice: None,
                     }),
+                    // The review's words on it come back too.
+                    about: FindingText {
+                        explained: Some("Why.".into()),
+                        finding: Some("f2".into()),
+                        explanations: vec!["More.".into()],
+                    },
                     ..draft(2, DraftStatus::Fixed)
                 },
             ],

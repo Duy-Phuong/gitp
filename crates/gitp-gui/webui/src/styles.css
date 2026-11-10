@@ -7187,6 +7187,49 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   color: var(--text-dim);
   font-size: 11px;
 }
+/* The review's words on the finding, above its comment: Explained simply,
+   the Explain more answers, and Explain more. */
+.pr-draft-explain {
+  margin: 8px 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pr-draft-fold {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.pr-draft-fold > summary {
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.pr-draft-md {
+  padding: 0 10px 6px;
+  font-size: 13px;
+  overflow-x: auto;
+}
+.pr-draft-md pre {
+  white-space: pre;
+}
+.pr-draft-explain-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pr-draft-label {
+  margin: 10px 10px -2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
 .pr-draft-text {
   display: block;
   width: calc(100% - 20px);

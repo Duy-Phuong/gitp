@@ -30,6 +30,14 @@ export interface DraftComment {
   /// The heading of a comment on the whole pull request, which has no path
   /// ("") and no line (0).
   topic?: string;
+  /// The review's "Explained simply" text for the finding (Markdown).
+  explained?: string;
+  /// The finding's id on the review board and the review page, "f3": its
+  /// place in the review's "Suggested changes" section, for Explain more.
+  finding?: string;
+  /// The board's "Explain more" answers written back into the file, oldest
+  /// first (Markdown).
+  explanations?: string[];
 }
 
 /// The findings in a review file, in file order. Blocks without a location or
@@ -90,11 +98,29 @@ const TOPIC = /^###\s+(.+?)\s*$/;
 const COPY_START = "<!-- copy:start -->";
 const COPY_END = "<!-- copy:end -->";
 
-function parseMarkdown(text: string): DraftComment[] {
+// An "Explain more" answer the review board wrote into the file, at the end
+// of its finding (review/_board/sync_file.py).
+const EXPLAIN_BLOCK = /\n*<details class="explain"[^>]*>[\s\S]*?<\/details>\n*/g;
+const EXPLAIN_BODY = /<!-- explain:start [^>]*-->\n?([\s\S]*?)\n?<!-- explain:end -->/;
+const EXPLAIN_MARK = /^<!-- gitp-explain:(\d+) -->$/gm;
+// The section whose `###` blocks the board numbers f1, f2, ….
+const FINDINGS_SECTION = /^## +(?:.*suggested.*|.*comments to paste.*)$/i;
+
+function parseMarkdown(source: string): DraftComment[] {
+  // The explain blocks out of the way first, as the board does: one line
+  // each stands for its answer.
+  const answers: string[] = [];
+  const text = source.replace(EXPLAIN_BLOCK, (b) => {
+    answers.push((EXPLAIN_BODY.exec(b)?.[1] ?? "").trim());
+    return `\n\n<!-- gitp-explain:${answers.length - 1} -->\n\n`;
+  });
   const lines = text.split(/\r?\n/);
   const drafts: DraftComment[] = [];
+  let inFindings = false;
+  let findings = 0;
   let i = 0;
   while (i < lines.length) {
+    if (/^##\s/.test(lines[i])) inFindings = FINDINGS_SECTION.test(lines[i]);
     const m = HEADING.exec(lines[i]);
     const topic = m ? null : TOPIC.exec(lines[i]);
     if (!m && !topic) {
@@ -105,17 +131,42 @@ function parseMarkdown(text: string): DraftComment[] {
     let j = i + 1;
     while (j < lines.length && !/^#{1,3}\s/.test(lines[j])) j++;
     const block = lines.slice(i + 1, j).join("\n");
+    // A block holding several findings gives each its own number, from its
+    // "####" heading or its Severity line, as the board counts them.
+    const first = findings + 1;
+    if (inFindings) findings += Math.max(1, block.split("\n").filter((l) => /^(#### |\*\*Severity)/.test(l)).length);
+    const extra = (): Partial<DraftComment> => {
+      const out: Partial<DraftComment> = {};
+      const explained = explainedOf(block);
+      if (explained) out.explained = explained;
+      if (inFindings) out.finding = `f${first}`;
+      const said = [...block.matchAll(EXPLAIN_MARK)].map((x) => answers[Number(x[1])]).filter(Boolean);
+      if (said.length) out.explanations = said;
+      return out;
+    };
+    const clean = block.replace(EXPLAIN_MARK, "");
     if (m) {
-      const body = commentOf(block);
-      if (body) drafts.push({ path: m[1], line: Number(m[3] ?? m[2]), side: "RIGHT", body, severity: severityOf(block) });
+      const body = commentOf(clean);
+      if (body) drafts.push({ path: m[1], line: Number(m[3] ?? m[2]), side: "RIGHT", body, severity: severityOf(block), ...extra() });
     } else if (topic && marksComment(block)) {
-      const body = commentOf(block);
+      const body = commentOf(clean);
       const name = topic[1].replace(/`/g, "");
-      if (body) drafts.push({ path: "", line: 0, side: "RIGHT", body, severity: severityOf(block), topic: name });
+      if (body) drafts.push({ path: "", line: 0, side: "RIGHT", body, severity: severityOf(block), topic: name, ...extra() });
     }
     i = j;
   }
   return drafts;
+}
+
+/// The text after an "**Explained simply:**" label, up to the comment to
+/// paste; null when the block has none.
+function explainedOf(block: string): string | null {
+  const label = /\*\*Explained simply:?\*\*:?[ \t]*/i.exec(block);
+  if (!label) return null;
+  const rest = block.slice(label.index + label[0].length);
+  const end = rest.search(/^\*\*Comment to paste|<!-- copy:start -->|^<!-- gitp-explain:/m);
+  const text = (end >= 0 ? rest.slice(0, end) : rest).trim();
+  return text || null;
 }
 
 /// Whether the block says which text is the comment: copy markers or a

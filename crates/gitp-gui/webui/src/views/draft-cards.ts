@@ -10,6 +10,7 @@ import type { Draft } from "../pr-reviews";
 import { lineKey, lineTarget } from "../pull-requests";
 import type { FileDiff } from "../types";
 import { composerArea, previewToggle } from "./composer";
+import { renderGitHubMarkdown } from "./github-markdown";
 
 export interface DraftCardOptions {
   where: "list" | "inline";
@@ -21,6 +22,9 @@ export interface DraftCardOptions {
   openCommit: (sha: string) => void;
   // The draft changed: `redraw` for a status, not for typing.
   changed: (redraw: boolean) => void;
+  // Explain more on its finding, as the review board does: whether one runs,
+  // why the last one failed. Absent where it isn't offered.
+  explain?: { running: boolean; failed: string | null; run: () => void } | null;
 }
 
 function button(text: string, onClick: () => void, cls = "btn small ghost"): HTMLButtonElement {
@@ -69,6 +73,8 @@ export function draftCard(d: Draft, o: DraftCardOptions): HTMLElement {
   }
   const card = el("div", { class: `pr-draft ${d.status}${o.where === "inline" ? " inline" : ""}`, "data-draft": d.id }, [head]);
   if (d.status !== "discarded") {
+    const why = o.where === "list" ? explainNode(d, o.explain ?? null) : null;
+    if (why) card.append(why, el("div", { class: "pr-draft-label", text: "Comment to paste" }));
     const area = composerArea({ class: "pr-draft-text" });
     area.value = d.body;
     area.addEventListener("input", () => {
@@ -79,6 +85,33 @@ export function draftCard(d: Draft, o: DraftCardOptions): HTMLElement {
     card.append(area);
   }
   return card;
+}
+
+// What the review says about the finding, above its comment: "Explained
+// simply", the Explain more answers (the newest open), and Explain more.
+// Null when there is none of it.
+function explainNode(d: Draft, explain: DraftCardOptions["explain"]): HTMLElement | null {
+  const more = d.explanations ?? [];
+  if (!d.explained && !more.length && !explain) return null;
+  const node = el("div", { class: "pr-draft-explain" });
+  const fold = (title: string, md: string, open: boolean) => {
+    const box = el("details", { class: "pr-draft-fold" }, [el("summary", { text: title }), el("div", { class: "pr-draft-md" }, [renderGitHubMarkdown(md)])]);
+    box.open = open;
+    return box;
+  };
+  if (d.explained) node.append(fold("Explained simply", d.explained, true));
+  more.forEach((md, i) => node.append(fold(`Explained more ${i + 1}`, md, i === more.length - 1)));
+  if (explain) {
+    const b = button(explain.running ? "Explaining…" : "Explain more", explain.run);
+    b.disabled = explain.running;
+    b.title = more.length
+      ? "Ask Claude to explain this finding again, another way, as the review board does; the answer is added here and to the review file"
+      : "Ask Claude to explain this finding in more depth, as the review board does; the answer is added here and to the review file";
+    const row = el("div", { class: "pr-draft-explain-actions" }, [b]);
+    if (explain.failed) row.append(el("span", { class: "pr-draft-warn", text: `Couldn't explain: ${explain.failed}` }));
+    node.append(row);
+  }
+  return node;
 }
 
 // Put a card for each of `drafts` (at `line` on `side` of `file`) under that

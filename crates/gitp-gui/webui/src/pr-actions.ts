@@ -112,6 +112,7 @@ import {
   setReviewedHead,
   setReviewFile,
   unposted,
+  withFindingText,
 } from "./pr-reviews";
 import { openSignInDialog } from "./views/github-sign-in";
 import type { PullRequestCallbacks } from "./views/pull-request";
@@ -792,6 +793,11 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
     void cancelThreadTurn(state.repoPath, pr.number, thread.root.id).catch((err) => opFailed("Couldn't cancel Claude's turn", err)),
   confirm: (message) => confirmDialog(message),
   draftFix: (pr) => prDraftFix(state.repoPath, pr),
+  explainDraft: (pr, d) => void explainDraft(state.repoPath, pr.number, d),
+  draftExplaining: (pr, d) => {
+    const key = `${state.repoPath}\n${pr.number}\n${d.finding ?? ""}`;
+    return { running: explainRuns.has(key), failed: explainFailed.get(key) ?? null };
+  },
   openCommit: (sha) => void jumpToCommit(sha, sha.slice(0, 7)),
   loadCommit: (sha) => fetchCommitDetail(sha),
   cancelQueuedFix: (pr, thread, where) => cancelQueuedThreadFix(state.repoPath, pr.number, thread, where),
@@ -1215,6 +1221,46 @@ const storedLoaded = new Set<string>();
 
 // Read pull request `number`'s drafts from disk once, before anything could
 // save over them; true when they were loaded now.
+// Explain more on the drafts' findings, by `repo\nnumber\nfinding`: the ones
+// running, and why the last one failed.
+const explainRuns = new Set<string>();
+const explainFailed = new Map<string, string>();
+
+// Explain more on draft `d`'s finding of pull request `number`'s saved
+// review, as the review board does, in the background. The answer goes into
+// the review file; the drafts read it back from there.
+async function explainDraft(repo: string, number: number, d: Draft): Promise<void> {
+  const finding = d.finding;
+  const key = `${repo}\n${number}\n${finding}`;
+  if (!finding || explainRuns.has(key)) return;
+  explainRuns.add(key);
+  explainFailed.delete(key);
+  reviewsChanged();
+  const where = d.path ? `${d.path}:${d.line}` : (d.topic ?? "the pull request");
+  setStatus(`Asking Claude to explain ${where} of #${number} in the background — the draft shows the answer.`);
+  try {
+    await explainReviewFinding(repo, number, finding, withClaudeChoice(EXPLAIN_FINDING_COMMAND));
+    await readFindingText(repo, number);
+    setStatus(`Claude explained ${where} of #${number}.`);
+  } catch (err) {
+    const why = String(err).split("\n")[0];
+    explainFailed.set(key, why);
+    setStatus(`Couldn't explain ${where} of #${number}: ${why}`);
+  } finally {
+    explainRuns.delete(key);
+    reviewsChanged();
+  }
+}
+
+// The saved review's words on each draft's finding, read again from the
+// file: Explained simply, the board id and the Explain more answers.
+async function readFindingText(repo: string, number: number): Promise<void> {
+  const file = savedReview(number) ?? prReview(repo, number).file;
+  if (!file) return;
+  const r = prReview(repo, number);
+  r.drafts = withFindingText(r.drafts, parseReviewFile(await readReviewFile(file)));
+}
+
 async function loadStoredPrReview(repo: string, number: number): Promise<boolean> {
   const key = `${repo}\n${number}`;
   if (storedLoaded.has(key)) return false;
@@ -1225,6 +1271,8 @@ async function loadStoredPrReview(repo: string, number: number): Promise<boolean
     // file remembered from an earlier run is no longer offered.
     if (!stored || prReview(repo, number).drafts.length) return false;
     applyStored(repo, { pr: number }, stored);
+    // Drafts kept before gitp read these, or explained on the board since.
+    await readFindingText(repo, number).catch(() => undefined);
     return true;
   } catch (err) {
     readFailed("Couldn't read the saved review drafts", err);

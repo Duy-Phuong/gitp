@@ -239,3 +239,31 @@ describe("drafts kept on disk, with a fixed mark", () => {
     expect(m.nothingLeftAfterPost(r.drafts)).toBe(false);
   });
 });
+
+describe("the review file's words on a finding", () => {
+  const said = { explained: "Why.", finding: "f1", explanations: ["More."] };
+
+  it("are kept on disk and come back", async () => {
+    const m = await fresh();
+    const r = m.prReview("/a", 7);
+    m.addDrafts(r, [{ ...finding(1), ...said }, finding(2)]);
+    const stored = m.toStored(r, { pr: 7 });
+    expect(stored.drafts[0]).toMatchObject(said);
+    expect(stored.drafts[1]).not.toHaveProperty("explained");
+    const back = (await fresh()).applyStored("/a", { pr: 7 }, stored);
+    expect(back.drafts[0]).toMatchObject(said);
+  });
+
+  it("follow a new read of the file and leave decisions and edits alone", async () => {
+    const m = await fresh();
+    const r = m.prReview("/a", 7);
+    m.addDrafts(r, [{ ...finding(1), finding: "f1" }, finding(2)]);
+    r.drafts[0].status = "approved";
+    r.drafts[0].body = "edited";
+    const next = m.withFindingText(r.drafts, [{ ...finding(1), ...said }, finding(2)]);
+    expect(next[0]).toMatchObject({ status: "approved", body: "edited", ...said });
+    expect(next[1]).toEqual(r.drafts[1]);
+    // A run that finds it again takes the file's words too.
+    expect(m.mergeDrafts(next, [{ ...finding(1), finding: "f1", explained: "Why, again." }])[0]).toMatchObject({ explained: "Why, again.", explanations: undefined });
+  });
+});

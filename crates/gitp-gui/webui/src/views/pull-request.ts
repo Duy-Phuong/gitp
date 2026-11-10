@@ -168,6 +168,9 @@ export interface PullRequestCallbacks {
   // Fix on the review drafts of a pull request the signed-in user wrote
   // (null on anyone else's): why it is off for a draft, or null; and the run.
   draftFix: (pr: PullRequestDetail) => { reason: (d: Draft) => string | null; run: (d: Draft) => void } | null;
+  // Explain more on a draft's finding of the saved review, and how it went.
+  explainDraft: (pr: PullRequestDetail, d: Draft) => void;
+  draftExplaining: (pr: PullRequestDetail, d: Draft) => { running: boolean; failed: string | null };
   // Shows a commit in History.
   openCommit: (sha: string) => void;
   // Take a waiting fix off the pull request's queue.
@@ -1751,6 +1754,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       showInDiff: where === "list" && anchor === "ok" && d.path ? () => showInDiff(d) : null,
       openCommit: cb.openCommit,
       changed: (redraw) => (redraw ? reviewsChanged() : saveSoon()),
+      explain: d.finding ? { ...cb.draftExplaining(pr, d), run: () => cb.explainDraft(pr, d) } : null,
     };
     return draftCard(d, o);
   }

@@ -80,7 +80,7 @@ describe("parseReviewFile", () => {
   it("reads the Markdown an HTML review page embeds", () => {
     const md = "# PR Review\n\n### `src/a.ts:6`\n\n**Severity:** 🟡 minor\n\n**Explained simply:**\n\nWhy.\n\n**Comment to paste:**\n\n<div class=\"copy-block\" data-i=\"0\">\n\nOff by one.\n\n</div>\n";
     const html = `<!doctype html>\n<html><head><script>const x = 1;</script></head><body><div id="root"></div>\n<script type="text/plain" id="markdown-source">${md}</script>\n</body></html>`;
-    expect(parseReviewFile(html)).toEqual([{ path: "src/a.ts", line: 6, side: "RIGHT", body: "Off by one.", severity: "minor" }]);
+    expect(parseReviewFile(html)).toEqual([{ path: "src/a.ts", line: 6, side: "RIGHT", body: "Off by one.", severity: "minor", explained: "Why." }]);
     expect(parseReviewFile("<!doctype html><html><body>no review here</body></html>")).toEqual([]);
   });
 
@@ -201,5 +201,79 @@ All five hold; nothing to paste here.
     expect(withOffDiffDrafts("Thanks.", [general], "https://github.com/o/r/pull/7", "abc")).toBe(
       "Thanks.\n\n---\n\n**PR description**\n\nFix the body.",
     );
+  });
+});
+
+describe("a finding's explanations", () => {
+  const file = [
+    "# PR Review",
+    "## Summary",
+    "### `src/a.ts:3`",
+    "Not a finding: the summary's own heading.",
+    "## Suggested Changes & Comment Proposals",
+    "### `src/retry.ts:12`",
+    "**Severity:** 🟡 minor",
+    "",
+    "**Verified:** by reading",
+    "",
+    "**Explained simply:**",
+    "",
+    "The loop has **no** limit.",
+    "",
+    "```",
+    "try ─▶ try ─▶ try ─▶ …",
+    "```",
+    "",
+    "**Comment to paste:**",
+    "",
+    "<!-- copy:start -->",
+    "Add a limit.",
+    "<!-- copy:end -->",
+    "",
+    '<details class="explain" data-id="req_1">',
+    "<summary>Explained more 1 · 2026-11-10 09:00 (from /explain-simply)</summary>",
+    "",
+    "<!-- explain:start req_1 -->",
+    "#### Why it matters",
+    "### A heading inside the answer",
+    "Each try waits 5 s.",
+    "<!-- explain:end -->",
+    "",
+    "</details>",
+    "",
+    "### `src/check.ts:40`",
+    "**Severity:** 🟢 nit",
+    "",
+    "**Comment to paste:**",
+    "",
+    "<!-- copy:start -->",
+    "Log the requestId.",
+    "<!-- copy:end -->",
+    "",
+    "## Final Verdict",
+  ].join("\n");
+
+  it("reads the Explained simply text, the board's finding id and its Explain more answers", () => {
+    const [summary, retry, check] = parseReviewFile(file);
+    expect(summary.finding).toBeUndefined();
+    expect(retry).toMatchObject({
+      path: "src/retry.ts",
+      line: 12,
+      body: "Add a limit.",
+      finding: "f1",
+      explained: "The loop has **no** limit.\n\n```\ntry ─▶ try ─▶ try ─▶ …\n```",
+      explanations: ["#### Why it matters\n### A heading inside the answer\nEach try waits 5 s."],
+    });
+    // The answer's own heading neither ends the finding nor counts as one.
+    expect(check).toMatchObject({ path: "src/check.ts", line: 40, body: "Log the requestId.", finding: "f2" });
+    expect(check.explained).toBeUndefined();
+    expect(check.explanations).toBeUndefined();
+  });
+
+  // sync_file.py starts a finding at each "####" line and each Severity
+  // line of a block: here 4 in the first block, so the next is f5.
+  it("numbers a block of several findings as the board does", () => {
+    const two = "## Suggested changes\n### Two in one\n#### `a.ts:1`\n**Severity:** nit\n**Comment to paste:**\nx\n#### `b.ts:2`\n**Severity:** nit\n### `c.ts:3`\n**Comment to paste:**\ny";
+    expect(parseReviewFile(two).map((d) => d.finding)).toEqual(["f1", "f5"]);
   });
 });

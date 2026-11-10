@@ -2404,7 +2404,11 @@ export async function reviewPageUrl(number: number): Promise<string> {
 // with `command`, in the repository at `path`; resolves once the command has
 // added the explanation to the review file.
 export async function explainReviewFinding(path: string, number: number, finding: string, command: string): Promise<void> {
-  if (!isTauri()) return new Promise((resolve) => setTimeout(resolve, 5000));
+  if (!isTauri()) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    mockExplain(finding);
+    return;
+  }
   return invoke<void>("explain_review_finding", { path, number, finding, command });
 }
 
@@ -2915,11 +2919,38 @@ const MOCK_REVIEW_PAGE = `<!doctype html><html><head><meta charset="utf-8"><styl
 <p>Log the <code>requestId</code> on each retry. <a href="https://github.com/example/mideal/pull/42">#42</a></p>
 </body></html>`;
 
-const MOCK_REVIEW_FILE = `# Review of #42
+// The preview's Explain more: the board's answer at the end of the finding's
+// block, as review/_board/sync_file.py writes it.
+function mockExplain(finding: string): void {
+  const n = Number(finding.slice(1));
+  const blocks = MOCK_REVIEW_FILE.split(/(?=^### )/m);
+  if (!blocks[n]) return;
+  const count = (blocks[n].match(/<details class="explain"/g) ?? []).length + 1;
+  const id = `req_mock${Date.now()}`;
+  blocks[n] =
+    blocks[n].trimEnd() +
+    `\n\n<details class="explain" data-id="${id}">\n<summary>Explained more ${count} (from /explain-simply)</summary>\n\n<!-- explain:start ${id} -->\n` +
+    "Think of the retry as a counter that starts at 1:\n\n```\nattempt 1 ─▶ fail ─▶ attempt 2 ─▶ fail ─▶ attempt 3 ─▶ throw   ◄── 2 retries, not 3\n```\n\n" +
+    "With `MAX_ATTEMPTS = 3` the check must be `attempt === MAX_ATTEMPTS` **after** the third retry, not on the third try." +
+    "\n<!-- explain:end -->\n\n</details>\n\n";
+  MOCK_REVIEW_FILE = blocks.join("");
+}
+
+let MOCK_REVIEW_FILE = `# Review of #42
+
+## Suggested Changes & Comment Proposals
 
 ### \`src/identity/retry.ts:6\`
 
 **Severity:** 🔴 blocking
+
+**Explained simply:**
+
+The loop gives up one try too soon. It counts the first call as a retry.
+
+\`\`\`
+attempt 1 ─▶ attempt 2 ─▶ attempt 3 ─▶ throw     ◄── only 2 retries
+\`\`\`
 
 **Comment to paste:**
 
@@ -2934,6 +2965,10 @@ The retry stops one attempt early: \`attempt === 3\` throws on the third try, so
 ### \`src/identity/client.ts:11\`
 
 **Severity:** 🟡 minor
+
+**Explained simply:**
+
+\`http.get\` can time out after the server has done the work. A retry then does the check twice.
 
 **Comment to paste:**
 

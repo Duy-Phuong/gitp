@@ -1141,6 +1141,9 @@ export interface StoredDraft {
   topic?: string | null;
   fix?: ReviewFix | null;
   stale?: boolean;
+  explained?: string | null;
+  finding?: string | null;
+  explanations?: string[];
 }
 
 export interface StoredReview {

@@ -667,6 +667,7 @@ mod tests {
             topic: None,
             fix: None,
             stale: false,
+            about: Default::default(),
         };
         let review = StoredReview {
             version: 1,

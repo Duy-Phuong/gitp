@@ -109,4 +109,34 @@ describe("draft cards", () => {
       expect(row.textContent).toContain("two");
     }
   });
+
+  it("shows the review's Explained simply and Explain more answers above the comment, with Explain more", async () => {
+    const { draftCard } = await import("./draft-cards");
+    const run = vi.fn();
+    const d = draft({ explained: "The loop has **no** limit.", finding: "f2", explanations: ["First.", "Second."] });
+    const card = draftCard(d, options({ explain: { running: false, failed: null, run } }));
+    const folds = [...card.querySelectorAll<HTMLDetailsElement>(".pr-draft-fold")];
+    expect(folds.map((f) => f.querySelector("summary")!.textContent)).toEqual(["Explained simply", "Explained more 1", "Explained more 2"]);
+    expect(folds.map((f) => f.open)).toEqual([true, false, true]);
+    expect(folds[0].querySelector("strong")?.textContent).toBe("no");
+    // In this order: the explanations, then the comment to paste.
+    const label = card.querySelector(".pr-draft-label")!;
+    expect(label.textContent).toBe("Comment to paste");
+    expect(card.querySelector(".pr-draft-explain")!.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(label.nextElementSibling?.classList.contains("pr-draft-text")).toBe(true);
+    [...card.querySelectorAll("button")].find((b) => b.textContent === "Explain more")!.click();
+    expect(run).toHaveBeenCalled();
+
+    const running = draftCard(d, options({ explain: { running: true, failed: "no saved review", run } }));
+    const b = [...running.querySelectorAll("button")].find((x) => x.textContent === "Explaining…")!;
+    expect(b.disabled).toBe(true);
+    expect(running.textContent).toContain("Couldn't explain: no saved review");
+  });
+
+  it("keeps the inline card and a draft with nothing to explain as they were", async () => {
+    const { draftCard } = await import("./draft-cards");
+    const d = draft({ explained: "Why." });
+    expect(draftCard(d, options({ where: "inline" })).querySelector(".pr-draft-explain")).toBeNull();
+    expect(draftCard(draft(), options()).querySelector(".pr-draft-explain, .pr-draft-label")).toBeNull();
+  });
 });
