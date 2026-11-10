@@ -732,21 +732,24 @@ export const DEFAULT_REVIEW_COMMAND =
   "If nothing is wrong print exactly: No findings.'";
 
 // "Use Review Skill" in Settings: the /review-pr-phuong Claude Code skill,
-// which saves its review page under review/ (gitp reads the drafts from
-// there). Nobody can answer a permission prompt in the background, so
-// dontAsk refuses every tool the list doesn't name: reads, git and gh
-// lookups, the skill's checks and page build, writes under review/, the Jira
-// and Confluence reads and the Review Board.
+// which saves its review page in the review folder (gitp reads the drafts
+// from there). gitp sets $GITP_REVIEW_DIR to that folder as Settings → Claude
+// has it (review/ unless set) and $GITP_REVIEW_PATH to it in full. Nobody can
+// answer a permission prompt in the background, so dontAsk refuses every
+// tool the list doesn't name: reads, git and gh lookups, the skill's checks
+// and page build, writes in the review folder, the Jira and Confluence reads
+// and the Review Board.
 const SKILL_TOOLS = [
   // Edit(path) covers every file-writing tool, Write included. A path rule
   // is relative to Claude's working directory, which a `cd` in a Bash call
-  // moves (into the skill's folder, say), so review/ is also given by its
-  // full path: "//" + the directory the shell starts in, the repository's.
-  "Read", "Grep", "Glob", "Skill", "Edit(review/**)", "Edit(/$(pwd)/review/**)",
+  // moves (into the skill's folder, say), so the folder is also given by its
+  // full path: "//" + $GITP_REVIEW_PATH.
+  "Read", "Grep", "Glob", "Skill", "Edit($GITP_REVIEW_DIR/**)", "Edit(/$GITP_REVIEW_PATH/**)",
   "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)", "Bash(git grep *)", "Bash(git fetch *)",
   "Bash(git rev-parse *)", "Bash(git merge-base *)", "Bash(git ls-files *)", "Bash(git blame *)",
   "Bash(gh pr view *)", "Bash(gh pr diff *)", "Bash(gh api --paginate repos/*)",
-  "Bash(mkdir -p review/*)", "Bash(rm review/*)", "Bash(curl -fsSL https://cdn.jsdelivr.net/*)", "Bash(python3 *)",
+  "Bash(mkdir -p $GITP_REVIEW_DIR/*)", "Bash(mkdir -p $GITP_REVIEW_PATH/*)", "Bash(rm $GITP_REVIEW_DIR/*)",
+  "Bash(curl -fsSL https://cdn.jsdelivr.net/*)", "Bash(python3 *)",
   ...["claude_ai_Atlassian", "claude_ai_Atlassian_MCP"].flatMap((server) =>
     ["getJiraIssue", "searchJiraIssuesUsingJql", "getConfluencePage"].map((tool) => `mcp__${server}__${tool}`),
   ),
@@ -757,7 +760,7 @@ const SKILL_TOOLS = [
 // so a prompt behind it would be swallowed and claude would get none.
 export const SKILL_REVIEW_COMMAND =
   `claude -p "/review-pr-phuong $GITP_PR_URL board mode, with md, no questions: where you would ask, take the default ` +
-  `(the sprint folder no-sprint when Jira has no sprint). Write the review Markdown under review/, not in TMPDIR." ` +
+  `(the sprint folder no-sprint when Jira has no sprint). Write the review Markdown under $GITP_REVIEW_DIR/, not in TMPDIR." ` +
   `--model opus --effort medium --permission-mode dontAsk ${SESSION_ID_ARG} --allowedTools "${SKILL_TOOLS.join(" ")}"`;
 
 // Run Review Skill on a local branch (no pull request yet): the skill's
@@ -765,7 +768,7 @@ export const SKILL_REVIEW_COMMAND =
 // worktree; not board mode, which is for pull requests.
 export const BRANCH_SKILL_REVIEW_COMMAND =
   `claude -p "/review-pr-phuong $GITP_BRANCH against $GITP_BASE, with md, no questions: where you would ask, take the default ` +
-  `(the sprint folder no-sprint when Jira has no sprint). Write the review Markdown under review/, not in TMPDIR." ` +
+  `(the sprint folder no-sprint when Jira has no sprint). Write the review Markdown under $GITP_REVIEW_DIR/, not in TMPDIR." ` +
   `--model opus --effort medium --permission-mode dontAsk ${SESSION_ID_ARG} --allowedTools "${SKILL_TOOLS.join(" ")}"`;
 
 // "Explain more" on a finding of a saved review: the review board's own
@@ -773,7 +776,8 @@ export const BRANCH_SKILL_REVIEW_COMMAND =
 // the review file. The slug and the finding come in the environment.
 export const EXPLAIN_FINDING_COMMAND =
   `claude -p "/serve-board Review board request: explain finding $GITP_REVIEW_FINDING of $GITP_REVIEW_SLUG. ` +
-  `Serve only this line, as the README part 'Lines from the review HTML file' says. Do not arm a watch, ask no questions." ` +
+  `Serve only this line, as the README part 'Lines from the review HTML file' says. The review files are under $GITP_REVIEW_DIR/. ` +
+  `Do not arm a watch, ask no questions." ` +
   `--model opus --effort medium --permission-mode dontAsk ${SESSION_ID_ARG} --allowedTools "${[...SKILL_TOOLS, "ToolSearch"].join(" ")}"`;
 
 // "Explain with Claude" on a commit, a branch or a tag: what Claude reads

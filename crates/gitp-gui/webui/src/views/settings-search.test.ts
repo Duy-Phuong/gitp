@@ -19,6 +19,8 @@ const actions = {
   browseFolder: none,
   redrawDiffs: () => {},
   encoding: none,
+  reviewFolder: none,
+  setReviewFolder: () => Promise.resolve(),
   setEncoding: () => Promise.resolve(),
   openConfig: () => {},
   githubAccount: () => Promise.reject(new Error("no gh")),
@@ -48,6 +50,11 @@ describe("Settings search", () => {
     expect(labels()).toEqual(["Zoom"]);
     type("notifications");
     expect(labels()).toEqual(["A Claude job finishes or fails", "A check fails on my pull request or branch", "A review is asked of me"]);
+    // Every Claude setting is in its own tab.
+    type("claude");
+    expect(labels()).toEqual(expect.arrayContaining(["Claude model", "Claude effort", "Review folder", "Review command", "Fix command", "Commit message command"]));
+    type("review folder");
+    expect(labels()).toEqual(["Review folder"]);
     type("nothing like this");
     expect(document.querySelector(".settings-body")?.textContent).toContain('No setting matches "nothing like this".');
     type("");

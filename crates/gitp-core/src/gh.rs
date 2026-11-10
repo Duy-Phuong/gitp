@@ -1485,10 +1485,26 @@ pub struct GeneratedReview {
     pub file: Option<String>,
 }
 
-/// The `pr-review-*.html` and `.md` files under `dir/review/` and one folder
-/// below it (the sprint folder), each with when it was last written.
+/// The folder review commands save their pages in: the repository's
+/// `gitp.reviewFolder` (Settings → Claude → Review folder), relative to
+/// `dir` or a full path (`~/` is the home folder), and `review` when unset.
+pub(crate) fn review_folder(dir: &Path) -> String {
+    let folder = git_in(dir, &["config", "--get", "gitp.reviewFolder"])
+        .ok()
+        .map(|v| v.trim().trim_end_matches('/').to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "review".to_string());
+    match (folder.strip_prefix("~/"), std::env::var_os("HOME")) {
+        (Some(rest), Some(home)) => Path::new(&home).join(rest).to_string_lossy().into_owned(),
+        _ => folder,
+    }
+}
+
+/// The `pr-review-*.html` and `.md` files under `dir`'s review folder and
+/// one folder below it (the sprint folder), each with when it was last
+/// written.
 fn review_files_in(dir: &Path) -> Vec<(PathBuf, SystemTime)> {
-    let root = dir.join("review");
+    let root = dir.join(review_folder(dir));
     let mut found = Vec::new();
     let mut look = |folder: &Path| {
         let Ok(entries) = std::fs::read_dir(folder) else {
@@ -2397,6 +2413,11 @@ pub(crate) fn run_shell(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Where a review command saves its page, as configured and in full,
+    // for the prompt and Claude's --allowedTools.
+    let folder = review_folder(dir);
+    cmd.env("GITP_REVIEW_PATH", dir.join(&folder))
+        .env("GITP_REVIEW_DIR", folder);
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -4418,6 +4439,51 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
             .generate_review_drafts(&fake.gh(), 7, "cat >/dev/null; echo '### a.rs:1'")
             .unwrap();
         assert_eq!((out.text.as_str(), out.file), ("### a.rs:1\n", None));
+    }
+
+    #[test]
+    fn a_set_review_folder_is_where_the_review_is_written_and_read() {
+        let fake = Fake::new();
+        fake.answer("pr diff", "diff --git a/x b/x\n+hello\n", "", 0);
+        let (dir, repo) = github_repo();
+        git_in(
+            dir.path(),
+            &["config", "gitp.reviewFolder", "notes/reviews/"],
+        )
+        .unwrap();
+        assert_eq!(review_folder(dir.path()), "notes/reviews");
+        let out = repo
+            .generate_review_drafts(
+                &fake.gh(),
+                7,
+                "cat >/dev/null; mkdir -p \"$GITP_REVIEW_DIR/s\"; \
+                 printf '[#7](https://github.com/octo/hello/pull/7)' > \"$GITP_REVIEW_DIR/s/pr-review-UBIID-7.md\"; \
+                 printf '%s' \"$GITP_REVIEW_PATH\" > where",
+            )
+            .unwrap();
+        assert!(
+            out.file
+                .unwrap()
+                .ends_with("notes/reviews/s/pr-review-UBIID-7.md"),
+            "read from the set folder"
+        );
+        // The full path, for Claude's permission rules after a cd.
+        let full = std::fs::read_to_string(dir.path().join("where")).unwrap();
+        assert!(
+            Path::new(&full).is_absolute() && full.ends_with("notes/reviews"),
+            "{full}"
+        );
+        assert_eq!(
+            repo.review_files()
+                .iter()
+                .map(|f| f.number)
+                .collect::<Vec<_>>(),
+            [7]
+        );
+
+        // Unset, or blank: review/.
+        git_in(dir.path(), &["config", "gitp.reviewFolder", " "]).unwrap();
+        assert_eq!(review_folder(dir.path()), "review");
     }
 
     #[test]

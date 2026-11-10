@@ -145,14 +145,16 @@ describe("the review skill command", () => {
 });
 
 describe("the review skill's writes", () => {
-  it("allows review/ by its full path too, which a cd in a Bash call doesn't move", () => {
+  it("go to the review folder gitp sets, allowed by its full path too, which a cd in a Bash call doesn't move", () => {
     for (const c of [SKILL_REVIEW_COMMAND, BRANCH_SKILL_REVIEW_COMMAND, EXPLAIN_FINDING_COMMAND]) {
-      expect(c).toContain("Edit(review/**) Edit(/$(pwd)/review/**)");
+      expect(c).toContain("Edit($GITP_REVIEW_DIR/**) Edit(/$GITP_REVIEW_PATH/**)");
+      expect(c).not.toMatch(/[ (]review\//);
     }
-    // Inside the double quotes, so the shell puts the repository's path in.
+    for (const c of [SKILL_REVIEW_COMMAND, BRANCH_SKILL_REVIEW_COMMAND]) expect(c).toContain("Write the review Markdown under $GITP_REVIEW_DIR/");
+    // Inside the double quotes, so the shell puts the folder in.
     const c = SKILL_REVIEW_COMMAND;
     const list = c.slice(c.indexOf('--allowedTools "'));
-    expect(list.endsWith('"') && list.indexOf("$(pwd)") > 0).toBe(true);
+    expect(list.endsWith('"') && list.indexOf("$GITP_REVIEW_PATH") > 0).toBe(true);
   });
 });
 

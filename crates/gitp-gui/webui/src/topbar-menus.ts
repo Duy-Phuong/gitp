@@ -251,6 +251,24 @@ export function openSettings(section?: string): void {
           opFailed("Couldn't set the hooks folder", err);
         }
       },
+      reviewFolder: async () => {
+        if (!state.repoPath) return null;
+        const entries = await fetchConfig();
+        return entries.find((e) => e.scope === "Local" && e.name.toLowerCase() === "gitp.reviewfolder")?.value ?? "";
+      },
+      // A folder picked inside the repository is kept relative to it, so
+      // every worktree of a branch review has its own.
+      setReviewFolder: async (path) => {
+        const root = state.repoPath.replace(/\/+$/, "");
+        const folder = path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
+        try {
+          if (folder) await saveConfig("Local", "gitp.reviewFolder", folder);
+          else await unsetConfig("Local", "gitp.reviewFolder");
+          reportDone(folder ? `Reviews are saved in ${folder}` : "Reviews are saved in review/");
+        } catch (err) {
+          opFailed("Couldn't set the review folder", err);
+        }
+      },
       browseFolder: browseForFolder,
       hooks: async () => (state.repoPath ? listHooks() : null),
       setLocalHistory: (on) => void setLocalHistoryEnabled(on),

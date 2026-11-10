@@ -14,8 +14,8 @@ use crate::diff::FileDiff;
 use crate::error::{Error, Result};
 use crate::gh::{
     claude_answer, git_in, parse_pr_diff, require_clean, require_contains,
-    review_file_written_since, run_shell, run_verified_fix, FixRules, SetAside, FIX_TIMEOUT,
-    REVIEW_TIMEOUT,
+    review_file_written_since, review_folder, run_shell, run_verified_fix, FixRules, SetAside,
+    FIX_TIMEOUT, REVIEW_TIMEOUT,
 };
 use crate::pr_threads::now_millis;
 use crate::repo::Repo;
@@ -97,11 +97,17 @@ impl Repo {
     }
 
     /// A review page the command left untracked under the worktree's
-    /// `review/` would make the worktree dirty, and every Fix refuses a
-    /// dirty one (and its undo would delete the page): add `/review/` to the
-    /// repository's own exclude file, which every worktree shares and which
-    /// is never committed.
+    /// review folder (`review/` unless set) would make the worktree dirty,
+    /// and every Fix refuses a dirty one (and its undo would delete the
+    /// page): add `/<folder>/` to the repository's own exclude file, which
+    /// every worktree shares and which is never committed. A folder outside
+    /// the worktree needs nothing.
     fn keep_review_folder_out(&self, dir: &Path, file: &Path) -> Result<()> {
+        let folder = review_folder(dir);
+        if Path::new(&folder).is_absolute() {
+            return Ok(());
+        }
+        let line = format!("/{folder}/");
         let rel = file
             .strip_prefix(dir)
             .unwrap_or(file)
@@ -119,13 +125,15 @@ impl Repo {
             .map_err(|e| Error::Message(format!("{}: {e}", info.display())))?;
         let exclude = info.join("exclude");
         let mut text = std::fs::read_to_string(&exclude).unwrap_or_default();
-        if text.lines().any(|l| l.trim() == "/review/") {
+        if text.lines().any(|l| l.trim() == line) {
             return Ok(());
         }
         if !text.is_empty() && !text.ends_with('\n') {
             text.push('\n');
         }
-        text.push_str("# gitp: review pages written by branch reviews\n/review/\n");
+        text.push_str(&format!(
+            "# gitp: review pages written by branch reviews\n{line}\n"
+        ));
         std::fs::write(&exclude, text)
             .map_err(|e| Error::Message(format!("{}: {e}", exclude.display())))
     }

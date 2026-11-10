@@ -83,6 +83,10 @@ export interface SettingsActions {
   // is open; and writing it ("" unsets it).
   hooksPath: () => Promise<string | null>;
   setHooksPath: (path: string) => Promise<void>;
+  // The open repo's gitp.reviewFolder ("" when unset: review/), or null when
+  // no repo is open; and setting it.
+  reviewFolder: () => Promise<string | null>;
+  setReviewFolder: (path: string) => Promise<void>;
   // The open repo's hooks, or null when no repo is open; switching one off or
   // on; and opening its script in the editor.
   hooks: () => Promise<Hooks | null>;
@@ -386,6 +390,13 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
           "block",
           "A pull request whose title or branch names a ticket (UBIID-1234) gets an icon beside its title that opens the ticket here. Paste the site or any ticket link from it. Blank hides it.",
         ),
+        row("Git configuration", linkButton("Open Git Config", () => actions.openConfig("git"))),
+        row("Dotfiles", linkButton("Open Dotfiles", () => actions.openConfig("dotfiles"))),
+      ],
+    },
+    {
+      title: "Claude",
+      render: () => [
         row(
           "Claude model",
           claudeChoiceSelect("model"),
@@ -393,6 +404,12 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
           "Every Claude run gitp starts uses this model and effort: reviews, Explain more, Check, Explain simply, Reply with Claude, a follow-up and Fix on a thread, and the commit message and pull request drafts. gitp sets them in each command below as it runs it, in its --model and --effort.",
         ),
         row("Claude effort", claudeChoiceSelect("effort"), "inline"),
+        row(
+          "Review folder",
+          reviewFolderField(actions),
+          "block",
+          "Where Run Review Skill saves its review pages and where gitp reads them back: a folder in the repository, or a full path. Claude may write there. Kept in the open repository's config as gitp.reviewFolder. Empty uses review/.",
+        ),
         row(
           "Review command",
           reviewCommandField(),
@@ -426,8 +443,6 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
           "block",
           "Draft with Claude in Create Pull Request runs this with the branch's commits and then its diff against Into on stdin. GITP_BRANCH, GITP_BASE and, when the repository has a pull request template, GITP_PR_TEMPLATE_FILE are set. It prints JSON with a title and a body, or plain text whose first line is the title. Blank restores the default.",
         ),
-        row("Git configuration", linkButton("Open Git Config", () => actions.openConfig("git"))),
-        row("Dotfiles", linkButton("Open Dotfiles", () => actions.openConfig("dotfiles"))),
       ],
     },
   ];
@@ -674,13 +689,13 @@ function encodingSelect(actions: SettingsActions): HTMLElement {
   return select;
 }
 
-// The repo's hooks folder: a path field that saves when it changes (Enter or
-// leaving it), and Browse. Disabled until the current value has loaded, and
-// when no repo is open.
-function hooksField(actions: SettingsActions): HTMLElement {
+// A folder of the repo's config: a path field that saves when it changes
+// (Enter or leaving it), and Browse. Disabled until the current value has
+// loaded, and when no repo is open.
+function pathField(placeholder: string, browseTitle: string, load: () => Promise<string | null>, store: (path: string) => Promise<void>, browseFolder: (title: string) => Promise<string | null>): HTMLElement {
   const input = el("input", {
     class: "settings-select settings-path",
-    placeholder: ".git/hooks",
+    placeholder,
     spellcheck: "false",
     autocomplete: "off",
     disabled: true,
@@ -691,16 +706,16 @@ function hooksField(actions: SettingsActions): HTMLElement {
     const path = input.value.trim();
     if (path === saved) return;
     saved = path;
-    void actions.setHooksPath(path);
+    void store(path);
   };
   input.addEventListener("change", save);
   browse.addEventListener("click", async () => {
-    const dir = await actions.browseFolder("Hooks Folder");
+    const dir = await browseFolder(browseTitle);
     if (dir === null) return;
     input.value = dir;
     save();
   });
-  void actions.hooksPath().then(
+  void load().then(
     (path) => {
       if (path === null) {
         input.placeholder = "No repository open";
@@ -713,6 +728,9 @@ function hooksField(actions: SettingsActions): HTMLElement {
   );
   return el("div", { class: "settings-path-row" }, [input, browse]);
 }
+
+const hooksField = (actions: SettingsActions) => pathField(".git/hooks", "Hooks Folder", actions.hooksPath, actions.setHooksPath, actions.browseFolder);
+const reviewFolderField = (actions: SettingsActions) => pathField("review", "Review Folder", actions.reviewFolder, actions.setReviewFolder, actions.browseFolder);
 
 // The hooks git has in this repository, each with Off / On and Open.
 function hooksList(actions: SettingsActions): HTMLElement {
