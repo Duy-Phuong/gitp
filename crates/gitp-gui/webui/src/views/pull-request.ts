@@ -10,6 +10,7 @@
 // which builds text nodes, and the rest is set as text.
 
 import { clear, el, menuCaret, svg } from "../dom";
+import { DRAFT_KEYS } from "../shortcuts";
 import { showContextMenu, type MenuItem } from "./context-menu";
 import { renderGitHubMarkdown } from "./github-markdown";
 import { conversationNode, threadBadges, threadClaudeButtons } from "./thread-claude";
@@ -261,15 +262,17 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // when none is.
   let draftCursor: number | null = null;
 
-  // The Drafts tab's keys, as its cards' own buttons: j / k (↓ / ↑) move
-  // between the cards shown, a approves (again: back to pending), d discards
-  // (again: restores), f fixes, e explains more, o shows or hides a folded one.
+  // The Drafts tab's keys (DRAFT_KEYS in shortcuts.ts), as its cards' own
+  // buttons: j / k move between the cards shown, the others press a button
+  // of the marked card.
   document.addEventListener("keydown", (e) => {
     if (!draftKeysAllowed(e)) return;
     const cards = [...host.querySelectorAll<HTMLElement>(".pr-draft[data-draft]:not(.inline)")];
     if (!cards.length) return;
     const at = Math.max(0, cards.findIndex((c) => Number(c.dataset.draft) === draftCursor));
-    const move = e.key === "j" || e.key === "ArrowDown" ? 1 : e.key === "k" || e.key === "ArrowUp" ? -1 : 0;
+    const bound = DRAFT_KEYS.find((k) => k.keys.includes(e.key));
+    if (!bound) return;
+    const move = bound.move ?? 0;
     if (move) {
       const next = cards[Math.min(cards.length - 1, Math.max(0, draftCursor === null ? 0 : at + move))];
       e.preventDefault();
@@ -277,15 +280,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       next.scrollIntoView({ block: "nearest" });
       return;
     }
-    const labels: Record<string, string[]> = {
-      a: ["Approve", "Approved ✓"],
-      d: ["Discard", "Restore"],
-      f: ["Fix"],
-      e: ["Explain more"],
-      o: ["Show", "Hide"],
-    };
-    const want = labels[e.key];
-    if (!want) return;
+    const want = bound.buttons ?? [];
     const card = cards[at];
     const b = [...card.querySelectorAll<HTMLButtonElement>("button")].find((x) => want.includes(x.textContent ?? "") && !x.disabled);
     if (!b) return;
@@ -1865,7 +1860,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       el("span", {
         class: "pr-drafts-keys",
         text: "j/k move · a approve · d discard · f fix · e explain · o show",
-        title: "Keys of the Drafts tab, on the marked card (click a card to mark it)",
+        title: "Keys of the Drafts tab, on the marked card (click a card to mark it). All of them: Settings → Keymap, or ⌘/",
       }),
     );
     return el("div", { class: "pr-drafts-overview" }, [filters, list]);

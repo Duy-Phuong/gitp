@@ -47,7 +47,8 @@ describe("Settings search", () => {
     openSettingsDialog(actions);
     const first = labels();
     type("zoom");
-    expect(labels()).toEqual(["Zoom"]);
+    // The setting, and the shortcut on the Keymap tab.
+    expect(labels()).toEqual(["Zoom", "Zoom in / out / reset"]);
     type("notifications");
     expect(labels()).toEqual(["A Claude job finishes or fails", "A check fails on my pull request or branch", "A review is asked of me"]);
     // Every Claude setting is in its own tab.
