@@ -19,12 +19,14 @@ export function isShortcutsDialogOpen(): boolean {
   return overlay !== null;
 }
 
-const GROUPS: (ShortcutGroup | "Commit log")[] = [
+const GROUPS: (ShortcutGroup | "Commit log" | "Code" | "Pull request drafts")[] = [
   "Sync",
   "Branches and changes",
   "Repositories",
   "Views",
   "Commit log",
+  "Code",
+  "Pull request drafts",
   "App",
 ];
 

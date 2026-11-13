@@ -71,9 +71,36 @@ export const SHORTCUTS: Record<ShortcutId, ShortcutDef> = {
 /// per platform.
 export interface BuiltIn {
   label: string;
-  group: ShortcutGroup | "Commit log" | "Code";
+  group: ShortcutGroup | "Commit log" | "Code" | "Pull request drafts";
   mac: string;
   other: string;
+}
+
+/// The Drafts tab's keys, on the marked card, with no modifier: `move` steps
+/// between the cards, else the key presses the first of the card's `buttons`
+/// it has (by label). The Drafts tab and the lists read this one table.
+export interface DraftKey {
+  keys: string[];
+  label: string;
+  move?: 1 | -1;
+  buttons?: string[];
+}
+
+export const DRAFT_KEYS: DraftKey[] = [
+  { keys: ["j", "ArrowDown"], label: "Next draft", move: 1 },
+  { keys: ["k", "ArrowUp"], label: "Previous draft", move: -1 },
+  { keys: ["a"], label: "Approve (again: back to pending)", buttons: ["Approve", "Approved ✓"] },
+  { keys: ["d"], label: "Discard (again: restore)", buttons: ["Discard", "Restore"] },
+  { keys: ["f"], label: "Fix", buttons: ["Fix"] },
+  { keys: ["e"], label: "Explain more", buttons: ["Explain more"] },
+  { keys: ["o"], label: "Show / hide a folded draft", buttons: ["Show", "Hide"] },
+];
+
+const KEY_NAMES: Record<string, string> = { ArrowDown: "↓", ArrowUp: "↑" };
+
+/// A draft key as the lists spell it: "J or ↓".
+export function draftKeyText(k: DraftKey): string {
+  return k.keys.map((x) => KEY_NAMES[x] ?? x.toUpperCase()).join(" or ");
 }
 
 export const BUILT_IN: BuiltIn[] = [
@@ -101,6 +128,7 @@ export const BUILT_IN: BuiltIn[] = [
   { label: "Call hierarchy", group: "Code", mac: "⌃⌥H", other: "Ctrl+Alt+H" },
   { label: "Close file", group: "Code", mac: "⌘⇧W", other: "Ctrl+Shift+W" },
   { label: "Markdown: preview / edit", group: "Code", mac: "⌘⇧V", other: "Ctrl+Shift+V" },
+  ...DRAFT_KEYS.map((k): BuiltIn => ({ label: k.label, group: "Pull request drafts", mac: draftKeyText(k), other: draftKeyText(k) })),
 ];
 
 export const IS_MAC = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");

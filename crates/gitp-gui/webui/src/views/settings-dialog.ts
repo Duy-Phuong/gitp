@@ -71,6 +71,7 @@ import {
   ZOOM_LEVELS,
 } from "../prefs";
 import type { DetailTab } from "./detail";
+import { sheetRows } from "./shortcuts-dialog";
 import type { GhAccount, Hooks, TurnKind } from "../types";
 
 export interface SettingsActions {
@@ -454,6 +455,10 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
         ),
       ],
     },
+    {
+      title: "Keymap",
+      render: () => keymapRows(),
+    },
   ];
 
   overlay = el("div", { class: "modal-overlay" });
@@ -532,6 +537,23 @@ export function matchesSettingsQuery(text: string, query: string): boolean {
 
 // A label (and optional hint) with its control beside it, or below it when the
 // control is too wide to share the line.
+// Every keyboard shortcut, by group, as the cheat sheet (Cmd/Ctrl+/) lists
+// them: one row each, so Settings search finds a shortcut by its name.
+// Read-only — the bindings aren't editable.
+function keymapRows(): HTMLElement[] {
+  const out: HTMLElement[] = [
+    el("div", {
+      class: "settings-row-hint",
+      text: "Letter keys without Cmd or Ctrl (the commit log, Pull request drafts) are ignored while typing, in the terminal and under a dialog. Cmd/Ctrl+/ shows this list anywhere.",
+    }),
+  ];
+  for (const { group, rows } of sheetRows()) {
+    out.push(el("div", { class: "settings-subheading", text: group }));
+    for (const r of rows) out.push(row(r.label, el("kbd", { class: "settings-kbd", text: r.keys })));
+  }
+  return out;
+}
+
 function row(label: string, control: HTMLElement, layout: "inline" | "block" = "inline", hint?: string): HTMLElement {
   const text = el("div", { class: "settings-row-text" }, [el("div", { class: "settings-row-label", text: label })]);
   if (hint) text.append(el("div", { class: "settings-row-hint", text: hint }));
