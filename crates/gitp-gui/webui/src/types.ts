@@ -820,6 +820,23 @@ export interface ThreadInput {
   comments: PrReviewComment[];
 }
 
+// Several threads of one pull request, for one Check of them all.
+export interface ThreadsInput {
+  number: number;
+  head: string;
+  author: string;
+  title?: string;
+  // Each thread's comments, root first.
+  threads: PrReviewComment[][];
+}
+
+// What a Check of several threads gave each: its conversation with the new
+// Check, or why it has none.
+export interface CheckedThreads {
+  checks: { thread: number; conversation: ThreadConversation | null; error: string | null }[];
+  session: string | null;
+}
+
 // A stored conversation a search found.
 export interface ThreadHit {
   pr: number;

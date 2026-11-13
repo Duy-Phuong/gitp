@@ -400,6 +400,12 @@ built and checked with `vite dev` in the browser.
   scroll to the thread.
 - **The panel and the Terminal panel** can be open at the same time, stacked.
 - **Tool input and output** in an event are cut at 4 KB.
+- **Check N Comments** (added 2026-11-13) is one run and one job of kind
+  `threads`, "Check · N comments · #PR", which lists its threads. A turn on
+  one of them is refused while it runs, and a thread's Cancel stops it. The
+  answer is cut at `<!-- gitp-thread: id -->` lines into each thread's Check
+  (`check_threads` in core). The run's session is no thread's own, so a
+  follow-up after it starts fresh from the thread file.
 - **Quit** is caught on `RunEvent::ExitRequested` and on the window's
   `CloseRequested`. It has not been checked in the native app: the GUI can't
   be run from the build sandbox.

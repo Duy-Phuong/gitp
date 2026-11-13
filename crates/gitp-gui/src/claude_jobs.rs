@@ -54,6 +54,9 @@ pub(crate) enum JobKind {
     Review,
     Explain,
     Thread,
+    /// Check several threads of a pull request in one run (Check all; the
+    /// threads in `threads`).
+    Threads,
     /// Suggest resolutions for a conflicted file (no pull request: `pr` 0,
     /// the file's path in `finding`).
     Resolve,
@@ -92,6 +95,9 @@ pub(crate) struct Job {
     pub repo: String,
     pub pr: u64,
     pub thread: Option<u64>,
+    /// The threads a Check all checks.
+    #[serde(default)]
+    pub threads: Vec<u64>,
     /// The finding of an Explain more.
     pub finding: Option<String>,
     /// The local branch of a branch review or of a draft's fix.
@@ -309,6 +315,16 @@ impl ClaudeJobs {
     /// a turn on the same thread runs. A thread's run joins its job, if the
     /// list still keeps it.
     pub fn begin(&self, new: NewJob) -> Result<Running, String> {
+        self.start(new, Vec::new())
+    }
+
+    /// Register a Check all of `threads`, or refuse it while a turn runs on
+    /// any of them.
+    pub fn begin_threads(&self, new: NewJob, threads: Vec<u64>) -> Result<Running, String> {
+        self.start(new, threads)
+    }
+
+    fn start(&self, new: NewJob, threads: Vec<u64>) -> Result<Running, String> {
         let now = (self.now)();
         let from = kept_from(now);
         let mut inner = self.inner.lock().unwrap();
@@ -320,6 +336,29 @@ impl ClaudeJobs {
                 && j.finding == new.finding
                 && j.branch == new.branch
         };
+        // A thread is busy with its own turn or with a Check all of it.
+        let busy = |j: &Job, thread: u64| {
+            j.state == JobState::Running
+                && j.repo == new.repo
+                && j.pr == new.pr
+                && match j.kind {
+                    JobKind::Thread => j.thread == Some(thread),
+                    JobKind::Threads => j.threads.contains(&thread),
+                    _ => false,
+                }
+        };
+        let mine: Vec<u64> = match new.kind {
+            JobKind::Thread => new.thread.into_iter().collect(),
+            JobKind::Threads => threads.clone(),
+            _ => Vec::new(),
+        };
+        if mine.iter().any(|&t| inner.jobs.iter().any(|j| busy(j, t))) {
+            return Err(if mine.len() == 1 {
+                "A turn on this thread is already running.".into()
+            } else {
+                "Claude is already on some of these comments.".into()
+            });
+        }
         if inner
             .jobs
             .iter()
@@ -331,6 +370,9 @@ impl ClaudeJobs {
                     None => format!("A review of #{} is already running.", new.pr),
                 },
                 JobKind::Thread => "A turn on this thread is already running.".into(),
+                JobKind::Threads => {
+                    format!("Claude is already checking comments of #{}.", new.pr)
+                }
                 JobKind::Explain => format!(
                     "Finding {} of #{} is already being explained.",
                     new.finding.as_deref().unwrap_or_default(),
@@ -374,6 +416,7 @@ impl ClaudeJobs {
                     repo: new.repo,
                     pr: new.pr,
                     thread: new.thread,
+                    threads,
                     finding: new.finding,
                     branch: new.branch,
                     state: JobState::Running,
@@ -508,7 +551,8 @@ impl ClaudeJobs {
     }
 
     /// Stop the running job of `kind` that matches, if any: the Cancel of a
-    /// review or a thread turn where it was started.
+    /// review or a thread turn where it was started. A thread's Cancel stops
+    /// the Check all it is in, too.
     pub fn stop_matching(&self, kind: JobKind, repo: &str, pr: u64, thread: Option<u64>) {
         let id = self
             .inner
@@ -518,10 +562,12 @@ impl ClaudeJobs {
             .iter()
             .find(|j| {
                 j.state == JobState::Running
-                    && j.kind == kind
                     && j.repo == repo
                     && j.pr == pr
-                    && j.thread == thread
+                    && ((j.kind == kind && j.thread == thread)
+                        || (kind == JobKind::Thread
+                            && j.kind == JobKind::Threads
+                            && thread.is_some_and(|t| j.threads.contains(&t))))
             })
             .map(|j| j.id);
         if let Some(id) = id {
@@ -843,6 +889,52 @@ mod tests {
         let state = |pr| list.iter().find(|j| j.pr == pr).unwrap().state;
         assert_eq!((state(7), state(8)), (JobState::Stopped, JobState::Done));
         assert!(jobs.running().is_empty());
+    }
+
+    #[test]
+    fn a_check_all_holds_its_threads_and_a_threads_cancel_stops_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let jobs = jobs_at(Arc::new(AtomicU64::new(T0)), dir.path().into());
+        let all = || NewJob {
+            kind: JobKind::Threads,
+            label: "Check 2 comments · #7".into(),
+            ..review(7)
+        };
+        let run = jobs.begin_threads(all(), vec![500, 600]).unwrap();
+        assert_eq!(
+            jobs.begin(turn("Follow-up")).err().unwrap(),
+            "A turn on this thread is already running.",
+            "thread 500 is in the Check all"
+        );
+        assert_eq!(
+            jobs.begin_threads(all(), vec![700]).err().unwrap(),
+            "Claude is already checking comments of #7."
+        );
+        let other = NewJob {
+            thread: Some(700),
+            ..turn("Check")
+        };
+        jobs.begin(other).unwrap().finish(Ok("ok".into()), &[]);
+        jobs.stop_matching(JobKind::Thread, "/src/app", 7, Some(600));
+        assert!(run.cancel.load(Ordering::SeqCst));
+        run.finish(Err("Cancelled".into()), &[]);
+        let list = jobs.list();
+        let job = list.iter().find(|j| j.kind == JobKind::Threads).unwrap();
+        assert_eq!(
+            (job.state, job.threads.as_slice()),
+            (JobState::Stopped, &[500, 600][..])
+        );
+        // Its threads are free again.
+        jobs.begin_threads(all(), vec![600]).unwrap();
+        assert_eq!(
+            jobs.begin(NewJob {
+                thread: Some(600),
+                ..turn("Check")
+            })
+            .err()
+            .unwrap(),
+            "A turn on this thread is already running."
+        );
     }
 
     #[test]

@@ -12,10 +12,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use gitp_core::{
-    CommitPullRequest, ConflictResolution, FileDiff, GeneratedReview, Gh, GhAccount, GhLogin,
-    GitHubRepoSettings, LineComment, MergeMethod, NewPullRequest, PrDraft, PrFilter,
-    PrReviewComment, PullRequest, PullRequestDetail, Repo, ReviewFile, ReviewVerdict,
-    ThreadConversation, ThreadInput, ThreadSearch, TurnKind, Undoable, LOGIN_TIMEOUT,
+    CheckedThreads, CommitPullRequest, ConflictResolution, FileDiff, GeneratedReview, Gh,
+    GhAccount, GhLogin, GitHubRepoSettings, LineComment, MergeMethod, NewPullRequest, PrDraft,
+    PrFilter, PrReviewComment, PullRequest, PullRequestDetail, Repo, ReviewFile, ReviewVerdict,
+    ThreadConversation, ThreadInput, ThreadSearch, ThreadsInput, TurnKind, Undoable, LOGIN_TIMEOUT,
 };
 use serde::Serialize;
 use tauri::State;
@@ -311,6 +311,60 @@ fn finish_turn(run: Running, path: &str, out: &Result<ThreadConversation, String
         .map(|c| c.turns.last().map(|t| t.text.clone()).unwrap_or_default())
         .map_err(Clone::clone);
     run.finish(answer, &sessions);
+}
+
+/// Check the threads of `input` in one Claude run (Check all), in the
+/// repository at `path` — named, not the active one: one job for them all,
+/// which a Cancel on any of them stops.
+fn gh_check_threads_impl(
+    jobs: &ClaudeJobs,
+    path: String,
+    input: ThreadsInput,
+    command: String,
+) -> Result<CheckedThreads, String> {
+    let ids: Vec<u64> = input
+        .threads
+        .iter()
+        .filter_map(|t| t.first().map(|c| c.id))
+        .collect();
+    let n = ids.len();
+    let mut repo = Repo::open(&path).map_err(to_message)?;
+    let run = jobs.begin_threads(
+        NewJob {
+            kind: JobKind::Threads,
+            label: format!(
+                "{n} {} · #{}",
+                if n == 1 { "comment" } else { "comments" },
+                input.number
+            ),
+            activity: "Check".into(),
+            repo: path.clone(),
+            pr: input.number,
+            thread: None,
+            finding: None,
+            branch: None,
+            command: command.clone(),
+            stdin_bytes: 0,
+        },
+        ids,
+    )?;
+    repo.set_network_hooks(run.hooks());
+    let out = repo
+        .check_threads(&Gh::system(), &input, &command)
+        .map_err(to_message);
+    let sessions: Vec<(String, String)> = out
+        .as_ref()
+        .ok()
+        .and_then(|o| o.session.clone())
+        .map(|s| (s, path.clone()))
+        .into_iter()
+        .collect();
+    let answer = out.as_ref().map_err(Clone::clone).map(|o| {
+        let checked = o.checks.iter().filter(|c| c.error.is_none()).count();
+        format!("Checked {checked} of {n} comments.")
+    });
+    run.finish(answer, &sessions);
+    out
 }
 
 /// The fixes running, by repository path and branch: one at a time per
@@ -799,6 +853,16 @@ pub(crate) fn gh_thread_turn(
     jobs: State<ClaudeJobs>,
 ) -> Result<ThreadConversation, String> {
     gh_thread_turn_impl(&jobs, path, input, kind, user_text, command)
+}
+
+#[tauri::command(async)]
+pub(crate) fn gh_check_threads(
+    path: String,
+    input: ThreadsInput,
+    command: String,
+    jobs: State<ClaudeJobs>,
+) -> Result<CheckedThreads, String> {
+    gh_check_threads_impl(&jobs, path, input, command)
 }
 
 #[tauri::command]

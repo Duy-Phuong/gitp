@@ -18,6 +18,8 @@ import type {
   ThreadConversation,
   ThreadSearch,
   ThreadInput,
+  ThreadsInput,
+  CheckedThreads,
   TurnKind,
   GitHubRepoSettings,
   MergeMethod,
@@ -2415,7 +2417,7 @@ export async function explainReviewFinding(path: string, number: number, finding
 // --- Claude jobs ----------------------------------------------------------------
 
 // Every Claude Code run gitp starts (see claude_jobs.rs): the last 7 days', newest first.
-export type ClaudeJobKind = "review" | "explain" | "thread" | "resolve" | "ask";
+export type ClaudeJobKind = "review" | "explain" | "thread" | "threads" | "resolve" | "ask";
 export type ClaudeJobState = "running" | "done" | "failed" | "stopped" | "interrupted";
 
 export interface ClaudeUsage {
@@ -2434,6 +2436,8 @@ export interface ClaudeJob {
   repo: string;
   pr: number;
   thread: number | null;
+  // The threads a Check all checks.
+  threads?: number[];
   finding: string | null;
   // The local branch of a branch review or a draft's fix.
   branch?: string | null;
@@ -2682,6 +2686,27 @@ export async function threadTurn(path: string, input: ThreadInput, kind: TurnKin
     return structuredClone(c);
   }
   return invoke<ThreadConversation>("gh_thread_turn", { path, input, kind, userText, command });
+}
+
+// Check every thread of `input` in one Claude run (Check all); resolves with
+// each thread's conversation and its new Check, or why it has none. A Cancel
+// on any of the threads stops the run.
+export async function checkThreads(path: string, input: ThreadsInput, command: string): Promise<CheckedThreads> {
+  if (!isTauri()) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const checks = input.threads.map((comments) => {
+      const root = comments[0];
+      const key = `${input.number}\n${root.id}`;
+      const c: ThreadConversation = mockThreads.get(key) ?? { version: 1, pr: input.number, thread: root.id, path: root.path, turns: [] };
+      c.title = input.title ?? c.title;
+      c.line = root.line ?? root.original_line ?? undefined;
+      c.turns.push({ kind: "check", role: "claude", at: Date.now(), head: input.head, text: MOCK_TURN_TEXT.check });
+      mockThreads.set(key, c);
+      return { thread: root.id, conversation: structuredClone(c), error: null };
+    });
+    return { checks, session: null };
+  }
+  return invoke<CheckedThreads>("gh_check_threads", { path, input, command });
 }
 
 export async function cancelThreadTurn(path: string, number: number, thread: number): Promise<void> {

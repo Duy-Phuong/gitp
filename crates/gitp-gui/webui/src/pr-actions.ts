@@ -59,6 +59,7 @@ import {
   applySuggestions,
   threadFix,
   threadTurn,
+  checkThreads,
   markReplyPosted,
   dropReply,
   branchAheadLog,
@@ -90,7 +91,7 @@ import { hunkAround, openFindingsNote } from "./branch-reviews";
 import { parseReviewFile, reviewedHeadIn } from "./review-drafts";
 import { cancelDraft, draftPullRequest, loadDraftCommand } from "./claude-drafts";
 import { prDraftAction } from "./pr-draft-action";
-import { EXPLAIN_FINDING_COMMAND, loadReviewCommand, loadThreadCommand, RESOLVE_PR_CONFLICTS_COMMAND, SKILL_REVIEW_COMMAND, withClaudeChoice } from "./prefs";
+import { EXPLAIN_FINDING_COMMAND, loadCheckAllCommand, loadReviewCommand, loadThreadCommand, RESOLVE_PR_CONFLICTS_COMMAND, SKILL_REVIEW_COMMAND, withClaudeChoice } from "./prefs";
 import { conflictPreviewBody } from "./pr-conflicts";
 import { askChoice } from "./views/choice-dialog";
 import { cancelQueuedFix, finishTurn, fixRunningOn, lastUserText, preparedReply, queuedFixes, queueFix, runningTurns, setConversation, startTurn, takeQueuedFix, threadState, threadsChanged } from "./pr-threads";
@@ -738,6 +739,7 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
     return post(what, pr.number, body.trim() ? `${body}\n\n${preview}` : preview, () => reviewWithComments(pr.number, verdict, body, comments));
   },
   threadTurn: (pr, thread, kind, userText) => void runThreadTurn(state.repoPath, pr, thread, kind, userText),
+  checkAll: (pr, threads) => void runCheckAll(state.repoPath, pr, threads),
   fixThread: (pr, thread) => void runFix(state.repoPath, pr, thread),
   applySuggestions: async (pr, suggestions) => {
     const what = suggestions.length === 1 ? "the suggestion" : `${suggestions.length} suggestions`;
@@ -857,6 +859,44 @@ async function runThreadTurn(repo: string, pr: PullRequestDetail, thread: Thread
     }
     // A failed follow-up kept its question: show it.
     void loadThreadConversation(repo, number, id, true);
+  }
+}
+
+// Check all of `threads` of `pr` in one Claude run, in the background: each
+// thread shows its Check running, then its own part of the answer. A single
+// thread is a plain Check, which keeps its session for the follow-ups.
+async function runCheckAll(repo: string, pr: PullRequestDetail, threads: Thread[]): Promise<void> {
+  const { number } = pr;
+  const mine = threads.filter((t) => !threadState(repo, number, t.root.id).running);
+  if (mine.length <= 1) {
+    for (const t of mine) void runThreadTurn(repo, pr, t, "check", "");
+    return;
+  }
+  for (const t of mine) startTurn(repo, number, t.root.id, "check");
+  const n = mine.length;
+  setStatus(`Asking Claude to check ${n} comments of #${number} in one run in the background — keep working; each thread shows its answer when it's done.`);
+  try {
+    const input = { number, head: pr.head_oid, author: pr.author, title: pr.title, threads: mine.map((t) => [t.root, ...t.replies]) };
+    const out = await checkThreads(repo, input, withClaudeChoice(loadCheckAllCommand()));
+    let failed = 0;
+    for (const t of mine) {
+      const check = out.checks.find((c) => c.thread === t.root.id);
+      if (check?.conversation) finishTurn(repo, number, t.root.id, check.conversation);
+      else {
+        failed++;
+        finishTurn(repo, number, t.root.id, { error: check?.error ?? "Claude's answer has no part for this comment." });
+      }
+    }
+    setStatus(failed ? `Claude checked ${n - failed} of ${n} comments of #${number}; the others say why not.` : `Claude checked ${n} comments of #${number}.`);
+  } catch (err) {
+    const cancelled = isCancelled(err);
+    for (const t of mine) finishTurn(repo, number, t.root.id, { error: cancelled ? "Cancelled." : String(err) });
+    if (cancelled) setStatus(`Claude's check of ${n} comments of #${number} cancelled.`);
+    else {
+      const title = `Claude couldn't check the comments of #${number}`;
+      setStatus(`${title}: ${String(err)}`);
+      toast(title, { kind: "error", onDetails: () => showErrorDialog(title, String(err)) });
+    }
   }
 }
 

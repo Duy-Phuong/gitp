@@ -137,6 +137,8 @@ export interface PullRequestCallbacks {
   // the view redraws from the thread's state; loads the saved conversation
   // once; forgets it after the user confirms; prunes the old ones.
   threadTurn: (pr: PullRequestDetail, thread: Thread, kind: TurnKind, userText: string) => void;
+  // Check all of `threads` in one Claude run (Check N Comments).
+  checkAll: (pr: PullRequestDetail, threads: Thread[]) => void;
   // Fix the thread as the chosen option says, in the branch's worktree,
   // commit, and prepare the reply; drop a prepared reply after a confirm.
   fixThread: (pr: PullRequestDetail, thread: Thread) => void;
@@ -1531,14 +1533,14 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     const b = el("button", {
       class: "btn small ghost",
       text: `Check ${n} ${n === 1 ? "Comment" : "Comments"}`,
-      title: `Ask Claude to check the ${n === 1 ? "open comment" : `${n} open comments`} not checked at ${pr.head_oid.slice(0, 7)} yet, all at once in the background`,
+      title: `Ask Claude to check the ${n === 1 ? "open comment" : `${n} open comments`} not checked at ${pr.head_oid.slice(0, 7)} yet, ${n === 1 ? "" : "all in one run, "}in the background`,
     });
     b.addEventListener("click", () => {
       for (const thread of unchecked) {
         lastKind.set(thread.root.id, "check");
         openBlocks.add(thread.root.id);
-        cb.threadTurn(pr, thread, "check", "");
       }
+      cb.checkAll(pr, unchecked);
     });
     return [b];
   }

@@ -936,6 +936,43 @@ export const DEFAULT_THREAD_COMMANDS: Record<TurnKind, string> = {
   ),
 };
 
+// Check N Comments: one run checks every open thread not checked yet, with
+// them all as JSON in $GITP_THREADS_FILE. gitp cuts the answer at the
+// <!-- gitp-thread: id --> lines and keeps each part as its thread's Check
+// (see check_threads in core).
+export const DEFAULT_CHECK_ALL_COMMAND = threadCommand(
+  "Read the review threads in $GITP_THREADS_FILE on pull request $GITP_PR_URL: JSON whose threads list " +
+    "holds each thread's id, path, line, diff_hunk, comments and earlier turns. For each thread, check the " +
+    "reviewer's claim against the code, as phase 2 steps 1 and 2 of the answer-pr-comments skill do: then " +
+    "explain it simply: one bottom line, an ASCII flow with the place where it goes wrong marked, when it " +
+    "really happens with proof as file:line, a worked example with real values, and the options (the " +
+    "reviewer's suggestion, an alternative, no change) in a table. Read code that several threads share " +
+    "once, but write each thread's answer so it stands alone. Start each thread's answer with a line that " +
+    "is exactly <!-- gitp-thread: ID --> with that thread's id, in the order of the file, and print " +
+    "nothing before the first one. " +
+    THREAD_RULES,
+);
+
+const CHECK_ALL_COMMAND_KEY = "gitp-check-all-command";
+
+export function loadCheckAllCommand(): string {
+  try {
+    return localStorage.getItem(CHECK_ALL_COMMAND_KEY) ?? DEFAULT_CHECK_ALL_COMMAND;
+  } catch {
+    return DEFAULT_CHECK_ALL_COMMAND;
+  }
+}
+
+// Blank, or the default itself, forgets the custom command.
+export function saveCheckAllCommand(command: string): void {
+  try {
+    if (command.trim() === DEFAULT_CHECK_ALL_COMMAND || !command.trim()) localStorage.removeItem(CHECK_ALL_COMMAND_KEY);
+    else localStorage.setItem(CHECK_ALL_COMMAND_KEY, command.trim());
+  } catch {
+    // Full or blocked storage: the command just doesn't survive a restart.
+  }
+}
+
 const threadCommandKey = (kind: TurnKind) => `gitp-thread-command-${kind}`;
 
 export function loadThreadCommand(kind: TurnKind): string {

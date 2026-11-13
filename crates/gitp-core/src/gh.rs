@@ -1944,33 +1944,7 @@ impl Repo {
         };
         let target = self.github_target()?;
         let number = input.number;
-        let mut conversation = self
-            .thread_conversation(number, root.id)?
-            .unwrap_or_else(|| ThreadConversation {
-                version: 1,
-                pr: number,
-                thread: root.id,
-                path: root.path.clone(),
-                title: None,
-                line: None,
-                comments: Vec::new(),
-                session: None,
-                fix_session: None,
-                turns: Vec::new(),
-            });
-        // The thread as it is now, for the search: edits and new replies too.
-        if input.title.is_some() {
-            conversation.title = input.title.clone();
-        }
-        conversation.line = root.line.or(root.original_line);
-        conversation.comments = input
-            .comments
-            .iter()
-            .map(|c| ThreadComment {
-                author: c.author.clone(),
-                body: c.body.clone(),
-            })
-            .collect();
+        let mut conversation = self.thread_now(number, &input.title, &input.comments)?;
         if kind == TurnKind::Followup {
             conversation
                 .turns
@@ -1979,16 +1953,7 @@ impl Repo {
         }
         // After the question is kept: a fetch that fails must not lose it.
         self.ensure_pull_request_head(number, &input.head)?;
-        let thread_json = serde_json::json!({
-            "path": root.path,
-            "line": root.line,
-            "original_line": root.original_line,
-            "diff_hunk": root.diff_hunk,
-            "comments": input.comments.iter().map(|c| serde_json::json!({
-                "author": c.author, "created_at": c.created_at, "body": c.body,
-            })).collect::<Vec<_>>(),
-            "turns": conversation.turns,
-        });
+        let thread_json = thread_json(&input.comments, &conversation);
         let file = std::env::temp_dir().join(format!(
             "gitp-thread-{}-{}-{}.json",
             std::process::id(),
@@ -1997,7 +1962,6 @@ impl Repo {
         ));
         std::fs::write(&file, thread_json.to_string())
             .map_err(|e| Error::Message(format!("can't write {}: {e}", file.display())))?;
-        let login = gh.account().ok().and_then(|a| a.login).unwrap_or_default();
         let line = root
             .line
             .or(root.original_line)
@@ -2010,16 +1974,8 @@ impl Repo {
             TurnKind::ReplyDraft => "reply-draft",
             TurnKind::Fix => "fix",
         };
-        let mut env = vec![
-            ("GITP_PR_NUMBER", number.to_string()),
-            ("GITP_PR_REPO", target.repo_arg()),
-            (
-                "GITP_PR_URL",
-                format!("https://{}/{}/pull/{number}", target.host, target.path),
-            ),
-            ("GITP_PR_HEAD", input.head.clone()),
-            ("GITP_PR_AUTHOR", input.author.clone()),
-            ("GITP_GH_LOGIN", login),
+        let mut env = pr_env(gh, &target, number, &input.head, &input.author);
+        env.extend([
             ("GITP_THREAD_ID", root.id.to_string()),
             ("GITP_THREAD_PATH", root.path.clone()),
             ("GITP_THREAD_LINE", line),
@@ -2034,7 +1990,7 @@ impl Repo {
                 .unwrap_or_default(),
             ),
             ("GITP_TURN_KIND", kind_name.to_string()),
-        ];
+        ]);
         env.extend(place.extra_env.iter().map(|(k, v)| (*k, v.clone())));
         let run = |env: &[(&str, String)]| {
             run_shell(
@@ -2100,6 +2056,277 @@ impl Repo {
         self.save_thread_conversation(&conversation)?;
         Ok(conversation)
     }
+
+    /// The kept conversation of the thread whose `comments` these are (root
+    /// first), or a new one, with the thread as it is now — edits and new
+    /// replies too — for the search.
+    fn thread_now(
+        &self,
+        number: u64,
+        title: &Option<String>,
+        comments: &[PrReviewComment],
+    ) -> Result<ThreadConversation> {
+        let Some(root) = comments.first() else {
+            return Err(Error::Message("The thread has no comments.".into()));
+        };
+        let mut conversation = self
+            .thread_conversation(number, root.id)?
+            .unwrap_or_else(|| ThreadConversation {
+                version: 1,
+                pr: number,
+                thread: root.id,
+                path: root.path.clone(),
+                title: None,
+                line: None,
+                comments: Vec::new(),
+                session: None,
+                fix_session: None,
+                turns: Vec::new(),
+            });
+        if title.is_some() {
+            conversation.title = title.clone();
+        }
+        conversation.line = root.line.or(root.original_line);
+        conversation.comments = comments
+            .iter()
+            .map(|c| ThreadComment {
+                author: c.author.clone(),
+                body: c.body.clone(),
+            })
+            .collect();
+        Ok(conversation)
+    }
+
+    /// Check every thread of `input` in one run of `command`, which gets
+    /// them all as JSON in the file `GITP_THREADS_FILE` names (`{"threads":
+    /// [{"id", "path", "line", …, "comments", "turns"}]}`) and their ids in
+    /// `GITP_THREAD_IDS`, besides the pull request's `GITP_PR_*`. Its answer
+    /// — plain, or `claude -p --output-format json` — holds one part per
+    /// thread, each starting at a line `<!-- gitp-thread: <id> -->`; each
+    /// part is kept as a Check in its thread's conversation. The run's
+    /// session is no thread's own: a follow-up starts fresh, from the thread
+    /// file, so two threads never resume one session at the same time.
+    pub fn check_threads(
+        &self,
+        gh: &Gh,
+        input: &ThreadsInput,
+        command: &str,
+    ) -> Result<CheckedThreads> {
+        let command = command.trim();
+        if command.is_empty() {
+            return Err(Error::Message(
+                "Set the Check all command in Settings → Claude first.".into(),
+            ));
+        }
+        let threads: Vec<&[PrReviewComment]> = input
+            .threads
+            .iter()
+            .map(Vec::as_slice)
+            .filter(|t| !t.is_empty())
+            .collect();
+        if threads.is_empty() {
+            return Err(Error::Message("There is no comment to check.".into()));
+        }
+        let target = self.github_target()?;
+        let number = input.number;
+        let mut conversations = Vec::with_capacity(threads.len());
+        for comments in &threads {
+            conversations.push(self.thread_now(number, &input.title, comments)?);
+        }
+        self.ensure_pull_request_head(number, &input.head)?;
+        let all: Vec<serde_json::Value> = threads
+            .iter()
+            .zip(&conversations)
+            .map(|(comments, c)| {
+                let mut json = thread_json(comments, c);
+                json["id"] = c.thread.into();
+                json
+            })
+            .collect();
+        let file = std::env::temp_dir().join(format!(
+            "gitp-threads-{}-{number}-{}.json",
+            std::process::id(),
+            now_millis()
+        ));
+        std::fs::write(&file, serde_json::json!({ "threads": all }).to_string())
+            .map_err(|e| Error::Message(format!("can't write {}: {e}", file.display())))?;
+        let ids: Vec<String> = conversations.iter().map(|c| c.thread.to_string()).collect();
+        let mut env = pr_env(gh, &target, number, &input.head, &input.author);
+        env.extend([
+            ("GITP_THREADS_FILE", file.to_string_lossy().into_owned()),
+            ("GITP_THREAD_IDS", ids.join(",")),
+            ("GITP_TURN_KIND", "check-all".to_string()),
+        ]);
+        let out = run_shell(
+            self.workdir(),
+            command,
+            b"",
+            &env,
+            REVIEW_TIMEOUT,
+            &self.net,
+        );
+        let _ = std::fs::remove_file(&file);
+        let out = out?;
+        let (text, session) = claude_answer(&out.stdout)?;
+        let parts = thread_parts(&text);
+        if parts.is_empty() {
+            let said = text.trim();
+            return Err(Error::Message(format!(
+                "Claude's answer has no part for any comment: no line <!-- gitp-thread: id -->.{}",
+                if said.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n\n{said}")
+                }
+            )));
+        }
+        let mut checks = Vec::with_capacity(conversations.len());
+        for mut c in conversations {
+            let thread = c.thread;
+            let check = match parts.get(&thread) {
+                Some(part) => {
+                    c.turns.push(ThreadTurn::claude(
+                        TurnKind::Check,
+                        input.head.clone(),
+                        part.clone(),
+                    ));
+                    match self.save_thread_conversation(&c) {
+                        Ok(()) => ThreadCheck {
+                            thread,
+                            conversation: Some(c),
+                            error: None,
+                        },
+                        Err(e) => ThreadCheck {
+                            thread,
+                            conversation: None,
+                            error: Some(e.to_string()),
+                        },
+                    }
+                }
+                None => ThreadCheck {
+                    thread,
+                    conversation: None,
+                    error: Some("Claude's answer has no part for this comment.".into()),
+                },
+            };
+            checks.push(check);
+        }
+        Ok(CheckedThreads { checks, session })
+    }
+}
+
+/// Several line-comment threads of one pull request, for one Check of them
+/// all ([`Repo::check_threads`]).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ThreadsInput {
+    pub number: u64,
+    /// The pull request's head commit, full id.
+    pub head: String,
+    pub author: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Each thread's comments, root first.
+    pub threads: Vec<Vec<PrReviewComment>>,
+}
+
+/// What a Check of several threads gave one of them: its conversation with
+/// the new Check, or why it has none.
+#[derive(Debug, Clone, Serialize)]
+pub struct ThreadCheck {
+    pub thread: u64,
+    pub conversation: Option<ThreadConversation>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CheckedThreads {
+    pub checks: Vec<ThreadCheck>,
+    /// The run's Claude session, when its JSON answer named one.
+    pub session: Option<String>,
+}
+
+/// The parts of an answer about several threads, by thread id: each starts
+/// at a line `<!-- gitp-thread: <id> -->` and runs to the next. Text before
+/// the first is no thread's; a thread named twice gets both parts.
+fn thread_parts(text: &str) -> HashMap<u64, String> {
+    let mut parts: HashMap<u64, String> = HashMap::new();
+    let mut current: Option<(u64, Vec<&str>)> = None;
+    let keep = |parts: &mut HashMap<u64, String>, (id, lines): (u64, Vec<&str>)| {
+        let part = lines.join("\n").trim().to_string();
+        if part.is_empty() {
+            return;
+        }
+        parts
+            .entry(id)
+            .and_modify(|p| {
+                p.push_str("\n\n");
+                p.push_str(&part);
+            })
+            .or_insert(part);
+    };
+    for line in text.lines() {
+        let marker = line
+            .trim()
+            .strip_prefix("<!--")
+            .and_then(|l| l.strip_suffix("-->"))
+            .and_then(|l| l.trim().strip_prefix("gitp-thread:"))
+            .and_then(|id| id.trim().parse::<u64>().ok());
+        match (marker, &mut current) {
+            (Some(id), _) => {
+                if let Some(done) = current.take() {
+                    keep(&mut parts, done);
+                }
+                current = Some((id, Vec::new()));
+            }
+            (None, Some((_, lines))) => lines.push(line),
+            (None, None) => {}
+        }
+    }
+    if let Some(done) = current {
+        keep(&mut parts, done);
+    }
+    parts
+}
+
+/// The thread whose `comments` these are, with its conversation so far, as
+/// a thread command reads it.
+fn thread_json(
+    comments: &[PrReviewComment],
+    conversation: &ThreadConversation,
+) -> serde_json::Value {
+    let root = &comments[0];
+    serde_json::json!({
+        "path": root.path,
+        "line": root.line,
+        "original_line": root.original_line,
+        "diff_hunk": root.diff_hunk,
+        "comments": comments.iter().map(|c| serde_json::json!({
+            "author": c.author, "created_at": c.created_at, "body": c.body,
+        })).collect::<Vec<_>>(),
+        "turns": conversation.turns,
+    })
+}
+
+/// The pull request a Claude run on its threads is about, in its environment.
+fn pr_env(
+    gh: &Gh,
+    target: &GitHubRepo,
+    number: u64,
+    head: &str,
+    author: &str,
+) -> Vec<(&'static str, String)> {
+    let login = gh.account().ok().and_then(|a| a.login).unwrap_or_default();
+    vec![
+        ("GITP_PR_NUMBER", number.to_string()),
+        ("GITP_PR_REPO", target.repo_arg()),
+        (
+            "GITP_PR_URL",
+            format!("https://{}/{}/pull/{number}", target.host, target.path),
+        ),
+        ("GITP_PR_HEAD", head.to_string()),
+        ("GITP_PR_AUTHOR", author.to_string()),
+        ("GITP_GH_LOGIN", login),
+    ]
 }
 
 /// How long a fix may take: a change, a test and a commit.
@@ -3855,6 +4082,109 @@ exit "$(cat "$d/code.$1.$2" 2>/dev/null || echo 0)"
         );
         assert_eq!(c.session, None, "plain text gives no session");
         assert_eq!(repo.thread_conversation(7, 500).unwrap(), Some(c));
+    }
+
+    /// Two threads of #7: 500 (with a reply) and 600.
+    fn threads_input(repo: &Repo) -> ThreadsInput {
+        let one = thread_input(repo);
+        let other = PrReviewComment {
+            id: 600,
+            in_reply_to: None,
+            path: "src/other.ts".into(),
+            body: "why sleep?".into(),
+            ..one.comments[0].clone()
+        };
+        ThreadsInput {
+            number: one.number,
+            head: one.head,
+            author: one.author,
+            title: one.title,
+            threads: vec![one.comments, vec![other]],
+        }
+    }
+
+    #[test]
+    fn check_all_runs_once_and_keeps_each_part_in_its_thread() {
+        let fake = Fake::new();
+        let (_dir, repo) = github_repo();
+        let input = threads_input(&repo);
+        // One run: it reads every thread from the file and answers each.
+        let cmd = "echo run >> \"$GITP_PR_HEAD.runs\"; \
+            printf 'Both look at the retry.\\n'; \
+            for id in $(echo \"$GITP_THREAD_IDS\" | tr , ' '); do \
+              printf '<!-- gitp-thread: %s -->\\n**%s** %s\\n' \"$id\" \"$id\" \"$GITP_TURN_KIND\"; \
+            done; \
+            printf '<!-- gitp-thread: 500 -->\\n'; cat \"$GITP_THREADS_FILE\"";
+        let out = repo.check_threads(&fake.gh(), &input, cmd).unwrap();
+        let runs =
+            std::fs::read_to_string(repo.workdir().join(format!("{}.runs", input.head))).unwrap();
+        assert_eq!(runs.lines().count(), 1, "one Claude run for all threads");
+        assert_eq!(out.checks.len(), 2);
+        let text = |n: usize| {
+            let c = out.checks[n].conversation.as_ref().unwrap();
+            assert_eq!(c.turns.len(), 1);
+            let t = &c.turns[0];
+            assert_eq!(
+                (t.kind, t.role, t.head.as_deref()),
+                (TurnKind::Check, TurnRole::Claude, Some(input.head.as_str()))
+            );
+            t.text.clone()
+        };
+        // A thread named twice gets both parts; the text before the first
+        // marker is no thread's.
+        let first = text(0);
+        let (said, file) = first.split_once("\n\n").unwrap();
+        assert_eq!(said, "**500** check-all");
+        let file: serde_json::Value = serde_json::from_str(file).unwrap();
+        let threads = file["threads"].as_array().unwrap();
+        assert_eq!(
+            threads
+                .iter()
+                .map(|t| (t["id"].as_u64().unwrap(), t["path"].as_str().unwrap()))
+                .collect::<Vec<_>>(),
+            [(500, "src/retry.ts"), (600, "src/other.ts")]
+        );
+        assert_eq!(threads[0]["comments"][1]["body"], "yes?");
+        assert_eq!(text(1), "**600** check-all");
+        assert_eq!(
+            repo.thread_conversation(7, 600).unwrap(),
+            out.checks[1].conversation.clone()
+        );
+        // The run's session is no thread's: a follow-up starts fresh.
+        assert_eq!(out.checks[0].conversation.as_ref().unwrap().session, None);
+    }
+
+    #[test]
+    fn check_all_marks_a_thread_its_answer_skipped_and_fails_on_no_part() {
+        let fake = Fake::new();
+        let (_dir, repo) = github_repo();
+        let input = threads_input(&repo);
+        let json = r#"printf '{"result":"<!-- gitp-thread: 600 -->\\nfine","session_id":"s-1"}'"#;
+        let out = repo.check_threads(&fake.gh(), &input, json).unwrap();
+        assert_eq!(out.session.as_deref(), Some("s-1"));
+        assert_eq!(
+            out.checks[0].error.as_deref(),
+            Some("Claude's answer has no part for this comment.")
+        );
+        assert!(out.checks[0].conversation.is_none());
+        assert_eq!(repo.thread_conversation(7, 500).unwrap(), None);
+        assert_eq!(
+            out.checks[1].conversation.as_ref().unwrap().turns[0].text,
+            "fine"
+        );
+        let err = repo
+            .check_threads(&fake.gh(), &input, "echo no markers")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("no part for any comment") && err.contains("no markers"),
+            "{err}"
+        );
+        let err = repo
+            .check_threads(&fake.gh(), &input, " ")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Check all command"), "{err}");
     }
 
     #[test]

@@ -18,6 +18,7 @@ import {
   SKILL_REVIEW_COMMAND,
   BRANCH_SKILL_REVIEW_COMMAND,
   DEFAULT_THREAD_COMMANDS,
+  DEFAULT_CHECK_ALL_COMMAND,
   FIX_TOOLS,
   loadThreadCommand,
   saveThreadCommand,
@@ -193,9 +194,20 @@ describe("the fix command", () => {
   });
 });
 
+describe("the Check all command", () => {
+  it("reads every thread from one file and marks each answer with its thread's id", () => {
+    const c = DEFAULT_CHECK_ALL_COMMAND;
+    expect(c).toContain('claude -p "Read the review threads in $GITP_THREADS_FILE on pull request $GITP_PR_URL');
+    expect(c).toContain("<!-- gitp-thread: ID -->");
+    // As read-only as a thread's own Check, and never resumed.
+    expect(c).toContain(`--allowedTools "${THREAD_TOOLS.join(" ")}"`);
+    expect(c).not.toContain("$GITP_THREAD_FILE");
+  });
+});
+
 describe("the session id of a fresh run", () => {
   it("is passed by every default command, before --allowedTools", () => {
-    const all = [DEFAULT_REVIEW_COMMAND, SKILL_REVIEW_COMMAND, EXPLAIN_FINDING_COMMAND, ...Object.values(DEFAULT_THREAD_COMMANDS)];
+    const all = [DEFAULT_REVIEW_COMMAND, SKILL_REVIEW_COMMAND, EXPLAIN_FINDING_COMMAND, DEFAULT_CHECK_ALL_COMMAND, ...Object.values(DEFAULT_THREAD_COMMANDS)];
     for (const c of all) expect(c).toContain(SESSION_ID_ARG);
     for (const c of [SKILL_REVIEW_COMMAND, EXPLAIN_FINDING_COMMAND]) {
       expect(c.indexOf(SESSION_ID_ARG)).toBeLessThan(c.indexOf("--allowedTools"));

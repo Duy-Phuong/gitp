@@ -270,6 +270,7 @@ pub fn run() {
             ask::claude_ask,
             ask::claude_my_work,
             gh::gh_thread_turn,
+            gh::gh_check_threads,
             gh::gh_thread_cancel,
             gh::gh_thread_conversation,
             gh::gh_thread_clear,
