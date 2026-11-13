@@ -3013,6 +3013,32 @@ A timeout from \`http.get\` is retried too — is that wanted for a POST-like ch
 <!-- copy:start -->
 This line is not part of the diff, so GitHub would refuse a comment here.
 <!-- copy:end -->
+
+### \`src/identity/client.ts:12\`
+
+**Severity:** 🟢 nit
+
+**Explained simply:**
+
+A repeat of the same value saves nothing, so it writes no audit entry.
+
+**Comment to paste:**
+
+<div class="copy-block" data-i="3">
+
+Note: the same value, sent again, writes no audit entry with this PR. Can you add one line about it to the PR description?
+
+</div>
+
+**Fix check:** confirmed · \`client.ts:12\` returns before the save.
+
+**Fix solution:**
+
+Change: add one line to the PR description (no code change). Test: none.
+
+**Fix status:** pushed in the PR description · re-check: ✅ fixed
+
+**Fixed:** one line in the PR description.
 `;
 
 // Start `gh auth login`'s browser sign-in: resolves with the one-time code as

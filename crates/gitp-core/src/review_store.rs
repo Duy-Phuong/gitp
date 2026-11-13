@@ -77,6 +77,9 @@ pub struct FindingText {
     pub finding: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub explanations: Vec<String>,
+    /// A fix round's notes after the comment (Fix check, solution, status).
+    #[serde(default, rename = "fixNotes", skip_serializing_if = "Option::is_none")]
+    pub fix_notes: Option<String>,
 }
 
 /// A review's drafts: of a branch (`branch`) or a pull request (`pr`).
@@ -289,6 +292,7 @@ mod tests {
                         explained: Some("Why.".into()),
                         finding: Some("f2".into()),
                         explanations: vec!["More.".into()],
+                        fix_notes: Some("**Fix status:** proposed".into()),
                     },
                     ..draft(2, DraftStatus::Fixed)
                 },

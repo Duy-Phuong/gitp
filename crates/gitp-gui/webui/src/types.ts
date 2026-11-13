@@ -1161,6 +1161,7 @@ export interface StoredDraft {
   explained?: string | null;
   finding?: string | null;
   explanations?: string[];
+  fixNotes?: string | null;
 }
 
 export interface StoredReview {

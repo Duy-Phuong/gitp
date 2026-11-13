@@ -6092,6 +6092,10 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   color: var(--text);
   border-bottom-color: var(--accent);
 }
+/* In the header's meta line, beside the approvals. */
+.pr-meta .pr-diffstat {
+  margin-left: 0;
+}
 .pr-diffstat {
   margin-left: auto;
   display: flex;
@@ -7126,6 +7130,90 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   width: calc(100% - 24px);
   min-height: 48px;
 }
+/* The Drafts tab's filters and its one line per draft. */
+.pr-drafts-overview {
+  padding: 8px 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.pr-drafts-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.pr-drafts-filters-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  margin: 0 4px;
+}
+.pr-drafts-chip {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.pr-drafts-chip.on {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.pr-drafts-index {
+  display: flex;
+  flex-direction: column;
+}
+.pr-drafts-index-row {
+  display: grid;
+  grid-template-columns: 76px minmax(120px, 220px) 72px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.pr-drafts-index-row:hover {
+  background: var(--row-hover);
+}
+.pr-drafts-index-row.discarded,
+.pr-drafts-index-row.fixed {
+  color: var(--text-dim);
+}
+.pr-drafts-index-row .pr-draft-sev {
+  justify-self: start;
+}
+.pr-drafts-index-where {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pr-drafts-index-state {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.pr-drafts-index-state.open {
+  color: var(--accent);
+}
+.pr-drafts-index-state.fixed {
+  color: var(--add-fg);
+}
+.pr-drafts-index-text {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pr-draft {
   margin: 10px 12px;
   border: 1px solid var(--border);
@@ -7163,17 +7251,71 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 }
 .pr-draft-where {
   font-family: var(--mono);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+/* The file and line first; the folder after it, dimmed, cut when long. */
+.pr-draft-file {
+  white-space: nowrap;
+}
+.pr-draft-dir {
+  color: var(--text-dim);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pr-draft-sev {
-  padding: 0 6px;
+  padding: 1px 8px;
   border-radius: 10px;
   border: 1px solid var(--border);
   color: var(--text-dim);
   font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
-.pr-draft-sev.blocking {
+.pr-draft-sev.blocking,
+.pr-draft-sev.major,
+.pr-draft-sev.critical {
   color: var(--del-fg);
   border-color: var(--del-fg);
+  background: var(--del-bg);
+}
+.pr-draft-sev.minor {
+  color: var(--mod-fg);
+  border-color: var(--mod-fg);
+  background: var(--mod-bg);
+}
+.pr-draft-sev.nit {
+  color: var(--ren-fg);
+  border-color: var(--ren-fg);
+  background: var(--ren-bg);
+}
+/* A fix round's status, from the review file. */
+.pr-draft-fix-badge {
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--text-dim);
+  background: var(--bg-elev-2);
+}
+.pr-draft-fix-badge.done {
+  color: var(--add-fg);
+  background: var(--add-bg);
+}
+.pr-draft-fix-badge.warn {
+  color: var(--mod-fg);
+  background: var(--mod-bg);
+}
+/* Fixed: folded to its head until Show. */
+.pr-draft.folded {
+  opacity: 0.75;
+}
+.pr-draft.folded .pr-draft-head {
+  border-bottom: none;
 }
 .pr-draft-warn {
   color: var(--del-fg);
@@ -7201,6 +7343,9 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   background: var(--bg);
 }
 .pr-draft-fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 4px 8px;
   cursor: pointer;
   font-size: 11px;
@@ -7232,6 +7377,21 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 .mermaid-error {
   color: var(--del-fg);
   font-size: 11px;
+}
+/* Explain more in the title of the box it adds to. */
+.pr-draft-fold > summary .pr-draft-explain-btn {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: normal;
+}
+.pr-draft-fix-notes {
+  margin: 0 10px 10px;
+}
+.pr-draft-fold > summary .pr-draft-fix-badge {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: normal;
 }
 .pr-draft-explain-actions {
   display: flex;

@@ -84,6 +84,15 @@ describe("parseReviewFile", () => {
     expect(parseReviewFile("<!doctype html><html><body>no review here</body></html>")).toEqual([]);
   });
 
+  it("keeps the fix notes a fix round wrote after the comment out of the comment", () => {
+    const md =
+      "## Suggested changes\n\n### `src/a.ts:6`\n\n**Severity:** nit\n\n**Comment to paste:**\n\n<div class=\"copy-block\" data-i=\"2\">\n\nNote: the same number.\n\n</div>\n\n" +
+      "**Fix check:** confirmed · `a.ts:6`\n\n**Fix solution:**\n\nAdd one line.\n\n**Fix status:** pushed in abc1234 · re-check: ✅ fixed\n";
+    const [d] = parseReviewFile(md);
+    expect(d.body).toBe("Note: the same number.");
+    expect(d.fixNotes).toBe("**Fix check:** confirmed · `a.ts:6`\n\n**Fix solution:**\n\nAdd one line.\n\n**Fix status:** pushed in abc1234 · re-check: ✅ fixed");
+  });
+
   it("gives nothing for text without findings", () => {
     expect(parseReviewFile("# Nothing here\n\nAll good.")).toEqual([]);
   });

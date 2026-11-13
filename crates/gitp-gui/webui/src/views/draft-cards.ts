@@ -36,13 +36,38 @@ function button(text: string, onClick: () => void, cls = "btn small ghost"): HTM
   return b;
 }
 
+// What a fix round's "**Fix status:**" line says: `label` for a badge, and
+// `tone` — "done" (fixed), "warn" (still open, changed, not approved) or
+// "open" (proposed). Null when the notes have no status line.
+export function fixState(notes: string | undefined): { label: string; tone: "done" | "warn" | "open" } | null {
+  const m = notes && /\*\*Fix status:?\*\*:?\s*(.+)/i.exec(notes);
+  if (!m) return null;
+  const said = m[1].trim();
+  const label = (/re-check:\s*(.+)$/i.exec(said)?.[1] ?? said).trim();
+  if (/still open|not approved|changed|⚠|⏳/i.test(said)) return { label, tone: "warn" };
+  if (/✅|\bfixed\b|fixed-local|pushed in/i.test(said)) return { label, tone: "done" };
+  return { label, tone: "open" };
+}
+
+// Fixed by a fix round, though still open here: nothing left to post.
+export const fixedByNotes = (d: Draft): boolean => fixState(d.fixNotes)?.tone === "done";
+
+// The cards a click opened while their draft was folded away (fixed).
+const unfolded = new Set<number>();
+
 export function draftCard(d: Draft, o: DraftCardOptions): HTMLElement {
+  const dir = d.path.includes("/") ? d.path.slice(0, d.path.lastIndexOf("/") + 1) : "";
   const head = el("div", { class: "pr-draft-head" }, [
     d.path
-      ? el("code", { class: "pr-draft-where", text: `${d.path}:${d.line}${d.side === "LEFT" ? " (removed line)" : ""}` })
+      ? el("span", { class: "pr-draft-where", title: d.path }, [
+          el("strong", { class: "pr-draft-file", text: `${d.path.slice(dir.length)}:${d.line}${d.side === "LEFT" ? " (removed line)" : ""}` }),
+          ...(dir ? [el("span", { class: "pr-draft-dir", text: dir })] : []),
+        ])
       : el("span", { class: "pr-draft-where pr-draft-topic", text: d.topic ?? "On the whole change" }),
   ]);
   if (d.severity) head.append(el("span", { class: `pr-draft-sev ${d.severity.replace(/\W+/g, "-")}`, text: d.severity }));
+  const fixed = fixState(d.fixNotes);
+  if (fixed) head.append(el("span", { class: `pr-draft-fix-badge ${fixed.tone}`, text: fixed.label, title: "The fix round's status, from the review file" }));
   if (o.note) head.append(el("span", { class: "pr-draft-warn", text: o.note }));
   if (o.showInDiff) head.append(button("Show in diff", o.showInDiff, "btn small ghost pr-draft-show"));
   head.append(el("span", { class: "spacer" }));
@@ -56,14 +81,19 @@ export function draftCard(d: Draft, o: DraftCardOptions): HTMLElement {
     link.title = `Open ${sha.slice(0, 12)}, made in ${d.fix.worktree}`;
     head.append(link);
   }
+  // Fixed already, by a commit here or by a fix round: Discard is the one
+  // thing left to do, and the card folds to its head.
+  const done = d.status === "fixed" || (o.where === "list" && d.status === "pending" && fixed?.tone === "done");
+  const folded = done && o.where === "list" && !unfolded.has(d.id);
   if (d.status === "discarded") {
     // Back to what it was: a fixed one keeps its fix.
     head.append(button("Restore", () => set(d.fix ? "fixed" : "pending")));
   } else if (d.status === "fixed") {
     head.append(button("Discard", () => set("discarded")));
   } else {
-    head.append(button(d.status === "approved" ? "Approved ✓" : "Approve", () => set(d.status === "approved" ? "pending" : "approved")));
-    head.append(button("Discard", () => set("discarded")));
+    const approve = button(d.status === "approved" ? "Approved ✓" : "Approve", () => set(d.status === "approved" ? "pending" : "approved"), done ? "btn small ghost" : "btn small");
+    approve.title = done ? "The review file says this is fixed: post it anyway" : "Post this comment with the review";
+    head.append(approve, button("Discard", () => set("discarded"), done ? "btn small" : "btn small ghost"));
     if (o.fix) {
       const fix = button("Fix", o.fix.run);
       fix.disabled = o.fix.reason !== null;
@@ -71,10 +101,21 @@ export function draftCard(d: Draft, o: DraftCardOptions): HTMLElement {
       head.append(fix);
     }
   }
-  const card = el("div", { class: `pr-draft ${d.status}${o.where === "inline" ? " inline" : ""}`, "data-draft": d.id }, [head]);
-  if (d.status !== "discarded") {
+  const card = el("div", { class: `pr-draft ${d.status}${o.where === "inline" ? " inline" : ""}${folded ? " folded" : ""}`, "data-draft": d.id }, [head]);
+  if (done && o.where === "list" && d.status !== "discarded") {
+    head.append(
+      button(folded ? "Show" : "Hide", () => {
+        if (folded) unfolded.add(d.id);
+        else unfolded.delete(d.id);
+        o.changed(true);
+      }),
+    );
+  }
+  if (d.status !== "discarded" && !folded) {
     const why = o.where === "list" ? explainNode(d, o.explain ?? null) : null;
-    if (why) card.append(why, el("div", { class: "pr-draft-label", text: "Comment to paste" }));
+    const notes = o.where === "list" ? fixNotesNode(d.fixNotes, fixed) : null;
+    if (why) card.append(why);
+    if (why || notes) card.append(el("div", { class: "pr-draft-label", text: "Comment to paste" }));
     const area = composerArea({ class: "pr-draft-text" });
     area.value = d.body;
     area.addEventListener("input", () => {
@@ -83,33 +124,52 @@ export function draftCard(d: Draft, o: DraftCardOptions): HTMLElement {
     });
     head.append(previewToggle(area).button);
     card.append(area);
+    if (notes) card.append(notes);
   }
   return card;
 }
 
+// A fix round's notes under the comment, as Markdown, with the status as a
+// badge; folded once the status says fixed.
+function fixNotesNode(notes: string | undefined, state: ReturnType<typeof fixState>): HTMLElement | null {
+  if (!notes) return null;
+  const summary = el("summary", {}, [el("span", { class: "pr-draft-fold-title", text: "Fix" })]);
+  if (state) summary.append(el("span", { class: `pr-draft-fix-badge ${state.tone}`, text: state.label }));
+  const box = el("details", { class: "pr-draft-fold pr-draft-fix-notes" }, [summary, el("div", { class: "pr-draft-md" }, [renderMarkdownWithMermaid(notes)])]);
+  box.open = state?.tone !== "done";
+  return box;
+}
+
 // What the review says about the finding, above its comment: "Explained
-// simply", the Explain more answers (the newest open), and Explain more.
-// Null when there is none of it.
+// simply", the Explain more answers (the newest open), and Explain more in
+// the title of the first. Null when there is none of it.
 function explainNode(d: Draft, explain: DraftCardOptions["explain"]): HTMLElement | null {
   const more = d.explanations ?? [];
   if (!d.explained && !more.length && !explain) return null;
   const node = el("div", { class: "pr-draft-explain" });
+  const folds: HTMLDetailsElement[] = [];
   const fold = (title: string, md: string, open: boolean) => {
-    const box = el("details", { class: "pr-draft-fold" }, [el("summary", { text: title }), el("div", { class: "pr-draft-md" }, [renderMarkdownWithMermaid(md)])]);
+    const box = el("details", { class: "pr-draft-fold" }, [
+      el("summary", {}, [el("span", { class: "pr-draft-fold-title", text: title })]),
+      el("div", { class: "pr-draft-md" }, [renderMarkdownWithMermaid(md)]),
+    ]) as HTMLDetailsElement;
     box.open = open;
+    folds.push(box);
     return box;
   };
   if (d.explained) node.append(fold("Explained simply", d.explained, true));
   more.forEach((md, i) => node.append(fold(`Explained more ${i + 1}`, md, i === more.length - 1)));
   if (explain) {
-    const b = button(explain.running ? "Explaining…" : "Explain more", explain.run);
+    const b = button(explain.running ? "Explaining…" : "Explain more", explain.run, "btn small ghost pr-draft-explain-btn");
+    // In a fold's title: the click mustn't open or close it too.
+    b.addEventListener("click", (e) => e.preventDefault());
     b.disabled = explain.running;
     b.title = more.length
       ? "Ask Claude to explain this finding again, another way, as the review board does; the answer is added here and to the review file"
       : "Ask Claude to explain this finding in more depth, as the review board does; the answer is added here and to the review file";
-    const row = el("div", { class: "pr-draft-explain-actions" }, [b]);
-    if (explain.failed) row.append(el("span", { class: "pr-draft-warn", text: `Couldn't explain: ${explain.failed}` }));
-    node.append(row);
+    if (folds.length) folds[0].querySelector("summary")!.append(b);
+    else node.append(el("div", { class: "pr-draft-explain-actions" }, [b]));
+    if (explain.failed) node.append(el("div", { class: "pr-draft-explain-actions" }, [el("span", { class: "pr-draft-warn", text: `Couldn't explain: ${explain.failed}` })]));
   }
   return node;
 }
