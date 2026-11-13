@@ -2,7 +2,7 @@
 // commit, the files it changed and their diff, folded until asked for, so
 // the change can be reviewed where it was discussed.
 
-import { el } from "./dom";
+import { el, toggleChevron } from "./dom";
 import type { ChangeKind, CommitDetail } from "./types";
 
 // The commits shown open (by id): kept across redraws, and opened by the
@@ -45,11 +45,11 @@ export function fixChangesNode(
   const where = worktree ? ` in ${worktree.replace(/\/$/, "").split("/").pop()}` : "";
   const draw = () => {
     const open = expanded.has(commit);
-    const toggle = el("button", {
-      class: "fix-changes-toggle",
-      text: `${open ? "▾" : "▸"} Commit ${commit.slice(0, 7)}${where} — ${open ? "hide" : "show"} the changes`,
-      title: "The files this fix changed, and the diff",
-    });
+    const toggle = el(
+      "button",
+      { class: "fix-changes-toggle", title: "The files this fix changed, and the diff" },
+      [toggleChevron(open), `Commit ${commit.slice(0, 7)}${where} — ${open ? "hide" : "show"} the changes`],
+    );
     toggle.addEventListener("click", (e) => {
       e.stopPropagation();
       if (open) expanded.delete(commit);

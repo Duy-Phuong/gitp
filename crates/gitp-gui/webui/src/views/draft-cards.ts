@@ -25,6 +25,53 @@ export interface DraftCardOptions {
   // Explain more on its finding, as the review board does: whether one runs,
   // why the last one failed. Absent where it isn't offered.
   explain?: { running: boolean; failed: string | null; run: () => void } | null;
+  // The draft's file in the diff, for a few lines around its line on the
+  // Drafts tab's card. Absent when the diff isn't loaded.
+  file?: FileDiff | null;
+}
+
+export interface ContextLine {
+  origin: string;
+  // The line's number on its side: the old file for a removed line.
+  no: number | null;
+  content: string;
+  // The draft's own line.
+  target: boolean;
+}
+
+// The `around` lines before and after `line` on `side` of `file`, in its
+// hunk; empty when the line isn't in the diff.
+export function contextLines(file: FileDiff, line: number, side: "LEFT" | "RIGHT", around = 3): ContextLine[] {
+  for (const hunk of file.hunks) {
+    const i = hunk.lines.findIndex((l) => {
+      const t = lineTarget(l);
+      return t !== null && t.line === line && t.side === side;
+    });
+    if (i < 0) continue;
+    return hunk.lines.slice(Math.max(0, i - around), i + around + 1).map((l, j) => ({
+      origin: l.origin,
+      no: l.origin === "-" ? l.old_lineno : l.new_lineno,
+      content: l.content.replace(/\r?\n$/, ""),
+      target: Math.max(0, i - around) + j === i,
+    }));
+  }
+  return [];
+}
+
+// The lines around the draft's line, as a small diff.
+function contextNode(d: Draft, file: FileDiff): HTMLElement | null {
+  const lines = contextLines(file, d.line, d.side);
+  if (!lines.length) return null;
+  return el(
+    "div",
+    { class: "pr-draft-context" },
+    lines.map((l) =>
+      el("div", { class: `pr-draft-context-line${l.origin === "+" ? " add" : l.origin === "-" ? " del" : ""}${l.target ? " target" : ""}` }, [
+        el("span", { class: "pr-draft-context-no", text: l.no === null ? "" : String(l.no) }),
+        el("span", { class: "pr-draft-context-code", text: l.content }),
+      ]),
+    ),
+  );
 }
 
 function button(text: string, onClick: () => void, cls = "btn small ghost"): HTMLButtonElement {
@@ -112,6 +159,8 @@ export function draftCard(d: Draft, o: DraftCardOptions): HTMLElement {
     );
   }
   if (d.status !== "discarded" && !folded) {
+    const context = o.where === "list" && o.file && d.path ? contextNode(d, o.file) : null;
+    if (context) card.append(context);
     const why = o.where === "list" ? explainNode(d, o.explain ?? null) : null;
     const notes = o.where === "list" ? fixNotesNode(d.fixNotes, fixed) : null;
     if (why) card.append(why);

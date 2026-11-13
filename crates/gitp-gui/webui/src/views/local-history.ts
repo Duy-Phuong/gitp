@@ -6,7 +6,7 @@
 // was never committed and then lost — overwritten, discarded, deleted, or
 // gone with a crash.
 
-import { clear, el, statusBadge } from "../dom";
+import { clear, el, statusBadge, toggleChevron } from "../dom";
 import { fullTime, relativeTime } from "../timeago";
 import type { FileDiff, FileVersion, Snapshot, SnapshotFile } from "../types";
 import { renderFile as renderDiff } from "./detail";
@@ -134,7 +134,7 @@ export function setupLocalHistory(host: HTMLElement, cb: LocalHistoryCallbacks):
   function snapshotRow(s: Snapshot): HTMLElement {
     const isOpen = open.has(s.id);
     const head = el("div", { class: "lh-head" }, [
-      el("span", { class: `lh-chevron${isOpen ? " open" : ""}`, text: "▸" }),
+      toggleChevron(isOpen),
       el("span", { class: "lh-time", text: relativeTime(s.time / 1000), title: fullTime(s.time / 1000) }),
       el("span", { class: "lh-summary", text: snapshotSummary(s) }),
       el("code", { class: "lh-head-sha", text: s.head.slice(0, 7), title: `HEAD was ${s.head} when this snapshot was taken` }),

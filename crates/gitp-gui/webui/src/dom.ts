@@ -103,6 +103,16 @@ export function chevronIcon(): SVGElement {
   return s;
 }
 
+// The arrow of a section that opens and closes: the shared chevron, down when
+// open and turned right when closed (`.sb-chevron`).
+export function toggleChevron(open: boolean): HTMLElement {
+  const span = document.createElement("span");
+  span.className = `sb-chevron${open ? " open" : ""}`;
+  span.setAttribute("aria-hidden", "true");
+  span.append(chevronIcon());
+  return span;
+}
+
 // The down chevron after the label of a button that opens a menu ("Review",
 // "any"): the shared chevron, sized and spaced by `.menu-caret`.
 export function menuCaret(): HTMLElement {
