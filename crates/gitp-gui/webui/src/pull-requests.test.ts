@@ -10,6 +10,7 @@ import {
   filterPrList,
   hasPrListFilters,
   prAttentionTags,
+  prGroup,
   approvalCount,
   hasConflicts,
   reviewerMatches,
@@ -527,5 +528,19 @@ describe("several pull requests at once", () => {
     const prs = [{ number: 1, author: "me" }, { number: 2, author: "hubot" }];
     expect(approvable(prs, "me")).toEqual({ others: [prs[1]], own: [prs[0]] });
     expect(approvable(prs, null), "not signed in: GitHub decides").toEqual({ others: prs, own: [] });
+  });
+});
+
+describe("prGroup", () => {
+  const pr = { number: 7, author: "me" };
+  it("puts a saved review first, then a review request, then my own", () => {
+    expect(prGroup(pr, "me", new Set([7]), "stale")).toBe("rereview");
+    expect(prGroup(pr, "me", new Set([7]), "reviewed")).toBe("reviewed");
+    expect(prGroup(pr, "me", new Set([7]), null)).toBe("review_requested");
+    expect(prGroup(pr, "me", new Set(), null)).toBe("mine");
+  });
+  it("is none for someone else's pull request that asks nothing of me", () => {
+    expect(prGroup(pr, "other", new Set(), null)).toBeNull();
+    expect(prGroup(pr, null, new Set(), null)).toBeNull();
   });
 });

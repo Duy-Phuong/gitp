@@ -178,6 +178,8 @@ import { readPullRequestAhead } from "./read-ahead";
 import { setupThreadSearchView } from "./views/thread-search";
 import { showThreadSearch, threadSearchCallbacks } from "./thread-search-actions";
 import { prReviewMark, reviewBadge } from "./pr-reviews";
+import { storedPullRequestList } from "./pr-store";
+import { prGroup } from "./pull-requests";
 import { createFileAction, editFileAction } from "./editor-actions";
 import { setupTerminalPanel, toggleTerminal, warmTerminal } from "./terminal-panel";
 import { setupExternalChangeRefresh } from "./external-refresh";
@@ -590,6 +592,11 @@ async function init(): Promise<void> {
     signIn: () => void signInToGitHub(),
     reviewBadge: (pr) => reviewBadge(state.repoPath, pr.number),
     reviewMark: (pr) => prReviewMark(state.repoPath, pr, state.prs.reviewFiles),
+    groups: () => {
+      const requested = new Set((storedPullRequestList(state.repoPath, "review_requested") ?? []).map((pr) => pr.number));
+      const login = state.prs.account?.login ?? null;
+      return (pr) => prGroup(pr, login, requested, prReviewMark(state.repoPath, pr, state.prs.reviewFiles)?.kind ?? null);
+    },
     searchConversations: showThreadSearch,
   });
   ui.threadSearchView = setupThreadSearchView($("#thread-search-view"), threadSearchCallbacks);

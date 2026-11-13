@@ -43,6 +43,22 @@ export function otherListings(filter: PrFilter): PrListing[] {
   return PR_FILTERS.map((f) => listingOf(f.value)).filter((l, i, all) => l !== own && all.indexOf(l) === i);
 }
 
+// The group a pull request of the All list belongs to, for its colour: Review
+// again or Reviewed when there is a saved review, else Review requested when
+// that list holds it, else Created by me; null for none of them.
+export function prGroup(
+  pr: Pick<PullRequest, "number" | "author">,
+  login: string | null,
+  requested: ReadonlySet<number>,
+  mark: "reviewed" | "stale" | null,
+): PrFilter | null {
+  if (mark === "stale") return "rereview";
+  if (mark === "reviewed") return "reviewed";
+  if (requested.has(pr.number)) return "review_requested";
+  if (login && pr.author === login) return "mine";
+  return null;
+}
+
 // The tags that make a pull request stand out in the sidebar and the Pull
 // Requests view: conflicts to resolve, line comments still to answer, and two
 // approvals or more (ready to merge, as most repositories ask for two).

@@ -2603,6 +2603,10 @@ body.tab-dragging * {
 .prl-table[data-pr-filter] {
   border-top: 2px solid var(--filter-color);
 }
+/* All mixes the groups: a bar in its group's colour starts each row. */
+.prl-row.grouped > td:first-child {
+  box-shadow: inset 3px 0 0 var(--filter-color);
+}
 .pr-filter::before {
   content: "";
   flex: none;

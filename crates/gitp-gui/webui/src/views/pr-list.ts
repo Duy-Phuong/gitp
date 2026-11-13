@@ -45,6 +45,9 @@ export interface PullRequestListCallbacks {
   reviewBadge: (pr: PullRequest) => { kind: string; text: string } | null;
   // Reviewed at its head commit, or commits came since.
   reviewMark?: (pr: PullRequest) => { kind: string; text: string; title: string } | null;
+  // In the All list: what tells the group a pull request belongs to, for its
+  // colour (made once a draw, as it reads the other lists).
+  groups?: () => (pr: PullRequest) => PrFilter | null;
   // The search over the stored Claude thread conversations.
   searchConversations: () => void;
 }
@@ -287,7 +290,18 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
       headRow.append(th);
     }
     const rows = el("tbody");
-    for (const pr of shown) rows.append(row(pr, p.open, p.selected.includes(pr.number)));
+    const groupOf = p.filter === "all" ? cb.groups?.() : undefined;
+    for (const pr of shown) {
+      const tr = row(pr, p.open, p.selected.includes(pr.number));
+      // All mixes the groups: each row has its group's colour at its start.
+      const group = groupOf?.(pr);
+      if (group) {
+        tr.dataset.prFilter = group;
+        tr.classList.add("grouped");
+        tr.title = `${PR_FILTERS.find((f) => f.value === group)?.label} · ${tr.title}`;
+      }
+      rows.append(tr);
+    }
     table.append(el("thead", {}, [headRow]), rows);
     body.append(table);
   }
