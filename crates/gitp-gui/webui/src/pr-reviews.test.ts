@@ -280,4 +280,15 @@ describe("the review file's words on a finding", () => {
     expect(next[1]).toMatchObject({ body: "my edit", original: dirty("Two."), fixNotes: "**Fix status:** proposed" });
     expect(m.mergeDrafts(r.drafts, [{ ...finding(1), ...clean("One.") }])[0]).toMatchObject({ id: 1, status: "approved", body: "One." });
   });
+
+  it("counts on the list badge, and as left to decide, only the drafts a fix round didn't fix", async () => {
+    const m = await fresh();
+    const r = m.prReview("/a", 9);
+    m.addDrafts(r, [finding(1), { ...finding(2), fixNotes: "**Fix status:** pushed in abc · re-check: ✅ fixed" }, finding(3)]);
+    r.drafts[2].status = "approved";
+    expect(m.reviewBadge("/a", 9)).toEqual({ text: "2 drafts", kind: "ready" });
+    expect(r.drafts.map(m.toDecide)).toEqual([true, false, false]);
+    expect(m.hasDrafts("/a", 9)).toBe(true);
+    expect(m.hasDrafts("/a", 10)).toBe(false);
+  });
 });

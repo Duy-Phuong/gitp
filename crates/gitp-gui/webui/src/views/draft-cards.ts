@@ -6,7 +6,8 @@
 // so the other one follows.
 
 import { el } from "../dom";
-import type { Draft } from "../pr-reviews";
+import { fixState, type Draft } from "../pr-reviews";
+export { fixState, fixedByNotes } from "../pr-reviews";
 import { lineKey, lineTarget } from "../pull-requests";
 import type { FileDiff } from "../types";
 import { composerArea, previewToggle } from "./composer";
@@ -83,22 +84,6 @@ function button(text: string, onClick: () => void, cls = "btn small ghost"): HTM
   return b;
 }
 
-// What a fix round's "**Fix status:**" line says: `label` for a badge, and
-// `tone` — "done" (fixed), "warn" (still open, changed, not approved) or
-// "open" (proposed). Null when the notes have no status line.
-export function fixState(notes: string | undefined): { label: string; tone: "done" | "warn" | "open" } | null {
-  const m = notes && /\*\*Fix status:?\*\*:?\s*(.+)/i.exec(notes);
-  if (!m) return null;
-  const said = m[1].trim();
-  const label = (/re-check:\s*(.+)$/i.exec(said)?.[1] ?? said).trim();
-  if (/still open|not approved|changed|⚠|⏳/i.test(said)) return { label, tone: "warn" };
-  if (/✅|\bfixed\b|fixed-local|pushed in/i.test(said)) return { label, tone: "done" };
-  return { label, tone: "open" };
-}
-
-// Fixed by a fix round, though still open here: nothing left to post.
-export const fixedByNotes = (d: Draft): boolean => fixState(d.fixNotes)?.tone === "done";
-
 // The cards a click opened while their draft was folded away (fixed).
 const unfolded = new Set<number>();
 
@@ -116,6 +101,9 @@ export function draftCard(d: Draft, o: DraftCardOptions): HTMLElement {
   const fixed = fixState(d.fixNotes);
   if (fixed) head.append(el("span", { class: `pr-draft-fix-badge ${fixed.tone}`, text: fixed.label, title: "The fix round's status, from the review file" }));
   if (o.note) head.append(el("span", { class: "pr-draft-warn", text: o.note }));
+  // Changed here from what the review wrote: say so, and offer it back.
+  const edited = d.status !== "discarded" && d.body.trim() !== d.original.trim();
+  if (edited) head.append(el("span", { class: "pr-draft-edited", text: "edited", title: "You changed this comment; Reset puts back the review's text" }));
   if (o.showInDiff) head.append(button("Show in diff", o.showInDiff, "btn small ghost pr-draft-show"));
   head.append(el("span", { class: "spacer" }));
   const set = (status: Draft["status"]) => {
@@ -149,6 +137,14 @@ export function draftCard(d: Draft, o: DraftCardOptions): HTMLElement {
     }
   }
   const card = el("div", { class: `pr-draft ${d.status}${o.where === "inline" ? " inline" : ""}${folded ? " folded" : ""}`, "data-draft": d.id }, [head]);
+  if (edited) {
+    const reset = button("Reset", () => {
+      d.body = d.original;
+      o.changed(true);
+    });
+    reset.title = `Put back the review's text:\n${d.original.trim().split("\n")[0].slice(0, 120)}`;
+    head.append(reset);
+  }
   if (done && o.where === "list" && d.status !== "discarded") {
     head.append(
       button(folded ? "Show" : "Hide", () => {

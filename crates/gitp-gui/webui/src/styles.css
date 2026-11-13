@@ -7329,10 +7329,60 @@ textarea:focus-visible,
 .pr-draft-context-code {
   padding-right: 10px;
 }
+.pr-draft-edited {
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--mod-fg);
+  background: var(--mod-bg);
+}
+/* The review "Post N approved" will put on GitHub. */
+.review-preview {
+  width: min(820px, 94vw);
+}
+.review-preview-body {
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.review-preview-label {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.review-preview-item {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  font-size: 13px;
+}
+.review-preview-where {
+  display: block;
+  margin-bottom: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.review-preview-empty {
+  color: var(--text-dim);
+  font-size: 12px;
+}
 /* The card the Drafts tab's keys act on. */
 .pr-draft.cursor {
   box-shadow: 0 0 0 2px var(--accent-soft);
   border-color: var(--accent);
+}
+/* Every draft decided: the tab says so. */
+.pr-tab.all-decided::after {
+  content: " ✓";
+  color: var(--add-fg);
 }
 .pr-drafts-keys {
   margin-left: auto;

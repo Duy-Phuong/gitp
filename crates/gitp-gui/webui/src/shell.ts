@@ -1451,7 +1451,7 @@ function renderConflictBanner(): void {
     return;
   }
   if (!banner) {
-    banner = el("div", { id: "conflict-banner", class: "rebase-banner conflict-banner" });
+    banner = el("div", { id: "conflict-banner", class: "rebase-banner" });
     bannerDock().append(banner);
   }
   clear(banner);

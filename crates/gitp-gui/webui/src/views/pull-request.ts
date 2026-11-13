@@ -69,6 +69,7 @@ import {
   prReview,
   reviewsChanged,
   setReviewedHead,
+  toDecide,
   type Draft,
   type PrReview,
 } from "../pr-reviews";
@@ -481,7 +482,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       tabButton("files", `Files changed (${pr.changed_files})`),
       tabButton("checks", `Checks (${pr.checks.length})`),
       ...(review().drafts.length
-        ? [tabButton("drafts", `Drafts (${review().drafts.filter((d) => draftStanding(d) === "open").length})`)]
+        ? [draftsTabButton(tabButton)]
         : []),
     );
     host.append(el("div", { class: "pr-view" }, [header(pr), tabs, body]));
@@ -1807,6 +1808,17 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       return c;
     });
     body.append(...cards);
+  }
+
+  // "Drafts (2/5)": how many of the review's drafts are decided — approved,
+  // discarded or fixed — so the tab shows how much is left.
+  function draftsTabButton(tabButton: (t: Tab, label: string) => HTMLElement): HTMLElement {
+    const all = review().drafts;
+    const left = all.filter(toDecide).length;
+    const b = tabButton("drafts", `Drafts (${all.length - left}/${all.length})`);
+    b.title = left ? `${all.length - left} of ${all.length} drafts decided: ${left} left to approve, discard or fix` : `All ${all.length} drafts decided`;
+    if (!left) b.classList.add("all-decided");
+    return b;
   }
 
   // Whether the Drafts tab's filters show `d`.

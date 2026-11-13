@@ -196,4 +196,16 @@ describe("draft cards", () => {
     expect(draftCard(draft(), options({ file, where: "inline" })).querySelector(".pr-draft-context")).toBeNull();
     expect(draftCard(draft(), options()).querySelector(".pr-draft-context")).toBeNull();
   });
+
+  it("marks a comment changed here as edited, and Reset puts back the review's text", async () => {
+    const { draftCard } = await import("./draft-cards");
+    expect(draftCard(draft(), options()).querySelector(".pr-draft-edited")).toBeNull();
+    const changed = vi.fn();
+    const d = draft({ body: "My own words." });
+    const card = draftCard(d, options({ changed }));
+    expect(card.querySelector(".pr-draft-edited")?.textContent).toBe("edited");
+    [...card.querySelectorAll("button")].find((b) => b.textContent === "Reset")!.click();
+    expect(d.body).toBe("Use a constant.");
+    expect(changed).toHaveBeenCalledWith(true);
+  });
 });
