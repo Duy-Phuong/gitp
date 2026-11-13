@@ -56,7 +56,7 @@ import {
 import { fullTime, relativeTime } from "../timeago";
 import { copyText } from "../clipboard";
 import { checkAnchor, withOffDiffDrafts } from "../review-drafts";
-import { draftCard, placeDraftCards, type DraftCardOptions } from "./draft-cards";
+import { draftCard, fixedByNotes, placeDraftCards, type DraftCardOptions } from "./draft-cards";
 import { draftFoldText, threadFoldText } from "../comment-fold";
 import {
   clearDrafts,
@@ -252,6 +252,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   let draft = "";
   // The Files tab's search, kept across re-renders (a layout switch).
   let filesQuery = "";
+  // The Drafts tab's filters: by where a draft stands, and by severity.
+  let draftShow: DraftShow = "all";
+  let draftSeverity: string | null = null;
   let split = loadPrDiffSplit();
   // The folder tree beside the diffs: shown or not, which folders are folded,
   // and the file last picked in it.
@@ -427,12 +430,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       tabButton("files", `Files changed (${pr.changed_files})`),
       tabButton("checks", `Checks (${pr.checks.length})`),
       ...(review().drafts.length
-        ? [tabButton("drafts", `Drafts (${review().drafts.filter(isOpen).length})`)]
+        ? [tabButton("drafts", `Drafts (${review().drafts.filter((d) => draftStanding(d) === "open").length})`)]
         : []),
-      el("span", { class: "pr-diffstat" }, [
-        el("span", { class: "pr-add", text: `+${pr.additions}` }),
-        el("span", { class: "pr-del", text: `−${pr.deletions}` }),
-      ]),
     );
     host.append(el("div", { class: "pr-view" }, [header(pr), tabs, body]));
     if (tab === "conversation") renderConversation(body, pr);
@@ -565,6 +564,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     );
     const decision = reviewDecisionLabel(pr.review_decision);
     if (decision) meta.append(el("span", { class: `pr-badge review-${pr.review_decision!.toLowerCase()}`, text: decision }));
+    meta.append(
+      el("span", { class: "pr-diffstat", title: `${pr.changed_files} file${pr.changed_files === 1 ? "" : "s"} changed` }, [
+        el("span", { class: "pr-add", text: `+${pr.additions}` }),
+        el("span", { class: "pr-del", text: `−${pr.deletions}` }),
+      ]),
+    );
     meta.append(...fixingChip(pr));
     for (const label of pr.labels) meta.append(labelChip(label));
 
@@ -574,14 +579,12 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       return b;
     };
     const actions = el("div", { class: "pr-actions" }, [
-      button("Check Out", () => cb.checkout(pr), `gh pr checkout ${pr.number}: a local branch tracking ${pr.head}`),
-      button("Check Out in New Worktree…", (e) => cb.checkoutInWorktree(pr, e.clientX, e.clientY)),
+      checkoutMenuButton(pr),
       button("Review ▾", (e) => cb.reviewMenu(pr, e.clientX, e.clientY), "Approve, request changes or comment"),
-      ...(review().running
-        ? [button("Reviewing… Cancel", () => cb.cancelReview(pr), "The review command is running in the background; click to stop it")]
-        : [generateButton(pr), skillButton(pr), ...pushAndReplyButton(pr)]),
+      ...(review().running ? [button("Reviewing… Cancel", () => cb.cancelReview(pr), "The review command is running in the background; click to stop it")] : []),
+      draftsMenuButton(pr),
+      ...(review().running ? [] : pushAndReplyButton(pr)),
       ...checkAllButton(pr),
-      button("Load Review File…", () => void loadDrafts(pr), "Read a review's findings as draft comments, to approve or discard before posting"),
       ...applyAllButton(pr, button),
     ]);
     if (pr.state === "OPEN") {
@@ -1482,19 +1485,43 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     return box;
   }
 
-  // Run Review Command, with a green dot when commits arrived since the last
-  // review: time to review again.
-  function generateButton(pr: PullRequestDetail): HTMLElement {
+  // Check Out ▾: a local branch, or one in a new worktree.
+  function checkoutMenuButton(pr: PullRequestDetail): HTMLElement {
+    const b = el("button", { class: "btn small ghost", text: "Check Out ▾", title: `Check out ${pr.head} here or in a new worktree` });
+    b.addEventListener("click", (e) => {
+      const { clientX: x, clientY: y } = e;
+      showContextMenu(x, y, [
+        { label: "Check Out", run: () => cb.checkout(pr) },
+        { label: "Check Out in New Worktree…", run: () => cb.checkoutInWorktree(pr, x, y) },
+      ]);
+    });
+    return b;
+  }
+
+  // Draft Review ▾: the review command, the /review-pr-phuong skill, or a
+  // review file, into the Drafts tab. A green dot, and the menu says why,
+  // when commits arrived since the last review: time to review again.
+  function draftsMenuButton(pr: PullRequestDetail): HTMLElement {
     const reviewed = cb.reviewedHead(pr.number);
     const fresh = hasNewCommits(reviewed, pr.head_oid);
+    const news = fresh ? `New commits since the last review (${reviewed!.slice(0, 8)} → ${pr.head_oid.slice(0, 8)})` : null;
     const b = el("button", {
       class: `btn small ghost${fresh ? " pr-has-news" : ""}`,
-      text: "Run Review Command",
-      title: fresh
-        ? `New commits since the last review (${reviewed!.slice(0, 8)} → ${pr.head_oid.slice(0, 8)}): run the review command again`
-        : "Run the review command (Settings → Git) over the diff in the background; its findings become draft comments to approve or discard",
+      text: "Draft Review ▾",
+      title: news ? `${news}: run a review again` : "Run a review, or load a review file, for draft comments to approve or discard before posting",
     });
-    b.addEventListener("click", () => cb.generateDrafts(pr));
+    b.addEventListener("click", (e) => {
+      const items: MenuItem[] = news ? [{ heading: news }] : [];
+      if (!review().running) {
+        items.push(
+          { label: "Run Review Command", run: () => cb.generateDrafts(pr) },
+          { label: "Run Review Skill", run: () => cb.generateDraftsWithSkill(pr) },
+          { separator: true },
+        );
+      }
+      items.push({ label: "Load Review File…", run: () => void loadDrafts(pr) });
+      showContextMenu(e.clientX, e.clientY, items);
+    });
     return b;
   }
 
@@ -1503,19 +1530,6 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     const all = cb.applySuggestions ? prSuggestions(pr) : [];
     if (all.length < 2) return [];
     return [button(`Apply ${all.length} Suggestions`, () => void cb.applySuggestions?.(pr, all), "Apply every reviewer's suggestion of the open threads in the branch's worktree, as one commit")];
-  }
-
-  // Run Review Skill: the /review-pr-phuong skill in one click, whatever the
-  // Review command preset in Settings says; the same green dot.
-  function skillButton(pr: PullRequestDetail): HTMLElement {
-    const fresh = hasNewCommits(cb.reviewedHead(pr.number), pr.head_oid);
-    const b = el("button", {
-      class: `btn small ghost${fresh ? " pr-has-news" : ""}`,
-      text: "Run Review Skill",
-      title: "Run the /review-pr-phuong Claude Code skill in the background, whatever the Review command preset; its findings become draft comments",
-    });
-    b.addEventListener("click", () => cb.generateDraftsWithSkill(pr));
-    return b;
   }
 
   // Check N Comments: a Check on every open thread not checked at the pull
@@ -1715,7 +1729,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       for (const d of drafts) if (isOpen(d) || (status === "pending" && d.status === "discarded" && !d.fix)) d.status = status;
       reviewsChanged();
     };
-    const summary = `${live.length} draft${live.length === 1 ? "" : "s"} · ${drafts.filter((d) => d.status === "approved").length} approved${offDiff.length ? ` · ${offDiff.length} in the review message (line not in this diff)` : ""}`;
+    const toDecide = drafts.filter((d) => draftStanding(d) === "open").length;
+    const summary = `${toDecide} open draft${toDecide === 1 ? "" : "s"} · ${drafts.filter((d) => d.status === "approved").length} approved${offDiff.length ? ` · ${offDiff.length} in the review message (line not in this diff)` : ""}`;
     body.append(
       el("div", { class: "pr-drafts-bar" }, [
         el("span", { class: "pr-drafts-summary", text: summary }),
@@ -1733,7 +1748,53 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       ]),
       message,
     );
-    for (const d of drafts) body.append(prDraftCard(pr, d, "list", anchorOf(d)));
+    body.append(draftsOverview(drafts));
+    for (const d of drafts.filter(shown)) body.append(prDraftCard(pr, d, "list", anchorOf(d)));
+  }
+
+  // Whether the Drafts tab's filters show `d`.
+  function shown(d: Draft): boolean {
+    return (draftShow === "all" || draftStanding(d) === draftShow) && (draftSeverity === null || d.severity === draftSeverity);
+  }
+
+  // Above the cards: filters by standing and severity, then one line per
+  // draft shown — its severity, place, standing and first words — that
+  // scrolls to its card.
+  function draftsOverview(drafts: Draft[]): HTMLElement {
+    const chip = (label: string, on: boolean, pick: () => void) => {
+      const b = el("button", { class: `pr-drafts-chip${on ? " on" : ""}`, text: label });
+      b.addEventListener("click", () => {
+        pick();
+        render();
+      });
+      return b;
+    };
+    const count = (s: DraftShow) => drafts.filter((d) => s === "all" || draftStanding(d) === s).length;
+    const filters = el("div", { class: "pr-drafts-filters" }, [
+      ...(["all", "open", "fixed", "discarded"] as const).map((s) => chip(`${s[0].toUpperCase()}${s.slice(1)} ${count(s)}`, draftShow === s, () => (draftShow = s))),
+    ]);
+    const severities = [...new Set(drafts.map((d) => d.severity).filter((x): x is string => !!x))];
+    if (severities.length > 1) {
+      filters.append(
+        el("span", { class: "pr-drafts-filters-sep" }),
+        chip("Any severity", draftSeverity === null, () => (draftSeverity = null)),
+        ...severities.map((sev) => chip(sev, draftSeverity === sev, () => (draftSeverity = sev))),
+      );
+    }
+    const list = el("div", { class: "pr-drafts-index" });
+    for (const d of drafts.filter(shown)) {
+      const standing = draftStanding(d);
+      const row = el("button", { class: `pr-drafts-index-row ${standing}`, title: "Go to this draft" }, [
+        el("span", { class: `pr-draft-sev ${(d.severity ?? "").replace(/\W+/g, "-")}`, text: d.severity ?? "—" }),
+        el("span", { class: "pr-drafts-index-where", text: d.path ? `${d.path.slice(d.path.lastIndexOf("/") + 1)}:${d.line}` : (d.topic ?? "Whole change") }),
+        el("span", { class: `pr-drafts-index-state ${standing}`, text: d.status === "approved" ? "approved" : standing }),
+        el("span", { class: "pr-drafts-index-text", text: d.body.split("\n").find((l) => l.trim()) ?? "" }),
+      ]);
+      row.addEventListener("click", () => host.querySelector<HTMLElement>(`.pr-draft[data-draft="${d.id}"]:not(.inline)`)?.scrollIntoView({ block: "start", behavior: "smooth" }));
+      list.append(row);
+    }
+    if (!list.childElementCount) list.append(el("div", { class: "pr-empty", text: "No draft matches these filters." }));
+    return el("div", { class: "pr-drafts-overview" }, [filters, list]);
   }
 
   // A draft's card in the Drafts tab or under its line in the Files tab.
@@ -2064,6 +2125,15 @@ export function labelChip(label: PrLabel): HTMLElement {
   const chip = el("span", { class: "pr-label", text: label.name });
   if (/^[0-9a-f]{6}$/i.test(label.color)) chip.style.setProperty("--label", `#${label.color}`);
   return chip;
+}
+
+// Where a draft stands, for the Drafts tab's filters: still to decide, fixed
+// (by a commit here, or by a fix round the review file tells of), discarded.
+type DraftShow = "all" | "open" | "fixed" | "discarded";
+function draftStanding(d: Draft): Exclude<DraftShow, "all"> {
+  if (d.status === "discarded") return "discarded";
+  if (d.status === "fixed" || fixedByNotes(d)) return "fixed";
+  return "open";
 }
 
 function smallButton(text: string, onClick: () => void): HTMLElement {

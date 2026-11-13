@@ -38,6 +38,9 @@ export interface DraftComment {
   /// The board's "Explain more" answers written back into the file, oldest
   /// first (Markdown).
   explanations?: string[];
+  /// What a fix round (review-fix-pr) wrote after the comment: its
+  /// "**Fix check:**", "**Fix solution:**", "**Fix status:**" lines (Markdown).
+  fixNotes?: string;
 }
 
 /// The findings in a review file, in file order. Blocks without a location or
@@ -97,6 +100,8 @@ const HEADING = /^###\s+`?([^\s`:]+(?:\/[^\s`:]+)*):(\d+)(?:-(\d+))?`?/;
 const TOPIC = /^###\s+(.+?)\s*$/;
 const COPY_START = "<!-- copy:start -->";
 const COPY_END = "<!-- copy:end -->";
+// Where the notes of a fix round start, after the comment.
+const FIX_NOTES = /^\*\*Fix(?:ed| check| solution| status)?:?\*\*/m;
 
 // An "Explain more" answer the review board wrote into the file, at the end
 // of its finding (review/_board/sync_file.py).
@@ -142,9 +147,14 @@ function parseMarkdown(source: string): DraftComment[] {
       if (inFindings) out.finding = `f${first}`;
       const said = [...block.matchAll(EXPLAIN_MARK)].map((x) => answers[Number(x[1])]).filter(Boolean);
       if (said.length) out.explanations = said;
+      if (notes) out.fixNotes = notes;
       return out;
     };
-    const clean = block.replace(EXPLAIN_MARK, "");
+    // The fix round's notes come after the comment: they are not part of it.
+    const all = block.replace(EXPLAIN_MARK, "");
+    const at = all.search(FIX_NOTES);
+    const notes = at >= 0 ? all.slice(at).trim() : "";
+    const clean = at >= 0 ? all.slice(0, at) : all;
     if (m) {
       const body = commentOf(clean);
       if (body) drafts.push({ path: m[1], line: Number(m[3] ?? m[2]), side: "RIGHT", body, severity: severityOf(block), ...extra() });
@@ -192,7 +202,7 @@ function commentOf(block: string): string {
 /// The review pages wrap the comment in `<div class="copy-block">` for their
 /// Copy button; the comment is what's inside.
 function unwrapCopyBlock(text: string): string {
-  const m = /^\s*<div class="copy-block"[^>]*>([\s\S]*?)<\/div>\s*$/i.exec(text);
+  const m = /^\s*<div class="copy-block"[^>]*>([\s\S]*?)<\/div>/i.exec(text);
   return (m ? m[1] : text).trim();
 }
 

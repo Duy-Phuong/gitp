@@ -116,7 +116,9 @@ describe("draft cards", () => {
     const d = draft({ explained: "The loop has **no** limit.", finding: "f2", explanations: ["First.", "Second."] });
     const card = draftCard(d, options({ explain: { running: false, failed: null, run } }));
     const folds = [...card.querySelectorAll<HTMLDetailsElement>(".pr-draft-fold")];
-    expect(folds.map((f) => f.querySelector("summary")!.textContent)).toEqual(["Explained simply", "Explained more 1", "Explained more 2"]);
+    expect(folds.map((f) => f.querySelector(".pr-draft-fold-title")!.textContent)).toEqual(["Explained simply", "Explained more 1", "Explained more 2"]);
+    // Explain more sits in the title of the box it adds to.
+    expect(folds[0].querySelector("summary button")?.textContent).toBe("Explain more");
     expect(folds.map((f) => f.open)).toEqual([true, false, true]);
     expect(folds[0].querySelector("strong")?.textContent).toBe("no");
     // In this order: the explanations, then the comment to paste.
@@ -138,5 +140,43 @@ describe("draft cards", () => {
     const d = draft({ explained: "Why." });
     expect(draftCard(d, options({ where: "inline" })).querySelector(".pr-draft-explain")).toBeNull();
     expect(draftCard(draft(), options()).querySelector(".pr-draft-explain, .pr-draft-label")).toBeNull();
+  });
+
+  it("shows a file's name first and its folder dimmed", async () => {
+    const { draftCard } = await import("./draft-cards");
+    const where = draftCard(draft({ path: "a/b/c.java", line: 7 }), options()).querySelector(".pr-draft-where")!;
+    expect(where.querySelector(".pr-draft-file")!.textContent).toBe("c.java:7");
+    expect(where.querySelector(".pr-draft-dir")!.textContent).toBe("a/b/");
+  });
+
+  it("shows a fix round's notes under the comment, and folds a draft they say is fixed", async () => {
+    const { draftCard, fixState } = await import("./draft-cards");
+    expect(fixState("**Fix status:** pushed in abc · re-check: ✅ fixed")).toEqual({ label: "✅ fixed", tone: "done" });
+    expect(fixState("**Fix status:** proposed")).toEqual({ label: "proposed", tone: "open" });
+    expect(fixState("**Fix status:** pushed in abc · re-check: ⏳ still open")!.tone).toBe("warn");
+    expect(fixState("no status")).toBeNull();
+
+    const open = draftCard(draft({ id: 41, fixNotes: "**Fix check:** confirmed\n\n**Fix status:** proposed" }), options());
+    const notes = open.querySelector<HTMLDetailsElement>(".pr-draft-fix-notes")!;
+    expect(notes.open).toBe(true);
+    expect(notes.querySelector("strong")?.textContent).toBe("Fix check:");
+    expect(open.querySelector(".pr-draft-text")!.compareDocumentPosition(notes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(open.querySelector(".pr-draft-label")?.textContent).toBe("Comment to paste");
+
+    const changed = vi.fn();
+    const d = draft({ id: 42, fixNotes: "**Fix status:** pushed in abc · re-check: ✅ fixed" });
+    const folded = draftCard(d, options({ changed }));
+    expect(folded.classList.contains("folded")).toBe(true);
+    expect(folded.querySelector("textarea")).toBeNull();
+    expect(folded.querySelector(".pr-draft-fix-badge")!.textContent).toBe("✅ fixed");
+    // Discard is the main button; Approve is still there.
+    const discard = [...folded.querySelectorAll("button")].find((b) => b.textContent === "Discard")!;
+    expect(discard.classList.contains("ghost")).toBe(false);
+    expect(buttons(folded)).toContain("Approve");
+    [...folded.querySelectorAll("button")].find((b) => b.textContent === "Show")!.click();
+    expect(changed).toHaveBeenCalledWith(true);
+    const shown = draftCard(d, options());
+    expect(shown.querySelector("textarea")).not.toBeNull();
+    expect(buttons(shown)).toContain("Hide");
   });
 });

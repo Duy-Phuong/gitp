@@ -264,9 +264,13 @@ export function reviewsChanged(): void {
 // --- Merging a new run, and keeping drafts on disk ------------------------------
 
 // What a draft is known by across runs of the review: its file and the first
-// 80 characters of the text the review wrote.
+// 80 characters of the text the review wrote — without the copy-block wrapper
+// an older gitp left in it, so such a draft is found again.
 export function fingerprintOf(d: { path: string; body: string; original?: string }): string {
-  return `${d.path}\n${(d.original ?? d.body).trim().slice(0, 80)}`;
+  let text = d.original ?? d.body;
+  const wrapped = /^\s*<div class="copy-block"[^>]*>([\s\S]*?)(?:<\/div>|$)/i.exec(text);
+  if (wrapped) text = wrapped[1];
+  return `${d.path}\n${text.trim().slice(0, 80)}`;
 }
 
 // The drafts after a new run found `found`: a draft found again keeps its
@@ -278,7 +282,7 @@ export function mergeDrafts(existing: Draft[], found: DraftComment[]): Draft[] {
   const out: Draft[] = [];
   for (const d of existing) {
     const again = byPrint.get(fingerprintOf(d))?.shift();
-    if (again) out.push({ ...d, path: again.path, line: again.line, side: again.side, stale: false, ...findingText(again, true) });
+    if (again) out.push({ ...d, ...withCleanBody(d, again), path: again.path, line: again.line, side: again.side, stale: false, ...findingText(again, true) });
     else if (!isOpen(d)) out.push({ ...d, stale: true });
   }
   const fresh = [...byPrint.values()].flat();
@@ -293,15 +297,24 @@ export function mergeDrafts(existing: Draft[], found: DraftComment[]): Draft[] {
 }
 
 // The review file's own words on a finding — its Explained simply text, its
-// board id and the Explain more answers — as fields to spread, without the
-// empty ones. `all`: every key, undefined when empty, so a spread replaces
-// what an older read left.
-function findingText(d: Pick<DraftComment, "explained" | "finding" | "explanations">, all = false): Pick<DraftComment, "explained" | "finding" | "explanations"> {
-  const out: Pick<DraftComment, "explained" | "finding" | "explanations"> = all ? { explained: undefined, finding: undefined, explanations: undefined } : {};
+// board id, the Explain more answers and a fix round's notes — as fields to
+// spread, without the empty ones. `all`: every key, undefined when empty, so a
+// spread replaces what an older read left.
+type FindingText = Pick<DraftComment, "explained" | "finding" | "explanations" | "fixNotes">;
+function findingText(d: FindingText, all = false): FindingText {
+  const out: FindingText = all ? { explained: undefined, finding: undefined, explanations: undefined, fixNotes: undefined } : {};
   if (d.explained) out.explained = d.explained;
   if (d.finding) out.finding = d.finding;
   if (d.explanations?.length) out.explanations = d.explanations;
+  if (d.fixNotes) out.fixNotes = d.fixNotes;
   return out;
+}
+
+// The comment the review file gives now, for a draft not edited here: a
+// draft read before gitp unwrapped the comment from the fix notes after it
+// takes the clean text.
+function withCleanBody(d: Draft, again: DraftComment): Pick<Draft, "body" | "original"> {
+  return d.body === d.original ? { body: again.body, original: again.body } : { body: d.body, original: d.original };
 }
 
 // `drafts` with what the review file, read again as `found`, says about each
@@ -311,7 +324,7 @@ export function withFindingText(drafts: Draft[], found: DraftComment[]): Draft[]
   const byPrint = new Map(found.map((f) => [fingerprintOf(f), f]));
   return drafts.map((d) => {
     const again = byPrint.get(fingerprintOf(d));
-    return again ? { ...d, ...findingText(again, true) } : d;
+    return again ? { ...d, ...withCleanBody(d, again), ...findingText(again, true) } : d;
   });
 }
 
@@ -355,7 +368,7 @@ export function applyStored(repo: string, key: ReviewKey, s: StoredReview): PrRe
     ...(d.topic ? { topic: d.topic } : {}),
     fix: d.fix ?? null,
     ...(d.stale ? { stale: true } : {}),
-    ...findingText({ explained: d.explained ?? undefined, finding: d.finding ?? undefined, explanations: d.explanations }),
+    ...findingText({ explained: d.explained ?? undefined, finding: d.finding ?? undefined, explanations: d.explanations, fixNotes: d.fixNotes ?? undefined }),
   }));
   r.head = s.head || undefined;
   r.base = s.base || undefined;

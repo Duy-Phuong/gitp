@@ -266,4 +266,18 @@ describe("the review file's words on a finding", () => {
     // A run that finds it again takes the file's words too.
     expect(m.mergeDrafts(next, [{ ...finding(1), finding: "f1", explained: "Why, again." }])[0]).toMatchObject({ explained: "Why, again.", explanations: undefined });
   });
+
+  it("gives a draft read with the copy-block wrapper and fix notes in it the clean comment, unless it was edited", async () => {
+    const m = await fresh();
+    const r = m.prReview("/a", 8);
+    const dirty = (t: string) => `<div class="copy-block" data-i="2">\n\n${t}\n\n</div>\n\n**Fix status:** proposed`;
+    m.addDrafts(r, [{ ...finding(1), body: dirty("One.") }, { ...finding(2), body: dirty("Two.") }]);
+    r.drafts[0].status = "approved";
+    r.drafts[1].body = "my edit";
+    const clean = (t: string) => ({ body: t, fixNotes: "**Fix status:** proposed" });
+    const next = m.withFindingText(r.drafts, [{ ...finding(1), ...clean("One.") }, { ...finding(2), ...clean("Two.") }]);
+    expect(next[0]).toMatchObject({ status: "approved", body: "One.", original: "One.", fixNotes: "**Fix status:** proposed" });
+    expect(next[1]).toMatchObject({ body: "my edit", original: dirty("Two."), fixNotes: "**Fix status:** proposed" });
+    expect(m.mergeDrafts(r.drafts, [{ ...finding(1), ...clean("One.") }])[0]).toMatchObject({ id: 1, status: "approved", body: "One." });
+  });
 });
