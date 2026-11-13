@@ -103,6 +103,16 @@ export function chevronIcon(): SVGElement {
   return s;
 }
 
+// The down chevron after the label of a button that opens a menu ("Review",
+// "any"): the shared chevron, sized and spaced by `.menu-caret`.
+export function menuCaret(): HTMLElement {
+  const span = document.createElement("span");
+  span.className = "menu-caret";
+  span.setAttribute("aria-hidden", "true");
+  span.append(chevronIcon());
+  return span;
+}
+
 // The GitHub mark, colored via `currentColor`. Marks remote-tracking ref chips
 // (origin/…) in the commit log so they read as remote branches.
 export function githubIcon(): SVGElement {

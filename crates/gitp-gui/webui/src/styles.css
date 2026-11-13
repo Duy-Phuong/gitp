@@ -2209,6 +2209,25 @@ body.tab-dragging * {
 .sb-chevron.open {
   transform: rotate(0deg);
 }
+/* A button that opens a menu: its label, then a small down chevron, centred
+   on the text (menuCaret in dom.ts). */
+.has-caret {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.menu-caret {
+  display: inline-flex;
+  flex: none;
+  opacity: 0.7;
+}
+.menu-caret .chevron-icon {
+  width: 10px;
+  height: 10px;
+}
+.has-caret:hover .menu-caret {
+  opacity: 1;
+}
 /* Shared chevron glyph for collapsible sections/folders. */
 .chevron-icon {
   width: 12px;

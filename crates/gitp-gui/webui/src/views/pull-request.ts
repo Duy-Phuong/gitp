@@ -9,7 +9,7 @@
 // of it goes through innerHTML: Markdown is rendered by markdown-preview.ts,
 // which builds text nodes, and the rest is set as text.
 
-import { clear, el, svg } from "../dom";
+import { clear, el, menuCaret, svg } from "../dom";
 import { showContextMenu, type MenuItem } from "./context-menu";
 import { renderGitHubMarkdown } from "./github-markdown";
 import { conversationNode, threadBadges, threadClaudeButtons } from "./thread-claude";
@@ -582,7 +582,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     };
     const actions = el("div", { class: "pr-actions" }, [
       checkoutMenuButton(pr),
-      button("Review ▾", (e) => cb.reviewMenu(pr, e.clientX, e.clientY), "Approve, request changes or comment"),
+      withCaret(button("Review", (e) => cb.reviewMenu(pr, e.clientX, e.clientY), "Approve, request changes or comment")),
       ...(review().running ? [button("Reviewing… Cancel", () => cb.cancelReview(pr), "The review command is running in the background; click to stop it")] : []),
       draftsMenuButton(pr),
       ...(review().running ? [] : pushAndReplyButton(pr)),
@@ -752,8 +752,8 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       const root = pr.review_comments.find((c) => c.id === id);
       return root ? `${root.path.split("/").pop()}:${root.line ?? root.original_line ?? "?"}` : "another thread";
     };
-    const text = `🔧 ${running === null ? "Starting" : "Fixing 1"}${waiting.length ? ` · ${waiting.length} queued` : ""} ▾`;
-    const chip = el("button", { class: "pr-status fixing", text, title: "Claude's fixes on this pull request, one at a time: click for the list" });
+    const text = `🔧 ${running === null ? "Starting" : "Fixing 1"}${waiting.length ? ` · ${waiting.length} queued` : ""}`;
+    const chip = withCaret(el("button", { class: "pr-status fixing", text, title: "Claude's fixes on this pull request, one at a time: click for the list" }));
     const goTo = (id: number) => {
       focus = id;
       openBlocks.add(id);
@@ -1487,9 +1487,9 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     return box;
   }
 
-  // Check Out ▾: a local branch, or one in a new worktree.
+  // Check Out, with a menu: a local branch, or one in a new worktree.
   function checkoutMenuButton(pr: PullRequestDetail): HTMLElement {
-    const b = el("button", { class: "btn small ghost", text: "Check Out ▾", title: `Check out ${pr.head} here or in a new worktree` });
+    const b = withCaret(el("button", { class: "btn small ghost", text: "Check Out", title: `Check out ${pr.head} here or in a new worktree` }));
     b.addEventListener("click", (e) => {
       const { clientX: x, clientY: y } = e;
       showContextMenu(x, y, [
@@ -1500,18 +1500,18 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
     return b;
   }
 
-  // Draft Review ▾: the review command, the /review-pr-phuong skill, or a
+  // Draft Review, with a menu: the review command, the /review-pr-phuong skill, or a
   // review file, into the Drafts tab. A green dot, and the menu says why,
   // when commits arrived since the last review: time to review again.
   function draftsMenuButton(pr: PullRequestDetail): HTMLElement {
     const reviewed = cb.reviewedHead(pr.number);
     const fresh = hasNewCommits(reviewed, pr.head_oid);
     const news = fresh ? `New commits since the last review (${reviewed!.slice(0, 8)} → ${pr.head_oid.slice(0, 8)})` : null;
-    const b = el("button", {
+    const b = withCaret(el("button", {
       class: `btn small ghost${fresh ? " pr-has-news" : ""}`,
-      text: "Draft Review ▾",
+      text: "Draft Review",
       title: news ? `${news}: run a review again` : "Run a review, or load a review file, for draft comments to approve or discard before posting",
-    });
+    }));
     b.addEventListener("click", (e) => {
       const items: MenuItem[] = news ? [{ heading: news }] : [];
       if (!review().running) {
@@ -2136,6 +2136,13 @@ function draftStanding(d: Draft): Exclude<DraftShow, "all"> {
   if (d.status === "discarded") return "discarded";
   if (d.status === "fixed" || fixedByNotes(d)) return "fixed";
   return "open";
+}
+
+// A button that opens a menu: its label, then the shared down chevron.
+function withCaret<T extends HTMLElement>(b: T): T {
+  b.classList.add("has-caret");
+  b.append(menuCaret());
+  return b;
 }
 
 function smallButton(text: string, onClick: () => void): HTMLElement {

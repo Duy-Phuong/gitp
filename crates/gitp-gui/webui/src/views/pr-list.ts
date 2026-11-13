@@ -5,7 +5,7 @@
 // sort by any column.
 // A row opens its pull request; its corner arrows, in a tab of its own.
 
-import { clear, el, refreshButton, svg } from "../dom";
+import { clear, el, menuCaret, refreshButton, svg } from "../dom";
 import {
   filterPrList,
   hasPrListFilters,
@@ -128,12 +128,11 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
   const authorPicker = (list: PullRequest[], authors: string[]): HTMLElement => {
     const chosen = filters.authors;
     const button = el("button", {
-      class: `prl-picker prl-authors-button${chosen.length ? " set" : ""}`,
-      text: `${chosen.length === 0 ? "any" : chosen.length === 1 ? chosen[0] : `${chosen.length} authors`} ▾`,
+      class: `prl-picker prl-authors-button has-caret${chosen.length ? " set" : ""}`,
       title: chosen.join(", ") || "Pick one author or more",
       "aria-haspopup": "true",
       "aria-expanded": String(authorsOpen),
-    });
+    }, [el("span", { class: "prl-authors-label", text: chosen.length === 0 ? "any" : chosen.length === 1 ? chosen[0] : `${chosen.length} authors` }), menuCaret()]);
     button.addEventListener("click", () => {
       authorsOpen = !authorsOpen;
       draw();
