@@ -112,6 +112,7 @@ import {
   reviewsChanged,
   setReviewedHead,
   setReviewFile,
+  hasDrafts,
   unposted,
   withFindingText,
 } from "./pr-reviews";
@@ -120,6 +121,7 @@ import type { PullRequestCallbacks } from "./views/pull-request";
 import { openReviewViewer } from "./views/review-viewer";
 import { approvable, menuTargets, toggledSelection, baseBranches, canFixDrafts, defaultMergeMethod, githubRemoteName, listingOf, mergeAdvice, mergeChoices, otherListings, reviewThreads, type Thread } from "./pull-requests";
 import type { AheadCommit, BranchRef, ConflictResolution, GhAccount, MergeMethod, PrFilter, PullRequest, PullRequestDetail, ReviewVerdict, ThreadConversation, TurnKind } from "./types";
+import { confirmReviewPost } from "./views/review-preview-dialog";
 
 // --- The sidebar section ----------------------------------------------------
 
@@ -163,6 +165,7 @@ export async function loadPullRequests(recheckAccount = false): Promise<void> {
       state.prs.list = list;
       storePullRequestList(path, listingOf(filter), list);
       state.prs.reviewFiles = saved;
+      void readSavedDrafts(path, list);
       void readOtherListsAhead(path, filter);
       // The open pull request's review page icon follows the list.
       ui.prView?.redraw();
@@ -426,6 +429,11 @@ async function confirmPost(what: string, number: number, body: string): Promise<
 // Post, report what GitHub made of it, and say whether it went through.
 async function post(what: string, number: number, body: string, run: () => Promise<string>): Promise<boolean> {
   if (!(await confirmPost(what, number, body))) return false;
+  return send(what, number, run);
+}
+
+// Post what was already confirmed, and say whether it went through.
+async function send(what: string, number: number, run: () => Promise<string>): Promise<boolean> {
   setStatus(`Posting ${what} on #${number}…`);
   try {
     const said = (await run()).trim();
@@ -733,10 +741,14 @@ export const pullRequestCallbacks: PullRequestCallbacks = {
     const root = `${state.repoPath.replace(/\/$/, "")}/`;
     void (path.startsWith(root) ? revealPath(path.slice(root.length)) : revealFolder(path.replace(/\/[^/]*$/, "")));
   },
-  postReview: (pr, verdict, body, comments) => {
+  // The whole review, as GitHub will show it, to confirm before it goes.
+  postReview: async (pr, verdict, body, comments) => {
     const what = `a review with ${comments.length} comment${comments.length === 1 ? "" : "s"}`;
-    const preview = comments.map((c) => `${c.path}:${c.line} — ${c.body.split("\n")[0]}`).join("\n");
-    return post(what, pr.number, body.trim() ? `${body}\n\n${preview}` : preview, () => reviewWithComments(pr.number, verdict, body, comments));
+    if (!(await confirmReviewPost({ number: pr.number, login: state.prs.account?.login ?? null, verdict, body, comments }))) {
+      setStatus("Not posted.");
+      return false;
+    }
+    return send(what, pr.number, () => reviewWithComments(pr.number, verdict, body, comments));
   },
   threadTurn: (pr, thread, kind, userText) => void runThreadTurn(state.repoPath, pr, thread, kind, userText),
   checkAll: (pr, threads) => void runCheckAll(state.repoPath, pr, threads),
@@ -1163,6 +1175,8 @@ async function restoreDrafts(repo: string, number: number): Promise<void> {
     reviewsChanged();
     return;
   }
+  // Read already (by the list, or opened before): the file would add them twice.
+  if (hasDrafts(repo, number)) return;
   // Before prReview: the first ask makes the review, and then nothing is remembered.
   const remembered = rememberedFile(repo, number);
   const file =
@@ -1258,6 +1272,17 @@ export async function githubAccountForSettings(): Promise<GhAccount> {
 
 // The pull requests whose saved drafts were read (or found missing) this run.
 const storedLoaded = new Set<string>();
+
+// The drafts saved for the listed pull requests, read in the background so
+// each row's badge counts the ones left to decide; each once per run.
+async function readSavedDrafts(repo: string, list: PullRequest[]): Promise<void> {
+  let any = false;
+  for (const pr of list) {
+    if (state.repoPath !== repo) return;
+    if (await loadStoredPrReview(repo, pr.number)) any = true;
+  }
+  if (any) reviewsChanged();
+}
 
 // Read pull request `number`'s drafts from disk once, before anything could
 // save over them; true when they were loaded now.

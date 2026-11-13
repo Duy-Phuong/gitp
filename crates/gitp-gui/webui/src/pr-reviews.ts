@@ -36,6 +36,25 @@ export function nothingLeftAfterPost(drafts: Draft[]): boolean {
 // Still waiting for a decision: neither discarded nor fixed.
 export const isOpen = (d: Draft): boolean => d.status === "pending" || d.status === "approved";
 
+// What a fix round's "**Fix status:**" line says: `label` for a badge, and
+// `tone` — "done" (fixed), "warn" (still open, changed, not approved) or
+// "open" (proposed). Null when the notes have no status line.
+export function fixState(notes: string | undefined): { label: string; tone: "done" | "warn" | "open" } | null {
+  const m = notes && /\*\*Fix status:?\*\*:?\s*(.+)/i.exec(notes);
+  if (!m) return null;
+  const said = m[1].trim();
+  const label = (/re-check:\s*(.+)$/i.exec(said)?.[1] ?? said).trim();
+  if (/still open|not approved|changed|⚠|⏳/i.test(said)) return { label, tone: "warn" };
+  if (/✅|\bfixed\b|fixed-local|pushed in/i.test(said)) return { label, tone: "done" };
+  return { label, tone: "open" };
+}
+
+// Fixed by a fix round, though still open here: nothing left to post.
+export const fixedByNotes = (d: Draft): boolean => fixState(d.fixNotes)?.tone === "done";
+
+// Left to decide: open, and not fixed by a fix round either.
+export const toDecide = (d: Draft): boolean => d.status === "pending" && !fixedByNotes(d);
+
 export interface PrReview {
   // The review command is running for it.
   running: boolean;
@@ -246,10 +265,16 @@ export function reviewBadge(repo: string, number: number): { text: string; kind:
   if (fixRunningOn(repo, number) !== null || queued > 0) return { text: `fixing…${queued ? ` · ${queued} queued` : ""}`, kind: "running" };
   if (runningTurns(repo, number) > 0) return { text: "thinking…", kind: "running" };
   if (r?.error) return { text: "review failed", kind: "failed" };
-  const pending = r ? r.drafts.filter(isOpen).length : 0;
+  const pending = r ? r.drafts.filter((d) => isOpen(d) && !fixedByNotes(d)).length : 0;
   if (pending) return { text: `${pending} draft${pending === 1 ? "" : "s"}`, kind: "ready" };
   if (!r && loadFiles()[keyOf(repo, number)]) return { text: "drafts", kind: "ready" };
   return null;
+}
+
+// Whether pull request `number` has drafts here already, without making its
+// review (prReview would).
+export function hasDrafts(repo: string, number: number): boolean {
+  return (reviews.get(keyOf(repo, number))?.drafts.length ?? 0) > 0;
 }
 
 export function onReviewsChange(listener: () => void): void {
