@@ -5,7 +5,7 @@
 // line once it has been read. Everything Claude wrote is Markdown rendered
 // through renderGitHubMarkdown, never innerHTML, like the comments around it.
 
-import { el } from "../dom";
+import { el, toggleChevron } from "../dom";
 import { renderGitHubMarkdown } from "./github-markdown";
 import { composerArea } from "./composer";
 import { relativeTime, fullTime } from "../timeago";
@@ -226,7 +226,7 @@ export function conversationNode(o: ConversationOptions): HTMLElement {
   const node = el("div", { class: `pr-thread-claude${open ? " open" : ""}` });
   const summary = c ? conversationSummary(c) : "Claude";
   const headLine = el("div", { class: "pr-thread-claude-head" }, [
-    el("span", { class: "pr-thread-claude-arrow", text: open ? "▾" : "▸" }),
+    toggleChevron(open),
     el("span", { text: summary }),
   ]);
   headLine.addEventListener("click", (e) => {

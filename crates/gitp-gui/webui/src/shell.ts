@@ -39,7 +39,7 @@ import {
   lfsStatus,
 } from "./api";
 import { ensureAvatars } from "./avatar";
-import { clear, el, $ } from "./dom";
+import { chevronIcon, clear, el, $ } from "./dom";
 import { logRowTop, renderLog, setBisectMarks, setLogColumnsRepo, setOtherWipRows, setStashNodes, setWipRow, setWorktreeBranches } from "./views/log";
 import { branchesElsewhere, otherWipRows } from "./worktree-wip";
 import { bisectBannerText } from "./bisect-text";
@@ -1388,6 +1388,42 @@ function applyConflictStatus(st: ConflictStatus | null): void {
   if (state.view === "conflict" && !state.conflict) showView("history");
 }
 
+// The bars shown while git is mid-operation (rebase, conflicts, bisect,
+// detached HEAD) stack in one dock at the bottom instead of on top of each
+// other; each folds to a small chip with its title so it hides less of the
+// view under it. Folded ones stay folded across redraws.
+const foldedBanners = new Set<string>();
+function bannerDock(): HTMLElement {
+  let dock = document.getElementById("banner-dock");
+  if (!dock) {
+    dock = el("div", { id: "banner-dock" });
+    document.body.append(dock);
+  }
+  return dock;
+}
+
+// Add the fold button to a bar just drawn, and fold it if it was.
+function foldable(banner: HTMLElement): void {
+  const folded = foldedBanners.has(banner.id);
+  banner.classList.toggle("folded", folded);
+  const toggle = () => {
+    if (foldedBanners.has(banner.id)) foldedBanners.delete(banner.id);
+    else foldedBanners.add(banner.id);
+    foldable(banner);
+  };
+  banner.querySelector(".rebase-banner-fold")?.remove();
+  const fold = el("button", {
+    class: "rebase-banner-fold",
+    title: folded ? "Show the whole bar" : "Fold this bar to a small chip",
+    "aria-label": folded ? "Show the whole bar" : "Fold the bar",
+  });
+  fold.append(chevronIcon());
+  fold.addEventListener("click", toggle);
+  banner.append(fold);
+  const title = banner.querySelector<HTMLElement>(".rebase-banner-title");
+  if (title) title.onclick = folded ? toggle : null;
+}
+
 // The merge/cherry-pick/revert message last pre-filled into the commit box,
 // so it's done once per session and cleared when that session ends.
 let conflictPrefill: { summary: string; body: string } | null = null;
@@ -1416,7 +1452,7 @@ function renderConflictBanner(): void {
   }
   if (!banner) {
     banner = el("div", { id: "conflict-banner", class: "rebase-banner conflict-banner" });
-    document.body.append(banner);
+    bannerDock().append(banner);
   }
   clear(banner);
   const info = el("div", { class: "rebase-banner-info" }, [
@@ -1428,6 +1464,7 @@ function renderConflictBanner(): void {
   const abort = el("button", { class: "btn small danger", text: "Abort" });
   abort.addEventListener("click", () => void abortConflictAction());
   banner.append(info, el("div", { class: "rebase-banner-actions" }, [resolve, abort]));
+  foldable(banner);
 }
 
 async function abortConflictAction(): Promise<void> {
@@ -1457,7 +1494,7 @@ function renderRebaseBanner(): void {
   }
   if (!banner) {
     banner = el("div", { id: "rebase-banner", class: "rebase-banner" });
-    document.body.append(banner);
+    bannerDock().append(banner);
   }
   clear(banner);
 
@@ -1493,6 +1530,7 @@ function renderRebaseBanner(): void {
   actions.append(cont, skip, abort);
 
   banner.append(info, actions);
+  foldable(banner);
 }
 
 async function rebaseControl(kind: "continue" | "skip" | "abort"): Promise<void> {
@@ -1542,7 +1580,7 @@ function renderDetachedBanner(): void {
   }
   if (!banner) {
     banner = el("div", { id: "detached-banner", class: "rebase-banner" });
-    document.body.append(banner);
+    bannerDock().append(banner);
   }
   clear(banner);
 
@@ -1570,6 +1608,7 @@ function renderDetachedBanner(): void {
     actions.append(back);
   }
   banner.append(info, actions);
+  foldable(banner);
 }
 
 // --- Bisect in progress (good / bad / skip / reset) --------------------------
@@ -1586,7 +1625,7 @@ function renderBisectBanner(): void {
   }
   if (!banner) {
     banner = el("div", { id: "bisect-banner", class: "rebase-banner bisect-banner" });
-    document.body.append(banner);
+    bannerDock().append(banner);
   }
   clear(banner);
 
@@ -1605,6 +1644,7 @@ function renderBisectBanner(): void {
     show.addEventListener("click", () => void jumpToCommit(firstBad, firstBad.slice(0, 7)));
     actions.append(show, reset);
     banner.append(info, actions);
+    foldable(banner);
     return;
   }
 
@@ -1620,6 +1660,7 @@ function renderBisectBanner(): void {
   }
   actions.append(reset);
   banner.append(info, actions);
+  foldable(banner);
 }
 
 // Mark `rev` (the commit under test when omitted), or reset the bisect.

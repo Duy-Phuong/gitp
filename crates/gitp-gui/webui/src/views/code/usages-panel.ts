@@ -1,7 +1,7 @@
 // The Usages pane (every use of a symbol, the certain ones first) and the
 // Call hierarchy pane (a lazily expanded tree of callers or callees).
 
-import { clear, el } from "../../dom";
+import { clear, el, toggleChevron } from "../../dom";
 import type { HierarchyNode, Location, Symbol, UsagesResult } from "../../types";
 import { HierarchyModel, type HierarchyMode, type HNode } from "./hierarchy-model";
 
@@ -95,7 +95,7 @@ export function setupHierarchyPanel(
     const walk = (n: HNode, depth: number) => {
       const expandable = !!n.symbol && !n.onPath && !(n.children && n.children.length === 0 && n.expanded);
       const row = el("div", { class: `code-h-row${n.certain ? "" : " possible"}${n.onPath ? " on-path" : ""}`, style: `--depth:${depth}` }, [
-        el("span", { class: "code-h-chevron" }, [expandable ? (n.expanded ? "▾" : "▸") : ""]),
+        el("span", { class: "code-h-chevron" }, expandable ? [toggleChevron(!!n.expanded)] : []),
         el("span", { class: "code-h-label" }, [
           el("span", { class: "code-h-name" }, [n.symbol ? n.symbol.name : n.reference?.name ?? "?"]),
           el("span", { class: "code-h-where" }, [n.symbol ? ` ${n.symbol.kind} · ${n.symbol.path}:${n.symbol.name_range.start_line + 1}` : n.reference ? ` ${n.reference.path}:${n.reference.range.start_line + 1} (not in the project)` : ""]),

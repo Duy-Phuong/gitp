@@ -1151,12 +1151,24 @@ textarea.rename-input {
 }
 
 /* Paused-rebase banner --------------------------------------------------- */
-.rebase-banner {
+/* The bars of an operation in progress, stacked at the bottom (shell.ts). */
+#banner-dock {
   position: fixed;
   left: 50%;
   bottom: 16px;
   transform: translateX(-50%);
   z-index: 150;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 90vw;
+  pointer-events: none;
+}
+#banner-dock > * {
+  pointer-events: auto;
+}
+.rebase-banner {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -1192,6 +1204,41 @@ textarea.rename-input {
 .rebase-banner-actions {
   display: flex;
   gap: 6px;
+}
+/* Fold: a chevron that turns up while the bar is a chip. */
+.rebase-banner-fold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.rebase-banner-fold:hover {
+  background: var(--row-hover);
+  color: var(--text);
+}
+.rebase-banner.folded .rebase-banner-fold .chevron-icon {
+  transform: rotate(180deg);
+}
+.rebase-banner.folded {
+  gap: 6px;
+  padding: 3px 4px 3px 12px;
+  border-radius: 16px;
+}
+.rebase-banner.folded .rebase-banner-sub,
+.rebase-banner.folded .rebase-banner-files,
+.rebase-banner.folded .rebase-banner-actions {
+  display: none;
+}
+.rebase-banner.folded .rebase-banner-title {
+  font-size: 12px;
+  cursor: pointer;
 }
 
 /* Conflict resolver ------------------------------------------------------- */
@@ -5222,11 +5269,6 @@ textarea:focus-visible,
 }
 
 /* Bisect ------------------------------------------------------------------- */
-/* Shares the rebase banner's look and spot; lifted above it on the rare
-   occasion both are up (a conflict while bisecting). */
-body:has(#rebase-banner, #conflict-banner) .bisect-banner {
-  bottom: 76px;
-}
 /* Marks on log rows: what each commit was judged, and the one under test. */
 .bisect-mark {
   flex: none;
@@ -7239,6 +7281,52 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
   border-radius: 8px;
   background: var(--bg-elev);
 }
+/* The diff lines around a draft's line, its own marked. */
+.pr-draft-context {
+  margin: 8px 10px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-family: var(--code-font);
+  font-size: var(--code-size);
+  overflow-x: auto;
+}
+.pr-draft-context-line {
+  display: flex;
+  white-space: pre;
+  line-height: 1.5;
+}
+.pr-draft-context-line.add {
+  background: var(--add-bg);
+}
+.pr-draft-context-line.del {
+  background: var(--del-bg);
+}
+.pr-draft-context-line.target {
+  box-shadow: inset 3px 0 0 var(--accent);
+  font-weight: 600;
+}
+.pr-draft-context-no {
+  flex: none;
+  width: 44px;
+  padding-right: 8px;
+  text-align: right;
+  color: var(--text-dim);
+  user-select: none;
+}
+.pr-draft-context-code {
+  padding-right: 10px;
+}
+/* The card the Drafts tab's keys act on. */
+.pr-draft.cursor {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  border-color: var(--accent);
+}
+.pr-drafts-keys {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+}
 .pr-draft.approved {
   border-color: var(--accent);
 }
@@ -7574,15 +7662,6 @@ body:has(#rebase-banner, #conflict-banner) .bisect-banner {
 }
 .lh-head:hover {
   background: var(--bg-elev-2);
-}
-.lh-chevron {
-  display: inline-block;
-  width: 12px;
-  color: var(--text-dim);
-  transition: transform 0.12s ease;
-}
-.lh-chevron.open {
-  transform: rotate(90deg);
 }
 .lh-time {
   color: var(--text-dim);
@@ -8081,14 +8160,19 @@ mark.find-hit.current {
 .code-search-file > summary:hover {
   background: var(--row-hover);
 }
+/* The shared chevron (chevronIcon), drawn as a mask: down when open, turned
+   right when closed, as .sb-chevron. */
 .code-search-file > summary::before {
-  content: "▾";
-  flex: 0 0 10px;
-  color: var(--text-dim);
-  font-size: 10px;
+  content: "";
+  flex: 0 0 12px;
+  height: 12px;
+  background-color: var(--text-dim);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: transform 0.12s ease;
 }
 .code-search-file:not([open]) > summary::before {
-  content: "▸";
+  transform: rotate(-90deg);
 }
 .code-search-name {
   font-weight: 600;
@@ -8209,10 +8293,9 @@ mark.find-hit.current {
   font-style: italic;
 }
 .code-h-chevron {
+  display: inline-flex;
   width: 12px;
-  color: var(--text-dim);
   cursor: pointer;
-  font-size: 11px;
 }
 .code-h-label {
   cursor: pointer;
@@ -8983,6 +9066,9 @@ mark.find-hit.current {
   gap: 8px;
 }
 .fix-changes-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font: inherit;
   font-size: 12px;
   color: var(--accent);

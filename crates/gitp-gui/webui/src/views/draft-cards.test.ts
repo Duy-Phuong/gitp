@@ -179,4 +179,21 @@ describe("draft cards", () => {
     expect(shown.querySelector("textarea")).not.toBeNull();
     expect(buttons(shown)).toContain("Hide");
   });
+
+  it("shows the diff lines around a draft's line, its own marked", async () => {
+    const { contextLines, draftCard } = await import("./draft-cards");
+    expect(contextLines(file, 2, "RIGHT", 1).map((l) => [l.origin, l.content, l.target])).toEqual([
+      [" ", "one", false],
+      ["+", "two", true],
+      [" ", "three", false],
+    ]);
+    expect(contextLines(file, 9, "RIGHT", 3)).toEqual([]);
+    const card = draftCard(draft(), options({ file }));
+    const rows = [...card.querySelectorAll(".pr-draft-context-line")];
+    expect(rows.map((r) => r.textContent)).toEqual(["1one", "2two", "3three"]);
+    expect(card.querySelector(".pr-draft-context-line.target")!.textContent).toBe("2two");
+    // Not under its own line in the diff, and not without a file.
+    expect(draftCard(draft(), options({ file, where: "inline" })).querySelector(".pr-draft-context")).toBeNull();
+    expect(draftCard(draft(), options()).querySelector(".pr-draft-context")).toBeNull();
+  });
 });

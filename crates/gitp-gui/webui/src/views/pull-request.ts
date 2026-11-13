@@ -257,6 +257,60 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
   // The Drafts tab's filters: by where a draft stands, and by severity.
   let draftShow: DraftShow = "all";
   let draftSeverity: string | null = null;
+  // The draft the Drafts tab's keys act on (its id); the first card shown
+  // when none is.
+  let draftCursor: number | null = null;
+
+  // The Drafts tab's keys, as its cards' own buttons: j / k (↓ / ↑) move
+  // between the cards shown, a approves (again: back to pending), d discards
+  // (again: restores), f fixes, e explains more, o shows or hides a folded one.
+  document.addEventListener("keydown", (e) => {
+    if (!draftKeysAllowed(e)) return;
+    const cards = [...host.querySelectorAll<HTMLElement>(".pr-draft[data-draft]:not(.inline)")];
+    if (!cards.length) return;
+    const at = Math.max(0, cards.findIndex((c) => Number(c.dataset.draft) === draftCursor));
+    const move = e.key === "j" || e.key === "ArrowDown" ? 1 : e.key === "k" || e.key === "ArrowUp" ? -1 : 0;
+    if (move) {
+      const next = cards[Math.min(cards.length - 1, Math.max(0, draftCursor === null ? 0 : at + move))];
+      e.preventDefault();
+      pointAt(next);
+      next.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    const labels: Record<string, string[]> = {
+      a: ["Approve", "Approved ✓"],
+      d: ["Discard", "Restore"],
+      f: ["Fix"],
+      e: ["Explain more"],
+      o: ["Show", "Hide"],
+    };
+    const want = labels[e.key];
+    if (!want) return;
+    const card = cards[at];
+    const b = [...card.querySelectorAll<HTMLButtonElement>("button")].find((x) => want.includes(x.textContent ?? "") && !x.disabled);
+    if (!b) return;
+    e.preventDefault();
+    draftCursor = Number(card.dataset.draft);
+    b.click();
+  });
+
+  // Whether a bare key belongs to the Drafts tab now: it is on screen, nothing
+  // is layered over it, and no one is typing.
+  function draftKeysAllowed(e: KeyboardEvent): boolean {
+    if (tab !== "drafts" || !detail || !host.isConnected || host.offsetParent === null) return false;
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return false;
+    if (document.querySelector(".modal-overlay, .ql-overlay, .commit-menu, .menu:not(.hidden)")) return false;
+    const t = e.target instanceof HTMLElement ? e.target : null;
+    if (t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.closest("#terminal-host"))) return false;
+    return true;
+  }
+
+  // Mark `card` as the one the keys act on.
+  function pointAt(card: HTMLElement): void {
+    for (const c of host.querySelectorAll(".pr-draft.cursor")) c.classList.remove("cursor");
+    card.classList.add("cursor");
+    draftCursor = Number(card.dataset.draft);
+  }
   let split = loadPrDiffSplit();
   // The folder tree beside the diffs: shown or not, which folders are folded,
   // and the file last picked in it.
@@ -1751,7 +1805,13 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       message,
     );
     body.append(draftsOverview(drafts));
-    for (const d of drafts.filter(shown)) body.append(prDraftCard(pr, d, "list", anchorOf(d)));
+    const cards = drafts.filter(shown).map((d) => {
+      const c = prDraftCard(pr, d, "list", anchorOf(d));
+      if (d.id === draftCursor) c.classList.add("cursor");
+      c.addEventListener("click", () => pointAt(c));
+      return c;
+    });
+    body.append(...cards);
   }
 
   // Whether the Drafts tab's filters show `d`.
@@ -1792,10 +1852,22 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
         el("span", { class: `pr-drafts-index-state ${standing}`, text: d.status === "approved" ? "approved" : standing }),
         el("span", { class: "pr-drafts-index-text", text: d.body.split("\n").find((l) => l.trim()) ?? "" }),
       ]);
-      row.addEventListener("click", () => host.querySelector<HTMLElement>(`.pr-draft[data-draft="${d.id}"]:not(.inline)`)?.scrollIntoView({ block: "start", behavior: "smooth" }));
+      row.addEventListener("click", () => {
+        const card = host.querySelector<HTMLElement>(`.pr-draft[data-draft="${d.id}"]:not(.inline)`);
+        if (!card) return;
+        pointAt(card);
+        card.scrollIntoView({ block: "start", behavior: "smooth" });
+      });
       list.append(row);
     }
     if (!list.childElementCount) list.append(el("div", { class: "pr-empty", text: "No draft matches these filters." }));
+    filters.append(
+      el("span", {
+        class: "pr-drafts-keys",
+        text: "j/k move · a approve · d discard · f fix · e explain · o show",
+        title: "Keys of the Drafts tab, on the marked card (click a card to mark it)",
+      }),
+    );
     return el("div", { class: "pr-drafts-overview" }, [filters, list]);
   }
 
@@ -1818,6 +1890,7 @@ export function setupPullRequestView(host: HTMLElement, cb: PullRequestCallbacks
       openCommit: cb.openCommit,
       changed: (redraw) => (redraw ? reviewsChanged() : saveSoon()),
       explain: d.finding ? { ...cb.draftExplaining(pr, d), run: () => cb.explainDraft(pr, d) } : null,
+      file: where === "list" && d.path ? (files?.find((f) => f.path === d.path) ?? null) : null,
     };
     return draftCard(d, o);
   }
