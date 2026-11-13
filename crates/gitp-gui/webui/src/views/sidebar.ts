@@ -609,7 +609,7 @@ function buildPullRequests(
 
   const filters = el("div", { class: "seg-toggle sb-pr-filters", role: "group" });
   for (const f of PR_FILTERS) {
-    const b = el("button", { class: f.value === p.filter ? "seg active" : "seg", text: f.short, title: f.label });
+    const b = el("button", { class: `seg pr-filter${f.value === p.filter ? " active" : ""}`, "data-pr-filter": f.value, text: f.short, title: f.label });
     b.addEventListener("click", () => cb.onPrFilter(f.value));
     filters.append(b);
   }

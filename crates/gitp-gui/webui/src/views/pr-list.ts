@@ -183,7 +183,7 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
     title.textContent = p.repo ? `Pull Requests · ${p.repo}` : "Pull Requests";
     clear(segs);
     for (const f of PR_FILTERS) {
-      const b = el("button", { class: f.value === p.filter ? "seg active" : "seg", text: f.label });
+      const b = el("button", { class: `seg pr-filter${f.value === p.filter ? " active" : ""}`, "data-pr-filter": f.value, text: f.label });
       b.addEventListener("click", () => cb.setFilter(f.value));
       segs.append(b);
     }
@@ -266,7 +266,8 @@ export function setupPullRequestListView(host: HTMLElement, cb: PullRequestListC
       note(p.list.length ? "No pull request matches." : p.filter === "merged" ? "No merged pull requests." : "No open pull requests.");
       return;
     }
-    const table = el("table", { class: "prl-table" });
+    // A line on top in the group's colour, as its filter button.
+    const table = el("table", { class: "prl-table", "data-pr-filter": p.filter });
     const headRow = el("tr");
     for (const c of COLUMNS) {
       // The merged list dates each by its merge.

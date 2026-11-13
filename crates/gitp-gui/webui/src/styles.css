@@ -2573,6 +2573,63 @@ body.tab-dragging * {
   font-weight: 600;
 }
 
+/* The pull request groups (All, Created by me, Review requested, …), each in
+   its own colour so the one shown is told at a glance: a dot before the
+   name, and the colour filled in on the one chosen. Reviewed and Review
+   again match their marks on the rows. */
+[data-pr-filter] {
+  --filter-color: var(--text-dim);
+}
+[data-pr-filter="mine"] {
+  --filter-color: var(--accent);
+}
+[data-pr-filter="review_requested"] {
+  --filter-color: var(--mod-fg);
+}
+[data-pr-filter="reviewed"] {
+  --filter-color: var(--add-fg);
+}
+[data-pr-filter="rereview"] {
+  --filter-color: var(--claude-fg);
+}
+[data-pr-filter="merged"] {
+  --filter-color: var(--badge-system);
+}
+.pr-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.prl-table[data-pr-filter] {
+  border-top: 2px solid var(--filter-color);
+}
+.pr-filter::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--filter-color);
+}
+.pr-filter:not(.active):hover {
+  color: var(--filter-color);
+}
+.seg.pr-filter.active {
+  background: var(--filter-color);
+  color: var(--bg);
+}
+.seg.pr-filter.active::before {
+  background: var(--bg);
+}
+/* The narrow sidebar: a smaller dot, closer to its word. */
+.sb-pr-filters .pr-filter {
+  gap: 3px;
+}
+.sb-pr-filters .pr-filter::before {
+  width: 5px;
+  height: 5px;
+}
+
 /* Commit search box, next to the branch toggle. */
 .log-search {
   position: relative;
