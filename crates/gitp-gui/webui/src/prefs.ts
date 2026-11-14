@@ -307,6 +307,19 @@ export function saveAvatarStyle(style: AvatarStyle): void {
   localStorage.setItem(AVATAR_STYLE_KEY, style);
 }
 
+// The picture of gitp's own (its file name, "avatar-07.jpg") chosen for the
+// user: on their own commits and the profile button. Null for none chosen.
+const MY_AVATAR_KEY = "gitp-my-avatar";
+
+export function loadMyAvatar(): string | null {
+  return localStorage.getItem(MY_AVATAR_KEY) || null;
+}
+
+export function saveMyAvatar(name: string | null): void {
+  if (name) localStorage.setItem(MY_AVATAR_KEY, name);
+  else localStorage.removeItem(MY_AVATAR_KEY);
+}
+
 export function loadAuthorInitials(): boolean {
   return loadAvatarStyle() === "initials";
 }

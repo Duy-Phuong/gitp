@@ -14,6 +14,7 @@ import {
   restoreLocalIdentity,
   setGlobalIdentity,
 } from "./api";
+import { myAvatarUrl } from "./avatar";
 import { clear, el, $ } from "./dom";
 import { state, ui } from "./app-state";
 import { opFailed, readFailed, reportDone } from "./report";
@@ -68,12 +69,17 @@ export async function setupProfileMenu(): Promise<void> {
   renderProfileButton();
 }
 
-function renderProfileButton(): void {
+// Also after the picture is chosen in Settings.
+export function renderProfileButton(): void {
   const store = currentStore();
   if (!store) return;
   const p = activeProfile(store);
   const btn = $("#profile-btn");
-  btn.textContent = profileInitials(p.name);
+  // The picture chosen in Settings, else the profile's initials.
+  const picture = myAvatarUrl();
+  btn.textContent = picture ? "" : profileInitials(p.name);
+  btn.classList.toggle("has-picture", Boolean(picture));
+  btn.style.backgroundImage = picture ? `url("${picture}")` : "";
   btn.title = p.authorEmail ? `Profile: ${p.name} — ${p.authorName} <${p.authorEmail}>` : `Profile: ${p.name}`;
 }
 

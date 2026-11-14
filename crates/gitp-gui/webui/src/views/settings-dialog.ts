@@ -9,6 +9,7 @@
 import { loadNotifyPrefs, saveNotifyPrefs, type NotifyPrefs } from "../notifications";
 import { jiraSite } from "../jira";
 import { DEFAULT_DRAFT_COMMANDS, loadDraftCommand, saveDraftCommand, type DraftCommandKind } from "../claude-drafts";
+import { AVATAR_PICTURES } from "../avatar";
 import { el } from "../dom";
 import {
   applyZoom,
@@ -18,6 +19,7 @@ import {
   FONT_FAMILIES,
   FONT_SIZES,
   loadAvatarStyle,
+  loadMyAvatar,
   loadAutoFetchMinutes,
   loadAutoFetchPrune,
   loadBranchHoverFade,
@@ -37,6 +39,7 @@ import {
   PULL_DEFAULT_LABEL,
   PULL_DEFAULTS,
   saveAvatarStyle,
+  saveMyAvatar,
   type AvatarStyle,
   saveAutoFetchPrune,
   saveBranchHoverFade,
@@ -191,6 +194,12 @@ export function openSettingsDialog(actions: SettingsActions, initial?: string): 
           ),
           "inline",
           "Avatars come from gravatar.com, which is sent a hash of each author's email. Custom gives each author one of gitp's own pictures, the same one every time; it and initials fetch nothing.",
+        ),
+        row(
+          "Your picture",
+          avatarPicker(actions),
+          "block",
+          "On your own commits (the email of this profile) under Avatars or Custom, and on the profile button. None keeps the usual one.",
         ),
       ],
     },
@@ -907,6 +916,38 @@ function githubAccountField(actions: SettingsActions): HTMLElement {
   };
   actions.githubAccount().then(show, () => host.replaceChildren(el("span", { class: "settings-row-hint", text: "Couldn't ask gh" })));
   return host;
+}
+
+// The pictures of gitp's own to choose from, and None.
+function avatarPicker(actions: SettingsActions): HTMLElement {
+  const grid = el("div", { class: "avatar-picker", role: "radiogroup", "aria-label": "Your picture" });
+  const choices: { name: string | null; url?: string; label: string }[] = [
+    { name: null, label: "None" },
+    ...AVATAR_PICTURES.map((p, i) => ({ name: p.name, url: p.url, label: `Picture ${i + 1}` })),
+  ];
+  const mark = () => {
+    const cur = loadMyAvatar();
+    for (const b of grid.querySelectorAll<HTMLElement>(".avatar-choice")) {
+      const on = (b.dataset.avatar ?? null) === cur || (!b.dataset.avatar && cur === null);
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-checked", String(on));
+    }
+  };
+  for (const c of choices) {
+    const b = el("button", { class: "avatar-choice", role: "radio", title: c.label, "aria-label": c.label });
+    if (c.name) {
+      b.dataset.avatar = c.name;
+      b.append(el("img", { src: c.url!, alt: "", loading: "lazy" }));
+    } else b.textContent = "None";
+    b.addEventListener("click", () => {
+      saveMyAvatar(c.name);
+      mark();
+      actions.redrawDisplay();
+    });
+    grid.append(b);
+  }
+  mark();
+  return grid;
 }
 
 function segToggle<T>(options: { value: T; label: string }[], current: T, onChange: (v: T) => void): HTMLElement {

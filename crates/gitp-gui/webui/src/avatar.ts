@@ -2,20 +2,36 @@
 // SHA-256 hashes) using the built-in WebCrypto — no md5 dependency. Missing
 // Gravatars fall back to a generated identicon (d=identicon), and a failed image
 // load falls back to the plain lane-colored dot in the graph. With Settings'
-// Custom, an author gets one of gitp's own pictures instead.
+// Custom, an author gets one of gitp's own pictures instead; the picture the
+// user chose in Settings goes on their own commits under either.
 //
 // Note: this sends the email hash to gravatar.com to fetch the image — unless
 // Settings shows author initials or the custom pictures, when nothing is
 // fetched at all.
 
-import { loadAvatarStyle } from "./prefs";
+import { loadAvatarStyle, loadMyAvatar } from "./prefs";
+import { activeProfile, loadStore } from "./profiles";
 
-// gitp's own pictures (src/assets/avatars), bundled by Vite, in name order.
-export const CUSTOM_AVATARS: string[] = Object.entries(
+// gitp's own pictures (src/assets/avatars), bundled by Vite, in name order:
+// each by its file name ("avatar-07.jpg") and its URL.
+export const AVATAR_PICTURES: { name: string; url: string }[] = Object.entries(
   import.meta.glob<string>("./assets/avatars/*.jpg", { eager: true, import: "default", query: "?url" }),
 )
   .sort(([a], [b]) => a.localeCompare(b))
-  .map(([, url]) => url);
+  .map(([path, url]) => ({ name: path.slice(path.lastIndexOf("/") + 1), url }));
+
+export const CUSTOM_AVATARS: string[] = AVATAR_PICTURES.map((p) => p.url);
+
+// The URL of the picture the user chose in Settings, or undefined for none.
+export function myAvatarUrl(): string | undefined {
+  const name = loadMyAvatar();
+  return name ? AVATAR_PICTURES.find((p) => p.name === name)?.url : undefined;
+}
+
+// Whether `email` is the user's own: the email the active profile commits as.
+export function isMyEmail(email: string, mine: string | null | undefined): boolean {
+  return Boolean(mine) && email.trim().toLowerCase() === mine!.trim().toLowerCase();
+}
 
 // The picture of `email`'s author: picked by a hash of the email (FNV-1a), so
 // the pick looks random but an author keeps theirs across redraws and runs.
@@ -43,11 +59,20 @@ async function sha256Hex(text: string): Promise<string> {
 export async function ensureAvatars(emails: string[]): Promise<void> {
   const style = loadAvatarStyle();
   if (style === "initials") return;
-  if (style !== cachedStyle) {
+  // The user's chosen picture, on their own commits under either style.
+  const store = loadStore(localStorage);
+  const mine = store ? activeProfile(store).authorEmail : null;
+  const myUrl = myAvatarUrl();
+  const key = `${style}|${mine ?? ""}|${myUrl ?? ""}`;
+  if (key !== cachedStyle) {
     cache.clear();
-    cachedStyle = style;
+    cachedStyle = key;
   }
-  const pending = [...new Set(emails)].filter((e) => e && !cache.has(e));
+  let pending = [...new Set(emails)].filter((e) => e && !cache.has(e));
+  if (myUrl) {
+    for (const email of pending) if (isMyEmail(email, mine)) cache.set(email, myUrl);
+    pending = pending.filter((e) => !cache.has(e));
+  }
   if (style === "custom") {
     for (const email of pending) {
       const url = customAvatar(email);

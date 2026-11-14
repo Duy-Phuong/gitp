@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { authorInitials, CUSTOM_AVATARS, customAvatar } from "./avatar";
+import { authorInitials, AVATAR_PICTURES, CUSTOM_AVATARS, customAvatar, isMyEmail } from "./avatar";
 
 describe("authorInitials", () => {
   it("takes the first and last word's first letters", () => {
@@ -34,5 +34,19 @@ describe("custom avatars", () => {
 
   it("ships the pictures from src/assets/avatars", () => {
     expect(CUSTOM_AVATARS.length).toBeGreaterThan(20);
+  });
+});
+
+describe("the user's picture", () => {
+  it("knows the user's own email whatever its case", () => {
+    expect(isMyEmail(" Ada@Example.com", "ada@example.com ")).toBe(true);
+    expect(isMyEmail("bob@example.com", "ada@example.com")).toBe(false);
+    expect(isMyEmail("ada@example.com", "")).toBe(false);
+    expect(isMyEmail("ada@example.com", null)).toBe(false);
+  });
+
+  it("names each picture by its file", () => {
+    expect(AVATAR_PICTURES.length).toBe(CUSTOM_AVATARS.length);
+    for (const p of AVATAR_PICTURES) expect(p.name).toMatch(/^avatar-\d+\.jpg$/);
   });
 });

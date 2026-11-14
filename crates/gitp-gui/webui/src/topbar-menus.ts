@@ -4,6 +4,7 @@ import { browseForFolder, fetchConfig, listHooks, openHook, saveConfig, setHookE
 import { clear, el, $ } from "./dom";
 import { state, ui } from "./app-state";
 import { ensureAvatars } from "./avatar";
+import { renderProfileButton } from "./profile-menu";
 import { opFailed, reportDone } from "./report";
 import {
   applyTheme,
@@ -230,6 +231,7 @@ export function openSettings(section?: string): void {
       // The log and the reflog redraw now; the details pane shows the new
       // format from the next commit selected.
       redrawDisplay: () => {
+        renderProfileButton();
         if (state.view === "reflog") void ui.reflogView?.reload();
         // Back from initials, the loaded rows' avatars were never looked up.
         void ensureAvatars(state.rows.map((r) => r.author_email)).then(() => {
